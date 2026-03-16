@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /claude-hooks/intercept_build_test.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash /claude-hooks/block-push-passthrough.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

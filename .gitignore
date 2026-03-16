@@ -1,0 +1,19 @@
+node_modules/
+dist/
+*.db
+*.db-journal
+.env
+.venv/
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Docker build context artifacts
+repo.git/

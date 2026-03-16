@@ -1,0 +1,36 @@
+# Template docker-compose for a single agent.
+# Copy to your project and adjust paths, or use launch.sh which generates this.
+
+services:
+  claude-worker:
+    build:
+      context: .
+    environment:
+      - AGENT_NAME=${AGENT_NAME:-agent-1}
+      - WORK_BRANCH=${WORK_BRANCH:-main}
+      - AGENT_TYPE=${AGENT_TYPE:-container-orchestrator}
+      - MAX_TURNS=${MAX_TURNS:-200}
+      - SERVER_URL=http://host.docker.internal:${SERVER_PORT:-9100}
+      - TASK_PROMPT_FILE=/task/prompt.md
+      # Hook config — set these to match your project's build/test scripts
+      - BUILD_SCRIPT_NAME=${BUILD_SCRIPT_NAME:-build.py}
+      - TEST_SCRIPT_NAME=${TEST_SCRIPT_NAME:-run_tests.py}
+      - DEFAULT_TEST_FILTERS=${DEFAULT_TEST_FILTERS:-}
+    volumes:
+      # Required: bare repo for git operations
+      - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git:ro
+      # Required: task prompt and standing instructions
+      - ${TASKS_PATH:?Set TASKS_PATH}:/task:ro
+      # Required: Claude authentication (pick one)
+      # Option A — OAuth credentials file:
+      - ${CLAUDE_CREDENTIALS_PATH:-~/.claude/.credentials.json}:/home/claude/.claude/.credentials.json:ro
+      # Option B — API key: set ANTHROPIC_API_KEY in environment above instead
+      # Agent definitions (container-orchestrator, etc.)
+      - ${AGENTS_PATH:-~/.claude/agents}:/home/claude/.claude/agents:ro
+      # UE engine (read-only)
+      - ${UE_ENGINE_PATH:?Set UE_ENGINE_PATH}:/engine:ro
+      # Optional: read-only plugin mounts (symlinked into Plugins/ at startup)
+      # Add entries like:
+      # - /path/to/MyPlugin:/plugins-ro/MyPlugin:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

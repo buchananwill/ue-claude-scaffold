@@ -1,0 +1,40 @@
+{
+  "$schema": "./scaffold.config.schema.json",
+
+  "project": {
+    "name": "MyUEProject",
+    "path": "",
+    "uprojectFile": "MyUEProject.uproject"
+  },
+
+  "engine": {
+    "path": "",
+    "version": "5.7"
+  },
+
+  "build": {
+    "scriptPath": "Scripts/build.py",
+    "testScriptPath": "Scripts/run_tests.py",
+    "defaultTestFilters": ["MyProject"]
+  },
+
+  "plugins": {
+    "readOnlyMounts": []
+  },
+
+  "container": {
+    "agentType": "container-orchestrator",
+    "maxTurns": 200,
+    "defaultBranch": "main"
+  },
+
+  "server": {
+    "port": 9100,
+    "ubtLockTimeoutMs": 600000
+  },
+
+  "claudeMdPatches": {
+    "pathRemaps": {},
+    "agentSubstitutions": {}
+  }
+}
