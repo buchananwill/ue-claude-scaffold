@@ -3,3 +3,4 @@ export { default as agentsPlugin } from './agents.js';
 export { default as messagesPlugin } from './messages.js';
 export { default as ubtPlugin } from './ubt.js';
 export { default as buildPlugin } from './build.js';
+export { default as tasksPlugin } from './tasks.js';

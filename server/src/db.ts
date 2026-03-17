@@ -9,7 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (2);
+INSERT OR IGNORE INTO schema_version(version) VALUES (3);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
@@ -62,6 +62,26 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel);
 CREATE INDEX IF NOT EXISTS idx_messages_claimed ON messages(claimed_by);
+
+-- Task queue for worker mode
+CREATE TABLE IF NOT EXISTS tasks (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  title               TEXT NOT NULL,
+  description         TEXT NOT NULL DEFAULT '',
+  source_path         TEXT,
+  acceptance_criteria TEXT,
+  status              TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending','claimed','in_progress','completed','failed')),
+  priority            INTEGER NOT NULL DEFAULT 0,
+  claimed_by          TEXT,
+  claimed_at          DATETIME,
+  completed_at        DATETIME,
+  result              TEXT,
+  progress_log        TEXT,
+  created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status   ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority DESC, id ASC);
 `;
 
 export let db: Database.Database;

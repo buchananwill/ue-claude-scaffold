@@ -16,6 +16,9 @@ services:
       - BUILD_SCRIPT_NAME=${BUILD_SCRIPT_NAME:-build.py}
       - TEST_SCRIPT_NAME=${TEST_SCRIPT_NAME:-run_tests.py}
       - DEFAULT_TEST_FILTERS=${DEFAULT_TEST_FILTERS:-}
+      - WORKER_MODE=${WORKER_MODE:-false}
+      - WORKER_POLL_INTERVAL=${WORKER_POLL_INTERVAL:-30}
+      - WORKER_SINGLE_TASK=${WORKER_SINGLE_TASK:-true}
     volumes:
       # Required: bare repo for git operations
       - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git:ro

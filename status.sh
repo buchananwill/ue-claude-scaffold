@@ -114,13 +114,45 @@ print_status() {
   if [[ "$agent_count" -eq 0 ]]; then
     echo "  No agents registered."
   else
-    printf "  %-15s %-25s %-10s %s\n" "NAME" "BRANCH/WORKTREE" "STATUS" "REGISTERED"
-    printf "  %-15s %-25s %-10s %s\n" "----" "---------------" "------" "----------"
-    echo "$agents_json" | jq -r '.[] | "\(.name)\t\(.branch // "-")\t\(.status // "idle")\t\(.registeredAt // "-")"' | while IFS=$'\t' read -r name branch status registered; do
+    printf "  %-15s %-25s %-10s %s\n" "NAME" "WORKTREE" "STATUS" "REGISTERED"
+    printf "  %-15s %-25s %-10s %s\n" "----" "--------" "------" "----------"
+    echo "$agents_json" | jq -r '.[] | "\(.name)\t\(.worktree // "-")\t\(.status // "idle")\t\(.registered_at // "-")"' | while IFS=$'\t' read -r name branch status registered; do
       local colored_status
       colored_status=$(status_color "$status")
       printf "  %-15s %-25s %-10b %s\n" "$name" "$branch" "$colored_status" "$registered"
     done
+  fi
+
+  echo ""
+
+  # ── Tasks ──
+  echo ""
+  echo -e "${C_DIM}--- Tasks --------------------------------------------------${C_RESET}"
+
+  local tasks_json
+  if tasks_json=$(curl -sf "$BASE_URL/tasks?limit=20" --max-time 5 2>/dev/null); then
+    local task_count
+    task_count=$(echo "$tasks_json" | jq 'length')
+
+    if [[ "$task_count" -eq 0 ]]; then
+      echo "  No tasks."
+    else
+      printf "  ${C_DIM}%-4s  %-4s  %-12s  %-12s  %s${C_RESET}\n" "ID" "PRI" "STATUS" "CLAIMED BY" "TITLE"
+      echo "$tasks_json" | jq -r '.[] | [.id, .priority, .status, (.claimedBy // "-"), .title] | @tsv' | \
+      while IFS=$'\t' read -r id pri status claimed title; do
+        local color=""
+        case "$status" in
+          pending)     color="$C_DIM" ;;
+          claimed|in_progress) color="$C_YELLOW" ;;
+          completed)   color="$C_GREEN" ;;
+          failed)      color="$C_RED" ;;
+          *)           color="" ;;
+        esac
+        printf "  %-4s  %-4s  ${color}%-12s${C_RESET}  %-12s  %s\n" "$id" "$pri" "$status" "$claimed" "$title"
+      done
+    fi
+  else
+    echo "  Could not fetch tasks."
   fi
 
   echo ""

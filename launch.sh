@@ -15,12 +15,14 @@ Options:
   --branch BRANCH     Git branch to work on (default: from .env or "main")
   --plan PATH         Path to a plan markdown file (copied to TASKS_PATH/prompt.md)
   --agent-type TYPE   Agent type (default: from .env or "container-orchestrator")
+  --worker            Run in task-queue worker mode (no plan file needed)
   --dry-run           Print resolved configuration and exit without launching
   --help              Show this help message and exit
 
 Examples:
   ./launch.sh --plan plans/add-inventory.md
   ./launch.sh --agent-name agent-2 --branch feature/ui --plan plans/ui-rework.md
+  ./launch.sh --worker --agent-name worker-1
   ./launch.sh --dry-run
 USAGE
 }
@@ -31,6 +33,7 @@ _CLI_BRANCH=""
 _CLI_PLAN=""
 _CLI_AGENT_TYPE=""
 _CLI_DRY_RUN=false
+_CLI_WORKER=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +45,8 @@ while [[ $# -gt 0 ]]; do
       _CLI_PLAN="$2"; shift 2 ;;
     --agent-type)
       _CLI_AGENT_TYPE="$2"; shift 2 ;;
+    --worker)
+      _CLI_WORKER=true; shift ;;
     --dry-run)
       _CLI_DRY_RUN=true; shift ;;
     --help)
@@ -71,6 +76,13 @@ WORK_BRANCH="${_CLI_BRANCH:-${WORK_BRANCH:-main}}"
 AGENT_TYPE="${_CLI_AGENT_TYPE:-${AGENT_TYPE:-container-orchestrator}}"
 MAX_TURNS="${MAX_TURNS:-200}"
 PLAN_PATH="${_CLI_PLAN}"
+if [ "$_CLI_WORKER" = "true" ]; then
+    WORKER_MODE=true
+else
+    WORKER_MODE="${WORKER_MODE:-false}"
+fi
+WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
+WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
 
 # ── Resolve plan path to absolute ────────────────────────────────────────────
 if [[ -n "$PLAN_PATH" ]]; then
@@ -121,12 +133,15 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo "  TASKS_PATH:       $TASKS_PATH"
   echo "  SERVER_PORT:      ${SERVER_PORT:-9100}"
   echo "  PLAN_PATH:        ${PLAN_PATH:-<none>}"
+  echo "  WORKER_MODE:      $WORKER_MODE"
+  echo "  WORKER_POLL_INT:  $WORKER_POLL_INTERVAL"
+  echo "  WORKER_SINGLE:    $WORKER_SINGLE_TASK"
   echo ""
   exit 0
 fi
 
-# ── Copy plan file to TASKS_PATH/prompt.md ───────────────────────────────────
-if [[ -n "$PLAN_PATH" ]]; then
+# ── Copy plan file to TASKS_PATH/prompt.md (skip in worker mode) ─────────────
+if [[ "$WORKER_MODE" != "true" && -n "$PLAN_PATH" ]]; then
   if [[ -f "$TASKS_PATH/prompt.md" ]]; then
     echo "Warning: Overwriting existing $TASKS_PATH/prompt.md" >&2
   fi
@@ -173,6 +188,7 @@ fi
 # ── Export vars for docker-compose ───────────────────────────────────────────
 export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS
 export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH
+export WORKER_MODE WORKER_POLL_INTERVAL WORKER_SINGLE_TASK
 export SERVER_PORT="${SERVER_PORT:-9100}"
 
 # ── Launch ───────────────────────────────────────────────────────────────────
