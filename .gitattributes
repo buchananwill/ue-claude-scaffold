@@ -1,0 +1,12 @@
+# Ensure shell scripts always have LF line endings (critical for Git Bash on Windows)
+*.sh text eol=lf
+
+# Keep markdown readable on all platforms
+*.md text eol=lf
+
+# TypeScript and JSON files
+*.ts text eol=lf
+*.json text eol=lf
+
+# SQL files
+*.sql text eol=lf
