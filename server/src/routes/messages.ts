@@ -1,0 +1,103 @@
+import type { FastifyPluginAsync } from 'fastify';
+import { db } from '../db.js';
+
+const messagesPlugin: FastifyPluginAsync = async (fastify) => {
+  const insertMessage = db.prepare(
+    `INSERT INTO messages (from_agent, channel, type, payload)
+     VALUES (@fromAgent, @channel, @type, @payload)`
+  );
+
+  const claimMessage = db.prepare(
+    `UPDATE messages SET claimed_by = @claimedBy, claimed_at = CURRENT_TIMESTAMP
+     WHERE id = @id AND claimed_by IS NULL`
+  );
+
+  const resolveMessage = db.prepare(
+    `UPDATE messages SET resolved_at = CURRENT_TIMESTAMP, result = @result
+     WHERE id = @id`
+  );
+
+  fastify.post<{
+    Body: { channel: string; type: string; payload: unknown };
+  }>('/messages', async (request) => {
+    const agent = request.headers['x-agent-name'] as string | undefined;
+    const { channel, type, payload } = request.body;
+    const result = insertMessage.run({
+      fromAgent: agent ?? 'unknown',
+      channel,
+      type,
+      payload: JSON.stringify(payload),
+    });
+    return { id: Number(result.lastInsertRowid), ok: true };
+  });
+
+  fastify.get<{
+    Params: { channel: string };
+    Querystring: { since?: string; type?: string };
+  }>('/messages/:channel', async (request) => {
+    const { channel } = request.params;
+    const { since, type } = request.query;
+
+    let sql = 'SELECT * FROM messages WHERE channel = ?';
+    const params: unknown[] = [channel];
+
+    if (since) {
+      sql += ' AND id > ?';
+      params.push(Number(since));
+    }
+    if (type) {
+      sql += ' AND type = ?';
+      params.push(type);
+    }
+
+    sql += ' ORDER BY id ASC';
+
+    const rows = db.prepare(sql).all(...params) as Array<{
+      id: number;
+      from_agent: string;
+      channel: string;
+      type: string;
+      payload: string;
+      claimed_by: string | null;
+      claimed_at: string | null;
+      resolved_at: string | null;
+      result: string | null;
+      created_at: string;
+    }>;
+
+    return rows.map((row) => ({
+      ...row,
+      payload: JSON.parse(row.payload),
+      result: row.result ? JSON.parse(row.result) : null,
+    }));
+  });
+
+  fastify.post<{
+    Params: { id: string };
+  }>('/messages/:id/claim', async (request, reply) => {
+    const id = Number(request.params.id);
+    const agent = request.headers['x-agent-name'] as string | undefined;
+
+    const result = db.transaction(() => {
+      const info = claimMessage.run({ id, claimedBy: agent ?? 'unknown' });
+      return info.changes > 0;
+    })();
+
+    if (result) {
+      return { ok: true };
+    }
+    return reply.conflict('already_claimed');
+  });
+
+  fastify.post<{
+    Params: { id: string };
+    Body: { result: unknown };
+  }>('/messages/:id/resolve', async (request) => {
+    const id = Number(request.params.id);
+    const { result } = request.body;
+    resolveMessage.run({ id, result: JSON.stringify(result) });
+    return { ok: true };
+  });
+};
+
+export default messagesPlugin;

@@ -1,0 +1,20 @@
+{
+  "project": {
+    "name": "MyUEProject",
+    "path": "C:/Projects/MyUEProject",
+    "uprojectFile": "MyUEProject.uproject"
+  },
+  "engine": {
+    "path": "C:/UnrealEngine",
+    "version": "5.7"
+  },
+  "build": {
+    "scriptPath": "Scripts/build.py",
+    "testScriptPath": "Scripts/run_tests.py",
+    "defaultTestFilters": ["MyProject"]
+  },
+  "server": {
+    "port": 9100,
+    "ubtLockTimeoutMs": 600000
+  }
+}
