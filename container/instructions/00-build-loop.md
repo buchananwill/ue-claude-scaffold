@@ -6,6 +6,17 @@ You are running autonomously inside a Docker container. There is no human in the
 
 Run your project's build script via the Bash tool (e.g. `python Scripts/build.py`). This command is intercepted by a hook and routed to the host build system. The output you receive contains the real build results, including any compiler errors.
 
+## Build queuing
+
+If another agent is currently building, your build will be queued automatically.
+You will see a message like:
+
+    Build queued — UBT held by agent-2 since 2026-03-17 10:42:00 (position 1, est. wait ~5 min). Waiting...
+
+This is normal. Do not attempt to run the build again, cancel it, or find a
+workaround. The hook is handling the wait for you. When the lock is free, your
+build will start automatically and you will see the build output as usual.
+
 ## The rule
 
 **You are not finished until you have received a successful build result.** Do not:

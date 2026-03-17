@@ -12,6 +12,26 @@ let insertLock: Database.Statement;
 let clearLock: Database.Statement;
 let popNext: Database.Statement;
 
+let insertBuildHistory: Database.Statement;
+let updateBuildHistory: Database.Statement;
+let avgBuildDuration: Database.Statement;
+
+function initBuildHistoryStatements(): void {
+  insertBuildHistory = db.prepare(
+    'INSERT INTO build_history (agent, type) VALUES (@agent, @type)'
+  );
+  updateBuildHistory = db.prepare(
+    'UPDATE build_history SET duration_ms = @durationMs, success = @success WHERE id = @id'
+  );
+  avgBuildDuration = db.prepare(
+    `SELECT AVG(duration_ms) as avg_ms FROM (
+      SELECT duration_ms FROM build_history
+      WHERE type = @type AND success = 1 AND duration_ms IS NOT NULL
+      ORDER BY id DESC LIMIT 5
+    )`
+  );
+}
+
 export function initUbtStatements(): void {
   getLock = db.prepare('SELECT * FROM ubt_lock WHERE id = 1');
   insertLock = db.prepare(
@@ -24,6 +44,20 @@ export function initUbtStatements(): void {
        SELECT id FROM ubt_queue ORDER BY priority DESC, id ASC LIMIT 1
      ) RETURNING *`
   );
+  initBuildHistoryStatements();
+}
+
+export function recordBuildStart(agent: string, type: 'build' | 'test'): number {
+  return Number(insertBuildHistory.run({ agent, type }).lastInsertRowid);
+}
+
+export function recordBuildEnd(id: number, durationMs: number, success: boolean): void {
+  updateBuildHistory.run({ id, durationMs, success: success ? 1 : 0 });
+}
+
+export function getEstimatedBuildMs(type?: string): number {
+  const row = avgBuildDuration.get({ type: type ?? 'build' }) as { avg_ms: number | null } | undefined;
+  return row?.avg_ms ? Math.round(row.avg_ms) : 300_000;
 }
 
 let _timeoutMs = 600000;
@@ -90,13 +124,23 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
     const queue = getQueue.all();
 
     if (lock && isStale(lock.acquired_at)) {
-      return { holder: null, acquiredAt: null, stale: true, queue };
+      return { holder: null, acquiredAt: null, stale: true, queue, estimatedWaitMs: 0 };
+    }
+
+    if (!lock?.holder) {
+      return {
+        holder: null,
+        acquiredAt: null,
+        queue,
+        estimatedWaitMs: 0,
+      };
     }
 
     return {
-      holder: lock?.holder ?? null,
-      acquiredAt: lock?.acquired_at ?? null,
+      holder: lock.holder,
+      acquiredAt: lock.acquired_at ?? null,
       queue,
+      estimatedWaitMs: getEstimatedBuildMs() * (queue.length + 1),
     };
   });
 
@@ -130,6 +174,9 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
           granted: false,
           position: pos,
           backoffMs: pos * 5000,
+          holder: lock.holder,
+          holderSince: lock.acquired_at,
+          estimatedWaitMs: getEstimatedBuildMs() * pos,
         };
       }
 
@@ -143,6 +190,9 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
         granted: false,
         position: pos,
         backoffMs: pos * 5000,
+        holder: lock.holder,
+        holderSince: lock.acquired_at,
+        estimatedWaitMs: getEstimatedBuildMs() * pos,
       };
     })();
   });

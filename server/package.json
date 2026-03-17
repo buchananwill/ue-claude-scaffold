@@ -2,23 +2,27 @@
   "name": "@ue-claude/server",
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/**/*.test.ts",
+    "test:coverage": "c8 --reporter=text --reporter=lcov tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "fastify": "^5",
+    "@fastify/sensible": "^6",
     "better-sqlite3": "^11",
-    "@fastify/sensible": "^6"
+    "fastify": "^5"
   },
   "devDependencies": {
-    "tsx": "^4",
-    "typescript": "^5.8",
+    "@types/better-sqlite3": "^7",
     "@types/node": "^22",
-    "@types/better-sqlite3": "^7"
+    "c8": "^11.0.0",
+    "tsx": "^4",
+    "typescript": "^5.8"
   }
 }

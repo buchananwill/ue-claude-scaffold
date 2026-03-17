@@ -9,7 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (1);
+INSERT OR IGNORE INTO schema_version(version) VALUES (2);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
@@ -34,6 +34,16 @@ CREATE TABLE IF NOT EXISTS ubt_queue (
   agent       TEXT NOT NULL,
   priority    INTEGER DEFAULT 0,
   requested_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Build/test invocation history for wait-time estimation
+CREATE TABLE IF NOT EXISTS build_history (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent        TEXT NOT NULL,
+  type         TEXT NOT NULL CHECK (type IN ('build', 'test')),
+  started_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  duration_ms  INTEGER,
+  success      INTEGER
 );
 
 -- Message board

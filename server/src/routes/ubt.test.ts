@@ -144,6 +144,44 @@ describe('ubt routes', () => {
     assert.equal(status.json().holder, 'agent-2');
   });
 
+  it('POST /ubt/acquire when held by other includes holder, holderSince, and estimatedWaitMs', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/ubt/acquire',
+      payload: { agent: 'agent-1' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/ubt/acquire',
+      payload: { agent: 'agent-2' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.granted, false);
+    assert.equal(body.holder, 'agent-1');
+    assert.equal(typeof body.holderSince, 'string');
+    assert.equal(typeof body.estimatedWaitMs, 'number');
+    assert.ok(body.estimatedWaitMs > 0);
+  });
+
+  it('GET /ubt/status includes estimatedWaitMs', async () => {
+    // When no holder, estimatedWaitMs should be 0
+    const emptyRes = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
+    assert.equal(emptyRes.json().estimatedWaitMs, 0);
+
+    // When a holder exists, estimatedWaitMs should be > 0
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/ubt/acquire',
+      payload: { agent: 'agent-1' },
+    });
+    const heldRes = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
+    const heldBody = heldRes.json();
+    assert.equal(typeof heldBody.estimatedWaitMs, 'number');
+    assert.ok(heldBody.estimatedWaitMs > 0);
+  });
+
   it('POST /ubt/release when no lock held returns not_held', async () => {
     const rel = await ctx.app.inject({
       method: 'POST',

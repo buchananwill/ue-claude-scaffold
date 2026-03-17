@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
-import { isStale } from './ubt.js';
+import { isStale, recordBuildStart, recordBuildEnd } from './ubt.js';
 
 interface BuildOpts {
   config: ScaffoldConfig;
@@ -117,11 +117,16 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
 
   fastify.post<{
     Body: { clean?: boolean };
-  }>('/build', async (request, reply) => {
+  }>('/build', async (request) => {
     const agentName = request.headers['x-agent-name'] as string | undefined;
     const holder = checkLock(agentName);
     if (holder) {
-      return reply.conflict(`UBT lock held by '${holder}'`);
+      return {
+        success: false,
+        exit_code: -1,
+        output: '',
+        stderr: `UBT lock held by '${holder}'. The build hook should have acquired the lock first — this is unexpected.`,
+      };
     }
 
     const syncError = await syncWorktree(agentName);
@@ -137,16 +142,26 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const scriptPath = config.build.scriptPath;
     const cwd = getStagingWorktree();
 
-    return runCommand(scriptPath, args, cwd, 660_000);
+    const agentForHistory = agentName ?? 'unknown';
+    const histId = recordBuildStart(agentForHistory, 'build');
+    const t0 = Date.now();
+    const result = await runCommand(scriptPath, args, cwd, 660_000);
+    recordBuildEnd(histId, Date.now() - t0, result.success);
+    return result;
   });
 
   fastify.post<{
     Body: { filters?: string[] };
-  }>('/test', async (request, reply) => {
+  }>('/test', async (request) => {
     const agentName = request.headers['x-agent-name'] as string | undefined;
     const holder = checkLock(agentName);
     if (holder) {
-      return reply.conflict(`UBT lock held by '${holder}'`);
+      return {
+        success: false,
+        exit_code: -1,
+        output: '',
+        stderr: `UBT lock held by '${holder}'. The build hook should have acquired the lock first — this is unexpected.`,
+      };
     }
 
     const syncError = await syncWorktree(agentName);
@@ -161,7 +176,12 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const scriptPath = config.build.testScriptPath;
     const cwd = getStagingWorktree();
 
-    return runCommand(scriptPath, filters, cwd, 700_000);
+    const agentForHistory = agentName ?? 'unknown';
+    const histId = recordBuildStart(agentForHistory, 'test');
+    const t0 = Date.now();
+    const result = await runCommand(scriptPath, filters, cwd, 700_000);
+    recordBuildEnd(histId, Date.now() - t0, result.success);
+    return result;
   });
 };
 
