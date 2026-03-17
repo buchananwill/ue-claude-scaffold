@@ -35,20 +35,33 @@ Read the project's `CLAUDE.md` and look for the `### Orchestrator Role Mapping` 
 
 Log your resolved mapping before beginning work.
 
+## Message Board
+
+The coordination server at `$SERVER_URL` provides a message board. Post phase transitions so the human operator can monitor progress via `GET /messages/general`.
+
+**Conventions:**
+- Post `phase_start` and `phase_complete`/`phase_failed` to `general` for every phase.
+- Post the final Execution Summary to `general` as a `summary` type.
+- All posts are fire-and-forget — use `|| true`. Never let a failed post interrupt your workflow.
+- See the standing instruction `02-messages.md` for the curl command format.
+
 ## Phase Execution Protocol
 
 For each phase in the plan:
 
 ### Step 1 — Implement & Build
 
+Post `phase_start` to `general`: `{"phase":"<id>","title":"<title>"}`.
+
 Delegate to **implementer** with:
 - The phase's requirements from the plan (verbatim)
 - Any supplementary notes from the CLAUDE.md role mapping
 - This instruction: *"You must write a debrief to `notes/docker-claude/` before building. See the standing debrief instruction for format. Commit the debrief with your code changes, then build."*
+- Instruct the implementer to post `build_result` messages to the `implementer` channel after each build attempt.
 
 The implementer builds after making changes and iterates internally until the build is clean.
 
-**If the implementer reports it cannot achieve a clean build after its internal retries:** attempt one more delegation with the error output and explicit instruction to fix only the build errors. If that also fails, stop and report.
+**If the implementer reports it cannot achieve a clean build after its internal retries:** attempt one more delegation with the error output and explicit instruction to fix only the build errors. If that also fails, stop and report. Post `phase_failed` to `general`: `{"phase":"<id>","title":"<title>","step":"build","reason":"<summary>"}`.
 
 ### Step 2 — Code Review
 
@@ -56,7 +69,7 @@ Delegate to **reviewer** with:
 - The phase's requirements from the plan (as the specification to review against)
 - Any project style rules from CLAUDE.md
 
-**If BLOCKING issues are found:** pass the findings to **implementer** with instruction to fix them and rebuild. Then return to Step 2 for re-review. Maximum 2 review cycles per phase.
+**If BLOCKING issues are found:** pass the findings to **implementer** with instruction to fix them and rebuild. Then return to Step 2 for re-review. Maximum 2 review cycles per phase. If stopped here, post `phase_failed` to `general`: `{"phase":"<id>","title":"<title>","step":"review","reason":"<summary>"}`.
 
 **If only WARNING/NOTE issues:** record them and proceed.
 
@@ -65,6 +78,8 @@ Delegate to **reviewer** with:
 After the implementer's final successful build and the reviewer's approval (or WARNING-only verdict), verify the phase is committed by asking the implementer to ensure all changes (including debrief) are committed. Each phase should land as a distinct commit or series of commits.
 
 ### Step 4 — Advance
+
+Post `phase_complete` to `general`: `{"phase":"<id>","title":"<title>","build":"pass","review":"<verdict>"}`.
 
 Log the phase result and proceed to the next phase. Do not wait.
 
@@ -110,4 +125,14 @@ When all phases are complete (or on failure), produce:
 
 ### Debriefs Written
 - <list of debrief files>
+```
+
+After writing the Execution Summary, post it to `general` as a `summary` type message:
+
+```bash
+curl -s -X POST "${SERVER_URL}/messages" \
+  -H "Content-Type: application/json" \
+  -H "X-Agent-Name: ${AGENT_NAME}" \
+  -d '{"channel":"general","type":"summary","payload":{"summary":"<execution summary markdown>"}}' \
+  --max-time 5 >/dev/null 2>&1 || true
 ```
