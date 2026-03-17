@@ -35,7 +35,8 @@ cp .env.example .env
 cp scaffold.config.example.json scaffold.config.json
 # Edit both files with your project paths
 
-# Install agent definitions
+# Install agent definitions (only needed for interactive use outside containers)
+# Container agents are automatically mounted via docker-compose.
 cp agents/*.md ~/.claude/agents/
 
 # Start the coordination server
@@ -119,7 +120,7 @@ Key sections:
 
 ## Agent Definitions
 
-The `agents/` directory contains agent definitions used by the container. Install them with:
+The `agents/` directory contains agent definitions used by the container. When running in a container, agent definitions are automatically mounted from the scaffold's `agents/` directory. For interactive (non-container) Claude Code use, install them manually:
 
 ```bash
 cp agents/*.md ~/.claude/agents/

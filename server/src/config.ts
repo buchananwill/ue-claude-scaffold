@@ -22,6 +22,10 @@ export interface ScaffoldConfig {
     stagingWorktreePath?: string;
     bareRepoPath?: string;
   };
+  claudeMdPatches?: {
+    pathRemaps: Record<string, string>;
+    agentSubstitutions: Record<string, string>;
+  };
 }
 
 export function loadConfig(): ScaffoldConfig {

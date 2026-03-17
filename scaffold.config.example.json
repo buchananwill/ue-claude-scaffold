@@ -30,11 +30,17 @@
 
   "server": {
     "port": 9100,
-    "ubtLockTimeoutMs": 600000
+    "ubtLockTimeoutMs": 600000,
+    "stagingWorktreePath": "",
+    "bareRepoPath": ""
   },
 
   "claudeMdPatches": {
-    "pathRemaps": {},
-    "agentSubstitutions": {}
+    "pathRemaps": {
+      "D:\\\\Path\\\\On\\\\Host": "/container/path"
+    },
+    "agentSubstitutions": {
+      "host-only-agent": "- **`container-agent` agent** — replacement for container use"
+    }
   }
 }

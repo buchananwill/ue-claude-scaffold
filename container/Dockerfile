@@ -9,6 +9,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# ── Project-specific dependencies ─────────────────────────────────────────
+# Extend the image with packages your build scripts need.
+# Examples:
+#
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     python3-pip \
+#     && rm -rf /var/lib/apt/lists/*
+#
+# RUN pip3 install --no-cache-dir <package-name>
+
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
 

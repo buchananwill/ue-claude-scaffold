@@ -22,7 +22,7 @@ WORKTREE_CLAUDE_MD = WORKSPACE / ".claude" / "CLAUDE.md"
 def load_config() -> dict:
     """Load scaffold config from mounted config file or env vars."""
     config_path = Path("/config/scaffold.config.json")
-    if config_path.exists():
+    if config_path.is_file():
         return json.loads(config_path.read_text(encoding="utf-8"))
 
     # Fall back to env-var based config
