@@ -11,9 +11,9 @@ export interface HealthResponse {
 export interface Agent {
   name: string;
   worktree: string;
-  plan_doc: string | null;
+  planDoc: string | null;
   status: string;
-  registered_at: string;
+  registeredAt: string;
 }
 
 export interface Task {
@@ -34,15 +34,15 @@ export interface Task {
 
 export interface Message {
   id: number;
-  from_agent: string;
+  fromAgent: string;
   channel: string;
   type: string;
   payload: unknown;
-  claimed_by: string | null;
-  claimed_at: string | null;
-  resolved_at: string | null;
+  claimedBy: string | null;
+  claimedAt: string | null;
+  resolvedAt: string | null;
   result: unknown;
-  created_at: string;
+  createdAt: string;
 }
 
 export interface UbtStatus {

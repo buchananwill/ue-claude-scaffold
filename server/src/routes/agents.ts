@@ -1,6 +1,24 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db.js';
 
+interface AgentRow {
+  name: string;
+  worktree: string;
+  plan_doc: string | null;
+  status: string;
+  registered_at: string;
+}
+
+function formatAgent(row: AgentRow) {
+  return {
+    name: row.name,
+    worktree: row.worktree,
+    planDoc: row.plan_doc,
+    status: row.status,
+    registeredAt: row.registered_at,
+  };
+}
+
 const agentsPlugin: FastifyPluginAsync = async (fastify) => {
   const insertAgent = db.prepare(
     `INSERT OR REPLACE INTO agents (name, worktree, plan_doc, status, registered_at)
@@ -28,7 +46,7 @@ const agentsPlugin: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.get('/agents', async () => {
-    return allAgents.all();
+    return (allAgents.all() as AgentRow[]).map(formatAgent);
   });
 
   fastify.post<{

@@ -1,23 +1,24 @@
 import { Table, ActionIcon, Text, Popover, Button, Group, Stack } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
-import { apiDelete } from '../api/client';
-import type { Agent } from '../api/types';
-import { StatusBadge } from './StatusBadge';
-import { RelativeTime } from './RelativeTime';
+import { useQueryClient } from '@tanstack/react-query';
+import { apiDelete } from '../api/client.ts';
+import type { Agent } from '../api/types.ts';
+import { StatusBadge } from './StatusBadge.tsx';
+import { RelativeTime } from './RelativeTime.tsx';
 
 interface AgentsPanelProps {
   agents: Agent[] | null;
-  onMutate: () => void;
 }
 
-export function AgentsPanel({ agents, onMutate }: AgentsPanelProps) {
+export function AgentsPanel({ agents }: AgentsPanelProps) {
   const [confirming, setConfirming] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const handleDelete = async (name: string) => {
     await apiDelete(`/agents/${encodeURIComponent(name)}`);
     setConfirming(null);
-    onMutate();
+    await queryClient.invalidateQueries({ queryKey: ['agents'] });
   };
 
   if (!agents || agents.length === 0) {
@@ -43,7 +44,7 @@ export function AgentsPanel({ agents, onMutate }: AgentsPanelProps) {
               <Text size="xs" c="dimmed">{a.worktree}</Text>
             </Table.Td>
             <Table.Td><StatusBadge value={a.status} /></Table.Td>
-            <Table.Td><RelativeTime date={a.registered_at} /></Table.Td>
+            <Table.Td><RelativeTime date={a.registeredAt} /></Table.Td>
             <Table.Td>
               <Popover
                 opened={confirming === a.name}

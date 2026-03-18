@@ -36,7 +36,7 @@ describe('agents routes', () => {
     assert.equal(agents.length, 1);
     assert.equal(agents[0].name, 'agent-1');
     assert.equal(agents[0].worktree, '/tmp/wt1');
-    assert.equal(agents[0].plan_doc, 'plan.md');
+    assert.equal(agents[0].planDoc, 'plan.md');
     assert.equal(agents[0].status, 'idle');
   });
 

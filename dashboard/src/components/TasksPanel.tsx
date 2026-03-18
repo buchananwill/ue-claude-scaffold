@@ -9,11 +9,12 @@ import {
   Group,
 } from '@mantine/core';
 import { Fragment, useState } from 'react';
-import { apiPost } from '../api/client';
+import { useQueryClient } from '@tanstack/react-query';
+import { apiPost } from '../api/client.ts';
 import { notifications } from '@mantine/notifications';
-import type { Task } from '../api/types';
-import { StatusBadge } from './StatusBadge';
-import { RelativeTime } from './RelativeTime';
+import type { Task } from '../api/types.ts';
+import { StatusBadge } from './StatusBadge.tsx';
+import { RelativeTime } from './RelativeTime.tsx';
 
 const filters = [
   { label: 'All', value: '' },
@@ -26,21 +27,22 @@ const filters = [
 
 interface TasksPanelProps {
   tasks: Task[] | null;
+  isFetching: boolean;
   statusFilter: string;
   onFilterChange: (f: string) => void;
-  onMutate: () => void;
 }
 
-export function TasksPanel({ tasks, statusFilter, onFilterChange, onMutate }: TasksPanelProps) {
+export function TasksPanel({ tasks, isFetching, statusFilter, onFilterChange }: TasksPanelProps) {
   const [expanded, setExpanded] = useState<number | null>(null);
+  const queryClient = useQueryClient();
 
   const handleRelease = async (id: number) => {
     try {
       await apiPost(`/tasks/${id}/release`);
-      onMutate();
+      await queryClient.invalidateQueries({ queryKey: ['tasks'] });
       notifications.show({ title: 'Released', message: `Task #${id} returned to pending`, color: 'green' });
     } catch (err) {
-      notifications.show({ title: 'Error', message: String(err), color: 'red' });
+      notifications.show({ title: 'Error', message: err instanceof Error ? err.message : String(err), color: 'red' });
     }
   };
 
@@ -56,7 +58,7 @@ export function TasksPanel({ tasks, statusFilter, onFilterChange, onMutate }: Ta
       {(!tasks || tasks.length === 0) ? (
         <Text c="dimmed" ta="center" py="md" size="sm">No tasks</Text>
       ) : (
-        <Table striped highlightOnHover fz="sm">
+        <Table striped highlightOnHover fz="sm" style={{ opacity: isFetching ? 0.7 : 1, transition: 'opacity 150ms' }}>
           <Table.Thead>
             <Table.Tr>
               <Table.Th w={40}>#</Table.Th>

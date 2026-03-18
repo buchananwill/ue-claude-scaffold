@@ -35,7 +35,7 @@ describe('messages routes', () => {
     assert.equal(get.statusCode, 200);
     const messages = get.json();
     assert.equal(messages.length, 1);
-    assert.equal(messages[0].from_agent, 'agent-1');
+    assert.equal(messages[0].fromAgent, 'agent-1');
     assert.equal(messages[0].channel, 'general');
     assert.equal(messages[0].type, 'info');
     assert.deepEqual(messages[0].payload, { text: 'hello' });
@@ -125,6 +125,144 @@ describe('messages routes', () => {
     assert.equal(claim2.statusCode, 409);
   });
 
+  // === DELETE /messages/:id (single message) ===
+
+  it('DELETE /messages/:id deletes a single message', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/messages',
+      headers: { 'x-agent-name': 'agent-1' },
+      payload: { channel: 'general', type: 'info', payload: 'to-delete' },
+    });
+    const id = post.json().id;
+
+    const del = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/messages/${id}`,
+    });
+    assert.equal(del.statusCode, 200);
+    assert.deepEqual(del.json(), { ok: true });
+
+    // Verify it's gone
+    const get = await ctx.app.inject({ method: 'GET', url: '/messages/general' });
+    assert.equal(get.json().length, 0);
+  });
+
+  it('DELETE /messages/:id returns 404 for non-existent ID', async () => {
+    const del = await ctx.app.inject({
+      method: 'DELETE',
+      url: '/messages/99999',
+    });
+    assert.equal(del.statusCode, 404);
+  });
+
+  // === DELETE /messages/:channel (channel purge) ===
+
+  it('DELETE /messages/:channel purges all messages in a channel', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/messages',
+      payload: { channel: 'logs', type: 'info', payload: 'msg1' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/messages',
+      payload: { channel: 'logs', type: 'info', payload: 'msg2' },
+    });
+
+    const del = await ctx.app.inject({
+      method: 'DELETE',
+      url: '/messages/logs',
+    });
+    assert.equal(del.statusCode, 200);
+    const body = del.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.deleted, 2);
+
+    // Verify empty
+    const get = await ctx.app.inject({ method: 'GET', url: '/messages/logs' });
+    assert.equal(get.json().length, 0);
+  });
+
+  it('DELETE /messages/:channel?before=<id> deletes only older messages', async () => {
+    const r1 = await ctx.app.inject({
+      method: 'POST',
+      url: '/messages',
+      payload: { channel: 'logs', type: 'info', payload: 'first' },
+    });
+    const id1 = r1.json().id;
+
+    const r2 = await ctx.app.inject({
+      method: 'POST',
+      url: '/messages',
+      payload: { channel: 'logs', type: 'info', payload: 'second' },
+    });
+    const id2 = r2.json().id;
+
+    const del = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/messages/logs?before=${id2}`,
+    });
+    assert.equal(del.statusCode, 200);
+    assert.equal(del.json().deleted, 1);
+
+    // Verify only id2 remains
+    const get = await ctx.app.inject({ method: 'GET', url: '/messages/logs' });
+    const messages = get.json();
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].id, id2);
+  });
+
+  it('DELETE /messages/:channel?before= returns deleted:0 when nothing qualifies', async () => {
+    const r1 = await ctx.app.inject({
+      method: 'POST',
+      url: '/messages',
+      payload: { channel: 'logs', type: 'info', payload: 'only' },
+    });
+    const id1 = r1.json().id;
+
+    // before=id1 means id < id1, so nothing matches
+    const del = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/messages/logs?before=${id1}`,
+    });
+    assert.equal(del.statusCode, 200);
+    assert.equal(del.json().deleted, 0);
+  });
+
+  it('DELETE /messages/:channel returns deleted:0 for empty/nonexistent channel', async () => {
+    const del = await ctx.app.inject({
+      method: 'DELETE',
+      url: '/messages/nonexistent',
+    });
+    assert.equal(del.statusCode, 200);
+    assert.deepEqual(del.json(), { ok: true, deleted: 0 });
+  });
+
+  it('DELETE /messages/:channel does not affect other channels', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/messages',
+      payload: { channel: 'a', type: 'info', payload: 'in-a' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/messages',
+      payload: { channel: 'b', type: 'info', payload: 'in-b' },
+    });
+
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: '/messages/a',
+    });
+
+    // Channel b should still have its message
+    const get = await ctx.app.inject({ method: 'GET', url: '/messages/b' });
+    const messages = get.json();
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].payload, 'in-b');
+  });
+
   it('POST /messages/:id/resolve sets result and resolved_at', async () => {
     const post = await ctx.app.inject({
       method: 'POST',
@@ -144,7 +282,7 @@ describe('messages routes', () => {
     // Verify resolved data via GET
     const get = await ctx.app.inject({ method: 'GET', url: '/messages/ch' });
     const msg = get.json()[0];
-    assert.ok(msg.resolved_at);
+    assert.ok(msg.resolvedAt);
     assert.deepEqual(msg.result, { status: 'done', value: 42 });
   });
 });

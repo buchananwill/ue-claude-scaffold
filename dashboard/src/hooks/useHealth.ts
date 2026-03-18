@@ -1,12 +1,14 @@
-import { useCallback } from 'react';
-import { apiFetch } from '../api/client';
-import type { HealthResponse } from '../api/types';
-import { usePolling } from './usePolling';
+import { useQuery } from '@tanstack/react-query';
+import { apiFetch } from '../api/client.ts';
+import type { HealthResponse } from '../api/types.ts';
+import { usePollInterval } from './usePollInterval.tsx';
 
-export function useHealth(intervalMs: number) {
-  const fetcher = useCallback(
-    (signal: AbortSignal) => apiFetch<HealthResponse>('/health', signal),
-    [],
-  );
-  return usePolling(fetcher, intervalMs);
+export function useHealth() {
+  const { intervalMs } = usePollInterval();
+  return useQuery({
+    queryKey: ['health'],
+    queryFn: ({ signal }) => apiFetch<HealthResponse>('/health', signal),
+    refetchInterval: intervalMs,
+    staleTime: 2000,
+  });
 }

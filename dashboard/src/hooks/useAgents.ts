@@ -1,12 +1,14 @@
-import { useCallback } from 'react';
-import { apiFetch } from '../api/client';
-import type { Agent } from '../api/types';
-import { usePolling } from './usePolling';
+import { useQuery } from '@tanstack/react-query';
+import { apiFetch } from '../api/client.ts';
+import type { Agent } from '../api/types.ts';
+import { usePollInterval } from './usePollInterval.tsx';
 
-export function useAgents(intervalMs: number) {
-  const fetcher = useCallback(
-    (signal: AbortSignal) => apiFetch<Agent[]>('/agents', signal),
-    [],
-  );
-  return usePolling(fetcher, intervalMs);
+export function useAgents() {
+  const { intervalMs } = usePollInterval();
+  return useQuery({
+    queryKey: ['agents'],
+    queryFn: ({ signal }) => apiFetch<Agent[]>('/agents', signal),
+    refetchInterval: intervalMs,
+    staleTime: 2000,
+  });
 }

@@ -17,6 +17,10 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
      WHERE id = @id`
   );
 
+  const deleteMessageById = db.prepare('DELETE FROM messages WHERE id = @id');
+  const deleteMessagesByChannel = db.prepare('DELETE FROM messages WHERE channel = @channel');
+  const deleteMessagesByChannelBefore = db.prepare('DELETE FROM messages WHERE channel = @channel AND id < @before');
+
   fastify.post<{
     Body: { channel: string; type: string; payload: unknown };
   }>('/messages', async (request) => {
@@ -66,9 +70,16 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
     }>;
 
     return rows.map((row) => ({
-      ...row,
+      id: row.id,
+      fromAgent: row.from_agent,
+      channel: row.channel,
+      type: row.type,
       payload: JSON.parse(row.payload),
+      claimedBy: row.claimed_by,
+      claimedAt: row.claimed_at,
+      resolvedAt: row.resolved_at,
       result: row.result ? JSON.parse(row.result) : null,
+      createdAt: row.created_at,
     }));
   });
 
@@ -97,6 +108,36 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
     const { result } = request.body;
     resolveMessage.run({ id, result: JSON.stringify(result) });
     return { ok: true };
+  });
+  // DELETE /messages/:param — disambiguates by param format:
+  // numeric positive integer => delete single message by ID
+  // non-numeric string => purge messages by channel name (with optional ?before=<id>)
+  fastify.delete<{
+    Params: { param: string };
+    Querystring: { before?: string };
+  }>('/messages/:param', async (request, reply) => {
+    const { param } = request.params;
+    const asNum = Number(param);
+    const isId = Number.isInteger(asNum) && asNum > 0;
+
+    if (isId) {
+      const info = deleteMessageById.run({ id: asNum });
+      if (info.changes === 0) {
+        return reply.notFound('message not found');
+      }
+      return { ok: true };
+    }
+
+    const channel = param;
+    const { before } = request.query;
+
+    if (before) {
+      const info = deleteMessagesByChannelBefore.run({ channel, before: Number(before) });
+      return { ok: true, deleted: info.changes };
+    }
+
+    const info = deleteMessagesByChannel.run({ channel });
+    return { ok: true, deleted: info.changes };
   });
 };
 

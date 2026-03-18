@@ -1,15 +1,18 @@
-import { useCallback } from 'react';
-import { apiFetch } from '../api/client';
-import type { Task } from '../api/types';
-import { usePolling } from './usePolling';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { apiFetch } from '../api/client.ts';
+import type { Task } from '../api/types.ts';
+import { usePollInterval } from './usePollInterval.tsx';
 
-export function useTasks(intervalMs: number, statusFilter?: string) {
-  const fetcher = useCallback(
-    (signal: AbortSignal) => {
+export function useTasks(statusFilter?: string) {
+  const { intervalMs } = usePollInterval();
+  return useQuery({
+    queryKey: ['tasks', statusFilter ?? ''],
+    queryFn: ({ signal }) => {
       const params = statusFilter ? `?status=${statusFilter}` : '';
       return apiFetch<Task[]>(`/tasks${params}`, signal);
     },
-    [statusFilter],
-  );
-  return usePolling(fetcher, intervalMs);
+    refetchInterval: intervalMs,
+    staleTime: 2000,
+    placeholderData: keepPreviousData,
+  });
 }

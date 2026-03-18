@@ -1,21 +1,18 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { apiFetch } from '../api/client';
-import type { Message } from '../api/types';
+import { useState, useEffect, useRef } from 'react';
+import { apiFetch } from '../api/client.ts';
+import type { Message } from '../api/types.ts';
+import { usePollInterval } from './usePollInterval.tsx';
 
-export function useMessages(channel: string, intervalMs: number) {
+const MAX_MESSAGES = 1000;
+
+export function useMessages(channel: string) {
+  const { intervalMs } = usePollInterval();
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const cursorRef = useRef(0);
 
-  const reset = useCallback(() => {
-    setMessages([]);
-    cursorRef.current = 0;
-    setLoading(true);
-  }, []);
-
   useEffect(() => {
-    // Reset when channel changes
     setMessages([]);
     cursorRef.current = 0;
     setLoading(true);
@@ -31,7 +28,13 @@ export function useMessages(channel: string, intervalMs: number) {
         .then((newMsgs) => {
           if (ac.signal.aborted) return;
           if (newMsgs.length > 0) {
-            setMessages((prev) => [...prev, ...newMsgs]);
+            setMessages((prev) => {
+              const combined = [...prev, ...newMsgs];
+              if (combined.length > MAX_MESSAGES) {
+                return combined.slice(combined.length - MAX_MESSAGES);
+              }
+              return combined;
+            });
             cursorRef.current = newMsgs[newMsgs.length - 1].id;
           }
           setError(null);
@@ -53,5 +56,5 @@ export function useMessages(channel: string, intervalMs: number) {
     };
   }, [channel, intervalMs]);
 
-  return { messages, error, loading, reset };
+  return { messages, error, loading };
 }

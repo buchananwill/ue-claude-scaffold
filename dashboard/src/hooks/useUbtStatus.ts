@@ -1,12 +1,14 @@
-import { useCallback } from 'react';
-import { apiFetch } from '../api/client';
-import type { UbtStatus } from '../api/types';
-import { usePolling } from './usePolling';
+import { useQuery } from '@tanstack/react-query';
+import { apiFetch } from '../api/client.ts';
+import type { UbtStatus } from '../api/types.ts';
+import { usePollInterval } from './usePollInterval.tsx';
 
-export function useUbtStatus(intervalMs: number) {
-  const fetcher = useCallback(
-    (signal: AbortSignal) => apiFetch<UbtStatus>('/ubt/status', signal),
-    [],
-  );
-  return usePolling(fetcher, intervalMs);
+export function useUbtStatus() {
+  const { intervalMs } = usePollInterval();
+  return useQuery({
+    queryKey: ['ubt-status'],
+    queryFn: ({ signal }) => apiFetch<UbtStatus>('/ubt/status', signal),
+    refetchInterval: intervalMs,
+    staleTime: 2000,
+  });
 }

@@ -1,8 +1,8 @@
 import { Stack, Select, ScrollArea, Group, Text, Code, Box } from '@mantine/core';
 import { useRef, useEffect, useMemo } from 'react';
 import dayjs from 'dayjs';
-import type { Agent, Message } from '../api/types';
-import { StatusBadge } from './StatusBadge';
+import type { Agent, Message } from '../api/types.ts';
+import { StatusBadge } from './StatusBadge.tsx';
 
 interface MessagesFeedProps {
   messages: Message[];
@@ -59,7 +59,7 @@ export function MessagesFeed({
             <Text c="dimmed" ta="center" py="xl" size="sm">No messages in #{channel}</Text>
           )}
           {messages.map((m) => {
-            const ts = m.created_at.endsWith('Z') ? dayjs(m.created_at) : dayjs(m.created_at + 'Z');
+            const ts = m.createdAt.endsWith('Z') ? dayjs(m.createdAt) : dayjs(m.createdAt + 'Z');
             const payloadStr = formatPayload(m.payload);
             const isObject = typeof m.payload === 'object' && m.payload !== null;
 
@@ -67,7 +67,7 @@ export function MessagesFeed({
               <Box key={m.id} py={4} px="xs" style={{ borderBottom: '1px solid var(--mantine-color-dark-5)' }}>
                 <Group gap="xs" mb={2}>
                   <Text size="xs" c="dimmed" ff="monospace">{ts.format('HH:mm:ss')}</Text>
-                  <Text size="sm" fw={700}>{m.from_agent}</Text>
+                  <Text size="sm" fw={700}>{m.fromAgent}</Text>
                   <StatusBadge value={m.type} size="xs" />
                 </Group>
                 {isObject ? (
