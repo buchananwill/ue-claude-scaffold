@@ -54,7 +54,9 @@ at the end.
 
 If you are an **implementer**: post `build_result` after each build attempt to the `implementer` channel.
 
-If you are a **reviewer**: no mandatory posts (your findings are returned to the orchestrator).
+If you are a **reviewer**: post your review verdict to the `reviewer` channel as a `status_update`. Include the
+BLOCKING/WARNING/NOTE counts and a brief summary of each BLOCKING and WARNING issue. The orchestrator may compress or
+misinterpret your findings — posting them directly ensures the human operator sees exactly what you found.
 
 ## Verbosity
 

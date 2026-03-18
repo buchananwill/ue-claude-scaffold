@@ -118,6 +118,7 @@ The implementer builds after making changes and iterates internally until the bu
 ### Step 2 — Code Review
 
 Delegate to **reviewer** with:
+- The message board standing instruction and `LOG_VERBOSITY` directive (so it posts findings to the `reviewer` channel)
 - The phase's requirements from the plan (as the specification to review against)
 - Any project style rules from CLAUDE.md
 
