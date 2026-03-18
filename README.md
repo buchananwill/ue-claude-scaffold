@@ -1,14 +1,21 @@
 # @ue-claude/scaffold
 
-Run Claude Code autonomously against Unreal Engine projects. Human authors the plan, container executes it end-to-end, message board provides live inspectability.
+Run Claude Code autonomously against Unreal Engine projects. Human authors the plan, container executes it end-to-end,
+message board provides live inspectability.
 
 ## What this is
 
-A turnkey scaffold for handing off implementation work to autonomous Claude Code agents running in Docker containers. Designed for UE developers who already use Claude Code interactively and want to delegate longer tasks.
+A best-effort attempt at a turnkey scaffold for handing off implementation work to autonomous Claude Code agents running
+in Docker containers. Designed for UE developers who already use Claude Code interactively and want to delegate longer
+tasks.
 
-Unreal Engine builds require the real engine installation on the host — you cannot install UE inside a container. This scaffold solves that by isolating the autonomous agent's work inside a container while routing build and test requests back to the host through a coordination server. The server serializes access to Unreal Build Tool (UBT), which does not support concurrent invocations, making future multi-agent support safe by design.
+Unreal Engine builds require the real engine installation on the host — you cannot install UE inside a container. This
+scaffold solves that by isolating the autonomous agent's work inside a container while routing build and test requests
+back to the host through a coordination server. The server serializes access to Unreal Build Tool (UBT), which does not
+support concurrent invocations, making future multi-agent support safe by design.
 
 **The workflow:**
+
 1. Design your plan interactively with Claude Code (human in the loop)
 2. Commit the plan as a markdown document
 3. Launch a container agent — it executes the plan E2E
@@ -22,8 +29,8 @@ Unreal Engine builds require the real engine installation on the host — you ca
 - [Node.js](https://nodejs.org/) 22+
 - [jq](https://jqlang.github.io/jq/download/) (JSON processor — used by all scaffold scripts)
 - A Claude authentication method:
-  - **OAuth** (Claude Pro/Max subscription) — mount your `~/.claude/.credentials.json`
-  - **API key** — set `ANTHROPIC_API_KEY` environment variable
+    - **OAuth** (Claude Pro/Max subscription) — mount your `~/.claude/.credentials.json`
+    - **API key** — set `ANTHROPIC_API_KEY` environment variable
 - An Unreal Engine installation (for the host-side build system)
 
 **Shell note:** On Windows, use Git Bash or WSL. The launch and setup scripts require a Bash-compatible shell.
@@ -89,7 +96,8 @@ ue-claude-scaffold/
 
 ### Container Agent Architecture
 
-Each container runs a single Claude Code instance in non-interactive (`-p`) mode with a delegated agent type (default: `container-orchestrator`). The orchestrator:
+Each container runs a single Claude Code instance in non-interactive (`-p`) mode with a delegated agent type (default:
+`container-orchestrator`). The orchestrator:
 
 1. Reads the plan from the task prompt
 2. Resolves sub-agents from the project's CLAUDE.md role mapping
@@ -99,7 +107,8 @@ Each container runs a single Claude Code instance in non-interactive (`-p`) mode
 
 ### Build/Test Routing
 
-Containers don't have Unreal Engine installed. When Claude runs a build or test command, a PreToolUse hook intercepts it:
+Containers don't have Unreal Engine installed. When Claude runs a build or test command, a PreToolUse hook intercepts
+it:
 
 1. Commits and pushes current changes to a bare repo
 2. Calls the coordination server's `/build` or `/test` endpoint
@@ -127,22 +136,25 @@ Project Worktree --> [bare repo] --> Container Clone
                                  Server fetches --> Staging Worktree --> Build/Test
 ```
 
-The bare repo acts as a shared intermediary. The container clones from it on startup and pushes changes back when a build is requested. The server then fetches those changes into a staging worktree on the host where the real UE build tools run.
+The bare repo acts as a shared intermediary. The container clones from it on startup and pushes changes back when a
+build is requested. The server then fetches those changes into a staging worktree on the host where the real UE build
+tools run.
 
 ## Configuration
 
 ### `.env`
 
-Secrets and per-launch parameters. Created from `.env.example` by `setup.sh`. Structural configuration (paths, ports, build scripts) lives in `scaffold.config.json`.
+Secrets and per-launch parameters. Created from `.env.example` by `setup.sh`. Structural configuration (paths, ports,
+build scripts) lives in `scaffold.config.json`.
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CLAUDE_CREDENTIALS_PATH` | Yes* | — | Path to `.credentials.json` for OAuth auth |
-| `ANTHROPIC_API_KEY` | Yes* | — | API key for token-based auth |
-| `AGENT_NAME` | No | `agent-1` | Agent identifier |
-| `WORK_BRANCH` | No | `main` | Git branch for the agent to work on |
-| `AGENT_TYPE` | No | `container-orchestrator` | Agent definition to use |
-| `MAX_TURNS` | No | `200` | Max Claude Code turns before stopping |
+| Variable                  | Required | Default                  | Description                                |
+|---------------------------|----------|--------------------------|--------------------------------------------|
+| `CLAUDE_CREDENTIALS_PATH` | Yes*     | —                        | Path to `.credentials.json` for OAuth auth |
+| `ANTHROPIC_API_KEY`       | Yes*     | —                        | API key for token-based auth               |
+| `AGENT_NAME`              | No       | `agent-1`                | Agent identifier                           |
+| `WORK_BRANCH`             | No       | `main`                   | Git branch for the agent to work on        |
+| `AGENT_TYPE`              | No       | `container-orchestrator` | Agent definition to use                    |
+| `MAX_TURNS`               | No       | `200`                    | Max Claude Code turns before stopping      |
 
 *One of `CLAUDE_CREDENTIALS_PATH` or `ANTHROPIC_API_KEY` is required.
 
@@ -150,27 +162,27 @@ Secrets and per-launch parameters. Created from `.env.example` by `setup.sh`. St
 
 Structural configuration. Created from `scaffold.config.example.json` by `setup.sh`.
 
-| Field | Description |
-|-------|-------------|
-| `project.name` | Your UE project name |
-| `project.path` | Absolute path to the project |
-| `project.uprojectFile` | The `.uproject` filename |
-| `engine.path` | Absolute path to the UE engine |
-| `engine.version` | UE version string (e.g. `"5.7"`) |
-| `tasks.path` | Absolute path to the tasks directory |
-| `build.scriptPath` | Build script path relative to project root |
-| `build.testScriptPath` | Test script path relative to project root |
-| `build.defaultTestFilters` | Array of default test filter strings |
-| `plugins.readOnlyMounts` | Plugin paths to mount read-only in containers |
-| `container.agentType` | Default agent type for containers |
-| `container.maxTurns` | Max turns for the agent |
-| `container.defaultBranch` | Default branch for new agents |
-| `server.port` | Coordination server port |
-| `server.ubtLockTimeoutMs` | Timeout for UBT lock acquisition |
-| `server.stagingWorktreePath` | Path to the host-side staging worktree |
-| `server.bareRepoPath` | Path to the bare repo |
-| `claudeMdPatches.pathRemaps` | Host-to-container path substitutions |
-| `claudeMdPatches.agentSubstitutions` | Agent definition replacements for containers |
+| Field                                | Description                                   |
+|--------------------------------------|-----------------------------------------------|
+| `project.name`                       | Your UE project name                          |
+| `project.path`                       | Absolute path to the project                  |
+| `project.uprojectFile`               | The `.uproject` filename                      |
+| `engine.path`                        | Absolute path to the UE engine                |
+| `engine.version`                     | UE version string (e.g. `"5.7"`)              |
+| `tasks.path`                         | Absolute path to the tasks directory          |
+| `build.scriptPath`                   | Build script path relative to project root    |
+| `build.testScriptPath`               | Test script path relative to project root     |
+| `build.defaultTestFilters`           | Array of default test filter strings          |
+| `plugins.readOnlyMounts`             | Plugin paths to mount read-only in containers |
+| `container.agentType`                | Default agent type for containers             |
+| `container.maxTurns`                 | Max turns for the agent                       |
+| `container.defaultBranch`            | Default branch for new agents                 |
+| `server.port`                        | Coordination server port                      |
+| `server.ubtLockTimeoutMs`            | Timeout for UBT lock acquisition              |
+| `server.stagingWorktreePath`         | Path to the host-side staging worktree        |
+| `server.bareRepoPath`                | Path to the bare repo                         |
+| `claudeMdPatches.pathRemaps`         | Host-to-container path substitutions          |
+| `claudeMdPatches.agentSubstitutions` | Agent definition replacements for containers  |
 
 ## Scripts
 
@@ -227,7 +239,9 @@ Requires `curl` and `jq`. Supports `NO_COLOR` environment variable to disable co
 
 ## Agent Definitions
 
-The `agents/` directory contains agent definitions used by the container. When running in a container, agent definitions are automatically mounted from the scaffold's `agents/` directory. For interactive (non-container) Claude Code use, install them manually:
+The `agents/` directory contains agent definitions used by the container. When running in a container, agent definitions
+are automatically mounted from the scaffold's `agents/` directory. For interactive (non-container) Claude Code use,
+install them manually:
 
 ```bash
 cp agents/*.md ~/.claude/agents/
@@ -235,7 +249,8 @@ cp agents/*.md ~/.claude/agents/
 
 ### `container-orchestrator`
 
-The default agent type for container execution. Executes a pre-authored plan autonomously -- no human approval gates. Each phase must build and pass code review before advancing.
+The default agent type for container execution. Executes a pre-authored plan autonomously -- no human approval gates.
+Each phase must build and pass code review before advancing.
 
 ### Customising for your project
 
@@ -252,7 +267,8 @@ Add an `### Orchestrator Role Mapping` section to your project's CLAUDE.md:
 
 ### Writing a Plan Document
 
-Plan documents are markdown files that describe the implementation work for an agent. See `tasks/example-prompt.md` for the expected format. Key guidelines:
+Plan documents are markdown files that describe the implementation work for an agent. See `tasks/example-prompt.md` for
+the expected format. Key guidelines:
 
 - Break the work into numbered phases
 - Each phase should be independently buildable and reviewable
@@ -262,22 +278,28 @@ Plan documents are markdown files that describe the implementation work for an a
 ## Troubleshooting
 
 **Server unreachable when launching**
-The coordination server must be running before you launch an agent. Start it with `cd server && npm run dev` and verify with `curl http://localhost:9100/health`.
+The coordination server must be running before you launch an agent. Start it with `cd server && npm run dev` and verify
+with `curl http://localhost:9100/health`.
 
 **Shell scripts fail on Windows**
-The scripts require a Bash-compatible shell. Use Git Bash (included with Git for Windows) or WSL. The `.gitattributes` file ensures scripts keep LF line endings.
+The scripts require a Bash-compatible shell. Use Git Bash (included with Git for Windows) or WSL. The `.gitattributes`
+file ensures scripts keep LF line endings.
 
 **Docker Compose not found**
-Install Docker Desktop (includes Compose v2) or install the standalone `docker-compose`. The scripts detect both `docker compose` (plugin) and `docker-compose` (standalone).
+Install Docker Desktop (includes Compose v2) or install the standalone `docker-compose`. The scripts detect both
+`docker compose` (plugin) and `docker-compose` (standalone).
 
 **"BARE_REPO_PATH is not set" or similar**
-Edit your `scaffold.config.json` file and set all required paths. Run `./launch.sh --dry-run` to verify your configuration.
+Edit your `scaffold.config.json` file and set all required paths. Run `./launch.sh --dry-run` to verify your
+configuration.
 
 **Build timeouts**
-The default UBT lock timeout is 600000ms (10 minutes). For large projects, increase `server.ubtLockTimeoutMs` in `scaffold.config.json`.
+The default UBT lock timeout is 600000ms (10 minutes). For large projects, increase `server.ubtLockTimeoutMs` in
+`scaffold.config.json`.
 
 **Agent seems stuck**
-Check container logs: `docker compose --project-name claude-<agent-name> -f container/docker-compose.yml logs -f`. The agent has a `MAX_TURNS` limit (default 200) after which it will stop.
+Check container logs: `docker compose --project-name claude-<agent-name> -f container/docker-compose.yml logs -f`. The
+agent has a `MAX_TURNS` limit (default 200) after which it will stop.
 
 **Port conflict on 9100**
 Change `server.port` in `scaffold.config.json` and restart the server.
