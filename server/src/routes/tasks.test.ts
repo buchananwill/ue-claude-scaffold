@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, type TestContext } from '../test-helper.js';
+import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
 import tasksPlugin from './tasks.js';
 
 describe('tasks routes', () => {
@@ -8,7 +8,8 @@ describe('tasks routes', () => {
 
   beforeEach(async () => {
     ctx = await createTestApp();
-    await ctx.app.register(tasksPlugin);
+    const config = createTestConfig();
+    await ctx.app.register(tasksPlugin, { config });
   });
 
   afterEach(async () => {

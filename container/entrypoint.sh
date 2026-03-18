@@ -143,7 +143,7 @@ poll_and_claim_task() {
 
 TASK_PROMPT=""
 
-INSTRUCTIONS_DIR="/task/instructions"
+INSTRUCTIONS_DIR="/standing-instructions"
 if [ -d "$INSTRUCTIONS_DIR" ]; then
     for f in $(find "$INSTRUCTIONS_DIR" -maxdepth 1 -name '*.md' | sort); do
         echo "Loading instruction: $(basename "$f")"

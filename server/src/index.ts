@@ -31,7 +31,7 @@ await server.register(agentsPlugin);
 await server.register(messagesPlugin);
 await server.register(ubtPlugin, { config });
 await server.register(buildPlugin, { config });
-await server.register(tasksPlugin);
+await server.register(tasksPlugin, { config });
 
 try {
   const address = await server.listen({

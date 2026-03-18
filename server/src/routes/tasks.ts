@@ -1,5 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { execFileSync } from 'node:child_process';
 import { db } from '../db.js';
+import type { ScaffoldConfig } from '../config.js';
 
 interface TaskRow {
   id: number;
@@ -35,7 +37,48 @@ function formatTask(row: TaskRow) {
   };
 }
 
-const tasksPlugin: FastifyPluginAsync = async (fastify) => {
+/**
+ * Check whether a file path is committed (tracked in HEAD) at a given repo path.
+ * Uses `git rev-parse HEAD:<path>` which succeeds only if the file is in the
+ * latest commit — untracked or staged-but-uncommitted files will fail.
+ */
+function isCommittedInRepo(repoPath: string, filePath: string): boolean {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', `HEAD:${filePath}`], {
+      cwd: repoPath,
+      stdio: 'ignore',
+      timeout: 5000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check whether a file path exists on a specific branch in a bare repo.
+ * Uses `git cat-file -e <branch>:<path>`.
+ */
+function existsInBareRepo(bareRepoPath: string, branch: string, filePath: string): boolean {
+  try {
+    execFileSync('git', ['cat-file', '-e', `${branch}:${filePath}`], {
+      cwd: bareRepoPath,
+      stdio: 'ignore',
+      timeout: 5000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface TasksOpts {
+  config: ScaffoldConfig;
+}
+
+const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
+  const config = opts.config;
+
   const insertTask = db.prepare(
     `INSERT INTO tasks (title, description, source_path, acceptance_criteria, priority)
      VALUES (@title, @description, @sourcePath, @acceptanceCriteria, @priority)`
@@ -69,6 +112,14 @@ const tasksPlugin: FastifyPluginAsync = async (fastify) => {
      WHERE id = @id AND status IN ('claimed', 'in_progress')`
   );
 
+  function getStagingWorktree(): string {
+    return config.server.stagingWorktreePath ?? config.project.path;
+  }
+
+  function getBareRepoPath(): string | undefined {
+    return config.server.bareRepoPath;
+  }
+
   // POST /tasks
   fastify.post<{
     Body: {
@@ -78,8 +129,20 @@ const tasksPlugin: FastifyPluginAsync = async (fastify) => {
       acceptanceCriteria?: string;
       priority?: number;
     };
-  }>('/tasks', async (request) => {
+  }>('/tasks', async (request, reply) => {
     const { title, description, sourcePath, acceptanceCriteria, priority } = request.body;
+
+    // Validate sourcePath is committed in the staging worktree
+    if (sourcePath) {
+      const worktree = getStagingWorktree();
+      if (!isCommittedInRepo(worktree, sourcePath)) {
+        return reply.unprocessableEntity(
+          `sourcePath '${sourcePath}' is not committed in the staging worktree (${worktree}). ` +
+          `Commit it first: git add ${sourcePath} && git commit`
+        );
+      }
+    }
+
     const result = insertTask.run({
       title,
       description: description ?? '',
@@ -130,6 +193,37 @@ const tasksPlugin: FastifyPluginAsync = async (fastify) => {
     const id = Number(request.params.id);
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
 
+    // Re-validate sourcePath against the bare repo before claiming
+    const task = getTaskById.get({ id }) as TaskRow | undefined;
+    if (!task) {
+      return reply.notFound('task not found');
+    }
+    if (task.status !== 'pending') {
+      return reply.conflict('task not pending');
+    }
+
+    if (task.source_path) {
+      const bareRepo = getBareRepoPath();
+      if (bareRepo) {
+        // Determine the branch from the agent's registration
+        const agentRow = db.prepare('SELECT worktree FROM agents WHERE name = ?').get(agent) as
+          | { worktree: string }
+          | undefined;
+        const branch = agentRow?.worktree ?? 'main';
+
+        if (!existsInBareRepo(bareRepo, branch, task.source_path)) {
+          return reply.code(409).send({
+            statusCode: 409,
+            error: 'Conflict',
+            message:
+              `sourcePath '${task.source_path}' not found on branch '${branch}' in bare repo. ` +
+              `The file may not be committed or pushed. ` +
+              `Commit and re-run launch.sh to refresh the bare repo.`,
+          });
+        }
+      }
+    }
+
     const result = db.transaction(() => {
       const info = claimTask.run({ id, agent });
       return info.changes > 0;
@@ -138,7 +232,7 @@ const tasksPlugin: FastifyPluginAsync = async (fastify) => {
     if (result) {
       return { ok: true };
     }
-    return reply.conflict('task not pending or does not exist');
+    return reply.conflict('task was claimed by another agent');
   });
 
   // POST /tasks/:id/update
@@ -197,6 +291,39 @@ const tasksPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.conflict('task not in claimed or in_progress state');
     }
     return { ok: true };
+  });
+
+  // DELETE /tasks/:id — delete a single task
+  const deleteTask = db.prepare('DELETE FROM tasks WHERE id = @id AND status NOT IN (\'claimed\', \'in_progress\')');
+
+  fastify.delete<{
+    Params: { id: string };
+  }>('/tasks/:id', async (request, reply) => {
+    const id = Number(request.params.id);
+    const task = getTaskById.get({ id }) as TaskRow | undefined;
+    if (!task) {
+      return reply.notFound('task not found');
+    }
+    if (task.status === 'claimed' || task.status === 'in_progress') {
+      return reply.conflict('cannot delete a task that is claimed or in progress — release it first');
+    }
+    deleteTask.run({ id });
+    return { ok: true };
+  });
+
+  // DELETE /tasks — bulk delete by status (required query param)
+  fastify.delete<{
+    Querystring: { status: string };
+  }>('/tasks', async (request, reply) => {
+    const { status } = request.query;
+    if (!status) {
+      return reply.badRequest('status query parameter is required (e.g. ?status=completed)');
+    }
+    if (status === 'claimed' || status === 'in_progress') {
+      return reply.conflict('cannot bulk-delete tasks that are claimed or in progress');
+    }
+    const info = db.prepare('DELETE FROM tasks WHERE status = ?').run(status);
+    return { ok: true, deleted: info.changes };
   });
 };
 
