@@ -15,6 +15,10 @@ const agentsPlugin: FastifyPluginAsync = async (fastify) => {
 
   const getAgent = db.prepare('SELECT * FROM agents WHERE name = @name');
 
+  const deleteAgent = db.prepare('DELETE FROM agents WHERE name = @name');
+
+  const deleteAllAgents = db.prepare('DELETE FROM agents');
+
   fastify.post<{
     Body: { name: string; worktree: string; planDoc?: string };
   }>('/agents/register', async (request) => {
@@ -39,6 +43,24 @@ const agentsPlugin: FastifyPluginAsync = async (fastify) => {
     }
     updateStatus.run({ name, status });
     return { ok: true };
+  });
+
+  // DELETE /agents/:name — deregister a single agent
+  fastify.delete<{
+    Params: { name: string };
+  }>('/agents/:name', async (request, reply) => {
+    const { name } = request.params;
+    const info = deleteAgent.run({ name });
+    if (info.changes === 0) {
+      return reply.notFound(`Agent '${name}' not registered`);
+    }
+    return { ok: true };
+  });
+
+  // DELETE /agents — deregister all agents (e.g. server restart cleanup)
+  fastify.delete('/agents', async () => {
+    const info = deleteAllAgents.run();
+    return { ok: true, removed: info.changes };
   });
 };
 

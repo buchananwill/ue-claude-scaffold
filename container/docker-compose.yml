@@ -16,17 +16,19 @@ services:
       - BUILD_SCRIPT_NAME=${BUILD_SCRIPT_NAME:-build.py}
       - TEST_SCRIPT_NAME=${TEST_SCRIPT_NAME:-run_tests.py}
       - DEFAULT_TEST_FILTERS=${DEFAULT_TEST_FILTERS:-}
+      - LOG_VERBOSITY=${LOG_VERBOSITY:-normal}
       - WORKER_MODE=${WORKER_MODE:-false}
       - WORKER_POLL_INTERVAL=${WORKER_POLL_INTERVAL:-30}
       - WORKER_SINGLE_TASK=${WORKER_SINGLE_TASK:-true}
     volumes:
       # Required: bare repo for git operations
-      - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git:ro
+      - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git
       # Required: task prompt and standing instructions
       - ${TASKS_PATH:?Set TASKS_PATH}:/task:ro
       # Required: Claude authentication (pick one)
-      # Option A — OAuth credentials file:
-      - ${CLAUDE_CREDENTIALS_PATH:-~/.claude/.credentials.json}:/home/claude/.claude/.credentials.json:ro
+      # Option A — OAuth credentials file (CLAUDE_CREDENTIALS_PATH must be set in .env
+      # — ~ does not expand reliably on Windows):
+      - ${CLAUDE_CREDENTIALS_PATH:?Set CLAUDE_CREDENTIALS_PATH in .env}:/home/claude/.claude/.credentials.json:ro
       # Option B — API key: set ANTHROPIC_API_KEY in environment above instead
       # Agent definitions (container-orchestrator, etc.)
       - ${AGENTS_PATH:-../agents}:/home/claude/.claude/agents:ro
@@ -40,5 +42,7 @@ services:
       # Optional: read-only plugin mounts (symlinked into Plugins/ at startup)
       # Add entries like:
       # - /path/to/MyPlugin:/plugins-ro/MyPlugin:ro
+      - D:\Coding\resort_game\PistePerfect_5_7\Plugins\Voxel:/plugins-ro/Voxel:ro
+      - D:\Coding\resort_game\PistePerfect_5_7\Plugins\UE5Coro:/plugins-ro/UE5Coro:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"

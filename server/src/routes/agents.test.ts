@@ -85,4 +85,45 @@ describe('agents routes', () => {
     });
     assert.equal(res.statusCode, 404);
   });
+
+  it('DELETE /agents/:name deregisters an agent', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
+    assert.equal(del.statusCode, 200);
+    assert.deepEqual(del.json(), { ok: true });
+
+    const list = await ctx.app.inject({ method: 'GET', url: '/agents' });
+    assert.deepEqual(list.json(), []);
+  });
+
+  it('DELETE /agents/:name returns 404 for unknown agent', async () => {
+    const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/ghost' });
+    assert.equal(del.statusCode, 404);
+  });
+
+  it('DELETE /agents deregisters all agents', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-2', worktree: '/tmp/wt2' },
+    });
+
+    const del = await ctx.app.inject({ method: 'DELETE', url: '/agents' });
+    assert.equal(del.statusCode, 200);
+    assert.equal(del.json().ok, true);
+    assert.equal(del.json().removed, 2);
+
+    const list = await ctx.app.inject({ method: 'GET', url: '/agents' });
+    assert.deepEqual(list.json(), []);
+  });
 });

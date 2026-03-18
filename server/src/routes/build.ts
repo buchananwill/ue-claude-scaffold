@@ -25,7 +25,6 @@ function runCommand(
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
-      shell: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: timeoutMs,
     });
@@ -54,6 +53,22 @@ function runCommand(
       });
     });
   });
+}
+
+const SCRIPT_INTERPRETERS: Record<string, string> = {
+  '.py': 'python',
+  '.sh': 'bash',
+  '.rb': 'ruby',
+};
+
+/** Resolve a script path into an explicit interpreter + args to avoid shebang/CRLF issues. */
+function resolveScript(scriptPath: string, extraArgs: string[]): { command: string; scriptArgs: string[] } {
+  const ext = path.extname(scriptPath).toLowerCase();
+  const interpreter = SCRIPT_INTERPRETERS[ext];
+  if (interpreter) {
+    return { command: interpreter, scriptArgs: [scriptPath, ...extraArgs] };
+  }
+  return { command: scriptPath, scriptArgs: extraArgs };
 }
 
 const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
@@ -141,11 +156,12 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
 
     const scriptPath = config.build.scriptPath;
     const cwd = getStagingWorktree();
+    const { command, scriptArgs } = resolveScript(scriptPath, args);
 
     const agentForHistory = agentName ?? 'unknown';
     const histId = recordBuildStart(agentForHistory, 'build');
     const t0 = Date.now();
-    const result = await runCommand(scriptPath, args, cwd, 660_000);
+    const result = await runCommand(command, scriptArgs, cwd, config.build.buildTimeoutMs);
     recordBuildEnd(histId, Date.now() - t0, result.success);
     return result;
   });
@@ -175,11 +191,12 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
 
     const scriptPath = config.build.testScriptPath;
     const cwd = getStagingWorktree();
+    const { command, scriptArgs } = resolveScript(scriptPath, filters);
 
     const agentForHistory = agentName ?? 'unknown';
     const histId = recordBuildStart(agentForHistory, 'test');
     const t0 = Date.now();
-    const result = await runCommand(scriptPath, filters, cwd, 700_000);
+    const result = await runCommand(command, scriptArgs, cwd, config.build.testTimeoutMs);
     recordBuildEnd(histId, Date.now() - t0, result.success);
     return result;
   });

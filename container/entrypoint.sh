@@ -10,6 +10,7 @@ SERVER_URL="${SERVER_URL:-http://host.docker.internal:9100}"
 WORKER_MODE="${WORKER_MODE:-false}"
 WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
+LOG_VERBOSITY="${LOG_VERBOSITY:-normal}"
 
 echo "=== Claude Code Docker Worker ==="
 echo "Agent:  $AGENT_NAME"
@@ -62,11 +63,33 @@ _post_status() {
         --max-time 5 >/dev/null 2>&1 || true
 }
 
-curl -s -X POST "${SERVER_URL}/agents/register" \
+_shutdown() {
+    echo ""
+    echo "=== Shutting down agent ${AGENT_NAME} ==="
+    # Release any claimed task back to pending
+    if [ -n "${CURRENT_TASK_ID:-}" ]; then
+        echo "Releasing task #${CURRENT_TASK_ID}..."
+        curl -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/release" \
+            --max-time 5 >/dev/null 2>&1 || true
+    fi
+    # Deregister the agent
+    curl -s -X DELETE "${SERVER_URL}/agents/${AGENT_NAME}" \
+        --max-time 5 >/dev/null 2>&1 || true
+}
+trap _shutdown EXIT
+
+REG_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SERVER_URL}/agents/register" \
     -H "Content-Type: application/json" \
     -H "X-Agent-Name: ${AGENT_NAME}" \
     -d "{\"name\": \"${AGENT_NAME}\", \"worktree\": \"${WORK_BRANCH}\"}" \
-    --max-time 5 >/dev/null 2>&1 || echo "Warning: Could not register with server at ${SERVER_URL}"
+    --max-time 10 2>/dev/null) || REG_STATUS="000"
+
+if [ "$REG_STATUS" != "200" ]; then
+    echo "ERROR: Could not register with coordination server at ${SERVER_URL} (HTTP ${REG_STATUS})" >&2
+    echo "Is the server running? Start it with: cd server && npm run dev" >&2
+    exit 1
+fi
+echo "Registered with coordination server."
 
 # ── Worker mode: poll and claim ──────────────────────────────────────────────
 
@@ -91,7 +114,6 @@ poll_and_claim_task() {
             # Try to claim it
             CLAIM_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
                 -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/claim" \
-                -H "Content-Type: application/json" \
                 -H "X-Agent-Name: ${AGENT_NAME}" \
                 --max-time 10)
 
@@ -132,6 +154,13 @@ if [ -d "$INSTRUCTIONS_DIR" ]; then
 "
     done
 fi
+
+# Inject verbosity directive
+TASK_PROMPT="${TASK_PROMPT}LOG_VERBOSITY: ${LOG_VERBOSITY}
+
+---
+
+"
 
 # ── Worker mode or static prompt ────────────────────────────────────────────
 

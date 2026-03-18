@@ -3,6 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if ! command -v jq &>/dev/null; then
+    echo "Error: jq is required but not found." >&2
+    echo "Install it: winget install jqlang.jq (Windows) or apt-get install jq (Linux)" >&2
+    exit 1
+fi
+
 # ── Usage ────────────────────────────────────────────────────────────────────
 usage() {
   cat <<'USAGE'
@@ -15,7 +21,9 @@ Options:
   --branch BRANCH     Git branch to work on (default: from .env or "main")
   --plan PATH         Path to a plan markdown file (copied to TASKS_PATH/prompt.md)
   --agent-type TYPE   Agent type (default: from .env or "container-orchestrator")
+  --verbosity LEVEL   Message board verbosity: quiet, normal, verbose (default: normal)
   --worker            Run in task-queue worker mode (no plan file needed)
+  --fresh             Delete and re-clone the bare repo (clean start)
   --dry-run           Print resolved configuration and exit without launching
   --help              Show this help message and exit
 
@@ -23,6 +31,7 @@ Examples:
   ./launch.sh --plan plans/add-inventory.md
   ./launch.sh --agent-name agent-2 --branch feature/ui --plan plans/ui-rework.md
   ./launch.sh --worker --agent-name worker-1
+  ./launch.sh --verbosity verbose --plan plans/tricky-refactor.md
   ./launch.sh --dry-run
 USAGE
 }
@@ -32,8 +41,10 @@ _CLI_AGENT_NAME=""
 _CLI_BRANCH=""
 _CLI_PLAN=""
 _CLI_AGENT_TYPE=""
+_CLI_VERBOSITY=""
 _CLI_DRY_RUN=false
 _CLI_WORKER=false
+_CLI_FRESH=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,8 +56,12 @@ while [[ $# -gt 0 ]]; do
       _CLI_PLAN="$2"; shift 2 ;;
     --agent-type)
       _CLI_AGENT_TYPE="$2"; shift 2 ;;
+    --verbosity)
+      _CLI_VERBOSITY="$2"; shift 2 ;;
     --worker)
       _CLI_WORKER=true; shift ;;
+    --fresh)
+      _CLI_FRESH=true; shift ;;
     --dry-run)
       _CLI_DRY_RUN=true; shift ;;
     --help)
@@ -58,17 +73,35 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ── Source .env ──────────────────────────────────────────────────────────────
+# ── Load .env (secrets and per-launch params only) ────────────────────────────
 if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
-  echo "Error: .env file not found at $SCRIPT_DIR/.env" >&2
-  echo "Run ./setup.sh or copy .env.example to .env and configure it." >&2
+  echo "Error: .env not found at $SCRIPT_DIR/.env" >&2
   exit 1
 fi
-
 set -a
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/.env"
 set +a
+
+# ── Read structural config from scaffold.config.json ─────────────────────────
+if [[ ! -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
+  echo "Error: scaffold.config.json not found at $SCRIPT_DIR/scaffold.config.json" >&2
+  echo "Run ./setup.sh or copy scaffold.config.example.json and configure it." >&2
+  exit 1
+fi
+
+_cfg="$SCRIPT_DIR/scaffold.config.json"
+UE_ENGINE_PATH="$(jq -r '.engine.path // empty' "$_cfg")"
+PROJECT_PATH="$(jq -r '.project.path // empty' "$_cfg")"
+BARE_REPO_PATH="$(jq -r '.server.bareRepoPath // empty' "$_cfg")"
+TASKS_PATH="$(jq -r '.tasks.path // empty' "$_cfg")"
+STAGING_WORKTREE="$(jq -r '.server.stagingWorktreePath // empty' "$_cfg")"
+SERVER_PORT="$(jq -r '.server.port // 9100' "$_cfg")"
+BUILD_SCRIPT_NAME="$(jq -r '.build.scriptPath // "build.py"' "$_cfg" | xargs basename)"
+TEST_SCRIPT_NAME="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)"
+DEFAULT_TEST_FILTERS="$(jq -r '.build.defaultTestFilters // [] | join(" ")' "$_cfg")"
+
+CLONE_SOURCE="${STAGING_WORKTREE:-${PROJECT_PATH}}"
 
 # ── Apply CLI overrides ─────────────────────────────────────────────────────
 AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
@@ -83,6 +116,15 @@ else
 fi
 WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
+LOG_VERBOSITY="${_CLI_VERBOSITY:-${LOG_VERBOSITY:-normal}}"
+
+# Validate verbosity
+case "$LOG_VERBOSITY" in
+  quiet|normal|verbose) ;;
+  *)
+    echo "Error: --verbosity must be quiet, normal, or verbose (got '$LOG_VERBOSITY')" >&2
+    exit 1 ;;
+esac
 
 # ── Resolve plan path to absolute ────────────────────────────────────────────
 if [[ -n "$PLAN_PATH" ]]; then
@@ -102,13 +144,13 @@ fi
 # ── Validate required vars ───────────────────────────────────────────────────
 _errors=()
 if [[ -z "${BARE_REPO_PATH:-}" ]]; then
-  _errors+=("BARE_REPO_PATH is not set. Set it in .env or scaffold.config.json.")
+  _errors+=("BARE_REPO_PATH is not set. Set it in scaffold.config.json.")
 fi
 if [[ -z "${UE_ENGINE_PATH:-}" ]]; then
-  _errors+=("UE_ENGINE_PATH is not set. Set it in .env.")
+  _errors+=("UE_ENGINE_PATH is not set. Set it in scaffold.config.json.")
 fi
 if [[ -z "${TASKS_PATH:-}" ]]; then
-  _errors+=("TASKS_PATH is not set. Set it in .env.")
+  _errors+=("TASKS_PATH is not set. Set it in scaffold.config.json.")
 fi
 
 if [[ ${#_errors[@]} -gt 0 ]]; then
@@ -116,6 +158,17 @@ if [[ ${#_errors[@]} -gt 0 ]]; then
   for err in "${_errors[@]}"; do
     echo "  - $err" >&2
   done
+  exit 1
+fi
+
+# ── Detect docker compose ───────────────────────────────────────────────────
+COMPOSE_CMD=""
+if docker compose version &>/dev/null; then
+  COMPOSE_CMD="docker compose"
+elif docker-compose --version &>/dev/null; then
+  COMPOSE_CMD="docker-compose"
+else
+  echo "Error: Neither 'docker compose' nor 'docker-compose' found." >&2
   exit 1
 fi
 
@@ -127,7 +180,7 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo "  WORK_BRANCH:      $WORK_BRANCH"
   echo "  AGENT_TYPE:       $AGENT_TYPE"
   echo "  MAX_TURNS:        $MAX_TURNS"
-  echo "  PROJECT_PATH:     ${PROJECT_PATH:-<not set>}"
+  echo "  CLONE_SOURCE:     $CLONE_SOURCE"
   echo "  BARE_REPO_PATH:   $BARE_REPO_PATH"
   echo "  UE_ENGINE_PATH:   $UE_ENGINE_PATH"
   echo "  TASKS_PATH:       $TASKS_PATH"
@@ -136,6 +189,8 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo "  WORKER_MODE:      $WORKER_MODE"
   echo "  WORKER_POLL_INT:  $WORKER_POLL_INTERVAL"
   echo "  WORKER_SINGLE:    $WORKER_SINGLE_TASK"
+  echo "  LOG_VERBOSITY:    $LOG_VERBOSITY"
+  echo "  FRESH:            $_CLI_FRESH"
   echo ""
   exit 0
 fi
@@ -150,17 +205,6 @@ if [[ "$WORKER_MODE" != "true" && -n "$PLAN_PATH" ]]; then
   echo "Copied plan to $TASKS_PATH/prompt.md"
 fi
 
-# ── Detect docker compose ───────────────────────────────────────────────────
-COMPOSE_CMD=""
-if docker compose version &>/dev/null; then
-  COMPOSE_CMD="docker compose"
-elif docker-compose --version &>/dev/null; then
-  COMPOSE_CMD="docker-compose"
-else
-  echo "Error: Neither 'docker compose' nor 'docker-compose' found." >&2
-  exit 1
-fi
-
 # ── Check coordination server ────────────────────────────────────────────────
 if ! curl -sf "http://localhost:${SERVER_PORT:-9100}/health" >/dev/null 2>&1; then
   echo "Error: Coordination server is not running on port ${SERVER_PORT:-9100}." >&2
@@ -168,14 +212,24 @@ if ! curl -sf "http://localhost:${SERVER_PORT:-9100}/health" >/dev/null 2>&1; th
   exit 1
 fi
 
+# ── Stop existing container if running ──────────────────────────────────────
+(
+  cd "$SCRIPT_DIR/container"
+  $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" down 2>/dev/null || true
+)
+
 # ── Bare repo setup ─────────────────────────────────────────────────────────
+if [ "$_CLI_FRESH" = "true" ] && [ -d "$BARE_REPO_PATH" ]; then
+    echo "Removing existing bare repo (--fresh)..."
+    rm -rf "$BARE_REPO_PATH"
+fi
+
 if [[ ! -d "$BARE_REPO_PATH" ]]; then
-  echo "Creating bare repo at $BARE_REPO_PATH ..."
-  git clone --bare "${PROJECT_PATH:?PROJECT_PATH is not set}" "$BARE_REPO_PATH"
+  echo "Creating bare repo from $CLONE_SOURCE ..."
+  git clone --bare "$CLONE_SOURCE" "$BARE_REPO_PATH"
 else
-  # Only push the current branch from the project, don't overwrite agent branches
-  echo "Updating bare repo..."
-  git -C "${PROJECT_PATH:?PROJECT_PATH is not set}" push "$BARE_REPO_PATH" "HEAD:refs/heads/${WORK_BRANCH}" --force 2>/dev/null || true
+  echo "Updating bare repo from $CLONE_SOURCE ..."
+  git -C "$CLONE_SOURCE" push "$BARE_REPO_PATH" "HEAD:refs/heads/${WORK_BRANCH}" --force 2>/dev/null || true
 fi
 
 # Ensure target branch exists in the bare repo
@@ -186,20 +240,24 @@ if ! git -C "$BARE_REPO_PATH" rev-parse --verify "$WORK_BRANCH" &>/dev/null; the
 fi
 
 # ── Export vars for docker-compose ───────────────────────────────────────────
-export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS
+export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS LOG_VERBOSITY
 export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH
 export WORKER_MODE WORKER_POLL_INTERVAL WORKER_SINGLE_TASK
 export SERVER_PORT="${SERVER_PORT:-9100}"
 
 # ── Launch ───────────────────────────────────────────────────────────────────
 cd "$SCRIPT_DIR/container"
+if [ "$_CLI_FRESH" = "true" ]; then
+    $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" build --no-cache
+fi
 $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" up --build --detach
 
 echo ""
 echo "=== Agent Launched ==="
-echo "  Agent:   $AGENT_NAME"
-echo "  Branch:  $WORK_BRANCH"
-echo "  Type:    $AGENT_TYPE"
+echo "  Agent:     $AGENT_NAME"
+echo "  Branch:    $WORK_BRANCH"
+echo "  Type:      $AGENT_TYPE"
+echo "  Verbosity: $LOG_VERBOSITY"
 echo ""
 echo "Monitor progress:"
 echo "  ./status.sh --follow"

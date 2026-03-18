@@ -64,6 +64,11 @@ const tasksPlugin: FastifyPluginAsync = async (fastify) => {
      WHERE id = @id AND status IN ('claimed', 'in_progress')`
   );
 
+  const releaseTask = db.prepare(
+    `UPDATE tasks SET status = 'pending', claimed_by = NULL, claimed_at = NULL
+     WHERE id = @id AND status IN ('claimed', 'in_progress')`
+  );
+
   // POST /tasks
   fastify.post<{
     Body: {
@@ -175,6 +180,19 @@ const tasksPlugin: FastifyPluginAsync = async (fastify) => {
     const { error } = request.body;
 
     const info = failTask.run({ id, result: JSON.stringify({ error }) });
+    if (info.changes === 0) {
+      return reply.conflict('task not in claimed or in_progress state');
+    }
+    return { ok: true };
+  });
+
+  // POST /tasks/:id/release — return a claimed/in_progress task to pending
+  fastify.post<{
+    Params: { id: string };
+  }>('/tasks/:id/release', async (request, reply) => {
+    const id = Number(request.params.id);
+
+    const info = releaseTask.run({ id });
     if (info.changes === 0) {
       return reply.conflict('task not in claimed or in_progress state');
     }

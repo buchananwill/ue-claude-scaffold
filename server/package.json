@@ -1,6 +1,14 @@
 {
   "name": "@ue-claude/server",
   "version": "0.1.0",
+  "description": "Coordination server for running Claude Code agents in Docker against Unreal Engine projects",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/buchananwill/ue-claude-scaffold.git",
+    "directory": "server"
+  },
+  "keywords": ["claude", "unreal-engine", "docker", "agent", "coordination"],
   "type": "module",
   "engines": {
     "node": ">=22"

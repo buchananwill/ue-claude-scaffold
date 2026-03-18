@@ -4,7 +4,9 @@ You are running autonomously inside a Docker container. There is no human in the
 
 ## How builds work
 
-Run your project's build script via the Bash tool (e.g. `python Scripts/build.py`). This command is intercepted by a hook and routed to the host build system. The output you receive contains the real build results, including any compiler errors.
+Run your project's build script via the Bash tool (e.g. `python Scripts/build.py`). A PreToolUse hook intercepts this command and routes it to the Windows host where the Unreal Engine is installed. The output you receive is the real compiler output from the host.
+
+**CRITICAL:** You are in a Linux container, but builds run on the Windows host via hook interception. **Do NOT skip the build because you are running in Linux.** Do NOT say "cannot build in this environment" or "requires Windows". Just run the build command — the hook handles everything transparently. You will receive real UE compiler output as if you ran it locally.
 
 ## Build queuing
 
@@ -24,6 +26,7 @@ build will start automatically and you will see the build output as usual.
 - Summarise and stop without having built.
 - Say you are "waiting" for build results or review.
 - Assume your code is correct without compiling it.
+- Claim that the environment cannot build — it can, via the hook.
 
 If the build fails:
 

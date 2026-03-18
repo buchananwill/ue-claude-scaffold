@@ -3,6 +3,8 @@ dist/
 coverage/
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 .env
 .venv/
 *.log

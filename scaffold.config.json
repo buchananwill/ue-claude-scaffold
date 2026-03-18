@@ -1,20 +1,36 @@
 {
   "project": {
-    "name": "MyUEProject",
-    "path": "C:/Projects/MyUEProject",
-    "uprojectFile": "MyUEProject.uproject"
+    "name": "PistePerfect",
+    "path": "D:\\Coding\\resort_game\\PistePerfect_5_7",
+    "uprojectFile": "PistePerfect.uproject"
+  },
+  "tasks": {
+    "path": "D:\\Coding\\ue-claude-scaffold\\tasks"
   },
   "engine": {
-    "path": "C:/UnrealEngine",
+    "path": "D:\\Program Files\\Epic Games\\UE_5.7\\Engine",
     "version": "5.7"
   },
   "build": {
     "scriptPath": "Scripts/build.py",
     "testScriptPath": "Scripts/run_tests.py",
-    "defaultTestFilters": ["MyProject"]
+    "defaultTestFilters": ["Resort"]
   },
   "server": {
     "port": 9100,
-    "ubtLockTimeoutMs": 600000
+    "ubtLockTimeoutMs": 600000,
+    "stagingWorktreePath": "D:\\Coding\\resort_game\\coralie_work",
+    "bareRepoPath": "D:\\Coding\\resort_game\\docker-claude\\repo.git"
+  },
+  "claudeMdPatches": {
+    "pathRemaps": {
+      "D:\\Program Files\\Epic Games\\UE_5.7": "/engine",
+      "D:\\\\Program Files\\\\Epic Games\\\\UE_5.7": "/engine",
+      "D:\\Coding\\resort_game\\PistePerfect_5_7": "/workspace",
+      "D:\\Coding\\resort_game\\\\": "/workspace/"
+    },
+    "agentSubstitutions": {
+      "ue-source-explorer": "- **`Explore` agent** — Before implementing any feature that depends on Unreal Engine APIs, use the standard Explore agent to investigate engine headers and source at `/engine`. Use it whenever you are not fully certain about a Unreal Engine API's signature, behaviour, or intended usage. Prefer reading engine source over guessing."
+    }
   }
 }

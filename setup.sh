@@ -49,6 +49,7 @@ else
   _missing=true
 fi
 
+check_tool "jq" "jq --version"
 check_tool "Node.js" "node --version"
 
 echo ""
@@ -62,45 +63,49 @@ fi
 if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
   cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
   echo "Created .env from .env.example."
-  echo "  -> Edit .env with your project paths before launching."
+  echo "  -> Edit .env with your authentication credentials."
 else
   echo ".env already exists — skipping."
 fi
-
-# ── Bare repo initialization ────────────────────────────────────────────────
-# Source .env to check if bare repo should be created
-set -a
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/.env"
-set +a
-
-if [[ -n "${BARE_REPO_PATH:-}" && -n "${PROJECT_PATH:-}" && ! -d "${BARE_REPO_PATH}" && -d "${PROJECT_PATH}" ]]; then
-  if [[ "$NON_INTERACTIVE" == true ]]; then
-    echo "Creating bare repo at $BARE_REPO_PATH ..."
-    git clone --bare "$PROJECT_PATH" "$BARE_REPO_PATH"
-    echo "Bare repo created."
-  else
-    read -rp "Create bare repo at $BARE_REPO_PATH from $PROJECT_PATH? [y/N] " _answer
-    if [[ "${_answer,,}" == "y" ]]; then
-      git clone --bare "$PROJECT_PATH" "$BARE_REPO_PATH"
-      echo "Bare repo created."
-    else
-      echo "Skipped bare repo creation. You can create it later or launch.sh will create it."
-    fi
-  fi
-elif [[ -n "${BARE_REPO_PATH:-}" && -d "${BARE_REPO_PATH}" ]]; then
-  echo "Bare repo already exists at $BARE_REPO_PATH — skipping."
-fi
-
-echo ""
 
 # ── scaffold.config.json setup ──────────────────────────────────────────────
 if [[ ! -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
   cp "$SCRIPT_DIR/scaffold.config.example.json" "$SCRIPT_DIR/scaffold.config.json"
   echo "Created scaffold.config.json from scaffold.config.example.json."
-  echo "  -> Edit scaffold.config.json with your project details before launching."
+  echo "  -> Edit scaffold.config.json with your project paths and details before launching."
 else
   echo "scaffold.config.json already exists — skipping."
+fi
+
+echo ""
+
+# ── Bare repo initialization ────────────────────────────────────────────────
+# Read paths from scaffold.config.json
+_bare=""
+_clone_source=""
+if [[ -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
+    _bare="$(jq -r '.server.bareRepoPath // empty' "$SCRIPT_DIR/scaffold.config.json")"
+    _proj="$(jq -r '.project.path // empty' "$SCRIPT_DIR/scaffold.config.json")"
+    _staging="$(jq -r '.server.stagingWorktreePath // empty' "$SCRIPT_DIR/scaffold.config.json")"
+    _clone_source="${_staging:-${_proj}}"
+fi
+
+if [[ -n "$_bare" && -n "$_clone_source" && ! -d "$_bare" && -d "$_clone_source" ]]; then
+  if [[ "$NON_INTERACTIVE" == true ]]; then
+    echo "Creating bare repo at $_bare ..."
+    git clone --bare "$_clone_source" "$_bare"
+    echo "Bare repo created."
+  else
+    read -rp "Create bare repo at $_bare from $_clone_source? [y/N] " _answer
+    if [[ "${_answer,,}" == "y" ]]; then
+      git clone --bare "$_clone_source" "$_bare"
+      echo "Bare repo created."
+    else
+      echo "Skipped bare repo creation. You can create it later or launch.sh will create it."
+    fi
+  fi
+elif [[ -n "$_bare" && -d "$_bare" ]]; then
+  echo "Bare repo already exists at $_bare — skipping."
 fi
 
 echo ""
@@ -160,8 +165,8 @@ echo ""
 echo "=== Setup Complete ==="
 echo ""
 echo "Next steps:"
-echo "  1. Edit .env with your project paths and authentication"
-echo "  2. Edit scaffold.config.json with your project details"
+echo "  1. Edit .env with your authentication credentials"
+echo "  2. Edit scaffold.config.json with your project paths"
 echo "  3. Start the coordination server:  cd server && npm run dev"
 echo "  4. Launch an agent:                ./launch.sh --plan path/to/plan.md"
 echo "  5. Monitor progress:               ./status.sh --follow"

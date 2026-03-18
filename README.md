@@ -20,7 +20,7 @@ Unreal Engine builds require the real engine installation on the host — you ca
 - [Git](https://git-scm.com/) 2.25+
 - [Docker](https://docs.docker.com/get-docker/) with Docker Compose v2 (or the standalone `docker-compose` v1.29+)
 - [Node.js](https://nodejs.org/) 22+
-- [jq](https://jqlang.github.io/jq/) (required by `status.sh`)
+- [jq](https://jqlang.github.io/jq/download/) (JSON processor — used by all scaffold scripts)
 - A Claude authentication method:
   - **OAuth** (Claude Pro/Max subscription) — mount your `~/.claude/.credentials.json`
   - **API key** — set `ANTHROPIC_API_KEY` environment variable
@@ -38,11 +38,10 @@ cd ue-claude-scaffold
 # 2. Run first-time setup (checks prerequisites, creates config files, installs deps)
 ./setup.sh
 
-# 3. Edit .env with your project paths and authentication
-#    Required: PROJECT_PATH, UE_ENGINE_PATH, BARE_REPO_PATH, TASKS_PATH
+# 3. Edit .env with your authentication credentials
 
-# 4. Edit scaffold.config.json with your project details
-#    Required: project.path, engine.path, build.scriptPath
+# 4. Edit scaffold.config.json with your project paths
+#    Required: project.path, engine.path, server.bareRepoPath, tasks.path
 
 # 5. Start the coordination server
 cd server && npm run dev
@@ -134,24 +133,16 @@ The bare repo acts as a shared intermediary. The container clones from it on sta
 
 ### `.env`
 
-Secrets and host-specific paths. Created from `.env.example` by `setup.sh`.
+Secrets and per-launch parameters. Created from `.env.example` by `setup.sh`. Structural configuration (paths, ports, build scripts) lives in `scaffold.config.json`.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `CLAUDE_CREDENTIALS_PATH` | Yes* | — | Path to `.credentials.json` for OAuth auth |
 | `ANTHROPIC_API_KEY` | Yes* | — | API key for token-based auth |
-| `UE_ENGINE_PATH` | Yes | — | Absolute path to your UE `Engine/` root |
-| `PROJECT_PATH` | Yes | — | Absolute path to your project worktree |
-| `BARE_REPO_PATH` | Yes | — | Absolute path to the local bare repo |
-| `TASKS_PATH` | Yes | — | Absolute path to the tasks directory |
-| `SERVER_PORT` | No | `9100` | Coordination server port |
 | `AGENT_NAME` | No | `agent-1` | Agent identifier |
 | `WORK_BRANCH` | No | `main` | Git branch for the agent to work on |
 | `AGENT_TYPE` | No | `container-orchestrator` | Agent definition to use |
 | `MAX_TURNS` | No | `200` | Max Claude Code turns before stopping |
-| `BUILD_SCRIPT_NAME` | No | `build.py` | Build script filename |
-| `TEST_SCRIPT_NAME` | No | `run_tests.py` | Test script filename |
-| `DEFAULT_TEST_FILTERS` | No | — | Space-separated test filters |
 
 *One of `CLAUDE_CREDENTIALS_PATH` or `ANTHROPIC_API_KEY` is required.
 
@@ -166,6 +157,7 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 | `project.uprojectFile` | The `.uproject` filename |
 | `engine.path` | Absolute path to the UE engine |
 | `engine.version` | UE version string (e.g. `"5.7"`) |
+| `tasks.path` | Absolute path to the tasks directory |
 | `build.scriptPath` | Build script path relative to project root |
 | `build.testScriptPath` | Test script path relative to project root |
 | `build.defaultTestFilters` | Array of default test filter strings |
@@ -279,7 +271,7 @@ The scripts require a Bash-compatible shell. Use Git Bash (included with Git for
 Install Docker Desktop (includes Compose v2) or install the standalone `docker-compose`. The scripts detect both `docker compose` (plugin) and `docker-compose` (standalone).
 
 **"BARE_REPO_PATH is not set" or similar**
-Edit your `.env` file and set all required paths. Run `./launch.sh --dry-run` to verify your configuration.
+Edit your `scaffold.config.json` file and set all required paths. Run `./launch.sh --dry-run` to verify your configuration.
 
 **Build timeouts**
 The default UBT lock timeout is 600000ms (10 minutes). For large projects, increase `server.ubtLockTimeoutMs` in `scaffold.config.json`.
@@ -288,7 +280,7 @@ The default UBT lock timeout is 600000ms (10 minutes). For large projects, incre
 Check container logs: `docker compose --project-name claude-<agent-name> -f container/docker-compose.yml logs -f`. The agent has a `MAX_TURNS` limit (default 200) after which it will stop.
 
 **Port conflict on 9100**
-Change `SERVER_PORT` in `.env` and restart the server.
+Change `server.port` in `scaffold.config.json` and restart the server.
 
 ## Contributing
 

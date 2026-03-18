@@ -21,6 +21,8 @@ export function createTestConfig(overrides?: Partial<ScaffoldConfig>): ScaffoldC
       scriptPath: '/tmp/build.sh',
       testScriptPath: '/tmp/test.sh',
       defaultTestFilters: [],
+      buildTimeoutMs: 660_000,
+      testTimeoutMs: 700_000,
     },
     server: {
       port: 9100,

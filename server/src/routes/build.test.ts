@@ -31,6 +31,8 @@ process.exit(0);
         scriptPath: `node ${mockScriptPath}`,
         testScriptPath: `node ${mockScriptPath}`,
         defaultTestFilters: ['TestFilter1'],
+        buildTimeoutMs: 660_000,
+        testTimeoutMs: 700_000,
       },
       server: {
         port: 9100,

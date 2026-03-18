@@ -48,15 +48,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ── Source .env for SERVER_PORT ──────────────────────────────────────────────
-if [[ -f "$SCRIPT_DIR/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$SCRIPT_DIR/.env"
-  set +a
+# ── Read port from scaffold.config.json ──────────────────────────────────────
+_cfg_port=9100
+if [[ -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
+    _cfg_port="$(jq -r '.server.port // 9100' "$SCRIPT_DIR/scaffold.config.json" 2>/dev/null || echo 9100)"
 fi
-
-BASE_URL="http://localhost:${SERVER_PORT:-9100}"
+BASE_URL="http://localhost:$_cfg_port"
 
 # ── Check dependencies ──────────────────────────────────────────────────────
 if ! command -v curl &>/dev/null; then

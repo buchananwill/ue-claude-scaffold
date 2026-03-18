@@ -7,6 +7,10 @@
     "uprojectFile": "MyUEProject.uproject"
   },
 
+  "tasks": {
+    "path": ""
+  },
+
   "engine": {
     "path": "",
     "version": "5.7"
@@ -15,7 +19,9 @@
   "build": {
     "scriptPath": "Scripts/build.py",
     "testScriptPath": "Scripts/run_tests.py",
-    "defaultTestFilters": ["MyProject"]
+    "defaultTestFilters": ["MyProject"],
+    "buildTimeoutMs": 660000,
+    "testTimeoutMs": 700000
   },
 
   "plugins": {

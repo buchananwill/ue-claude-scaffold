@@ -238,4 +238,50 @@ describe('tasks routes', () => {
     assert.ok(task.completedAt);
     assert.deepEqual(task.result, { error: 'Compilation failed' });
   });
+
+  it('POST /tasks/:id/release returns claimed task to pending', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Releasable' },
+    });
+    const id = post.json().id;
+
+    // Claim it
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+
+    // Release it
+    const release = await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/release`,
+    });
+    assert.equal(release.statusCode, 200);
+    assert.deepEqual(release.json(), { ok: true });
+
+    // Verify it's pending again
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const task = get.json();
+    assert.equal(task.status, 'pending');
+    assert.equal(task.claimedBy, null);
+    assert.equal(task.claimedAt, null);
+  });
+
+  it('POST /tasks/:id/release returns 409 for pending task', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Already pending' },
+    });
+    const id = post.json().id;
+
+    const release = await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/release`,
+    });
+    assert.equal(release.statusCode, 409);
+  });
 });

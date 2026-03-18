@@ -15,12 +15,17 @@ export interface ScaffoldConfig {
     scriptPath: string;
     testScriptPath: string;
     defaultTestFilters: string[];
+    buildTimeoutMs: number;
+    testTimeoutMs: number;
   };
   server: {
     port: number;
     ubtLockTimeoutMs: number;
     stagingWorktreePath?: string;
     bareRepoPath?: string;
+  };
+  tasks?: {
+    path: string;
   };
   claudeMdPatches?: {
     pathRemaps: Record<string, string>;
@@ -64,14 +69,43 @@ export function loadConfig(): ScaffoldConfig {
       scriptPath: raw.build?.scriptPath ?? '',
       testScriptPath: raw.build?.testScriptPath ?? '',
       defaultTestFilters: raw.build?.defaultTestFilters ?? [],
+      buildTimeoutMs: raw.build?.buildTimeoutMs ?? 660_000,
+      testTimeoutMs: raw.build?.testTimeoutMs ?? 700_000,
     },
     server: {
-      port: Number(process.env['SERVER_PORT'] ?? raw.server?.port ?? 9100),
+      port: raw.server?.port ?? 9100,
       ubtLockTimeoutMs: raw.server?.ubtLockTimeoutMs ?? 600000,
       stagingWorktreePath: raw.server?.stagingWorktreePath,
       bareRepoPath: raw.server?.bareRepoPath,
     },
+    tasks: {
+      path: raw.tasks?.path ?? '',
+    },
   };
+
+  // Validate required fields
+  const missing: string[] = [];
+  if (!config.project.path) missing.push('project.path');
+  if (!config.engine.path) missing.push('engine.path');
+  if (!config.build.scriptPath) missing.push('build.scriptPath');
+  if (!config.build.testScriptPath) missing.push('build.testScriptPath');
+  if (!config.server.stagingWorktreePath && !config.project.path) {
+    missing.push('server.stagingWorktreePath (or project.path as fallback)');
+  }
+  if (!config.server.bareRepoPath) missing.push('server.bareRepoPath');
+
+  if (missing.length > 0) {
+    throw new Error(
+      `scaffold.config.json is missing required fields:\n` +
+      missing.map((f) => `  - ${f}`).join('\n') +
+      `\n\nCopy scaffold.config.example.json and fill in the paths for your project.`
+    );
+  }
+
+  const port = config.server.port;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`server.port must be 1–65535 (got ${port})`);
+  }
 
   return config;
 }
