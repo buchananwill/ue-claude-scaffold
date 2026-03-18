@@ -112,6 +112,17 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
      WHERE id = @id AND status IN ('claimed', 'in_progress')`
   );
 
+  const resetTask = db.prepare(
+    `UPDATE tasks
+     SET status = 'pending',
+         claimed_by = NULL,
+         claimed_at = NULL,
+         completed_at = NULL,
+         result = NULL,
+         progress_log = NULL
+     WHERE id = @id AND status IN ('completed', 'failed')`
+  );
+
   function getStagingWorktree(): string {
     return config.server.stagingWorktreePath ?? config.project.path;
   }
@@ -308,6 +319,98 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       return reply.conflict('cannot delete a task that is claimed or in progress — release it first');
     }
     deleteTask.run({ id });
+    return { ok: true };
+  });
+
+  // PATCH /tasks/:id — edit a pending task
+  fastify.patch<{
+    Params: { id: string };
+    Body: {
+      title?: string;
+      description?: string;
+      sourcePath?: string | null;
+      acceptanceCriteria?: string;
+      priority?: number;
+    };
+  }>('/tasks/:id', async (request, reply) => {
+    const id = Number(request.params.id);
+    const body = request.body;
+
+    const allowlist: Record<string, string> = {
+      title: 'title',
+      description: 'description',
+      sourcePath: 'source_path',
+      acceptanceCriteria: 'acceptance_criteria',
+      priority: 'priority',
+    };
+
+    const setClauses: string[] = [];
+    const params: Record<string, unknown> = { id };
+
+    for (const [camel, snake] of Object.entries(allowlist)) {
+      if (camel in body) {
+        setClauses.push(`${snake} = @${camel}`);
+        params[camel] = (body as Record<string, unknown>)[camel] ?? null;
+      }
+    }
+
+    if (setClauses.length === 0) {
+      return reply.badRequest('no updatable fields provided');
+    }
+
+    const row = getTaskById.get({ id }) as TaskRow | undefined;
+    if (!row) {
+      return reply.notFound('task not found');
+    }
+    if (row.status !== 'pending') {
+      return reply.conflict('task can only be edited when pending');
+    }
+
+    if ('sourcePath' in body && typeof body.sourcePath === 'string') {
+      const worktree = getStagingWorktree();
+      if (!isCommittedInRepo(worktree, body.sourcePath)) {
+        return reply.unprocessableEntity(
+          `sourcePath '${body.sourcePath}' is not committed in the staging worktree (${worktree}). ` +
+          `Commit it first: git add ${body.sourcePath} && git commit`
+        );
+      }
+    }
+
+    const sql = `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = @id AND status = 'pending'`;
+    const info = db.prepare(sql).run(params);
+    if (info.changes === 0) {
+      return reply.conflict('task is no longer pending');
+    }
+    return { ok: true };
+  });
+
+  // POST /tasks/:id/reset — reset a completed/failed task back to pending
+  fastify.post<{
+    Params: { id: string };
+  }>('/tasks/:id/reset', async (request, reply) => {
+    const id = Number(request.params.id);
+
+    const row = getTaskById.get({ id }) as TaskRow | undefined;
+    if (!row) {
+      return reply.notFound('task not found');
+    }
+    if (row.status !== 'completed' && row.status !== 'failed') {
+      return reply.conflict('task can only be reset when completed or failed');
+    }
+
+    if (row.source_path) {
+      const worktree = getStagingWorktree();
+      if (!isCommittedInRepo(worktree, row.source_path)) {
+        return reply.unprocessableEntity(
+          `sourcePath '${row.source_path}' is no longer committed in the staging worktree`
+        );
+      }
+    }
+
+    const info = resetTask.run({ id });
+    if (info.changes === 0) {
+      return reply.conflict('task is no longer completed or failed');
+    }
     return { ok: true };
   });
 

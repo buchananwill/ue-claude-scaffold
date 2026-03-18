@@ -285,4 +285,293 @@ describe('tasks routes', () => {
     });
     assert.equal(release.statusCode, 409);
   });
+
+  // ── PATCH /tasks/:id ─────────────────────────────────────────────────
+
+  it('PATCH /tasks/:id updates title of a pending task', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Original title' },
+    });
+    const id = post.json().id;
+
+    const patch = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/tasks/${id}`,
+      payload: { title: 'Updated title' },
+    });
+    assert.equal(patch.statusCode, 200);
+    assert.deepEqual(patch.json(), { ok: true });
+
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const task = get.json();
+    assert.equal(task.title, 'Updated title');
+  });
+
+  it('PATCH /tasks/:id partial update only touches provided fields', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Keep me', description: 'Original desc', priority: 3 },
+    });
+    const id = post.json().id;
+
+    const patch = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/tasks/${id}`,
+      payload: { priority: 10 },
+    });
+    assert.equal(patch.statusCode, 200);
+
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const task = get.json();
+    assert.equal(task.title, 'Keep me');
+    assert.equal(task.description, 'Original desc');
+    assert.equal(task.priority, 10);
+  });
+
+  it('PATCH /tasks/:id returns 404 for missing task', async () => {
+    const patch = await ctx.app.inject({
+      method: 'PATCH',
+      url: '/tasks/99999',
+      payload: { title: 'Nope' },
+    });
+    assert.equal(patch.statusCode, 404);
+  });
+
+  it('PATCH /tasks/:id returns 409 when task is claimed', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Will be claimed' },
+    });
+    const id = post.json().id;
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+
+    const patch = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/tasks/${id}`,
+      payload: { title: 'Too late' },
+    });
+    assert.equal(patch.statusCode, 409);
+  });
+
+  it('PATCH /tasks/:id returns 409 when task is completed', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Will be completed' },
+    });
+    const id = post.json().id;
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/complete`,
+      payload: { result: { summary: 'Done' } },
+    });
+
+    const patch = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/tasks/${id}`,
+      payload: { title: 'Too late' },
+    });
+    assert.equal(patch.statusCode, 409);
+  });
+
+  it('PATCH /tasks/:id returns 400 when body has no updatable fields', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Untouched' },
+    });
+    const id = post.json().id;
+
+    const patch = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/tasks/${id}`,
+      payload: { bogus: 'field' },
+    });
+    assert.equal(patch.statusCode, 400);
+  });
+
+  it('PATCH /tasks/:id allows clearing sourcePath to null', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Has no source' },
+    });
+    const id = post.json().id;
+
+    const patch = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/tasks/${id}`,
+      payload: { sourcePath: null },
+    });
+    assert.equal(patch.statusCode, 200);
+    assert.deepEqual(patch.json(), { ok: true });
+
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    assert.equal(get.json().sourcePath, null);
+  });
+
+  // ── POST /tasks/:id/reset ────────────────────────────────────────────
+
+  it('POST /tasks/:id/reset resets a completed task to pending', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Completed then reset' },
+    });
+    const id = post.json().id;
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/update`,
+      payload: { progress: 'Some progress' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/complete`,
+      payload: { result: { summary: 'Finished' } },
+    });
+
+    const reset = await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/reset`,
+    });
+    assert.equal(reset.statusCode, 200);
+    assert.deepEqual(reset.json(), { ok: true });
+
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const task = get.json();
+    assert.equal(task.status, 'pending');
+    assert.equal(task.claimedBy, null);
+    assert.equal(task.claimedAt, null);
+    assert.equal(task.completedAt, null);
+    assert.equal(task.result, null);
+    assert.equal(task.progressLog, null);
+  });
+
+  it('POST /tasks/:id/reset resets a failed task to pending', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Failed then reset' },
+    });
+    const id = post.json().id;
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/fail`,
+      payload: { error: 'Build broke' },
+    });
+
+    const reset = await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/reset`,
+    });
+    assert.equal(reset.statusCode, 200);
+    assert.deepEqual(reset.json(), { ok: true });
+
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const task = get.json();
+    assert.equal(task.status, 'pending');
+    assert.equal(task.claimedBy, null);
+    assert.equal(task.claimedAt, null);
+    assert.equal(task.completedAt, null);
+    assert.equal(task.result, null);
+    assert.equal(task.progressLog, null);
+  });
+
+  it('POST /tasks/:id/reset returns 404 for missing task', async () => {
+    const reset = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/99999/reset',
+    });
+    assert.equal(reset.statusCode, 404);
+  });
+
+  it('POST /tasks/:id/reset returns 409 when task is pending', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Never claimed' },
+    });
+    const id = post.json().id;
+
+    const reset = await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/reset`,
+    });
+    assert.equal(reset.statusCode, 409);
+  });
+
+  it('POST /tasks/:id/reset returns 409 when task is claimed', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Currently claimed' },
+    });
+    const id = post.json().id;
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+
+    const reset = await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/reset`,
+    });
+    assert.equal(reset.statusCode, 409);
+  });
+
+  it('POST /tasks/:id/reset returns ok:true confirming TOCTOU guard did not false-positive', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'TOCTOU check' },
+    });
+    const id = post.json().id;
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/complete`,
+      payload: { result: { summary: 'Done' } },
+    });
+
+    const reset = await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/reset`,
+    });
+    assert.equal(reset.statusCode, 200);
+    assert.deepEqual(reset.json(), { ok: true });
+  });
 });

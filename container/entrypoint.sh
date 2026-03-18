@@ -96,43 +96,71 @@ echo "Registered with coordination server."
 poll_and_claim_task() {
     local max_attempts=60
     local attempt=0
+    local -a skip_ids=()
 
     while [ $attempt -lt $max_attempts ]; do
         attempt=$((attempt + 1))
 
-        TASK_JSON=$(curl -sf "${SERVER_URL}/tasks?status=pending&limit=1" \
+        # Fetch a batch of pending tasks
+        TASK_JSON=$(curl -sf "${SERVER_URL}/tasks?status=pending&limit=10" \
             --max-time 10 2>/dev/null) || TASK_JSON="[]"
 
         TASK_COUNT=$(echo "$TASK_JSON" | jq 'length')
+        local claimed=false
 
         if [ "$TASK_COUNT" -gt 0 ]; then
-            CURRENT_TASK_ID=$(echo "$TASK_JSON" | jq -r '.[0].id')
-            CURRENT_TASK_TITLE=$(echo "$TASK_JSON" | jq -r '.[0].title // "Untitled"')
-            CURRENT_TASK_DESC=$(echo "$TASK_JSON" | jq -r '.[0].description // ""')
-            CURRENT_TASK_AC=$(echo "$TASK_JSON" | jq -r '.[0].acceptanceCriteria // "None specified"')
+            # Iterate through the batch, skipping already-failed IDs
+            for i in $(seq 0 $((TASK_COUNT - 1))); do
+                local task_id=$(echo "$TASK_JSON" | jq -r ".[$i].id")
 
-            # Try to claim it
-            CLAIM_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-                -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/claim" \
-                -H "X-Agent-Name: ${AGENT_NAME}" \
-                --max-time 10)
+                # Check if this task is in the skip list
+                local should_skip=false
+                for skip_id in ${skip_ids[@]+"${skip_ids[@]}"}; do
+                    if [ "$skip_id" = "$task_id" ]; then
+                        should_skip=true
+                        break
+                    fi
+                done
+                if [ "$should_skip" = "true" ]; then
+                    continue
+                fi
 
-            if [ "$CLAIM_STATUS" = "200" ]; then
-                echo "Claimed task #${CURRENT_TASK_ID}: ${CURRENT_TASK_TITLE}"
-                return 0
-            else
-                echo "Task #${CURRENT_TASK_ID} already claimed, retrying..."
-                sleep 1
-                continue
-            fi
+                CURRENT_TASK_ID="$task_id"
+                CURRENT_TASK_TITLE=$(echo "$TASK_JSON" | jq -r ".[$i].title // \"Untitled\"")
+                CURRENT_TASK_DESC=$(echo "$TASK_JSON" | jq -r ".[$i].description // \"\"")
+                CURRENT_TASK_AC=$(echo "$TASK_JSON" | jq -r ".[$i].acceptanceCriteria // \"None specified\"")
+
+                # Try to claim — capture BOTH status code and response body
+                local claim_response
+                local claim_status
+                claim_response=$(curl -s -w "\n%{http_code}" \
+                    -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/claim" \
+                    -H "X-Agent-Name: ${AGENT_NAME}" \
+                    --max-time 10) || claim_response=$'\n000'
+                claim_status="${claim_response##*$'\n'}"
+                local claim_body="${claim_response%$'\n'*}"
+
+                if [ "$claim_status" = "200" ]; then
+                    echo "Claimed task #${CURRENT_TASK_ID}: ${CURRENT_TASK_TITLE}"
+                    return 0
+                else
+                    # Extract the server's actual error message
+                    local err_msg
+                    err_msg=$(echo "$claim_body" | jq -r '.message // "unknown error"' 2>/dev/null) || err_msg="unknown error"
+                    echo "Task #${CURRENT_TASK_ID} claim failed (HTTP ${claim_status}): ${err_msg}"
+                    skip_ids+=("$task_id")
+                    sleep 1
+                fi
+            done
         fi
 
+        # If we got here, either no tasks or all tasks in batch were skipped/failed
         _post_status "idle"
-        echo "No pending tasks. Polling again in ${WORKER_POLL_INTERVAL}s... (attempt ${attempt}/${max_attempts})"
+        echo "No claimable tasks. Polling again in ${WORKER_POLL_INTERVAL}s... (attempt ${attempt}/${max_attempts})"
         sleep "$WORKER_POLL_INTERVAL"
     done
 
-    echo "ERROR: No tasks found after ${max_attempts} attempts"
+    echo "ERROR: No claimable tasks found after ${max_attempts} attempts"
     _post_status "error"
     return 1
 }
