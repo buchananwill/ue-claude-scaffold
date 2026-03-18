@@ -36,12 +36,25 @@ def load_config() -> dict:
     }
 
 
+def strip_interactive_sections(text: str) -> str:
+    """Remove sections between INTERACTIVE-ONLY markers."""
+    return re.sub(
+        r"<!-- BEGIN INTERACTIVE-ONLY -->.*?<!-- END INTERACTIVE-ONLY -->\n?",
+        "",
+        text,
+        flags=re.DOTALL,
+    )
+
+
 def patch_claude_md(config: dict):
-    """Apply path remaps and agent substitutions to CLAUDE.md."""
+    """Apply path remaps, agent substitutions, and section stripping to CLAUDE.md."""
     if not CLAUDE_MD.exists():
         return
 
     text = CLAUDE_MD.read_text(encoding="utf-8")
+
+    # Strip interactive-only sections first
+    text = strip_interactive_sections(text)
     patches = config.get("claudeMdPatches", {})
 
     # Apply path remaps

@@ -48,14 +48,13 @@ Log your resolved mapping before beginning work.
 
 ## Standing Instructions for Sub-Agents
 
-Your prompt includes standing instructions (prepended before the task). These contain critical container-environment rules that sub-agents need. When delegating to **implementer** or **tester** agents, you MUST include the following standing instructions verbatim in the delegation prompt:
+Your prompt includes standing instructions (prepended before the task). These contain critical container-environment rules that sub-agents need. When delegating to **implementer** or **tester** agents, you MUST include the following in the delegation prompt:
 
-1. **Build-Verify Loop** (`00-build-loop.md`) — Explains that build commands are intercepted by a hook and routed to the Windows host. Sub-agents must run the build and iterate until clean.
-2. **Message Board** (`02-messages.md`) — Explains how to post progress messages via curl.
+1. **Build-Verify Loop** (`00-build-loop.md`) — Copy verbatim. Explains that build commands are intercepted by a hook and routed to the Windows host. Sub-agents must run the build and iterate until clean. *(implementer and tester only — reviewer does not build.)*
+2. **Message Board** (`02-messages.md`) — Copy verbatim. Explains how to post progress messages via curl, including the verbosity system. *(All sub-agents, including reviewer.)*
+3. **Verbosity directive** — Add `LOG_VERBOSITY: <level>` (matching the level from your own prompt) so the sub-agent knows how chatty to be on the message board. In `verbose` mode, sub-agents should narrate their progress to their channel as described in the message board instruction. *(All sub-agents.)*
 
-Copy the full text of these instructions into your delegation prompt. Do NOT paraphrase or summarize — the exact wording matters for reinforcing the build mechanism.
-
-The **reviewer** agent does not need these (it does not build or post messages).
+Do NOT paraphrase or summarize the standing instructions — the exact wording matters for reinforcing the build mechanism and message protocol.
 
 ## Message Board
 
