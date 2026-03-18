@@ -13,6 +13,7 @@ A scaffold for running autonomous Claude Code agents in Docker containers agains
 ```bash
 npm run dev              # Start dev server with hot reload (tsx watch)
 npm run build            # TypeScript compile to dist/
+npm run start            # Run compiled server from dist/
 npm run typecheck        # Type-check without emitting
 npm test                 # Run all tests (Node.js built-in test runner via tsx)
 npm run test:coverage    # Tests with c8 coverage
@@ -22,6 +23,18 @@ Run a single test file:
 ```bash
 npx tsx --test src/routes/agents.test.ts
 ```
+
+### Dashboard (in `dashboard/`)
+
+A React + Vite SPA for monitoring agents, builds, tasks, and messages in real time. Uses TanStack Router, TanStack Query, and Mantine UI.
+
+```bash
+npm run dev              # Start Vite dev server
+npm run build            # Type-check + production build
+npm run preview          # Preview production build locally
+```
+
+The dashboard talks to the coordination server (default `http://localhost:9100`).
 
 ### Shell Scripts (from repo root, requires Git Bash on Windows)
 
@@ -42,13 +55,16 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
 1. **Shell scripts** (`launch.sh`, `setup.sh`, `status.sh`) — orchestrate Docker and config. Read structural config from `scaffold.config.json` and secrets from `.env`.
 
 2. **Coordination server** (`server/`) — Fastify + TypeScript, SQLite via better-sqlite3 (WAL mode). Runs on the host (default port 9100). Provides:
+   - `GET /health` — server health check (returns status, db path, config summary)
    - `POST /build`, `POST /test` — sync worktree from bare repo, run host-side build/test scripts, return structured `{success, exit_code, output, stderr}`
-   - `POST /agents/register`, `GET /agents`, agent status lifecycle
-   - `GET /messages`, `POST /messages` — SQLite-backed message board for agent progress
+   - `POST /agents/register`, `GET /agents`, `POST /agents/{name}/status`, `DELETE /agents/{name}` — agent lifecycle
+   - `GET /messages`, `POST /messages`, `GET /messages/{channel}` — SQLite-backed message board for agent progress
    - UBT lock (`/ubt/lock`, `/ubt/release`) — singleton mutex with stale-lock sweeping (60s interval)
    - `/tasks/*` — task queue with claim/complete/fail/release lifecycle for worker mode
 
-3. **Docker container** (`container/`) — runs a single Claude Code instance in non-interactive mode (`claude -p`). The entrypoint clones from a bare repo, patches CLAUDE.md paths for the container environment, registers with the coordination server, and delegates to the specified agent type.
+3. **Docker container** (`container/`) — runs a single Claude Code instance in non-interactive mode (`claude -p`). The entrypoint (`entrypoint.sh`) clones from a bare repo, runs `patch_workspace.py` to remap host paths to container mount points and strip interactive-only sections, registers with the coordination server, and delegates to the specified agent type.
+
+4. **Dashboard** (`dashboard/`) — React + Vite SPA for real-time monitoring of agents, builds, tasks, and messages. Polls the coordination server. See Commands section above.
 
 ### Git Data Flow
 
@@ -64,12 +80,19 @@ Host Project Worktree → [bare repo] → Container Clone
 
 ### Build Hook Interception
 
-Container agents don't run builds directly. A PreToolUse hook (`container/hooks/intercept_build_test.sh`) intercepts build/test commands, commits+pushes to the bare repo, then calls the coordination server's `/build` or `/test` endpoint. The server syncs to a staging worktree and runs the real UE build scripts.
+Container agents don't run builds directly. Two PreToolUse hooks in `container/hooks/` enforce this:
+
+- **`intercept_build_test.sh`** — intercepts build/test commands, commits+pushes to the bare repo, then calls the coordination server's `/build` or `/test` endpoint. The server syncs to a staging worktree and runs the real UE build scripts.
+- **`block-push-passthrough.sh`** — blocks manual `git push` commands. Pushes are handled automatically by the build/test intercept hook, so direct pushes are an error.
 
 ### Two Execution Modes
 
-- **Plan mode** (default): `launch.sh --plan plan.md` copies the plan to `tasks/prompt.md`, container reads it and executes E2E
+- **Plan mode** (default): `launch.sh --plan plan.md` copies the plan to `tasks/prompt.md`, container reads it and executes E2E. Plan documents live in `plans/` (e.g. `plans/dashboard-v3.md`).
 - **Worker mode**: `launch.sh --worker` — container polls `GET /tasks?status=pending`, claims tasks, executes them, reports results
+
+### Agent Definitions
+
+Agent type definitions live in `agents/` as markdown files (e.g. `agents/container-orchestrator.md`). Each defines the agent's role, available tools, and behavioral instructions. The `AGENT_TYPE` env var in `.env` selects which definition to use at launch.
 
 ### Server Code Conventions
 
@@ -85,5 +108,9 @@ Container agents don't run builds directly. A PreToolUse hook (`container/hooks/
 - `scaffold.config.json` — structural config (paths, ports, build scripts, path remaps). Not committed (user-specific). Copy from `scaffold.config.example.json`.
 - `.env` — secrets and per-launch params (auth credentials, agent name, branch). Not committed. Copy from `.env.example`.
 - `container/docker-compose.yml` — Docker Compose config with local volume mounts. Not committed (user-specific). Copy from `container/docker-compose.example.yml`.
-- `container/container-settings.json` — Claude Code settings injected into containers
-- `container/instructions/*.md` — standing instructions prepended to every task prompt (sorted by filename)
+- `container/container-settings.json` — Claude Code settings injected into containers (hooks config, permissions)
+- `container/instructions/*.md` — standing instructions prepended to every task prompt (sorted by filename):
+  - `00-build-loop.md` — build routing and UBT queue discipline
+  - `01-debrief.md` — debrief/reporting instructions
+  - `02-messages.md` — message board and monitoring guidance
+  - `03-task-worker.md` — task worker mode protocol

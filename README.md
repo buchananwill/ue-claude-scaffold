@@ -3,16 +3,29 @@
 Run Claude Code autonomously against Unreal Engine projects. Human authors the plan, container executes it end-to-end,
 message board provides live inspectability.
 
+## What Problems Does This Setup Solve?
+
+**1. UBT is a singleton — and agents don't handle that gracefully.**
+Unreal Build Tool cannot run concurrently. When an autonomous agent hits a build failure because another build is already
+running, it doesn't queue up and wait — it spirals, retries blindly, or gives up. This scaffold wraps UBT access in a
+coordination server with a proper mutex and message board. Agents submit build requests, the server serializes them, and
+structured results come back. No agent ever sees a "UBT is already running" error — they just wait their turn.
+
+**2. `--dangerously-skip-permissions` needs an actual safety boundary.**
+Autonomous agents need `--dangerously-skip-permissions` to work unattended, but running that on your host machine with
+your full filesystem, credentials, and network is asking for trouble. Docker containers provide that boundary. The agent
+gets exactly what it needs (a repo clone, the coordination server endpoint, mounted read-only plugins) and nothing it
+doesn't (no host filesystem, no credentials beyond Claude auth, no direct network access to your other services). You
+get full autonomy without the risk.
+
 ## What this is
 
-A best-effort attempt at a turnkey scaffold for handing off implementation work to autonomous Claude Code agents running
-in Docker containers. Designed for UE developers who already use Claude Code interactively and want to delegate longer
-tasks.
+A scaffold for handing off implementation work to autonomous Claude Code agents running in Docker containers. Designed
+for UE developers who already use Claude Code interactively and want to delegate longer tasks.
 
-Unreal Engine builds require the real engine installation on the host — you cannot install UE inside a container. This
-scaffold solves that by isolating the autonomous agent's work inside a container while routing build and test requests
-back to the host through a coordination server. The server serializes access to Unreal Build Tool (UBT), which does not
-support concurrent invocations, making future multi-agent support safe by design.
+Unreal Engine builds require the real engine installation on the host — you cannot install UE inside a container. The
+coordination server bridges that gap: containers do the coding, the host does the building, and a message board keeps
+everything inspectable.
 
 **The workflow:**
 
@@ -20,7 +33,7 @@ support concurrent invocations, making future multi-agent support safe by design
 2. Commit the plan as a markdown document
 3. Launch a container agent — it executes the plan E2E
 4. Each phase builds, passes code review, and commits with a debrief audit trail
-5. Monitor progress via the coordination server's message board
+5. Monitor progress via the coordination server's message board or the dashboard UI
 
 ## Prerequisites
 
@@ -56,8 +69,9 @@ cd server && npm run dev
 # 6. In another terminal — launch an agent with a plan
 ./launch.sh --plan path/to/your-plan.md
 
-# 7. Monitor progress
+# 7. Monitor progress (terminal or browser)
 ./status.sh --follow
+# Or: cd dashboard && npm install && npm run dev
 ```
 
 ## Project Structure
@@ -68,23 +82,30 @@ ue-claude-scaffold/
 │   └── container-orchestrator.md
 ├── container/                 # Docker container infrastructure
 │   ├── Dockerfile
-│   ├── docker-compose.yml     # Template compose file
+│   ├── docker-compose.example.yml  # Template — copy to docker-compose.yml
 │   ├── entrypoint.sh
 │   ├── container-settings.json
-│   ├── patch_workspace.py     # CLAUDE.md path remapping
+│   ├── patch_workspace.py     # CLAUDE.md path remapping for containers
 │   ├── hooks/                 # Claude Code PreToolUse hooks
-│   │   ├── intercept_build_test.sh
-│   │   └── block-push-passthrough.sh
+│   │   ├── intercept_build_test.sh   # Routes build/test to host
+│   │   └── block-push-passthrough.sh # Blocks manual git push
 │   └── instructions/          # Standing instructions for container agents
-│       ├── 00-build-loop.md
-│       └── 01-debrief.md
-├── server/                    # TypeScript coordination server
+│       ├── 00-build-loop.md   # Build routing and UBT queue discipline
+│       ├── 01-debrief.md      # Debrief/reporting instructions
+│       ├── 02-messages.md     # Message board and monitoring guidance
+│       └── 03-task-worker.md  # Task worker mode protocol
+├── dashboard/                 # React + Vite monitoring SPA
+│   ├── src/                   # TanStack Router + Query, Mantine UI
+│   └── package.json
+├── plans/                     # Plan documents for container agents
+├── scripts/
+│   └── ingest-tasks.sh        # Bulk-import task markdown into the queue
+├── server/                    # TypeScript coordination server (Fastify)
 │   └── src/
 ├── tasks/                     # Task prompts directory
-│   └── example-prompt.md
 ├── launch.sh                  # Parameterized agent launcher
 ├── setup.sh                   # First-time setup script
-├── status.sh                  # Agent monitoring dashboard
+├── status.sh                  # Agent monitoring script
 ├── .env.example
 ├── .gitattributes
 ├── scaffold.config.example.json
