@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export interface UsePollingResult<T> {
   data: T | null;
@@ -16,39 +16,38 @@ export function usePolling<T>(
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const fetcherRef = useRef(fetcher);
-  fetcherRef.current = fetcher;
-
-  const doFetch = useCallback((signal: AbortSignal) => {
-    fetcherRef.current(signal)
-      .then((result) => {
-        if (!signal.aborted) {
-          setData(result);
-          setError(null);
-          setLoading(false);
-          setLastUpdated(new Date());
-        }
-      })
-      .catch((err) => {
-        if (!signal.aborted) {
-          setError(err instanceof Error ? err.message : String(err));
-          setLoading(false);
-        }
-      });
-  }, []);
-
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     const ac = new AbortController();
-    doFetch(ac.signal);
-    const id = setInterval(() => doFetch(ac.signal), intervalMs);
+    setLoading(true);
+
+    const doFetch = () => {
+      fetcher(ac.signal)
+        .then((result) => {
+          if (!ac.signal.aborted) {
+            setData(result);
+            setError(null);
+            setLoading(false);
+            setLastUpdated(new Date());
+          }
+        })
+        .catch((err) => {
+          if (!ac.signal.aborted) {
+            setError(err instanceof Error ? err.message : String(err));
+            setLoading(false);
+          }
+        });
+    };
+
+    doFetch();
+    const id = setInterval(doFetch, intervalMs);
     return () => {
       ac.abort();
       clearInterval(id);
     };
-  }, [intervalMs, doFetch, tick]);
+  }, [fetcher, intervalMs, tick]);
 
   return { data, error, loading, lastUpdated, refresh };
 }
