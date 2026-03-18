@@ -21,5 +21,10 @@ Thumbs.db
 # Docker build context artifacts
 repo.git/
 
+# Local config (created from .example files by setup.sh)
+scaffold.config.json
+container/docker-compose.yml
+
 # Ingestion state
 .ingest-state.json
+/.claude/

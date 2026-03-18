@@ -82,7 +82,8 @@ Container agents don't run builds directly. A PreToolUse hook (`container/hooks/
 
 ### Configuration Split
 
-- `scaffold.config.json` — structural config (paths, ports, build scripts, path remaps). Not committed (user-specific).
-- `.env` — secrets and per-launch params (auth credentials, agent name, branch). Not committed.
+- `scaffold.config.json` — structural config (paths, ports, build scripts, path remaps). Not committed (user-specific). Copy from `scaffold.config.example.json`.
+- `.env` — secrets and per-launch params (auth credentials, agent name, branch). Not committed. Copy from `.env.example`.
+- `container/docker-compose.yml` — Docker Compose config with local volume mounts. Not committed (user-specific). Copy from `container/docker-compose.example.yml`.
 - `container/container-settings.json` — Claude Code settings injected into containers
 - `container/instructions/*.md` — standing instructions prepended to every task prompt (sorted by filename)

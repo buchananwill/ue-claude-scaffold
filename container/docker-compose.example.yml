@@ -1,5 +1,5 @@
 # Template docker-compose for a single agent.
-# Copy to your project and adjust paths, or use launch.sh which generates this.
+# Copy to docker-compose.yml and adjust paths, or use launch.sh which generates this.
 
 services:
   claude-worker:
@@ -42,7 +42,5 @@ services:
       # Optional: read-only plugin mounts (symlinked into Plugins/ at startup)
       # Add entries like:
       # - /path/to/MyPlugin:/plugins-ro/MyPlugin:ro
-      - D:\Coding\resort_game\PistePerfect_5_7\Plugins\Voxel:/plugins-ro/Voxel:ro
-      - D:\Coding\resort_game\PistePerfect_5_7\Plugins\UE5Coro:/plugins-ro/UE5Coro:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"

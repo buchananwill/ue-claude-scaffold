@@ -51,6 +51,10 @@ cp /container-settings.json /workspace/.claude/settings.json
 
 if [ -f /patch_workspace.py ] && [ -f /workspace/CLAUDE.md ]; then
     python3 /patch_workspace.py
+    # Mark patched files as unchanged so git add -A never commits the
+    # container-specific patches (path remaps, stripped sections, etc.)
+    git update-index --assume-unchanged CLAUDE.md 2>/dev/null || true
+    git update-index --assume-unchanged .claude/CLAUDE.md 2>/dev/null || true
 fi
 
 # ── Register with coordination server ────────────────────────────────────────

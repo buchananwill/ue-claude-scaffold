@@ -77,6 +77,15 @@ else
   echo "scaffold.config.json already exists — skipping."
 fi
 
+# ── docker-compose.yml setup ────────────────────────────────────────────────
+if [[ ! -f "$SCRIPT_DIR/container/docker-compose.yml" ]]; then
+  cp "$SCRIPT_DIR/container/docker-compose.example.yml" "$SCRIPT_DIR/container/docker-compose.yml"
+  echo "Created container/docker-compose.yml from docker-compose.example.yml."
+  echo "  -> Add any local plugin volume mounts to container/docker-compose.yml."
+else
+  echo "container/docker-compose.yml already exists — skipping."
+fi
+
 echo ""
 
 # ── Bare repo initialization ────────────────────────────────────────────────
