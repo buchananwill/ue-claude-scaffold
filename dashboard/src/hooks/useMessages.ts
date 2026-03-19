@@ -1,40 +1,67 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../api/client.ts';
 import type { Message } from '../api/types.ts';
 import { usePollInterval } from './usePollInterval.tsx';
 
-const MAX_MESSAGES = 1000;
+const LIMIT = 20;
 
 export function useMessages(channel: string, typeFilter = '') {
   const { intervalMs } = usePollInterval();
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
   const cursorRef = useRef(0);
+  const oldestIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     setMessages([]);
     cursorRef.current = 0;
+    oldestIdRef.current = null;
+    setHasOlder(false);
     setLoading(true);
+    setTotalCount(null);
 
     const ac = new AbortController();
 
     const fetchNew = () => {
       const since = cursorRef.current;
-      apiFetch<Message[]>(
-        `/messages/${encodeURIComponent(channel)}?since=${since}${typeFilter ? `&type=${encodeURIComponent(typeFilter)}` : ''}`,
-        ac.signal,
-      )
+      let url: string;
+
+      if (since > 0) {
+        // Polling path: no limit
+        url = `/messages/${encodeURIComponent(channel)}?since=${since}${typeFilter ? `&type=${encodeURIComponent(typeFilter)}` : ''}`;
+      } else {
+        // Initial load: get most recent LIMIT
+        url = `/messages/${encodeURIComponent(channel)}?limit=${LIMIT}${typeFilter ? `&type=${encodeURIComponent(typeFilter)}` : ''}`;
+      }
+
+      const fetchCount = () => {
+        const countUrl = `/messages/${encodeURIComponent(channel)}/count${typeFilter ? `?type=${encodeURIComponent(typeFilter)}` : ''}`;
+        apiFetch<{ count: number }>(countUrl, ac.signal)
+          .then((data) => {
+            if (!ac.signal.aborted) setTotalCount(data.count);
+          })
+          .catch(() => {});
+      };
+
+      apiFetch<Message[]>(url, ac.signal)
         .then((newMsgs) => {
           if (ac.signal.aborted) return;
-          if (newMsgs.length > 0) {
-            setMessages((prev) => {
-              const combined = [...prev, ...newMsgs];
-              if (combined.length > MAX_MESSAGES) {
-                return combined.slice(combined.length - MAX_MESSAGES);
-              }
-              return combined;
-            });
+          if (since === 0 && cursorRef.current === 0) {
+            // Initial load
+            fetchCount();
+            if (newMsgs.length > 0) {
+              setMessages(newMsgs);
+              cursorRef.current = newMsgs[newMsgs.length - 1].id;
+              oldestIdRef.current = newMsgs[0].id;
+              setHasOlder(newMsgs.length === LIMIT);
+            }
+          } else if (newMsgs.length > 0) {
+            // Polling append
+            setMessages((prev) => [...prev, ...newMsgs]);
             cursorRef.current = newMsgs[newMsgs.length - 1].id;
           }
           setError(null);
@@ -56,5 +83,31 @@ export function useMessages(channel: string, typeFilter = '') {
     };
   }, [channel, intervalMs, typeFilter]);
 
-  return { messages, error, loading };
+  const loadOlder = useCallback(() => {
+    const oldest = oldestIdRef.current;
+    if (oldest === null || loadingOlder) return;
+
+    setLoadingOlder(true);
+    let url = `/messages/${encodeURIComponent(channel)}?before=${oldest}&limit=${LIMIT}`;
+    if (typeFilter) {
+      url += `&type=${encodeURIComponent(typeFilter)}`;
+    }
+
+    apiFetch<Message[]>(url)
+      .then((olderMsgs) => {
+        if (olderMsgs.length > 0) {
+          setMessages((prev) => [...olderMsgs, ...prev]);
+          oldestIdRef.current = olderMsgs[0].id;
+          setHasOlder(olderMsgs.length === LIMIT);
+        } else {
+          setHasOlder(false);
+        }
+        setLoadingOlder(false);
+      })
+      .catch(() => {
+        setLoadingOlder(false);
+      });
+  }, [channel, typeFilter, loadingOlder]);
+
+  return { messages, error, loading, hasOlder, loadingOlder, loadOlder, totalCount };
 }

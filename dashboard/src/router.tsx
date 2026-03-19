@@ -32,6 +32,7 @@ const messagesChannelRoute = createRoute({
   component: MessagesPage,
   validateSearch: (search: Record<string, unknown>) => ({
     type: typeof search.type === 'string' && search.type ? search.type : undefined,
+    highlight: typeof search.highlight === 'string' && search.highlight ? search.highlight : undefined,
   }),
 });
 

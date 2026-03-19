@@ -1,5 +1,13 @@
 const BASE = '/api';
 
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function extractError(res: Response): Promise<string> {
   try {
     const body = await res.json();
@@ -17,7 +25,7 @@ async function extractError(res: Response): Promise<string> {
 export async function apiFetch<T>(path: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { signal });
   if (!res.ok) {
-    throw new Error(await extractError(res));
+    throw new ApiError(await extractError(res), res.status);
   }
   return res.json();
 }
@@ -29,7 +37,7 @@ export async function apiPost<T = unknown>(path: string, body?: unknown): Promis
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
-    throw new Error(await extractError(res));
+    throw new ApiError(await extractError(res), res.status);
   }
   return res.json();
 }
@@ -37,7 +45,7 @@ export async function apiPost<T = unknown>(path: string, body?: unknown): Promis
 export async function apiDelete<T = unknown>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { method: 'DELETE' });
   if (!res.ok) {
-    throw new Error(await extractError(res));
+    throw new ApiError(await extractError(res), res.status);
   }
   return res.json();
 }

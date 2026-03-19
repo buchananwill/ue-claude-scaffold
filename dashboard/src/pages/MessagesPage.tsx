@@ -8,18 +8,28 @@ export function MessagesPage() {
   const channel = params.channel ?? 'general';
   const navigate = useNavigate();
   const agents = useAgents();
-  const { type: typeFilter = '' } = useSearch({ strict: false }) as { type?: string };
+  const { type: typeFilter = '', highlight } = useSearch({ strict: false }) as { type?: string; highlight?: string };
   const messages = useMessages(channel, typeFilter);
+  const highlightId = highlight ? Number(highlight) : undefined;
 
   const handleChannelChange = (c: string) => {
-    navigate({ to: '/messages/$channel', params: { channel: c }, search: { type: typeFilter || undefined } });
+    navigate({ to: '/messages/$channel', params: { channel: c }, search: { type: typeFilter || undefined, highlight: undefined } });
   };
 
   const handleTypeFilterChange = (t: string) => {
     navigate({
       to: '/messages/$channel',
       params: { channel },
-      search: { type: t || undefined },
+      search: { type: t || undefined, highlight: undefined },
+      replace: true,
+    });
+  };
+
+  const handleHighlightConsumed = () => {
+    navigate({
+      to: '/messages/$channel',
+      params: { channel },
+      search: { type: typeFilter || undefined, highlight: undefined },
       replace: true,
     });
   };
@@ -34,6 +44,12 @@ export function MessagesPage() {
       agents={agents.data ?? null}
       typeFilter={typeFilter ?? ''}
       onTypeFilterChange={handleTypeFilterChange}
+      totalCount={messages.totalCount}
+      hasOlder={messages.hasOlder}
+      loadingOlder={messages.loadingOlder}
+      onLoadOlder={messages.loadOlder}
+      highlightMessageId={highlightId}
+      onHighlightConsumed={handleHighlightConsumed}
     />
   );
 }

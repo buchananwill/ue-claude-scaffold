@@ -42,7 +42,7 @@ export function DashboardLayout() {
             label="Messages"
             leftSection={<IconMessage size={16} />}
             active={isMessages}
-            onClick={() => router.navigate({ to: '/messages/$channel', params: { channel: 'general' }, search: { type: undefined } })}
+            onClick={() => router.navigate({ to: '/messages/$channel', params: { channel: 'general' }, search: { type: undefined, highlight: undefined } })}
             style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
             px="md"
           />
