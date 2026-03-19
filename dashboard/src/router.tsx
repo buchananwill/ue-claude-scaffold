@@ -8,6 +8,7 @@ import { OverviewPage } from './pages/OverviewPage.tsx';
 import { MessagesPage } from './pages/MessagesPage.tsx';
 import { TaskDetailPage } from './pages/TaskDetailPage.tsx';
 import { AgentDetailPage } from './pages/AgentDetailPage.tsx';
+import { BuildLogPage } from './pages/BuildLogPage.tsx';
 
 const rootRoute = createRootRoute({
   component: DashboardLayout,
@@ -46,8 +47,11 @@ const agentDetailRoute = createRoute({
   component: AgentDetailPage,
 });
 
-// Future routes (shape only — implement later)
-// /logs → BuildLogPage
+const logsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/logs',
+  component: BuildLogPage,
+});
 
 const routeTree = rootRoute.addChildren([
   overviewRoute,
@@ -55,6 +59,7 @@ const routeTree = rootRoute.addChildren([
   messagesChannelRoute,
   taskDetailRoute,
   agentDetailRoute,
+  logsRoute,
 ]);
 
 export const router = createRouter({ routeTree });

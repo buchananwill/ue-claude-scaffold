@@ -23,74 +23,74 @@ export function TaskDetailPage() {
         <Group gap="sm" mb="md">
           <Title order={3}>#{task.id} {task.title}</Title>
           <StatusBadge value={task.status} />
-          {task.priority > 0 && <Text size="sm" c="dimmed">Priority {task.priority}</Text>}
+          <Text size="sm" c="dimmed">Priority {task.priority}</Text>
         </Group>
 
         <Stack gap="sm">
-          {task.description && (
-            <div>
-              <Text size="xs" fw={600} c="dimmed">Description</Text>
-              <Text size="sm">{task.description}</Text>
-            </div>
-          )}
+          <div>
+            <Text size="xs" fw={600} c="dimmed">Description</Text>
+            {task.description
+              ? <Text size="sm">{task.description}</Text>
+              : <Text size="sm" c="dimmed" fs="italic">&mdash;</Text>}
+          </div>
 
-          {task.acceptanceCriteria && (
-            <div>
-              <Text size="xs" fw={600} c="dimmed">Acceptance Criteria</Text>
-              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{task.acceptanceCriteria}</Text>
-            </div>
-          )}
+          <div>
+            <Text size="xs" fw={600} c="dimmed">Acceptance Criteria</Text>
+            {task.acceptanceCriteria
+              ? <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{task.acceptanceCriteria}</Text>
+              : <Text size="sm" c="dimmed" fs="italic">&mdash;</Text>}
+          </div>
 
-          {task.progressLog && (
-            <div>
-              <Text size="xs" fw={600} c="dimmed">Progress Log</Text>
-              <Code block>{task.progressLog}</Code>
-            </div>
-          )}
+          <div>
+            <Text size="xs" fw={600} c="dimmed">Progress Log</Text>
+            {task.progressLog
+              ? <Code block>{task.progressLog}</Code>
+              : <Text size="sm" c="dimmed" fs="italic">&mdash;</Text>}
+          </div>
 
-          {task.result != null && (
-            <div>
-              <Text size="xs" fw={600} c="dimmed">Result</Text>
-              <Code block>{JSON.stringify(task.result, null, 2)}</Code>
-            </div>
-          )}
+          <div>
+            <Text size="xs" fw={600} c="dimmed">Result</Text>
+            {task.result != null
+              ? <Code block>{JSON.stringify(task.result, null, 2)}</Code>
+              : <Text size="sm" c="dimmed" fs="italic">&mdash;</Text>}
+          </div>
 
-          {task.files && task.files.length > 0 && (
-            <div>
-              <Text size="xs" fw={600} c="dimmed">Files</Text>
-              <Stack gap={2}>
-                {task.files.map((f) => (
-                  <Text key={f} size="sm" ff="monospace">{f}</Text>
-                ))}
-              </Stack>
-            </div>
-          )}
+          <div>
+            <Text size="xs" fw={600} c="dimmed">Files</Text>
+            {task.files && task.files.length > 0
+              ? <Stack gap={2}>
+                  {task.files.map((f) => (
+                    <Text key={f} size="sm" ff="monospace">{f}</Text>
+                  ))}
+                </Stack>
+              : <Text size="sm" c="dimmed" fs="italic">(none)</Text>}
+          </div>
 
-          {task.sourcePath && (
-            <div>
-              <Text size="xs" fw={600} c="dimmed">Source Path</Text>
-              <Text size="sm" ff="monospace">{task.sourcePath}</Text>
-            </div>
-          )}
+          <div>
+            <Text size="xs" fw={600} c="dimmed">Source Path</Text>
+            {task.sourcePath
+              ? <Text size="sm" ff="monospace">{task.sourcePath}</Text>
+              : <Text size="sm" c="dimmed" fs="italic">&mdash;</Text>}
+          </div>
 
           <Group gap="md">
             <Text size="xs" c="dimmed">Created: <RelativeTime date={task.createdAt} /></Text>
-            {task.claimedAt && (
-              <Text size="xs" c="dimmed">Claimed: <RelativeTime date={task.claimedAt} /></Text>
-            )}
-            {task.completedAt && (
-              <Text size="xs" c="dimmed">Completed: <RelativeTime date={task.completedAt} /></Text>
-            )}
+            <Text size="xs" c="dimmed">Claimed: {task.claimedAt
+              ? <RelativeTime date={task.claimedAt} />
+              : <Text span size="xs" c="dimmed" fs="italic">&mdash;</Text>}</Text>
+            <Text size="xs" c="dimmed">Completed: {task.completedAt
+              ? <RelativeTime date={task.completedAt} />
+              : <Text span size="xs" c="dimmed" fs="italic">&mdash;</Text>}</Text>
           </Group>
 
-          {task.claimedBy && (
-            <div>
-              <Text size="xs" fw={600} c="dimmed">Claimed By</Text>
-              <Link to="/agents/$agentName" params={{ agentName: task.claimedBy }} style={{ fontSize: '0.875rem' }}>
-                {task.claimedBy}
-              </Link>
-            </div>
-          )}
+          <div>
+            <Text size="xs" fw={600} c="dimmed">Claimed By</Text>
+            {task.claimedBy
+              ? <Link to="/agents/$agentName" params={{ agentName: task.claimedBy }} style={{ fontSize: '0.875rem' }}>
+                  {task.claimedBy}
+                </Link>
+              : <Text size="sm" c="dimmed" fs="italic">&mdash;</Text>}
+          </div>
         </Stack>
       </Card>
     </Stack>

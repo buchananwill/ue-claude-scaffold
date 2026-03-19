@@ -730,6 +730,266 @@ describe('tasks routes', () => {
     assert.ok(res.json().message.includes('source_path'));
   });
 
+  // ── POST /tasks/claim-next ─────────────────────────────────────────
+
+  it('POST /tasks/claim-next returns null task when no tasks exist', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.task, null);
+    assert.equal(body.pending, 0);
+    assert.equal(body.blocked, 0);
+  });
+
+  it('POST /tasks/claim-next returns the highest-priority pending task', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Low priority', priority: 1 },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'High priority', priority: 10 },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().task.title, 'High priority');
+  });
+
+  it('POST /tasks/claim-next returns older task when priorities are equal', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'First', priority: 5 },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Second', priority: 5 },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().task.title, 'First');
+  });
+
+  it('POST /tasks/claim-next prefers task with no file deps over task with file deps', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Has files', priority: 5, files: ['A.cpp'] },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'No files', priority: 5 },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().task.title, 'No files');
+  });
+
+  it('POST /tasks/claim-next skips tasks whose files are claimed by another agent', async () => {
+    // Create a task with files and claim those files via another task
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Blocker', files: ['Shared.cpp'] },
+    });
+    const blocker = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json()[0];
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${blocker.id}/claim`,
+      headers: { 'x-agent-name': 'agent-other' },
+    });
+
+    // Create a second task that uses the same file
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Blocked task', files: ['Shared.cpp'] },
+    });
+
+    // Also create an unblocked task
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Free task' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().task.title, 'Free task');
+  });
+
+  it('POST /tasks/claim-next returns task whose files are already owned by claiming agent', async () => {
+    // Create and claim a task to own the file
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'First task', files: ['Mine.cpp'] },
+    });
+    const first = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json()[0];
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${first.id}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${first.id}/complete`,
+      payload: { result: { summary: 'done' } },
+    });
+
+    // Create second task that uses the same file
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Self-overlap', files: ['Mine.cpp'] },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().task.title, 'Self-overlap');
+  });
+
+  it('POST /tasks/claim-next returns null with reason when all tasks are file-conflicted', async () => {
+    // Create and claim a task to own a file
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Blocker', files: ['Locked.cpp'] },
+    });
+    const blocker = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json()[0];
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${blocker.id}/claim`,
+      headers: { 'x-agent-name': 'agent-other' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${blocker.id}/complete`,
+      payload: { result: { summary: 'done' } },
+    });
+
+    // Create a pending task that depends on the locked file
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Blocked', files: ['Locked.cpp'] },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.task, null);
+    assert.equal(body.pending, 1);
+    assert.equal(body.blocked, 1);
+    assert.ok(body.reason.includes('file conflicts'));
+  });
+
+  it('POST /tasks/claim-next atomically claims the task and its files', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Atomic test', files: ['Atomic.cpp', 'Atomic.h'] },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(res.statusCode, 200);
+    const task = res.json().task;
+    assert.equal(task.status, 'claimed');
+    assert.equal(task.claimedBy, 'agent-1');
+
+    // Verify via GET
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${task.id}` });
+    assert.equal(get.json().status, 'claimed');
+    assert.equal(get.json().claimedBy, 'agent-1');
+  });
+
+  it('POST /tasks/claim-next prefers task with fewer new file locks', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Many files', priority: 5, files: ['A.cpp', 'B.cpp', 'C.cpp'] },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'One file', priority: 5, files: ['D.cpp'] },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().task.title, 'One file');
+  });
+
+  it('POST /tasks/claim-next two sequential calls do not return the same task', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Task A', priority: 5 },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Task B', priority: 5 },
+    });
+
+    const res1 = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    const res2 = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-2' },
+    });
+    assert.equal(res1.statusCode, 200);
+    assert.equal(res2.statusCode, 200);
+    assert.notEqual(res1.json().task.id, res2.json().task.id);
+  });
+
   it('PATCH /tasks/:id rejects unknown fields with 400', async () => {
     const post = await ctx.app.inject({
       method: 'POST',
@@ -745,5 +1005,173 @@ describe('tasks routes', () => {
     });
     assert.equal(patch.statusCode, 400);
     assert.ok(patch.json().message.includes('source_path'));
+  });
+
+  // ── claim-next edge cases ─────────────────────────────────────────
+
+  it('POST /tasks/claim-next without X-Agent-Name header defaults to unknown', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'No header task' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      // no x-agent-name header
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(body.task);
+    assert.equal(body.task.claimedBy, 'unknown');
+  });
+
+  it('POST /tasks/claim-next returns full formatted task with files array', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Full format', description: 'desc', priority: 7, files: ['Foo.cpp', 'Bar.h'] },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(res.statusCode, 200);
+    const task = res.json().task;
+    // Verify all expected fields exist
+    assert.equal(typeof task.id, 'number');
+    assert.equal(task.title, 'Full format');
+    assert.equal(task.description, 'desc');
+    assert.equal(task.priority, 7);
+    assert.equal(task.status, 'claimed');
+    assert.equal(task.claimedBy, 'agent-1');
+    assert.ok(task.claimedAt);
+    assert.ok(task.createdAt);
+    assert.equal(task.completedAt, null);
+    assert.equal(task.result, null);
+    assert.equal(task.progressLog, null);
+    assert.ok(Array.isArray(task.files));
+    assert.equal(task.files.length, 2);
+    assert.ok(task.files.includes('Foo.cpp'));
+    assert.ok(task.files.includes('Bar.h'));
+  });
+
+  it('POST /tasks/claim-next returns null when only non-pending tasks exist', async () => {
+    // Create a task, claim it, complete it -- no pending tasks left
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Already done' },
+    });
+    const id = post.json().id;
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/complete`,
+      payload: { result: { summary: 'done' } },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-2' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.task, null);
+    assert.equal(body.pending, 0);
+    assert.equal(body.blocked, 0);
+  });
+
+  it('POST /tasks/claim-next blocked count reflects only tasks blocked for the specific agent', async () => {
+    // agent-other claims a task with file Locked.cpp
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Locker', files: ['Locked.cpp'] },
+    });
+    const locker = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json()[0];
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${locker.id}/claim`,
+      headers: { 'x-agent-name': 'agent-other' },
+    });
+
+    // Two pending tasks: one blocked (uses Locked.cpp), one unblocked (uses Locked.cpp but also)
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Blocked for requester', files: ['Locked.cpp'] },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Free task' },
+    });
+
+    // agent-requester calls claim-next; should get Free task; blocked=1
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-requester' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().task.title, 'Free task');
+
+    // Now call again -- only the blocked task remains pending
+    const res2 = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-requester' },
+    });
+    assert.equal(res2.statusCode, 200);
+    assert.equal(res2.json().task, null);
+    assert.equal(res2.json().pending, 1);
+    assert.equal(res2.json().blocked, 1);
+
+    // But agent-other should NOT see it as blocked (they own Locked.cpp)
+    const res3 = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-other' },
+    });
+    assert.equal(res3.statusCode, 200);
+    // agent-other can claim it since they own the file
+    assert.equal(res3.json().task.title, 'Blocked for requester');
+  });
+
+  it('POST /tasks/claim-next skips claimed tasks even without file deps', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Already claimed' },
+    });
+    const first = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json()[0];
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${first.id}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Still pending' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/claim-next',
+      headers: { 'x-agent-name': 'agent-2' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().task.title, 'Still pending');
   });
 });

@@ -52,6 +52,17 @@ export interface SearchResults {
   agents: Agent[];
 }
 
+export interface BuildRecord {
+  id: number;
+  agent: string;
+  type: 'build' | 'test';
+  startedAt: string;
+  durationMs: number | null;
+  success: boolean | null;
+  output: string | null;
+  stderr: string | null;
+}
+
 export interface UbtStatus {
   holder: string | null;
   acquiredAt: string | null;

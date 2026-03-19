@@ -22,6 +22,7 @@ Options:
   --agent-type TYPE   Agent type (default: from .env or "container-orchestrator")
   --verbosity LEVEL   Message board verbosity: quiet, normal, verbose (default: normal)
   --worker            Run in task-queue worker mode (no plan file needed)
+  --pump              Run in pump mode (multi-task worker with claim-next)
   --fresh             Delete and re-clone the bare repo (clean start)
   --dry-run           Print resolved configuration and exit without launching
   --help              Show this help message and exit
@@ -32,6 +33,7 @@ Examples:
   ./launch.sh --plan plans/add-inventory.md
   ./launch.sh --agent-name agent-2 --worker
   ./launch.sh --worker --agent-name worker-1
+  ./launch.sh --pump --agent-name pump-1
   ./launch.sh --verbosity verbose --plan plans/tricky-refactor.md
   ./launch.sh --dry-run
 USAGE
@@ -44,6 +46,7 @@ _CLI_AGENT_TYPE=""
 _CLI_VERBOSITY=""
 _CLI_DRY_RUN=false
 _CLI_WORKER=false
+_CLI_PUMP=false
 _CLI_FRESH=false
 
 while [[ $# -gt 0 ]]; do
@@ -58,6 +61,8 @@ while [[ $# -gt 0 ]]; do
       _CLI_VERBOSITY="$2"; shift 2 ;;
     --worker)
       _CLI_WORKER=true; shift ;;
+    --pump)
+      _CLI_PUMP=true; shift ;;
     --fresh)
       _CLI_FRESH=true; shift ;;
     --dry-run)
@@ -108,11 +113,16 @@ AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
 AGENT_TYPE="${_CLI_AGENT_TYPE:-${AGENT_TYPE:-container-orchestrator}}"
 MAX_TURNS="${MAX_TURNS:-200}"
 PLAN_PATH="${_CLI_PLAN}"
-if [ "$_CLI_WORKER" = "true" ]; then
+if [ "$_CLI_PUMP" = "true" ]; then
+    WORKER_MODE=true
+    WORKER_SINGLE_TASK=false
+    AGENT_MODE=pump
+elif [ "$_CLI_WORKER" = "true" ]; then
     WORKER_MODE=true
 else
     WORKER_MODE="${WORKER_MODE:-false}"
 fi
+AGENT_MODE="${AGENT_MODE:-single}"
 WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
 LOG_VERBOSITY="${_CLI_VERBOSITY:-${LOG_VERBOSITY:-normal}}"
@@ -211,6 +221,7 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo "  WORKER_MODE:      $WORKER_MODE"
   echo "  WORKER_POLL_INT:  $WORKER_POLL_INTERVAL"
   echo "  WORKER_SINGLE:    $WORKER_SINGLE_TASK"
+  echo "  AGENT_MODE:       $AGENT_MODE"
   echo "  LOG_VERBOSITY:    $LOG_VERBOSITY"
   echo "  FRESH:            $_CLI_FRESH"
   echo ""
@@ -291,6 +302,7 @@ fi
 export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS LOG_VERBOSITY
 export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH
 export WORKER_MODE WORKER_POLL_INTERVAL WORKER_SINGLE_TASK
+export AGENT_MODE="${AGENT_MODE:-single}"
 export SERVER_PORT="${SERVER_PORT:-9100}"
 
 # ── Launch ───────────────────────────────────────────────────────────────────

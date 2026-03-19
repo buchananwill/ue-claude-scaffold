@@ -362,6 +362,81 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     return formatTaskWithFiles(row);
   });
 
+  // POST /tasks/claim-next — atomically find and claim the best available task
+  const claimNextCandidate = db.prepare(`
+    SELECT t.id,
+      -- Guard against LEFT JOIN null row: without this, tasks with zero file deps
+      -- would score new_locks=1 instead of 0 (NULL IS NULL = true in the CASE)
+      COUNT(CASE WHEN tf.file_path IS NOT NULL AND f.claimant IS NULL THEN 1 END) as new_locks
+    FROM tasks t
+    LEFT JOIN task_files tf ON tf.task_id = t.id
+    LEFT JOIN files f ON f.path = tf.file_path
+    WHERE t.status = 'pending'
+      AND NOT EXISTS (
+        SELECT 1 FROM task_files tf2
+        JOIN files f2 ON f2.path = tf2.file_path
+        WHERE tf2.task_id = t.id
+          AND f2.claimant IS NOT NULL
+          AND f2.claimant != ?
+      )
+    GROUP BY t.id
+    ORDER BY new_locks ASC, t.priority DESC, t.id ASC
+    LIMIT 1
+  `);
+
+  const countPending = db.prepare(
+    `SELECT COUNT(*) as count FROM tasks WHERE status = 'pending'`
+  );
+
+  const countBlocked = db.prepare(`
+    SELECT COUNT(DISTINCT t.id) as count
+    FROM tasks t
+    JOIN task_files tf ON tf.task_id = t.id
+    JOIN files f ON f.path = tf.file_path
+    WHERE t.status = 'pending'
+      AND f.claimant IS NOT NULL
+      AND f.claimant != ?
+  `);
+
+  fastify.post('/tasks/claim-next', async (request) => {
+    const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
+
+    const result = db.transaction(() => {
+      const candidate = claimNextCandidate.get(agent) as
+        | { id: number; new_locks: number }
+        | undefined;
+
+      if (!candidate) {
+        const { count: pendingCount } = countPending.get() as { count: number };
+        if (pendingCount === 0) {
+          return { task: null, pending: 0, blocked: 0 };
+        }
+        const { count: blockedCount } = countBlocked.get(agent) as { count: number };
+        return {
+          task: null,
+          pending: pendingCount,
+          blocked: blockedCount,
+          reason: 'all pending tasks have file conflicts',
+        };
+      }
+
+      // Claim the task
+      claimTask.run({ id: candidate.id, agent });
+
+      // Claim its files
+      const deps = (getTaskFiles.all(candidate.id) as { file_path: string }[])
+        .map(r => r.file_path);
+      for (const dep of deps) {
+        claimFilesForAgent.run(agent, dep);
+      }
+
+      const row = getTaskById.get({ id: candidate.id }) as TaskRow;
+      return { task: formatTaskWithFiles(row) };
+    })();
+
+    return result;
+  });
+
   // POST /tasks/:id/claim
   fastify.post<{
     Params: { id: string };

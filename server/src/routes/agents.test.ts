@@ -128,6 +128,30 @@ describe('agents routes', () => {
     assert.equal(del.statusCode, 404);
   });
 
+  it('POST /agents/register with mode pump returns mode pump', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'pump-agent', worktree: '/tmp/wt1', mode: 'pump' },
+    });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/agents/pump-agent' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().mode, 'pump');
+  });
+
+  it('POST /agents/register without mode defaults to single', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'default-agent', worktree: '/tmp/wt1' },
+    });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/agents/default-agent' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().mode, 'single');
+  });
+
   it('DELETE /agents deregisters all agents', async () => {
     await ctx.app.inject({
       method: 'POST',

@@ -9,7 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (4);
+INSERT OR IGNORE INTO schema_version(version) VALUES (6);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS agents (
   worktree    TEXT NOT NULL,
   plan_doc    TEXT,
   status      TEXT NOT NULL DEFAULT 'idle',
+  mode        TEXT NOT NULL DEFAULT 'single',
   registered_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -109,6 +110,13 @@ export function openDb(dbPath: string): Database.Database {
   instance.pragma('foreign_keys = ON');
 
   instance.exec(SCHEMA_SQL);
+
+  // Migration: add mode column to agents for existing DBs (v4 -> v5)
+  try { instance.exec("ALTER TABLE agents ADD COLUMN mode TEXT NOT NULL DEFAULT 'single'"); } catch { /* column already exists */ }
+
+  // Migration: add output/stderr columns to build_history (v5 -> v6)
+  try { instance.exec("ALTER TABLE build_history ADD COLUMN output TEXT"); } catch { /* column already exists */ }
+  try { instance.exec("ALTER TABLE build_history ADD COLUMN stderr TEXT"); } catch { /* column already exists */ }
 
   db = instance;
   return instance;

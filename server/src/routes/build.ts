@@ -168,7 +168,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const histId = recordBuildStart(agentForHistory, 'build');
     const t0 = Date.now();
     const result = await runCommand(command, scriptArgs, cwd, config.build.buildTimeoutMs);
-    recordBuildEnd(histId, Date.now() - t0, result.success);
+    recordBuildEnd(histId, Date.now() - t0, result.success, result.output, result.stderr);
     return result;
   });
 
@@ -203,7 +203,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const histId = recordBuildStart(agentForHistory, 'test');
     const t0 = Date.now();
     const result = await runCommand(command, scriptArgs, cwd, config.build.testTimeoutMs);
-    recordBuildEnd(histId, Date.now() - t0, result.success);
+    recordBuildEnd(histId, Date.now() - t0, result.success, result.output, result.stderr);
     return result;
   });
 };

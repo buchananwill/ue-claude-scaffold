@@ -21,7 +21,7 @@ function initBuildHistoryStatements(): void {
     'INSERT INTO build_history (agent, type) VALUES (@agent, @type)'
   );
   updateBuildHistory = db.prepare(
-    'UPDATE build_history SET duration_ms = @durationMs, success = @success WHERE id = @id'
+    'UPDATE build_history SET duration_ms = @durationMs, success = @success, output = @output, stderr = @stderr WHERE id = @id'
   );
   avgBuildDuration = db.prepare(
     `SELECT AVG(duration_ms) as avg_ms FROM (
@@ -51,8 +51,8 @@ export function recordBuildStart(agent: string, type: 'build' | 'test'): number 
   return Number(insertBuildHistory.run({ agent, type }).lastInsertRowid);
 }
 
-export function recordBuildEnd(id: number, durationMs: number, success: boolean): void {
-  updateBuildHistory.run({ id, durationMs, success: success ? 1 : 0 });
+export function recordBuildEnd(id: number, durationMs: number, success: boolean, output: string, stderr: string): void {
+  updateBuildHistory.run({ id, durationMs, success: success ? 1 : 0, output, stderr });
 }
 
 export function getEstimatedBuildMs(type?: string): number {

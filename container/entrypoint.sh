@@ -10,6 +10,7 @@ SERVER_URL="${SERVER_URL:-http://host.docker.internal:9100}"
 WORKER_MODE="${WORKER_MODE:-false}"
 WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
+AGENT_MODE="${AGENT_MODE:-single}"
 LOG_VERBOSITY="${LOG_VERBOSITY:-normal}"
 
 echo "=== Claude Code Docker Worker ==="
@@ -93,7 +94,7 @@ trap _shutdown EXIT
 REG_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SERVER_URL}/agents/register" \
     -H "Content-Type: application/json" \
     -H "X-Agent-Name: ${AGENT_NAME}" \
-    -d "{\"name\": \"${AGENT_NAME}\", \"worktree\": \"${WORK_BRANCH}\"}" \
+    -d "{\"name\": \"${AGENT_NAME}\", \"worktree\": \"${WORK_BRANCH}\", \"mode\": \"${AGENT_MODE}\"}" \
     --max-time 10 2>/dev/null) || REG_STATUS="000"
 
 if [ "$REG_STATUS" != "200" ]; then
@@ -108,67 +109,52 @@ echo "Registered with coordination server."
 poll_and_claim_task() {
     local max_attempts=60
     local attempt=0
-    local -a skip_ids=()
 
     while [ $attempt -lt $max_attempts ]; do
         attempt=$((attempt + 1))
 
-        # Fetch a batch of pending tasks
-        TASK_JSON=$(curl -sf "${SERVER_URL}/tasks?status=pending&limit=10" \
-            --max-time 10 2>/dev/null) || TASK_JSON="[]"
+        # Use claim-next endpoint — server picks the best task atomically
+        local response
+        response=$(curl -s -w "\n%{http_code}" \
+            -X POST "${SERVER_URL}/tasks/claim-next" \
+            -H "Content-Type: application/json" \
+            -H "X-Agent-Name: ${AGENT_NAME}" \
+            --max-time 10) || response=$'\n000'
+        local http_status="${response##*$'\n'}"
+        local body="${response%$'\n'*}"
 
-        TASK_COUNT=$(echo "$TASK_JSON" | jq 'length')
-        local claimed=false
-
-        if [ "$TASK_COUNT" -gt 0 ]; then
-            # Iterate through the batch, skipping already-failed IDs
-            for i in $(seq 0 $((TASK_COUNT - 1))); do
-                local task_id=$(echo "$TASK_JSON" | jq -r ".[$i].id")
-
-                # Check if this task is in the skip list
-                local should_skip=false
-                for skip_id in ${skip_ids[@]+"${skip_ids[@]}"}; do
-                    if [ "$skip_id" = "$task_id" ]; then
-                        should_skip=true
-                        break
-                    fi
-                done
-                if [ "$should_skip" = "true" ]; then
-                    continue
-                fi
-
-                CURRENT_TASK_ID="$task_id"
-                CURRENT_TASK_TITLE=$(echo "$TASK_JSON" | jq -r ".[$i].title // \"Untitled\"")
-                CURRENT_TASK_DESC=$(echo "$TASK_JSON" | jq -r ".[$i].description // \"\"")
-                CURRENT_TASK_AC=$(echo "$TASK_JSON" | jq -r ".[$i].acceptanceCriteria // \"None specified\"")
-
-                # Try to claim — capture BOTH status code and response body
-                local claim_response
-                local claim_status
-                claim_response=$(curl -s -w "\n%{http_code}" \
-                    -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/claim" \
-                    -H "X-Agent-Name: ${AGENT_NAME}" \
-                    --max-time 10) || claim_response=$'\n000'
-                claim_status="${claim_response##*$'\n'}"
-                local claim_body="${claim_response%$'\n'*}"
-
-                if [ "$claim_status" = "200" ]; then
-                    echo "Claimed task #${CURRENT_TASK_ID}: ${CURRENT_TASK_TITLE}"
-                    return 0
-                else
-                    # Extract the server's actual error message
-                    local err_msg
-                    err_msg=$(echo "$claim_body" | jq -r '.message // "unknown error"' 2>/dev/null) || err_msg="unknown error"
-                    echo "Task #${CURRENT_TASK_ID} claim failed (HTTP ${claim_status}): ${err_msg}"
-                    skip_ids+=("$task_id")
-                    sleep 1
-                fi
-            done
+        if [ "$http_status" != "200" ]; then
+            echo "claim-next request failed (HTTP ${http_status})"
+            sleep "$WORKER_POLL_INTERVAL"
+            continue
         fi
 
-        # If we got here, either no tasks or all tasks in batch were skipped/failed
+        local task_json
+        task_json=$(echo "$body" | jq -r '.task // empty')
+
+        if [ -n "$task_json" ] && [ "$task_json" != "null" ]; then
+            CURRENT_TASK_ID=$(echo "$body" | jq -r '.task.id')
+            CURRENT_TASK_TITLE=$(echo "$body" | jq -r '.task.title // "Untitled"')
+            CURRENT_TASK_DESC=$(echo "$body" | jq -r '.task.description // ""')
+            CURRENT_TASK_AC=$(echo "$body" | jq -r '.task.acceptanceCriteria // "None specified"')
+            echo "Claimed task #${CURRENT_TASK_ID}: ${CURRENT_TASK_TITLE}"
+            return 0
+        fi
+
+        # No task claimed — check why
+        local pending blocked
+        pending=$(echo "$body" | jq -r '.pending // 0')
+
+        if [ "$pending" = "0" ]; then
+            echo "No pending tasks remain. Pump complete."
+            _post_status "done"
+            return 1
+        fi
+
+        # Tasks exist but blocked by file ownership — wait for reconciliation
+        blocked=$(echo "$body" | jq -r '.blocked // 0')
         _post_status "idle"
-        echo "No claimable tasks. Polling again in ${WORKER_POLL_INTERVAL}s... (attempt ${attempt}/${max_attempts})"
+        echo "No claimable tasks (${pending} pending, ${blocked} blocked by file ownership). Waiting ${WORKER_POLL_INTERVAL}s... (${attempt}/${max_attempts})"
         sleep "$WORKER_POLL_INTERVAL"
     done
 
@@ -320,6 +306,22 @@ if [ "$WORKER_MODE" = "true" ] && [ "$WORKER_SINGLE_TASK" = "false" ]; then
         CURRENT_TASK_TITLE=""
         CURRENT_TASK_DESC=""
         CURRENT_TASK_AC=""
+
+        # Check if agent has been paused
+        AGENT_STATUS=$(curl -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
+            --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || AGENT_STATUS="unknown"
+        if [ "$AGENT_STATUS" = "paused" ]; then
+            echo "Agent is paused. Waiting for resume..."
+            while true; do
+                sleep "$WORKER_POLL_INTERVAL"
+                AGENT_STATUS=$(curl -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
+                    --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || AGENT_STATUS="unknown"
+                if [ "$AGENT_STATUS" != "paused" ]; then
+                    echo "Agent resumed (status: ${AGENT_STATUS})."
+                    break
+                fi
+            done
+        fi
 
         echo ""
         echo "=== Task complete (exit $TASK_EXIT). Polling for next task... ==="

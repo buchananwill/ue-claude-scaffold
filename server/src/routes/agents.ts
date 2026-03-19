@@ -6,6 +6,7 @@ export interface AgentRow {
   worktree: string;
   plan_doc: string | null;
   status: string;
+  mode: string;
   registered_at: string;
 }
 
@@ -15,14 +16,15 @@ export function formatAgent(row: AgentRow) {
     worktree: row.worktree,
     planDoc: row.plan_doc,
     status: row.status,
+    mode: row.mode,
     registeredAt: row.registered_at,
   };
 }
 
 const agentsPlugin: FastifyPluginAsync = async (fastify) => {
   const insertAgent = db.prepare(
-    `INSERT OR REPLACE INTO agents (name, worktree, plan_doc, status, registered_at)
-     VALUES (@name, @worktree, @planDoc, 'idle', CURRENT_TIMESTAMP)`
+    `INSERT OR REPLACE INTO agents (name, worktree, plan_doc, status, mode, registered_at)
+     VALUES (@name, @worktree, @planDoc, 'idle', @mode, CURRENT_TIMESTAMP)`
   );
 
   const allAgents = db.prepare('SELECT * FROM agents');
@@ -42,10 +44,10 @@ const agentsPlugin: FastifyPluginAsync = async (fastify) => {
   );
 
   fastify.post<{
-    Body: { name: string; worktree: string; planDoc?: string };
+    Body: { name: string; worktree: string; planDoc?: string; mode?: 'single' | 'pump' };
   }>('/agents/register', async (request) => {
-    const { name, worktree, planDoc } = request.body;
-    insertAgent.run({ name, worktree, planDoc: planDoc ?? null });
+    const { name, worktree, planDoc, mode } = request.body;
+    insertAgent.run({ name, worktree, planDoc: planDoc ?? null, mode: mode ?? 'single' });
     return { ok: true };
   });
 
