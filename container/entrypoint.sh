@@ -119,6 +119,7 @@ poll_and_claim_task() {
             -X POST "${SERVER_URL}/tasks/claim-next" \
             -H "Content-Type: application/json" \
             -H "X-Agent-Name: ${AGENT_NAME}" \
+            -d '{}' \
             --max-time 10) || response=$'\n000'
         local http_status="${response##*$'\n'}"
         local body="${response%$'\n'*}"
