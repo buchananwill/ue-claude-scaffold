@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
 
@@ -123,11 +124,15 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
      WHERE id = @id AND status IN ('completed', 'failed')`
   );
 
-  function getStagingWorktree(): string {
+  /** For task creation/edit validation (no agent context), use project path as canonical source. */
+  function getValidationWorktree(): string {
     return config.server.stagingWorktreePath ?? config.project.path;
   }
 
-  function getBareRepoPath(): string | undefined {
+  function getBareRepoPath(agentName?: string): string | undefined {
+    if (config.server.bareRepoRoot && agentName) {
+      return path.join(config.server.bareRepoRoot, `${agentName}.git`);
+    }
     return config.server.bareRepoPath;
   }
 
@@ -145,7 +150,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     // Validate sourcePath is committed in the staging worktree
     if (sourcePath) {
-      const worktree = getStagingWorktree();
+      const worktree = getValidationWorktree();
       if (!isCommittedInRepo(worktree, sourcePath)) {
         return reply.unprocessableEntity(
           `sourcePath '${sourcePath}' is not committed in the staging worktree (${worktree}). ` +
@@ -214,7 +219,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     if (task.source_path) {
-      const bareRepo = getBareRepoPath();
+      const bareRepo = getBareRepoPath(agent);
       if (bareRepo) {
         // Determine the branch from the agent's registration
         const agentRow = db.prepare('SELECT worktree FROM agents WHERE name = ?').get(agent) as
@@ -367,7 +372,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     if ('sourcePath' in body && typeof body.sourcePath === 'string') {
-      const worktree = getStagingWorktree();
+      const worktree = getValidationWorktree();
       if (!isCommittedInRepo(worktree, body.sourcePath)) {
         return reply.unprocessableEntity(
           `sourcePath '${body.sourcePath}' is not committed in the staging worktree (${worktree}). ` +
@@ -399,7 +404,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     if (row.source_path) {
-      const worktree = getStagingWorktree();
+      const worktree = getValidationWorktree();
       if (!isCommittedInRepo(worktree, row.source_path)) {
         return reply.unprocessableEntity(
           `sourcePath '${row.source_path}' is no longer committed in the staging worktree`

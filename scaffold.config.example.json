@@ -37,6 +37,8 @@
   "server": {
     "port": 9100,
     "ubtLockTimeoutMs": 600000,
+    "stagingWorktreeRoot": "",
+    "bareRepoRoot": "",
     "stagingWorktreePath": "",
     "bareRepoPath": ""
   },

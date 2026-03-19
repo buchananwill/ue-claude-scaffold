@@ -21,6 +21,8 @@ export interface ScaffoldConfig {
   server: {
     port: number;
     ubtLockTimeoutMs: number;
+    stagingWorktreeRoot?: string;
+    bareRepoRoot?: string;
     stagingWorktreePath?: string;
     bareRepoPath?: string;
   };
@@ -75,6 +77,8 @@ export function loadConfig(): ScaffoldConfig {
     server: {
       port: raw.server?.port ?? 9100,
       ubtLockTimeoutMs: raw.server?.ubtLockTimeoutMs ?? 600000,
+      stagingWorktreeRoot: raw.server?.stagingWorktreeRoot,
+      bareRepoRoot: raw.server?.bareRepoRoot,
       stagingWorktreePath: raw.server?.stagingWorktreePath,
       bareRepoPath: raw.server?.bareRepoPath,
     },
@@ -89,10 +93,12 @@ export function loadConfig(): ScaffoldConfig {
   if (!config.engine.path) missing.push('engine.path');
   if (!config.build.scriptPath) missing.push('build.scriptPath');
   if (!config.build.testScriptPath) missing.push('build.testScriptPath');
-  if (!config.server.stagingWorktreePath && !config.project.path) {
-    missing.push('server.stagingWorktreePath (or project.path as fallback)');
+  if (!config.server.stagingWorktreePath && !config.server.stagingWorktreeRoot && !config.project.path) {
+    missing.push('server.stagingWorktreeRoot or server.stagingWorktreePath (or project.path as fallback)');
   }
-  if (!config.server.bareRepoPath) missing.push('server.bareRepoPath');
+  if (!config.server.bareRepoPath && !config.server.bareRepoRoot) {
+    missing.push('server.bareRepoRoot or server.bareRepoPath');
+  }
 
   if (missing.length > 0) {
     throw new Error(

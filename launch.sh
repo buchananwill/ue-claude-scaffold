@@ -18,7 +18,6 @@ Launch a containerized Claude Code agent against your Unreal Engine project.
 
 Options:
   --agent-name NAME   Agent identifier (default: from .env or "agent-1")
-  --branch BRANCH     Git branch to work on (default: from .env or "main")
   --plan PATH         Path to a plan markdown file (copied to TASKS_PATH/prompt.md)
   --agent-type TYPE   Agent type (default: from .env or "container-orchestrator")
   --verbosity LEVEL   Message board verbosity: quiet, normal, verbose (default: normal)
@@ -27,9 +26,11 @@ Options:
   --dry-run           Print resolved configuration and exit without launching
   --help              Show this help message and exit
 
+Branch is determined automatically from the agent's staging worktree.
+
 Examples:
   ./launch.sh --plan plans/add-inventory.md
-  ./launch.sh --agent-name agent-2 --branch feature/ui --plan plans/ui-rework.md
+  ./launch.sh --agent-name agent-2 --worker
   ./launch.sh --worker --agent-name worker-1
   ./launch.sh --verbosity verbose --plan plans/tricky-refactor.md
   ./launch.sh --dry-run
@@ -38,7 +39,6 @@ USAGE
 
 # ── Parse CLI flags ──────────────────────────────────────────────────────────
 _CLI_AGENT_NAME=""
-_CLI_BRANCH=""
 _CLI_PLAN=""
 _CLI_AGENT_TYPE=""
 _CLI_VERBOSITY=""
@@ -50,8 +50,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent-name)
       _CLI_AGENT_NAME="$2"; shift 2 ;;
-    --branch)
-      _CLI_BRANCH="$2"; shift 2 ;;
     --plan)
       _CLI_PLAN="$2"; shift 2 ;;
     --agent-type)
@@ -94,18 +92,19 @@ _cfg="$SCRIPT_DIR/scaffold.config.json"
 UE_ENGINE_PATH="$(jq -r '.engine.path // empty' "$_cfg")"
 PROJECT_PATH="$(jq -r '.project.path // empty' "$_cfg")"
 BARE_REPO_PATH="$(jq -r '.server.bareRepoPath // empty' "$_cfg")"
+BARE_REPO_ROOT="$(jq -r '.server.bareRepoRoot // empty' "$_cfg")"
 TASKS_PATH="$(jq -r '.tasks.path // empty' "$_cfg")"
 STAGING_WORKTREE="$(jq -r '.server.stagingWorktreePath // empty' "$_cfg")"
+STAGING_WORKTREE_ROOT="$(jq -r '.server.stagingWorktreeRoot // empty' "$_cfg")"
 SERVER_PORT="$(jq -r '.server.port // 9100' "$_cfg")"
 BUILD_SCRIPT_NAME="$(jq -r '.build.scriptPath // "build.py"' "$_cfg" | xargs basename)"
 TEST_SCRIPT_NAME="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)"
 DEFAULT_TEST_FILTERS="$(jq -r '.build.defaultTestFilters // [] | join(" ")' "$_cfg")"
 
-CLONE_SOURCE="${STAGING_WORKTREE:-${PROJECT_PATH}}"
+# CLONE_SOURCE and BARE_REPO_PATH are resolved after AGENT_NAME is known (below)
 
 # ── Apply CLI overrides ─────────────────────────────────────────────────────
 AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
-WORK_BRANCH="${_CLI_BRANCH:-${WORK_BRANCH:-main}}"
 AGENT_TYPE="${_CLI_AGENT_TYPE:-${AGENT_TYPE:-container-orchestrator}}"
 MAX_TURNS="${MAX_TURNS:-200}"
 PLAN_PATH="${_CLI_PLAN}"
@@ -117,6 +116,35 @@ fi
 WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
 LOG_VERBOSITY="${_CLI_VERBOSITY:-${LOG_VERBOSITY:-normal}}"
+
+# ── Resolve per-agent paths (staging worktree + bare repo) ──────────────────
+# If root directories are configured, derive per-agent paths from AGENT_NAME.
+# Otherwise fall back to the single-path values (V2 backwards-compatible).
+if [[ -n "$STAGING_WORKTREE_ROOT" ]]; then
+  STAGING_WORKTREE="${STAGING_WORKTREE_ROOT}/${AGENT_NAME}"
+  if [[ ! -d "$STAGING_WORKTREE" ]]; then
+    echo "Error: Staging worktree for $AGENT_NAME not found at $STAGING_WORKTREE" >&2
+    echo "Create it first: git clone --branch <branch> <source> \"$STAGING_WORKTREE\"" >&2
+    exit 1
+  fi
+fi
+CLONE_SOURCE="${STAGING_WORKTREE:-${PROJECT_PATH}}"
+
+# Derive WORK_BRANCH from the staging worktree's current branch.
+# Falls back to WORK_BRANCH from .env or "main" for legacy single-path mode.
+if [[ -n "$STAGING_WORKTREE_ROOT" ]]; then
+  WORK_BRANCH="$(git -C "$CLONE_SOURCE" branch --show-current 2>/dev/null)" || true
+  if [[ -z "$WORK_BRANCH" ]]; then
+    echo "Error: Could not determine branch from staging worktree at $CLONE_SOURCE" >&2
+    exit 1
+  fi
+else
+  WORK_BRANCH="${WORK_BRANCH:-main}"
+fi
+
+if [[ -n "$BARE_REPO_ROOT" ]]; then
+  BARE_REPO_PATH="${BARE_REPO_ROOT}/${AGENT_NAME}.git"
+fi
 
 # Validate verbosity
 case "$LOG_VERBOSITY" in
@@ -133,12 +161,6 @@ if [[ -n "$PLAN_PATH" ]]; then
     exit 1
   fi
   PLAN_PATH="$(cd "$(dirname "$PLAN_PATH")" && pwd)/$(basename "$PLAN_PATH")"
-fi
-
-# ── Derive branch from plan filename if --plan given but --branch not ────────
-if [[ -n "$PLAN_PATH" && -z "$_CLI_BRANCH" ]]; then
-  _derived=$(basename "$PLAN_PATH" .md | tr '[:upper:]' '[:lower:]' | tr ' _' '-')
-  WORK_BRANCH="feature/$_derived"
 fi
 
 # ── Validate required vars ───────────────────────────────────────────────────

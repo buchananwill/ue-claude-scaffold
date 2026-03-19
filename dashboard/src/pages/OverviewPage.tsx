@@ -4,6 +4,7 @@ import { AgentsPanel } from '../components/AgentsPanel.tsx';
 import { UbtLockCard } from '../components/UbtLockCard.tsx';
 import { useAgents } from '../hooks/useAgents.ts';
 import { useTasks } from '../hooks/useTasks.ts';
+import { useTaskFilters } from '../hooks/useTaskFilters.ts';
 import { useUbtStatus } from '../hooks/useUbtStatus.ts';
 import { useState } from 'react';
 
@@ -11,6 +12,7 @@ export function OverviewPage() {
   const [taskFilter, setTaskFilter] = useState('');
   const agents = useAgents();
   const tasks = useTasks(taskFilter || undefined);
+  const taskFilters = useTaskFilters(tasks.data ?? []);
   const ubt = useUbtStatus();
 
   return (
@@ -23,6 +25,7 @@ export function OverviewPage() {
             isFetching={tasks.isFetching}
             statusFilter={taskFilter}
             onFilterChange={setTaskFilter}
+            filters={taskFilters}
           />
         </Card>
       </Grid.Col>

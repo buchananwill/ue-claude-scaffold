@@ -90,17 +90,23 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     return lock.holder;
   }
 
-  function getStagingWorktree(): string {
+  function getStagingWorktree(agentName: string | undefined): string {
+    if (config.server.stagingWorktreeRoot && agentName) {
+      return path.join(config.server.stagingWorktreeRoot, agentName);
+    }
     return config.server.stagingWorktreePath ?? config.project.path;
   }
 
-  function getBareRepoPath(): string {
+  function getBareRepoPath(agentName: string | undefined): string {
+    if (config.server.bareRepoRoot && agentName) {
+      return path.join(config.server.bareRepoRoot, `${agentName}.git`);
+    }
     return config.server.bareRepoPath ?? path.join(config.project.path, '..', 'repo.git');
   }
 
   async function syncWorktree(agentName: string | undefined): Promise<SpawnResult | null> {
-    const worktreePath = getStagingWorktree();
-    const bareRepo = getBareRepoPath();
+    const worktreePath = getStagingWorktree(agentName);
+    const bareRepo = getBareRepoPath(agentName);
 
     const agentRow = agentName
       ? (db.prepare('SELECT worktree FROM agents WHERE name = ?').get(agentName) as { worktree: string } | undefined)
@@ -155,7 +161,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     }
 
     const scriptPath = config.build.scriptPath;
-    const cwd = getStagingWorktree();
+    const cwd = getStagingWorktree(agentName);
     const { command, scriptArgs } = resolveScript(scriptPath, args);
 
     const agentForHistory = agentName ?? 'unknown';
@@ -190,7 +196,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       : config.build.defaultTestFilters;
 
     const scriptPath = config.build.testScriptPath;
-    const cwd = getStagingWorktree();
+    const cwd = getStagingWorktree(agentName);
     const { command, scriptArgs } = resolveScript(scriptPath, filters);
 
     const agentForHistory = agentName ?? 'unknown';
