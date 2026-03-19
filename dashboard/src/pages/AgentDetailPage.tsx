@@ -18,7 +18,8 @@ export function AgentDetailPage() {
   const { data: agent, isLoading, error } = useAgent(agentName);
   const tasks = useTasks();
   const agents = useAgents();
-  const messages = useMessages(agentName);
+  const [typeFilter, setTypeFilter] = useState('');
+  const messages = useMessages(agentName, typeFilter);
   const [statusFilter, setStatusFilter] = useState('');
 
   const agentTasks = useMemo(() => {
@@ -73,6 +74,8 @@ export function AgentDetailPage() {
               onChannelChange={() => {}}
               agents={agents.data ?? null}
               hideSelector
+              typeFilter={typeFilter}
+              onTypeFilterChange={setTypeFilter}
             />
           </Card>
         </Grid.Col>

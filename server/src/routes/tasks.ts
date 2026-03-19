@@ -186,14 +186,17 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
      WHERE path = ? AND claimant IS NULL`
   );
 
+  const getFileConflicts = db.prepare(
+    `SELECT f.path, f.claimant FROM task_files tf
+     JOIN files f ON f.path = tf.file_path
+     WHERE tf.task_id = ? AND f.claimant IS NOT NULL AND f.claimant != ?`
+  );
+
   function checkAndClaimFiles(taskId: number, agent: string): ConflictInfo[] | null {
     const deps = (getTaskFiles.all(taskId) as { file_path: string }[]).map(r => r.file_path);
     if (deps.length === 0) return null;
 
-    const placeholders = deps.map(() => '?').join(', ');
-    const conflictRows = db.prepare(
-      `SELECT path, claimant FROM files WHERE path IN (${placeholders}) AND claimant IS NOT NULL AND claimant != ?`
-    ).all(...deps, agent) as { path: string; claimant: string }[];
+    const conflictRows = getFileConflicts.all(taskId, agent) as { path: string; claimant: string }[];
 
     if (conflictRows.length > 0) {
       return conflictRows.map(r => ({ file: r.path, claimant: r.claimant }));
@@ -397,28 +400,25 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    let conflicts: ConflictInfo[] | undefined;
-
     const result = db.transaction(() => {
       const ownershipResult = checkAndClaimFiles(id, agent);
       if (ownershipResult !== null && ownershipResult.length > 0) {
-        conflicts = ownershipResult;
-        return false;
+        return { ok: false as const, conflicts: ownershipResult };
       }
       const info = claimTask.run({ id, agent });
-      return info.changes > 0;
+      return { ok: info.changes > 0, conflicts: undefined };
     })();
 
-    if (conflicts && conflicts.length > 0) {
+    if (!result.ok && result.conflicts) {
       return reply.code(409).send({
         statusCode: 409,
         error: 'Conflict',
         message: 'File ownership conflict — files are owned by another agent and cannot be claimed until reconciliation',
-        conflicts,
+        conflicts: result.conflicts,
       });
     }
 
-    if (result) {
+    if (result.ok) {
       return { ok: true };
     }
     return reply.conflict('task was claimed by another agent');

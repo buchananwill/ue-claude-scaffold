@@ -5,7 +5,7 @@ import { usePollInterval } from './usePollInterval.tsx';
 
 const MAX_MESSAGES = 1000;
 
-export function useMessages(channel: string) {
+export function useMessages(channel: string, typeFilter = '') {
   const { intervalMs } = usePollInterval();
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +22,7 @@ export function useMessages(channel: string) {
     const fetchNew = () => {
       const since = cursorRef.current;
       apiFetch<Message[]>(
-        `/messages/${encodeURIComponent(channel)}?since=${since}`,
+        `/messages/${encodeURIComponent(channel)}?since=${since}${typeFilter ? `&type=${encodeURIComponent(typeFilter)}` : ''}`,
         ac.signal,
       )
         .then((newMsgs) => {
@@ -54,7 +54,7 @@ export function useMessages(channel: string) {
       ac.abort();
       clearInterval(id);
     };
-  }, [channel, intervalMs]);
+  }, [channel, intervalMs, typeFilter]);
 
   return { messages, error, loading };
 }

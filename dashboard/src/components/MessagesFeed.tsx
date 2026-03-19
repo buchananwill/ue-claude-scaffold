@@ -1,4 +1,4 @@
-import { Stack, Select, ScrollArea, Group, Text, Code, Box } from '@mantine/core';
+import { Stack, Select, ScrollArea, Group, Text, Code, Box, Chip } from '@mantine/core';
 import { useRef, useEffect, useMemo } from 'react';
 import dayjs from 'dayjs';
 import type { Agent, Message } from '../api/types.ts';
@@ -12,7 +12,11 @@ interface MessagesFeedProps {
   onChannelChange: (c: string) => void;
   agents: Agent[] | null;
   hideSelector?: boolean;
+  typeFilter: string;
+  onTypeFilterChange: (t: string) => void;
 }
+
+const KNOWN_TYPES = ['info', 'progress', 'build_start', 'build_end', 'test_start', 'test_end', 'error', 'warning'];
 
 export function MessagesFeed({
   messages,
@@ -22,6 +26,8 @@ export function MessagesFeed({
   onChannelChange,
   agents,
   hideSelector,
+  typeFilter,
+  onTypeFilterChange,
 }: MessagesFeedProps) {
   const viewport = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
@@ -31,6 +37,10 @@ export function MessagesFeed({
     agents?.forEach((a) => set.add(a.name));
     return Array.from(set).map((c) => ({ value: c, label: c }));
   }, [agents]);
+  const dynamicTypes = useMemo(() => {
+    const seen = new Set(messages.map(m => m.type));
+    return Array.from(seen).filter(t => !KNOWN_TYPES.includes(t));
+  }, [messages]);
 
   useEffect(() => {
     sentinel.current?.scrollIntoView({ behavior: 'smooth' });
@@ -54,10 +64,18 @@ export function MessagesFeed({
         />
       )}
 
+      <Chip.Group value={typeFilter} onChange={(v) => onTypeFilterChange(typeof v === 'string' ? v : '')}>
+        <Group gap="xs" wrap="wrap">
+          <Chip value="" size="xs" variant="outline">All</Chip>
+          {KNOWN_TYPES.map(t => <Chip key={t} value={t} size="xs" variant="outline">{t}</Chip>)}
+          {dynamicTypes.map(t => <Chip key={t} value={t} size="xs" variant="outline">{t}</Chip>)}
+        </Group>
+      </Chip.Group>
+
       {error && <Text c="red" size="sm">{error}</Text>}
       {loading && messages.length === 0 && <Text c="dimmed" size="sm">Loading...</Text>}
 
-      <ScrollArea h="calc(100vh - 220px)" viewportRef={viewport}>
+      <ScrollArea h="calc(100vh - 260px)" viewportRef={viewport}>
         <Stack gap={4}>
           {messages.length === 0 && !loading && (
             <Text c="dimmed" ta="center" py="xl" size="sm">No messages in #{channel}</Text>

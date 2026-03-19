@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, useRouter } from '@tanstack/react-router';
 import { MessagesFeed } from '../components/MessagesFeed.tsx';
 import { useMessages } from '../hooks/useMessages.ts';
@@ -8,7 +9,8 @@ export function MessagesPage() {
   const channel = params.channel ?? 'general';
   const router = useRouter();
   const agents = useAgents();
-  const messages = useMessages(channel);
+  const [typeFilter, setTypeFilter] = useState('');
+  const messages = useMessages(channel, typeFilter);
 
   const handleChannelChange = (c: string) => {
     router.navigate({ to: '/messages/$channel', params: { channel: c } });
@@ -22,6 +24,8 @@ export function MessagesPage() {
       channel={channel}
       onChannelChange={handleChannelChange}
       agents={agents.data ?? null}
+      typeFilter={typeFilter}
+      onTypeFilterChange={setTypeFilter}
     />
   );
 }
