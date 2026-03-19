@@ -483,6 +483,26 @@ When the user clicks a message search result, they should land on the right chan
   - Apply a flash highlight (background color transition, auto-clears after 2-3s)
   - Clear the URL search param after highlighting (so refresh doesn't re-flash)
 
+### 6C: Deregistered Agent Resilience
+
+The agent detail page (`/agents/$agentName`) fails with "Agent not found" when the agent is no longer registered (container stopped, `DELETE /agents/:name` called). But the agent's footprint — claimed tasks, posted messages, build history — is still in the database. The detail page should assemble from those footprints, not fail.
+
+#### Dashboard: graceful degradation when agent record is missing
+
+**File: `dashboard/src/pages/AgentDetailPage.tsx`** (modify)
+
+- When `useAgent(agentName)` returns 404 (error state), don't render a fatal error. Instead:
+  - Show the agent name in the header with a "(deregistered)" indicator or a dimmed badge
+  - Skip the fields that only exist in the agents table (status, worktree, registeredAt)
+  - Still render the Tasks section (tasks where `claimedBy === agentName`)
+  - Still render the Messages section (messages in the agent's channel)
+  - Still render Build History if Phase 4's build log component is available (builds where `agent === agentName`)
+- The page title should show the agent name regardless — it comes from the URL param, not the agent record
+
+#### No server changes needed
+
+Tasks, messages, and builds are already fetched independently via their own endpoints. The only thing that 404s is `GET /agents/:name` — the page just needs to tolerate that.
+
 ### Acceptance criteria
 
 - [ ] Initial message load fetches only the most recent 100, not the entire history
@@ -492,6 +512,8 @@ When the user clicks a message search result, they should land on the right chan
 - [ ] Search → click message result → navigates to channel, scrolls to message, flash-highlights it
 - [ ] Highlight auto-clears after 2-3 seconds
 - [ ] Refreshing the page does not re-trigger the highlight
+- [ ] Navigate to `/agents/deregistered-agent` where agent was deleted → page shows tasks/messages/builds, header says "(deregistered)"
+- [ ] Navigate to `/agents/active-agent` → page shows full agent info as before
 - [ ] `cd server && npm test` passes
 - [ ] `cd dashboard && npx tsc -b && npx vite build` passes
 
@@ -533,3 +555,4 @@ Recommended execution order for a single implementer: **2 → 1 → 5 → 3 → 
 10. Leave dashboard open 30+ min → memory stable (no unbounded growth)
 11. Messages page loads only recent 100 messages; "Load older" fetches more
 12. Search → click message → channel loads, message highlighted
+13. Navigate to agent detail for a deregistered agent → tasks, messages, builds still visible
