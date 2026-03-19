@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel);
+CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel, id);
 CREATE INDEX IF NOT EXISTS idx_messages_claimed ON messages(claimed_by);
 
 -- Task queue for worker mode

@@ -263,6 +263,161 @@ describe('messages routes', () => {
     assert.equal(messages[0].payload, 'in-b');
   });
 
+  // === Count endpoint tests ===
+
+  it('GET /messages/:channel/count returns total message count', async () => {
+    for (let i = 0; i < 5; i++) {
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/messages',
+        payload: { channel: 'test-channel', type: 'info', payload: `msg${i}` },
+      });
+    }
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/messages/test-channel/count',
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), { count: 5 });
+  });
+
+  it('GET /messages/:channel/count?type= filters by type', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/messages',
+      payload: { channel: 'tc', type: 'info', payload: 'a' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/messages',
+      payload: { channel: 'tc', type: 'error', payload: 'b' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/messages',
+      payload: { channel: 'tc', type: 'error', payload: 'c' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/messages/tc/count?type=error',
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), { count: 2 });
+  });
+
+  // === Pagination tests ===
+
+  it('default (no params) returns most recent messages ascending', async () => {
+    // Insert 5 messages
+    for (let i = 1; i <= 5; i++) {
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/messages',
+        payload: { channel: 'pg', type: 'info', payload: `msg${i}` },
+      });
+    }
+
+    const get = await ctx.app.inject({
+      method: 'GET',
+      url: '/messages/pg?limit=3',
+    });
+    const msgs = get.json();
+    assert.equal(msgs.length, 3);
+    // Should be most recent 3, in ascending order
+    assert.equal(msgs[0].payload, 'msg3');
+    assert.equal(msgs[1].payload, 'msg4');
+    assert.equal(msgs[2].payload, 'msg5');
+    // Ascending order
+    assert.ok(msgs[0].id < msgs[1].id);
+    assert.ok(msgs[1].id < msgs[2].id);
+  });
+
+  it('?before=<id> returns older messages ascending', async () => {
+    const ids: number[] = [];
+    for (let i = 1; i <= 5; i++) {
+      const r = await ctx.app.inject({
+        method: 'POST',
+        url: '/messages',
+        payload: { channel: 'pg', type: 'info', payload: `msg${i}` },
+      });
+      ids.push(r.json().id);
+    }
+
+    const get = await ctx.app.inject({
+      method: 'GET',
+      url: `/messages/pg?before=${ids[3]}&limit=2`,
+    });
+    const msgs = get.json();
+    assert.equal(msgs.length, 2);
+    // Should be the 2 most recent before ids[3], ascending
+    assert.equal(msgs[0].payload, 'msg2');
+    assert.equal(msgs[1].payload, 'msg3');
+    assert.ok(msgs[0].id < msgs[1].id);
+  });
+
+  it('?before=<id> returns fewer than limit when exhausted', async () => {
+    const ids: number[] = [];
+    for (let i = 1; i <= 3; i++) {
+      const r = await ctx.app.inject({
+        method: 'POST',
+        url: '/messages',
+        payload: { channel: 'pg', type: 'info', payload: `msg${i}` },
+      });
+      ids.push(r.json().id);
+    }
+
+    const get = await ctx.app.inject({
+      method: 'GET',
+      url: `/messages/pg?before=${ids[1]}&limit=10`,
+    });
+    const msgs = get.json();
+    // Only 1 message exists before ids[1]
+    assert.equal(msgs.length, 1);
+    assert.equal(msgs[0].payload, 'msg1');
+  });
+
+  it('?limit=N caps response', async () => {
+    for (let i = 1; i <= 10; i++) {
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/messages',
+        payload: { channel: 'pg', type: 'info', payload: `msg${i}` },
+      });
+    }
+
+    const get = await ctx.app.inject({
+      method: 'GET',
+      url: '/messages/pg?limit=4',
+    });
+    const msgs = get.json();
+    assert.equal(msgs.length, 4);
+  });
+
+  it('?since=<id> returns all messages after cursor without limit', async () => {
+    const ids: number[] = [];
+    for (let i = 1; i <= 10; i++) {
+      const r = await ctx.app.inject({
+        method: 'POST',
+        url: '/messages',
+        payload: { channel: 'pg', type: 'info', payload: `msg${i}` },
+      });
+      ids.push(r.json().id);
+    }
+
+    // Even with limit=2, since should return all after cursor
+    const get = await ctx.app.inject({
+      method: 'GET',
+      url: `/messages/pg?since=${ids[0]}&limit=2`,
+    });
+    const msgs = get.json();
+    // since ignores limit, returns all 9 remaining
+    assert.equal(msgs.length, 9);
+    assert.equal(msgs[0].payload, 'msg2');
+    assert.equal(msgs[8].payload, 'msg10');
+  });
+
   it('POST /messages/:id/resolve sets result and resolved_at', async () => {
     const post = await ctx.app.inject({
       method: 'POST',

@@ -81,27 +81,62 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
 
   fastify.get<{
     Params: { channel: string };
-    Querystring: { since?: string; type?: string };
-  }>('/messages/:channel', async (request) => {
+    Querystring: { type?: string };
+  }>('/messages/:channel/count', async (request) => {
     const { channel } = request.params;
-    const { since, type } = request.query;
+    const { type } = request.query;
 
-    let sql = 'SELECT * FROM messages WHERE channel = ?';
+    let sql = 'SELECT COUNT(*) as count FROM messages WHERE channel = ?';
     const params: unknown[] = [channel];
 
-    if (since) {
-      sql += ' AND id > ?';
-      params.push(Number(since));
-    }
     if (type) {
       sql += ' AND type = ?';
       params.push(type);
     }
 
-    sql += ' ORDER BY id ASC';
+    const row = db.prepare(sql).get(...params) as { count: number };
+    return { count: row.count };
+  });
+
+  fastify.get<{
+    Params: { channel: string };
+    Querystring: { since?: string; before?: string; type?: string; limit?: string };
+  }>('/messages/:channel', async (request) => {
+    const { channel } = request.params;
+    const { since, before, type, limit } = request.query;
+    const pageSize = Math.min(Math.max(Number(limit) || 100, 1), 500);
+
+    let sql = 'SELECT * FROM messages WHERE channel = ?';
+    const params: unknown[] = [channel];
+
+    if (since) {
+      // Polling path: return all messages after cursor, no limit
+      sql += ' AND id > ?';
+      params.push(Number(since));
+      if (type) {
+        sql += ' AND type = ?';
+        params.push(type);
+      }
+      sql += ' ORDER BY id ASC';
+      const rows = db.prepare(sql).all(...params) as MessageRow[];
+      return rows.map(formatMessage);
+    }
+
+    if (before) {
+      sql += ' AND id < ?';
+      params.push(Number(before));
+    }
+
+    if (type) {
+      sql += ' AND type = ?';
+      params.push(type);
+    }
+
+    sql += ' ORDER BY id DESC LIMIT ?';
+    params.push(pageSize);
 
     const rows = db.prepare(sql).all(...params) as MessageRow[];
-
+    rows.reverse();
     return rows.map(formatMessage);
   });
 

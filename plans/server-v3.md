@@ -296,14 +296,21 @@ The naive claim model has a starvation risk: agent-1 could claim tasks that touc
 
 ### Acceptance criteria
 
-- [ ] Claiming a task with file dependencies marks those files as claimed by the agent
-- [ ] Overlapping claim by a different agent is rejected with 409 + conflict details
-- [ ] Task completion does NOT release file ownership (sticky)
-- [ ] Task failure does NOT release file ownership (sticky)
-- [ ] Tasks with no file dependencies bypass ownership entirely
-- [ ] Self-overlap (same agent, multiple tasks, shared files) works correctly
-- [ ] Agent deregistration clears all owned files (safety valve)
-- [ ] `cd server && npm test` passes
+- [x] Claiming a task with file dependencies marks those files as claimed by the agent
+- [x] Overlapping claim by a different agent is rejected with 409 + conflict details
+- [x] Task completion does NOT release file ownership (sticky)
+- [x] Task failure does NOT release file ownership (sticky)
+- [x] Tasks with no file dependencies bypass ownership entirely
+- [x] Self-overlap (same agent, multiple tasks, shared files) works correctly
+- [x] Agent deregistration clears all owned files (safety valve)
+- [x] `cd server && npm test` passes
+
+**Work done:**
+- [x] `checkAndClaimFiles` helper with pre-prepared JOIN query (no dynamic SQL)
+- [x] Transaction returns structured `{ ok, conflicts }` (no side-effecting captured variables)
+- [x] Bulk `DELETE /agents` also releases file claims
+- [x] 15 ownership tests in `ownership.test.ts`
+- [x] `cd server && npm test` passes (98 at phase completion)
 
 ---
 
@@ -609,15 +616,23 @@ fi
 
 ### Acceptance criteria
 
-- [ ] `/tasks/claim-next` atomically finds and claims the best eligible task
-- [ ] File ownership conflicts are respected — agent gets the next non-conflicting task
-- [ ] Load balancing prefers tasks with minimal new file locks
-- [ ] Container pump mode cycles through tasks without manual intervention
-- [ ] No `--fresh` needed between pump cycles
-- [ ] Agent registers with `mode: 'pump'` in pump mode
-- [ ] Pump exits gracefully when no pending tasks remain
-- [ ] Pump idles correctly when tasks exist but are all blocked by file ownership
-- [ ] `cd server && npm test` passes
+- [x] `/tasks/claim-next` atomically finds and claims the best eligible task
+- [x] File ownership conflicts are respected — agent gets the next non-conflicting task
+- [x] Load balancing prefers tasks with minimal new file locks
+- [x] Container pump mode cycles through tasks without manual intervention
+- [x] No `--fresh` needed between pump cycles
+- [x] Agent registers with `mode: 'pump'` in pump mode
+- [x] Pump exits gracefully when no pending tasks remain
+- [x] Pump idles correctly when tasks exist but are all blocked by file ownership
+- [x] `cd server && npm test` passes
+
+**Work done:**
+- [x] Scoring query with LEFT JOIN null-row guard (tasks with no files score new_locks=0)
+- [x] Schema v5 with `mode` column on agents table + ALTER TABLE migration
+- [x] `--pump` flag in launch.sh, `AGENT_MODE` env var
+- [x] `entrypoint.sh` uses `/tasks/claim-next`, exits on empty, idles on blocked
+- [x] 17 tests (10 claim-next + 2 agent mode + 5 edge cases)
+- [x] `cd server && npm test` passes (115 at phase completion)
 
 ---
 
@@ -781,16 +796,23 @@ Note: `--drain` does NOT call `/coalesce/release` — that's the user's responsi
 
 ### Acceptance criteria
 
-- [ ] `./launch.sh --pump --parallel 3` starts 3 containers on separate branches
-- [ ] Each container gets its own staging worktree (Phase 3)
-- [ ] File ownership prevents two agents from claiming overlapping tasks
-- [ ] File ownership persists through task completions (sticky)
-- [ ] GET /coalesce/status reports whether reconciliation can proceed
-- [ ] POST /coalesce/pause pauses all pump agents; in-flight tasks finish naturally
-- [ ] POST /coalesce/release clears all ownership and resumes agents
-- [ ] `stop.sh --drain` gracefully drains and stops all agents
-- [ ] After reconciliation, previously blocked tasks become available
-- [ ] `cd server && npm test` passes
+- [x] `./launch.sh --pump --parallel 3` starts 3 containers on separate branches
+- [x] Each container gets its own staging worktree (Phase 3)
+- [x] File ownership prevents two agents from claiming overlapping tasks
+- [x] File ownership persists through task completions (sticky)
+- [x] GET /coalesce/status reports whether reconciliation can proceed
+- [x] POST /coalesce/pause pauses all pump agents; in-flight tasks finish naturally
+- [x] POST /coalesce/release clears all ownership and resumes agents
+- [x] `stop.sh --drain` gracefully drains and stops all agents
+- [x] After reconciliation, previously blocked tasks become available
+- [x] `cd server && npm test` passes
+
+**Work done:**
+- [x] `coalesce.ts` plugin with 3 endpoints (status/pause/release)
+- [x] `--parallel N` in launch.sh with per-agent bare repo + branch forking
+- [x] `stop.sh` with default/--agent/--drain modes (drain does NOT call release)
+- [x] 15 coalesce tests (7 core + 8 edge cases)
+- [x] `cd server && npm test` passes (145 at phase completion)
 
 ---
 

@@ -7,3 +7,4 @@ export { default as tasksPlugin } from './tasks.js';
 export { default as filesPlugin } from './files.js';
 export { default as searchPlugin } from './search.js';
 export { default as buildsPlugin } from './builds.js';
+export { default as coalescePlugin } from './coalesce.js';

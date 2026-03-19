@@ -23,6 +23,7 @@ Options:
   --verbosity LEVEL   Message board verbosity: quiet, normal, verbose (default: normal)
   --worker            Run in task-queue worker mode (no plan file needed)
   --pump              Run in pump mode (multi-task worker with claim-next)
+  --parallel N        Launch N parallel pump agents (implies --pump)
   --fresh             Delete and re-clone the bare repo (clean start)
   --dry-run           Print resolved configuration and exit without launching
   --help              Show this help message and exit
@@ -35,6 +36,7 @@ Examples:
   ./launch.sh --worker --agent-name worker-1
   ./launch.sh --pump --agent-name pump-1
   ./launch.sh --verbosity verbose --plan plans/tricky-refactor.md
+  ./launch.sh --parallel 3
   ./launch.sh --dry-run
 USAGE
 }
@@ -48,6 +50,7 @@ _CLI_DRY_RUN=false
 _CLI_WORKER=false
 _CLI_PUMP=false
 _CLI_FRESH=false
+_CLI_PARALLEL=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -63,6 +66,8 @@ while [[ $# -gt 0 ]]; do
       _CLI_WORKER=true; shift ;;
     --pump)
       _CLI_PUMP=true; shift ;;
+    --parallel)
+      _CLI_PARALLEL="$2"; shift 2 ;;
     --fresh)
       _CLI_FRESH=true; shift ;;
     --dry-run)
@@ -113,6 +118,11 @@ AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
 AGENT_TYPE="${_CLI_AGENT_TYPE:-${AGENT_TYPE:-container-orchestrator}}"
 MAX_TURNS="${MAX_TURNS:-200}"
 PLAN_PATH="${_CLI_PLAN}"
+# --parallel implies pump mode
+if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
+    _CLI_PUMP=true
+fi
+
 if [ "$_CLI_PUMP" = "true" ]; then
     WORKER_MODE=true
     WORKER_SINGLE_TASK=false
@@ -185,6 +195,13 @@ if [[ -z "${TASKS_PATH:-}" ]]; then
   _errors+=("TASKS_PATH is not set. Set it in scaffold.config.json.")
 fi
 
+if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null && [[ -z "${STAGING_WORKTREE_ROOT:-}" ]]; then
+  _errors+=("--parallel requires server.stagingWorktreeRoot to be set in scaffold.config.json")
+fi
+if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null && [[ -z "${BARE_REPO_ROOT:-}" ]]; then
+  _errors+=("--parallel requires server.bareRepoRoot to be set in scaffold.config.json")
+fi
+
 if [[ ${#_errors[@]} -gt 0 ]]; then
   echo "Configuration errors:" >&2
   for err in "${_errors[@]}"; do
@@ -223,6 +240,7 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo "  WORKER_SINGLE:    $WORKER_SINGLE_TASK"
   echo "  AGENT_MODE:       $AGENT_MODE"
   echo "  LOG_VERBOSITY:    $LOG_VERBOSITY"
+  echo "  PARALLEL:         $_CLI_PARALLEL"
   echo "  FRESH:            $_CLI_FRESH"
   echo ""
   exit 0
@@ -306,24 +324,75 @@ export AGENT_MODE="${AGENT_MODE:-single}"
 export SERVER_PORT="${SERVER_PORT:-9100}"
 
 # ── Launch ───────────────────────────────────────────────────────────────────
-cd "$SCRIPT_DIR/container"
-if [ "$_CLI_FRESH" = "true" ]; then
-    $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" build --no-cache
-fi
-$COMPOSE_CMD --project-name "claude-${AGENT_NAME}" up --build --detach
+if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
+  echo "=== Launching $_CLI_PARALLEL parallel agents ==="
+  BASE_BRANCH="$WORK_BRANCH"
 
-echo ""
-echo "=== Agent Launched ==="
-echo "  Agent:     $AGENT_NAME"
-echo "  Branch:    $WORK_BRANCH"
-echo "  Type:      $AGENT_TYPE"
-echo "  Verbosity: $LOG_VERBOSITY"
-echo ""
-echo "Monitor progress:"
-echo "  ./status.sh --follow"
-echo ""
-echo "View container logs:"
-echo "  docker compose --project-name claude-${AGENT_NAME} -f $SCRIPT_DIR/container/docker-compose.yml logs -f"
-echo ""
-echo "Stop agent:"
-echo "  $COMPOSE_CMD --project-name \"claude-${AGENT_NAME}\" down"
+  for i in $(seq 1 "$_CLI_PARALLEL"); do
+    _AGENT="agent-${i}"
+    _BRANCH="${BASE_BRANCH}-${i}"
+    _STAGING="${STAGING_WORKTREE_ROOT}/${_AGENT}"
+    _BARE="${BARE_REPO_ROOT}/${_AGENT}.git"
+
+    # Validate staging worktree exists
+    if [[ ! -d "$_STAGING" ]]; then
+      echo "Error: Staging worktree for $_AGENT not found at $_STAGING" >&2
+      exit 1
+    fi
+
+    # Create bare repo if needed
+    if [[ ! -d "$_BARE" ]]; then
+      git clone --bare "$_STAGING" "$_BARE"
+    fi
+
+    # Fork branch
+    git -C "$_BARE" branch "$_BRANCH" "$BASE_BRANCH" 2>/dev/null || \
+      git -C "$_BARE" branch -f "$_BRANCH" "$BASE_BRANCH"
+
+    # Launch container
+    (cd "$SCRIPT_DIR/container" && \
+      AGENT_NAME="$_AGENT" \
+      WORK_BRANCH="$_BRANCH" \
+      WORKER_MODE=true \
+      WORKER_SINGLE_TASK=false \
+      AGENT_MODE=pump \
+      $COMPOSE_CMD --project-name "claude-${_AGENT}" up --build --detach)
+
+    echo "  Launched $_AGENT on branch $_BRANCH"
+  done
+
+  echo ""
+  echo "=== $_CLI_PARALLEL Agents Launched ==="
+  echo "  Base branch: $BASE_BRANCH"
+  echo ""
+  echo "Monitor progress:"
+  echo "  ./status.sh --follow"
+  echo ""
+  echo "Stop all agents:"
+  echo "  ./stop.sh"
+  echo ""
+  echo "Graceful drain:"
+  echo "  ./stop.sh --drain"
+else
+  cd "$SCRIPT_DIR/container"
+  if [ "$_CLI_FRESH" = "true" ]; then
+      $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" build --no-cache
+  fi
+  $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" up --build --detach
+
+  echo ""
+  echo "=== Agent Launched ==="
+  echo "  Agent:     $AGENT_NAME"
+  echo "  Branch:    $WORK_BRANCH"
+  echo "  Type:      $AGENT_TYPE"
+  echo "  Verbosity: $LOG_VERBOSITY"
+  echo ""
+  echo "Monitor progress:"
+  echo "  ./status.sh --follow"
+  echo ""
+  echo "View container logs:"
+  echo "  docker compose --project-name claude-${AGENT_NAME} -f $SCRIPT_DIR/container/docker-compose.yml logs -f"
+  echo ""
+  echo "Stop agent:"
+  echo "  $COMPOSE_CMD --project-name \"claude-${AGENT_NAME}\" down"
+fi
