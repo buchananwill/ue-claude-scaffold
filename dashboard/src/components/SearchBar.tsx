@@ -102,6 +102,7 @@ export function SearchBar() {
                       navigate({
                         to: '/messages/$channel',
                         params: { channel: msg.channel },
+                        search: { type: undefined },
                       });
                     }}
                   >

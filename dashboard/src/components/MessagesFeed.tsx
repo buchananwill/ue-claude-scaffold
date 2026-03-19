@@ -1,4 +1,4 @@
-import { Stack, Select, ScrollArea, Group, Text, Code, Box, Chip } from '@mantine/core';
+import { Stack, Select, ScrollArea, Group, Text, Code, Box, Badge } from '@mantine/core';
 import { useRef, useEffect, useMemo } from 'react';
 import dayjs from 'dayjs';
 import type { Agent, Message } from '../api/types.ts';
@@ -16,7 +16,18 @@ interface MessagesFeedProps {
   onTypeFilterChange: (t: string) => void;
 }
 
-const KNOWN_TYPES = ['info', 'progress', 'build_start', 'build_end', 'test_start', 'test_end', 'error', 'warning'];
+const KNOWN_TYPES = [
+  'phase_start',
+  'phase_complete',
+  'phase_failed',
+  'build_result',
+  'build_start',
+  'build_end',
+  'test_start',
+  'test_end',
+  'status_update',
+  'summary',
+];
 
 export function MessagesFeed({
   messages,
@@ -64,13 +75,19 @@ export function MessagesFeed({
         />
       )}
 
-      <Chip.Group value={typeFilter} onChange={(v) => onTypeFilterChange(typeof v === 'string' ? v : '')}>
-        <Group gap="xs" wrap="wrap">
-          <Chip value="" size="xs" variant="outline">All</Chip>
-          {KNOWN_TYPES.map(t => <Chip key={t} value={t} size="xs" variant="outline">{t}</Chip>)}
-          {dynamicTypes.map(t => <Chip key={t} value={t} size="xs" variant="outline">{t}</Chip>)}
-        </Group>
-      </Chip.Group>
+      <Group gap="xs" wrap="wrap">
+        {['', ...KNOWN_TYPES, ...dynamicTypes].map((t) => (
+          <Badge
+            key={t}
+            size="sm"
+            variant={typeFilter === t ? 'filled' : 'outline'}
+            style={{ cursor: 'pointer' }}
+            onClick={() => onTypeFilterChange(t)}
+          >
+            {t || 'All'}
+          </Badge>
+        ))}
+      </Group>
 
       {error && <Text c="red" size="sm">{error}</Text>}
       {loading && messages.length === 0 && <Text c="dimmed" size="sm">Loading...</Text>}

@@ -29,6 +29,9 @@ const messagesChannelRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/messages/$channel',
   component: MessagesPage,
+  validateSearch: (search: Record<string, unknown>) => ({
+    type: typeof search.type === 'string' && search.type ? search.type : undefined,
+  }),
 });
 
 const taskDetailRoute = createRoute({
