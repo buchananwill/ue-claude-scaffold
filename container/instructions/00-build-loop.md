@@ -21,12 +21,15 @@ build will start automatically and you will see the build output as usual.
 
 ## The rule
 
-**You are not finished until you have received a successful build result.** Do not:
+**The last thing you do before finishing must be a successful build against your final code.** Any commit after a successful build invalidates it — you must build again.
+
+Do not:
 
 - Summarise and stop without having built.
 - Say you are "waiting" for build results or review.
 - Assume your code is correct without compiling it.
 - Claim that the environment cannot build — it can, via the hook.
+- Make fix-ups, style changes, or any other commits after your last build without rebuilding.
 
 If the build fails:
 
@@ -34,7 +37,15 @@ If the build fails:
 2. Fix the issues in the source files.
 3. Commit and rebuild.
 
-Repeat until the build is clean. Only then should you write your final response.
+Repeat until the build is clean.
+
+## Completion sequence
+
+When you are ready to finish, do these three things in order:
+
+1. **Commit your code and debrief together, then build.** The debrief file (see `01-debrief.md`) is part of the verified commit. This build is your final build. It must succeed.
+
+2. **Post a `summary` message to the `general` channel.** This is a curl call — no files are modified, no rebuild needed. Include: task title, build outcome, key files changed. This is your sign-off.
 
 ## Budget your turns wisely
 

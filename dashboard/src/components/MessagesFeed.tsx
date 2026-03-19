@@ -11,6 +11,7 @@ interface MessagesFeedProps {
   channel: string;
   onChannelChange: (c: string) => void;
   agents: Agent[] | null;
+  hideSelector?: boolean;
 }
 
 export function MessagesFeed({
@@ -20,6 +21,7 @@ export function MessagesFeed({
   channel,
   onChannelChange,
   agents,
+  hideSelector,
 }: MessagesFeedProps) {
   const viewport = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
@@ -41,14 +43,16 @@ export function MessagesFeed({
 
   return (
     <Stack gap="sm" h="100%">
-      <Select
-        size="xs"
-        label="Channel"
-        data={channels}
-        value={channel}
-        onChange={(v) => v && onChannelChange(v)}
-        w={200}
-      />
+      {!hideSelector && (
+        <Select
+          size="xs"
+          label="Channel"
+          data={channels}
+          value={channel}
+          onChange={(v) => v && onChannelChange(v)}
+          w={200}
+        />
+      )}
 
       {error && <Text c="red" size="sm">{error}</Text>}
       {loading && messages.length === 0 && <Text c="dimmed" size="sm">Loading...</Text>}

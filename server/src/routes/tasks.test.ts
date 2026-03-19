@@ -574,4 +574,176 @@ describe('tasks routes', () => {
     assert.equal(reset.statusCode, 200);
     assert.deepEqual(reset.json(), { ok: true });
   });
+
+  // ── File dependencies (Phase 1) ──────────────────────────────────────
+
+  it('POST /tasks with files array creates task_files rows and registers files', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'With files',
+        files: ['Source/Foo.cpp', 'Source/Foo.h'],
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const { id } = res.json();
+
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const task = get.json();
+    assert.deepEqual(task.files, ['Source/Foo.cpp', 'Source/Foo.h']);
+  });
+
+  it('POST /tasks without files returns files as empty array', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'No files' },
+    });
+    const { id } = res.json();
+
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    assert.deepEqual(get.json().files, []);
+  });
+
+  it('POST /tasks with invalid file path returns 400', async () => {
+    const cases = [
+      { files: ['../etc/passwd'], label: '..' },
+      { files: ['/absolute/path'], label: 'absolute' },
+      { files: [''], label: 'empty' },
+    ];
+    for (const { files, label } of cases) {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: `Bad path (${label})`, files },
+      });
+      assert.equal(res.statusCode, 400, `Expected 400 for ${label} path`);
+    }
+  });
+
+  it('GET /tasks/:id returns files array', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Files test', files: ['A.cpp', 'B.h'] },
+    });
+    const { id } = post.json();
+
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const task = get.json();
+    assert.equal(Array.isArray(task.files), true);
+    assert.equal(task.files.length, 2);
+    assert.ok(task.files.includes('A.cpp'));
+    assert.ok(task.files.includes('B.h'));
+  });
+
+  it('PATCH /tasks/:id can update files on pending task', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Patch files', files: ['Old.cpp'] },
+    });
+    const { id } = post.json();
+
+    const patch = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/tasks/${id}`,
+      payload: { files: ['New.cpp', 'New.h'] },
+    });
+    assert.equal(patch.statusCode, 200);
+
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const task = get.json();
+    assert.deepEqual(task.files.sort(), ['New.cpp', 'New.h']);
+  });
+
+  it('DELETE /tasks/:id cascades to task_files', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Delete me', files: ['Doomed.cpp'] },
+    });
+    const { id } = post.json();
+
+    const del = await ctx.app.inject({ method: 'DELETE', url: `/tasks/${id}` });
+    assert.equal(del.statusCode, 200);
+
+    // Task gone
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    assert.equal(get.statusCode, 404);
+  });
+
+  it('POST /tasks/batch creates all tasks atomically with file registrations', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/batch',
+      payload: {
+        tasks: [
+          { title: 'Batch 1', files: ['Shared.cpp'] },
+          { title: 'Batch 2', priority: 5, files: ['Shared.cpp', 'Only2.h'] },
+          { title: 'Batch 3' },
+        ],
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.ids.length, 3);
+
+    // Verify files on each task
+    const get1 = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[0]}` });
+    assert.deepEqual(get1.json().files, ['Shared.cpp']);
+
+    const get2 = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[1]}` });
+    assert.deepEqual(get2.json().files.sort(), ['Only2.h', 'Shared.cpp']);
+
+    const get3 = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[2]}` });
+    assert.deepEqual(get3.json().files, []);
+  });
+
+  it('POST /tasks/batch rolls back entirely if any task fails validation', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/batch',
+      payload: {
+        tasks: [
+          { title: 'Good task' },
+          { title: 'Bad task', files: ['../escape'] },
+        ],
+      },
+    });
+    assert.equal(res.statusCode, 400);
+
+    // No tasks should have been created
+    const list = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+    assert.equal(list.json().length, 0);
+  });
+
+  it('POST /tasks rejects unknown fields with 400', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Test', source_path: 'snake_case_mistake' },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('source_path'));
+  });
+
+  it('PATCH /tasks/:id rejects unknown fields with 400', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Test' },
+    });
+    const { id } = post.json();
+
+    const patch = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/tasks/${id}`,
+      payload: { source_path: 'oops' },
+    });
+    assert.equal(patch.statusCode, 400);
+    assert.ok(patch.json().message.includes('source_path'));
+  });
 });

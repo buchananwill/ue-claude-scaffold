@@ -16,6 +16,7 @@ Frontmatter (between --- delimiters) supports these keys:
   title:               Task title (required)
   priority:            Integer priority, higher = first (default: 0)
   acceptance_criteria: Single-line acceptance criteria
+  files:               YAML list of file paths this task will write to
 
 Everything after the closing --- becomes the task description.
 Complex multi-line acceptance criteria should go in the description body.
@@ -90,10 +91,12 @@ parse_frontmatter() {
   FM_TITLE=""
   FM_PRIORITY="0"
   FM_AC=""
+  FM_FILES=()
   BODY=""
 
   local in_frontmatter=false
   local frontmatter_closed=false
+  local in_files_list=false
   local line_num=0
 
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -107,8 +110,22 @@ parse_frontmatter() {
     if [[ "$in_frontmatter" == true ]]; then
       if [[ "$line" == "---" ]]; then
         in_frontmatter=false
+        in_files_list=false
         frontmatter_closed=true
         continue
+      fi
+
+      # Check for YAML list item (  - value) when inside a list key
+      if [[ "$in_files_list" == true ]]; then
+        local list_item
+        list_item=$(echo "$line" | sed -n 's/^[[:space:]]*-[[:space:]]*//p')
+        if [[ -n "$list_item" ]]; then
+          FM_FILES+=("$list_item")
+          continue
+        else
+          # Not a list item — end of list, fall through to key parsing
+          in_files_list=false
+        fi
       fi
 
       # Parse simple key: value pairs
@@ -120,6 +137,12 @@ parse_frontmatter() {
         title)               FM_TITLE="$value" ;;
         priority)            FM_PRIORITY="$value" ;;
         acceptance_criteria) FM_AC="$value" ;;
+        files)
+          # files: can be empty (list follows on next lines) or inline
+          if [[ -z "$value" ]]; then
+            in_files_list=true
+          fi
+          ;;
       esac
     else
       if [[ "$frontmatter_closed" == true ]]; then
@@ -175,10 +198,17 @@ for file in "$TASKS_DIR"/*.md; do
     echo "  Title:    $FM_TITLE"
     echo "  Priority: $FM_PRIORITY"
     echo "  AC:       ${FM_AC:-<none>}"
+    echo "  Files:    ${FM_FILES[*]:-<none>}"
     echo "  Body:     $(echo "$description" | head -3)..."
     echo ""
     ingested=$((ingested + 1))
     continue
+  fi
+
+  # Build files JSON array
+  files_json="[]"
+  if [[ ${#FM_FILES[@]} -gt 0 ]]; then
+    files_json=$(printf '%s\n' "${FM_FILES[@]}" | jq -R . | jq -s .)
   fi
 
   # Build JSON payload
@@ -188,7 +218,8 @@ for file in "$TASKS_DIR"/*.md; do
     --arg sourcePath "$filepath" \
     --arg acceptanceCriteria "$FM_AC" \
     --argjson priority "${FM_PRIORITY:-0}" \
-    '{title: $title, description: $description, sourcePath: $sourcePath, acceptanceCriteria: (if $acceptanceCriteria == "" then null else $acceptanceCriteria end), priority: $priority}')
+    --argjson files "$files_json" \
+    '{title: $title, description: $description, sourcePath: $sourcePath, acceptanceCriteria: (if $acceptanceCriteria == "" then null else $acceptanceCriteria end), priority: $priority} + (if ($files | length) > 0 then {files: $files} else {} end)')
 
   response=$(curl -sf -X POST "${SERVER_URL}/tasks" \
     -H "Content-Type: application/json" \

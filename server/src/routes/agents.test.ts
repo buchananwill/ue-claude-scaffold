@@ -86,6 +86,28 @@ describe('agents routes', () => {
     assert.equal(res.statusCode, 404);
   });
 
+  it('GET /agents/:name returns a single agent', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1', planDoc: 'plan.md' },
+    });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/agents/agent-1' });
+    assert.equal(res.statusCode, 200);
+    const agent = res.json();
+    assert.equal(agent.name, 'agent-1');
+    assert.equal(agent.worktree, '/tmp/wt1');
+    assert.equal(agent.planDoc, 'plan.md');
+    assert.equal(agent.status, 'idle');
+    assert.ok(agent.registeredAt);
+  });
+
+  it('GET /agents/:name returns 404 for nonexistent agent', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/agents/nonexistent' });
+    assert.equal(res.statusCode, 404);
+  });
+
   it('DELETE /agents/:name deregisters an agent', async () => {
     await ctx.app.inject({
       method: 'POST',

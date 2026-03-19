@@ -4,7 +4,7 @@ import path from 'node:path';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
 
-interface TaskRow {
+export interface TaskRow {
   id: number;
   title: string;
   description: string;
@@ -20,7 +20,7 @@ interface TaskRow {
   created_at: string;
 }
 
-function formatTask(row: TaskRow) {
+export function formatTask(row: TaskRow, files?: string[]) {
   return {
     id: row.id,
     title: row.title,
@@ -29,6 +29,7 @@ function formatTask(row: TaskRow) {
     acceptanceCriteria: row.acceptance_criteria,
     status: row.status,
     priority: row.priority,
+    files: files ?? [],
     claimedBy: row.claimed_by,
     claimedAt: row.claimed_at,
     completedAt: row.completed_at,
@@ -71,6 +72,11 @@ function existsInBareRepo(bareRepoPath: string, branch: string, filePath: string
   } catch {
     return false;
   }
+}
+
+interface ConflictInfo {
+  file: string;
+  claimant: string;
 }
 
 interface TasksOpts {
@@ -124,9 +130,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
      WHERE id = @id AND status IN ('completed', 'failed')`
   );
 
-  /** For task creation/edit validation (no agent context), use project path as canonical source. */
+  /** Validate sourcePath against the main project worktree (design team's canonical branch). */
   function getValidationWorktree(): string {
-    return config.server.stagingWorktreePath ?? config.project.path;
+    return config.project.path;
   }
 
   function getBareRepoPath(agentName?: string): string | undefined {
@@ -136,37 +142,188 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     return config.server.bareRepoPath;
   }
 
-  // POST /tasks
-  fastify.post<{
-    Body: {
-      title: string;
-      description?: string;
-      sourcePath?: string;
-      acceptanceCriteria?: string;
-      priority?: number;
-    };
-  }>('/tasks', async (request, reply) => {
-    const { title, description, sourcePath, acceptanceCriteria, priority } = request.body;
+  interface TaskBody {
+    title: string;
+    description?: string;
+    sourcePath?: string;
+    acceptanceCriteria?: string;
+    priority?: number;
+    files?: string[];
+  }
 
-    // Validate sourcePath is committed in the staging worktree
+  /** Returns unknown field names from a request body, inferred from a type's keys. */
+  function unknownFields<T>(body: unknown, known: { [K in keyof T]: true }): string[] {
+    if (typeof body !== 'object' || body === null) return [];
+    return Object.keys(body).filter(k => !(k in known));
+  }
+
+  const taskBodyKeys: { [K in keyof Required<TaskBody>]: true } = {
+    title: true,
+    description: true,
+    sourcePath: true,
+    acceptanceCriteria: true,
+    priority: true,
+    files: true,
+  };
+
+  /** Validate file paths: must be relative, no .., no empty strings. */
+  function validateFilePaths(files: string[]): string | null {
+    for (const f of files) {
+      if (!f || f.startsWith('/') || f.includes('..') || f.trim() === '') {
+        return `Invalid file path: '${f}'. Paths must be relative, non-empty, with no '..' components.`;
+      }
+    }
+    return null;
+  }
+
+  const insertFile = db.prepare('INSERT OR IGNORE INTO files (path) VALUES (?)');
+  const insertTaskFile = db.prepare('INSERT INTO task_files (task_id, file_path) VALUES (?, ?)');
+  const getTaskFiles = db.prepare('SELECT file_path FROM task_files WHERE task_id = ?');
+  const deleteTaskFiles = db.prepare('DELETE FROM task_files WHERE task_id = ?');
+
+  const claimFilesForAgent = db.prepare(
+    `UPDATE files SET claimant = ?, claimed_at = CURRENT_TIMESTAMP
+     WHERE path = ? AND claimant IS NULL`
+  );
+
+  function checkAndClaimFiles(taskId: number, agent: string): ConflictInfo[] | null {
+    const deps = (getTaskFiles.all(taskId) as { file_path: string }[]).map(r => r.file_path);
+    if (deps.length === 0) return null;
+
+    const placeholders = deps.map(() => '?').join(', ');
+    const conflictRows = db.prepare(
+      `SELECT path, claimant FROM files WHERE path IN (${placeholders}) AND claimant IS NOT NULL AND claimant != ?`
+    ).all(...deps, agent) as { path: string; claimant: string }[];
+
+    if (conflictRows.length > 0) {
+      return conflictRows.map(r => ({ file: r.path, claimant: r.claimant }));
+    }
+
+    for (const dep of deps) {
+      claimFilesForAgent.run(agent, dep);
+    }
+    return [];
+  }
+
+  function filesForTask(taskId: number): string[] {
+    return (getTaskFiles.all(taskId) as { file_path: string }[]).map(r => r.file_path);
+  }
+
+  function formatTaskWithFiles(row: TaskRow) {
+    return formatTask(row, filesForTask(row.id));
+  }
+
+  /** Register files and link them to a task. Must be called within a transaction. */
+  function linkFilesToTask(taskId: number, files: string[]): void {
+    for (const f of files) {
+      insertFile.run(f);
+      insertTaskFile.run(taskId, f);
+    }
+  }
+
+  // POST /tasks
+  fastify.post<{ Body: TaskBody }>('/tasks', async (request, reply) => {
+    const unknown = unknownFields<TaskBody>(request.body, taskBodyKeys);
+    if (unknown.length > 0) {
+      return reply.badRequest(
+        `Unknown fields: ${unknown.join(', ')}. ` +
+        `Valid fields: ${Object.keys(taskBodyKeys).join(', ')}`
+      );
+    }
+
+    const { title, description, sourcePath, acceptanceCriteria, priority, files } = request.body;
+
+    // Validate sourcePath is committed in the main project worktree
     if (sourcePath) {
       const worktree = getValidationWorktree();
       if (!isCommittedInRepo(worktree, sourcePath)) {
         return reply.unprocessableEntity(
-          `sourcePath '${sourcePath}' is not committed in the staging worktree (${worktree}). ` +
+          `sourcePath '${sourcePath}' is not committed in the project worktree (${worktree}). ` +
           `Commit it first: git add ${sourcePath} && git commit`
         );
       }
     }
 
-    const result = insertTask.run({
-      title,
-      description: description ?? '',
-      sourcePath: sourcePath ?? null,
-      acceptanceCriteria: acceptanceCriteria ?? null,
-      priority: priority ?? 0,
-    });
-    return { id: Number(result.lastInsertRowid), ok: true };
+    // Validate file paths
+    if (files?.length) {
+      const err = validateFilePaths(files);
+      if (err) return reply.badRequest(err);
+    }
+
+    const id = db.transaction(() => {
+      const result = insertTask.run({
+        title,
+        description: description ?? '',
+        sourcePath: sourcePath ?? null,
+        acceptanceCriteria: acceptanceCriteria ?? null,
+        priority: priority ?? 0,
+      });
+      const taskId = Number(result.lastInsertRowid);
+      if (files?.length) {
+        linkFilesToTask(taskId, files);
+      }
+      return taskId;
+    })();
+
+    return { id, ok: true };
+  });
+
+  // POST /tasks/batch — bulk creation
+  fastify.post<{
+    Body: { tasks: TaskBody[] };
+  }>('/tasks/batch', async (request, reply) => {
+    const { tasks } = request.body;
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+      return reply.badRequest('tasks must be a non-empty array');
+    }
+
+    // Validate all tasks before inserting any
+    for (let i = 0; i < tasks.length; i++) {
+      const t = tasks[i];
+      const extra = unknownFields<TaskBody>(t, taskBodyKeys);
+      if (extra.length > 0) {
+        return reply.badRequest(
+          `Task ${i}: unknown fields: ${extra.join(', ')}. ` +
+          `Valid fields: ${Object.keys(taskBodyKeys).join(', ')}`
+        );
+      }
+      if (!t.title) {
+        return reply.badRequest(`Task ${i}: title is required`);
+      }
+      if (t.files?.length) {
+        const err = validateFilePaths(t.files);
+        if (err) return reply.badRequest(`Task ${i}: ${err}`);
+      }
+      if (t.sourcePath) {
+        const worktree = getValidationWorktree();
+        if (!isCommittedInRepo(worktree, t.sourcePath)) {
+          return reply.unprocessableEntity(
+            `Task ${i}: sourcePath '${t.sourcePath}' is not committed in the project worktree (${worktree}).`
+          );
+        }
+      }
+    }
+
+    const ids = db.transaction(() => {
+      const result: number[] = [];
+      for (const t of tasks) {
+        const r = insertTask.run({
+          title: t.title,
+          description: t.description ?? '',
+          sourcePath: t.sourcePath ?? null,
+          acceptanceCriteria: t.acceptanceCriteria ?? null,
+          priority: t.priority ?? 0,
+        });
+        const taskId = Number(r.lastInsertRowid);
+        if (t.files?.length) {
+          linkFilesToTask(taskId, t.files);
+        }
+        result.push(taskId);
+      }
+      return result;
+    })();
+
+    return { ok: true, ids };
   });
 
   // GET /tasks
@@ -188,7 +345,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     params.push(limitNum);
 
     const rows = db.prepare(sql).all(...params) as TaskRow[];
-    return rows.map(formatTask);
+    return rows.map(formatTaskWithFiles);
   });
 
   // GET /tasks/:id
@@ -199,7 +356,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if (!row) {
       return reply.notFound('task not found');
     }
-    return formatTask(row);
+    return formatTaskWithFiles(row);
   });
 
   // POST /tasks/:id/claim
@@ -240,10 +397,26 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
+    let conflicts: ConflictInfo[] | undefined;
+
     const result = db.transaction(() => {
+      const ownershipResult = checkAndClaimFiles(id, agent);
+      if (ownershipResult !== null && ownershipResult.length > 0) {
+        conflicts = ownershipResult;
+        return false;
+      }
       const info = claimTask.run({ id, agent });
       return info.changes > 0;
     })();
+
+    if (conflicts && conflicts.length > 0) {
+      return reply.code(409).send({
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'File ownership conflict — files are owned by another agent and cannot be claimed until reconciliation',
+        conflicts,
+      });
+    }
 
     if (result) {
       return { ok: true };
@@ -330,16 +503,18 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   // PATCH /tasks/:id — edit a pending task
   fastify.patch<{
     Params: { id: string };
-    Body: {
-      title?: string;
-      description?: string;
-      sourcePath?: string | null;
-      acceptanceCriteria?: string;
-      priority?: number;
-    };
+    Body: Partial<TaskBody>;
   }>('/tasks/:id', async (request, reply) => {
     const id = Number(request.params.id);
     const body = request.body;
+
+    const extra = unknownFields<TaskBody>(body, taskBodyKeys);
+    if (extra.length > 0) {
+      return reply.badRequest(
+        `Unknown fields: ${extra.join(', ')}. ` +
+        `Valid fields: ${Object.keys(taskBodyKeys).join(', ')}`
+      );
+    }
 
     const allowlist: Record<string, string> = {
       title: 'title',
@@ -359,8 +534,16 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    if (setClauses.length === 0) {
+    const hasFiles = 'files' in body && Array.isArray(body.files);
+
+    if (setClauses.length === 0 && !hasFiles) {
       return reply.badRequest('no updatable fields provided');
+    }
+
+    // Validate file paths if provided
+    if (hasFiles) {
+      const err = validateFilePaths(body.files!);
+      if (err) return reply.badRequest(err);
     }
 
     const row = getTaskById.get({ id }) as TaskRow | undefined;
@@ -381,9 +564,20 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    const sql = `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = @id AND status = 'pending'`;
-    const info = db.prepare(sql).run(params);
-    if (info.changes === 0) {
+    const updated = db.transaction(() => {
+      if (setClauses.length > 0) {
+        const sql = `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = @id AND status = 'pending'`;
+        const info = db.prepare(sql).run(params);
+        if (info.changes === 0) return false;
+      }
+      if (hasFiles) {
+        deleteTaskFiles.run(id);
+        linkFilesToTask(id, body.files!);
+      }
+      return true;
+    })();
+
+    if (!updated) {
       return reply.conflict('task is no longer pending');
     }
     return { ok: true };

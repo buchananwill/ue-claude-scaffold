@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Group, Text, SegmentedControl, Indicator } from '@mantine/core';
 import type { HealthResponse } from '../api/types';
 
@@ -6,6 +7,7 @@ interface HealthBarProps {
   error: string | null;
   intervalMs: number;
   onIntervalChange: (ms: number) => void;
+  middle?: ReactNode;
 }
 
 const intervals = [
@@ -14,7 +16,7 @@ const intervals = [
   { label: '10s', value: '10000' },
 ];
 
-export function HealthBar({ health, error, intervalMs, onIntervalChange }: HealthBarProps) {
+export function HealthBar({ health, error, intervalMs, onIntervalChange, middle }: HealthBarProps) {
   const connected = !error && !!health;
   const projectName = health?.config.projectName ?? 'Coordination Server';
 
@@ -29,6 +31,7 @@ export function HealthBar({ health, error, intervalMs, onIntervalChange }: Healt
           <Text c="red" size="sm">Disconnected</Text>
         )}
       </Group>
+      {middle}
       <Group gap="sm">
         <Text size="xs" c="dimmed">Poll:</Text>
         <SegmentedControl

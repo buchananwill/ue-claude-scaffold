@@ -9,7 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (3);
+INSERT OR IGNORE INTO schema_version(version) VALUES (4);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
@@ -82,6 +82,23 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status   ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority DESC, id ASC);
+
+-- File registry — tracks which files are known to the coordination system.
+-- claimant is the agent that currently owns writes (NULL = unowned).
+-- Claims are sticky: they persist until explicit reconciliation, NOT until task completion.
+CREATE TABLE IF NOT EXISTS files (
+  path       TEXT PRIMARY KEY,
+  claimant   TEXT,
+  claimed_at DATETIME
+);
+
+-- Join table: which tasks will write to which files.
+CREATE TABLE IF NOT EXISTS task_files (
+  task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  file_path  TEXT NOT NULL REFERENCES files(path),
+  PRIMARY KEY (task_id, file_path)
+);
+CREATE INDEX IF NOT EXISTS idx_task_files_path ON task_files(file_path);
 `;
 
 export let db: Database.Database;

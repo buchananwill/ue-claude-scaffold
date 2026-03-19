@@ -70,6 +70,14 @@ _post_status() {
 _shutdown() {
     echo ""
     echo "=== Shutting down agent ${AGENT_NAME} ==="
+    # Push any remaining work to bare repo
+    if [ -d /workspace/.git ]; then
+        cd /workspace
+        git add -A 2>/dev/null || true
+        git diff --cached --quiet 2>/dev/null || \
+            git commit -m "Container shutdown commit" --no-gpg-sign 2>/dev/null || true
+        git push origin "HEAD:${WORK_BRANCH}" --force 2>/dev/null || true
+    fi
     # Release any claimed task back to pending
     if [ -n "${CURRENT_TASK_ID:-}" ]; then
         echo "Releasing task #${CURRENT_TASK_ID}..."
@@ -256,14 +264,14 @@ ${FULL_PROMPT}"
     echo ""
     echo "=== Claude Code exited with code $EXIT_CODE ==="
 
-    # Final push of any uncommitted work
+    # Final push — commit any uncommitted work, then push all commits to bare repo
     cd /workspace
     git add -A
     if ! git diff --cached --quiet; then
         git commit -m "Container final commit" --no-gpg-sign
-        git push origin "HEAD:${WORK_BRANCH}" --force
-        echo "Final changes pushed to bare repo"
     fi
+    git push origin "HEAD:${WORK_BRANCH}" --force
+    echo "Final state pushed to bare repo"
 
     # ── Report task completion (worker mode) ──────────────────────────────────
     if [ "$WORKER_MODE" = "true" ] && [ -n "$CURRENT_TASK_ID" ]; then

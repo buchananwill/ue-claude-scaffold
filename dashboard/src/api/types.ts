@@ -24,6 +24,7 @@ export interface Task {
   acceptanceCriteria: string | null;
   status: string;
   priority: number;
+  files: string[];
   claimedBy: string | null;
   claimedAt: string | null;
   completedAt: string | null;
@@ -43,6 +44,12 @@ export interface Message {
   resolvedAt: string | null;
   result: unknown;
   createdAt: string;
+}
+
+export interface SearchResults {
+  tasks: Task[];
+  messages: Message[];
+  agents: Agent[];
 }
 
 export interface UbtStatus {

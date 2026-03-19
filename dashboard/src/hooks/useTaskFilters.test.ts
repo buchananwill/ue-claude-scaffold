@@ -112,6 +112,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     acceptanceCriteria: null,
     status: 'pending',
     priority: 3,
+    files: [],
     claimedBy: null,
     claimedAt: null,
     completedAt: null,

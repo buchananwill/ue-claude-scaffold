@@ -1,6 +1,50 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db.js';
 
+export interface MessageRow {
+  id: number;
+  from_agent: string;
+  channel: string;
+  type: string;
+  payload: string;
+  claimed_by: string | null;
+  claimed_at: string | null;
+  resolved_at: string | null;
+  result: string | null;
+  created_at: string;
+}
+
+export function formatMessage(row: MessageRow) {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(row.payload);
+  } catch {
+    payload = row.payload;
+  }
+
+  let result: unknown = null;
+  if (row.result) {
+    try {
+      result = JSON.parse(row.result);
+    } catch {
+      result = row.result;
+    }
+  }
+
+  return {
+    id: row.id,
+    fromAgent: row.from_agent,
+    channel: row.channel,
+    type: row.type,
+    payload,
+    claimedBy: row.claimed_by,
+    claimedAt: row.claimed_at,
+    resolvedAt: row.resolved_at,
+    result,
+    createdAt: row.created_at,
+  };
+}
+
 const messagesPlugin: FastifyPluginAsync = async (fastify) => {
   const insertMessage = db.prepare(
     `INSERT INTO messages (from_agent, channel, type, payload)
@@ -56,31 +100,9 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
 
     sql += ' ORDER BY id ASC';
 
-    const rows = db.prepare(sql).all(...params) as Array<{
-      id: number;
-      from_agent: string;
-      channel: string;
-      type: string;
-      payload: string;
-      claimed_by: string | null;
-      claimed_at: string | null;
-      resolved_at: string | null;
-      result: string | null;
-      created_at: string;
-    }>;
+    const rows = db.prepare(sql).all(...params) as MessageRow[];
 
-    return rows.map((row) => ({
-      id: row.id,
-      fromAgent: row.from_agent,
-      channel: row.channel,
-      type: row.type,
-      payload: JSON.parse(row.payload),
-      claimedBy: row.claimed_by,
-      claimedAt: row.claimed_at,
-      resolvedAt: row.resolved_at,
-      result: row.result ? JSON.parse(row.result) : null,
-      createdAt: row.created_at,
-    }));
+    return rows.map(formatMessage);
   });
 
   fastify.post<{

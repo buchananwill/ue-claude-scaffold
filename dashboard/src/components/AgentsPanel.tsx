@@ -1,6 +1,7 @@
 import { Table, ActionIcon, Text, Popover, Button, Group, Stack } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiDelete } from '../api/client.ts';
 import type { Agent } from '../api/types.ts';
@@ -39,7 +40,11 @@ export function AgentsPanel({ agents }: AgentsPanelProps) {
       <Table.Tbody>
         {agents.map((a) => (
           <Table.Tr key={a.name}>
-            <Table.Td fw={600}>{a.name}</Table.Td>
+            <Table.Td fw={600}>
+              <Link to="/agents/$agentName" params={{ agentName: a.name }} style={{ textDecoration: 'none', color: 'inherit' }}>
+                {a.name}
+              </Link>
+            </Table.Td>
             <Table.Td>
               <Text size="xs" c="dimmed">{a.worktree}</Text>
             </Table.Td>

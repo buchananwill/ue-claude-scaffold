@@ -21,6 +21,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { Fragment, useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiPost, apiDelete } from '../api/client.ts';
 import { notifications } from '@mantine/notifications';
@@ -289,9 +290,29 @@ export function TasksPanel({ tasks, isFetching, statusFilter, onFilterChange, fi
                   <Table.Td>{t.id}</Table.Td>
                   <Table.Td>{t.priority}</Table.Td>
                   <Table.Td><StatusBadge value={t.status} /></Table.Td>
-                  <Table.Td fw={500}>{t.title}</Table.Td>
+                  <Table.Td fw={500}>
+                    <Link
+                      to="/tasks/$taskId"
+                      params={{ taskId: String(t.id) }}
+                      style={{ textDecoration: 'none', color: 'inherit', fontWeight: 500 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {t.title}
+                    </Link>
+                  </Table.Td>
                   <Table.Td>
-                    <Text size="xs" c="dimmed">{t.claimedBy ?? '\u2014'}</Text>
+                    {t.claimedBy ? (
+                      <Link
+                        to="/agents/$agentName"
+                        params={{ agentName: t.claimedBy }}
+                        style={{ textDecoration: 'none' }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Text size="xs">{t.claimedBy}</Text>
+                      </Link>
+                    ) : (
+                      <Text size="xs" c="dimmed">{'\u2014'}</Text>
+                    )}
                   </Table.Td>
                   <Table.Td><RelativeTime date={t.createdAt} /></Table.Td>
                   <Table.Td>

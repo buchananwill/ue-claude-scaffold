@@ -4,6 +4,7 @@ import { Outlet, useRouter, useMatches } from '@tanstack/react-router';
 import { HealthBar } from '../components/HealthBar.tsx';
 import { useHealth } from '../hooks/useHealth.ts';
 import { usePollInterval } from '../hooks/usePollInterval.tsx';
+import { SearchBar } from '../components/SearchBar.tsx';
 
 export function DashboardLayout() {
   const { intervalMs, setIntervalMs } = usePollInterval();
@@ -22,6 +23,7 @@ export function DashboardLayout() {
           error={health.error ? String(health.error) : null}
           intervalMs={intervalMs}
           onIntervalChange={setIntervalMs}
+          middle={<SearchBar />}
         />
       </AppShell.Header>
 

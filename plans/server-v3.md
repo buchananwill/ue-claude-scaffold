@@ -24,12 +24,22 @@ V3 extends this along two axes:
 - **Worker mode**: `entrypoint.sh` can poll for tasks and claim them. `WORKER_SINGLE_TASK=false` loops, but resets to `origin/<branch>` between tasks — this works for a single agent but doesn't account for parallel agents.
 - **Build history**: records agent, type, start time, duration, success (output/stderr storage is a V3-dashboard concern, not covered here).
 
+### Infrastructure (built during V3 session, before phased work began)
+
+- **Per-agent isolation**: Each agent has its own staging worktree (`staging/<agent>/`) and bare repo (`bare-repos/<agent>.git`). No shared bare repo. Each agent's lifecycle is fully independent.
+- **Staging worktree is source of truth**: The staging worktree seeds the bare repo (at launch), receives synced builds (during `/build`), and is where the user merges results. The bare repo is ephemeral — `--fresh` deletes and recreates it from the staging worktree.
+- **Branch auto-detection**: `launch.sh` reads the branch from the staging worktree's current checkout. No `--branch` flag. Branch is a setup-time concern (set when creating the staging worktree), not a launch-time concern.
+- **Config**: `scaffold.config.json` has `stagingWorktreeRoot` and `bareRepoRoot`. Server and launch.sh resolve per-agent paths as `<root>/<agentName>/` and `<root>/<agentName>.git`.
+- **Plugin junctions**: Staging worktrees need Windows junctions for gitignored plugin repos (Voxel, UE5Coro, SubsystemBrowserPlugin). Use PowerShell `New-Item -ItemType Junction`.
+- **Rider visibility**: Main worktree (`PistePerfect_5_7`) has remotes `agent-1` and `agent-2` pointing at the staging worktrees. `git fetch agent-1` shows the agent's branches.
+- **entrypoint.sh**: Always pushes to bare repo at exit (not just when dirty). Shutdown trap also pushes. Build loop instructions require final build against final code — no post-build modifications.
+
 ### Implicit constraints
 
 - **SQLite serialization**: All coordination state lives in a single SQLite DB in WAL mode. Concurrent reads are fine; writes serialize at the DB level. This is sufficient for the number of agents we're targeting (2–5 concurrent containers).
 - **One UBT at a time**: Unreal Build Tool is not concurrent-safe. The UBT lock must remain a singleton. Parallel worktrees can each push code independently, but builds are serialized.
-- **Bare repo as exchange**: All container→host data flow goes through the bare repo. Each container pushes to its own branch. The server fetches from the bare repo into per-agent staging worktrees.
-- **No automatic merging**: The server tracks file ownership and prevents conflicts, but does not perform git merges. The reconciliation phase is triggered by the user (or a script), who is responsible for merging branches. The server provides the data and lifecycle control to make reconciliation safe.
+- **Per-agent bare repo as exchange**: Each container pushes to its own bare repo. The server fetches from it into the agent's staging worktree.
+- **No automatic merging**: The server tracks file ownership and prevents conflicts, but does not perform git merges. The reconciliation phase is triggered by the user, who merges in the main worktree.
 - **Container-side changes are minimal**: The `entrypoint.sh` multi-task loop already exists (`WORKER_SINGLE_TASK=false`). V3 server changes should make that loop more robust, not rewrite it.
 
 ### Key design principle: sticky file ownership
@@ -203,13 +213,18 @@ Pass the `files` array to `POST /tasks` (or the new batch endpoint).
 
 ### Acceptance criteria
 
-- [ ] Tasks can be created with a `files` list → rows in `task_files` and `files` tables
-- [ ] Files are returned in GET task responses as a string array
-- [ ] Invalid paths are rejected with 400
-- [ ] Batch endpoint creates all-or-nothing
-- [ ] Tasks created before V3 (no file dependencies) work unchanged
-- [ ] GET /files returns the file registry with claimant info
-- [ ] `cd server && npm test` passes
+- [x] Tasks can be created with a `files` list → rows in `task_files` and `files` tables
+- [x] Files are returned in GET task responses as a string array
+- [x] Invalid paths are rejected with 400
+- [x] Batch endpoint creates all-or-nothing
+- [x] Tasks created before V3 (no file dependencies) work unchanged
+- [x] GET /files returns the file registry with claimant info
+- [x] `cd server && npm test` passes (73/73)
+
+**Additional work done beyond plan:**
+- [x] Unknown fields in POST/PATCH /tasks rejected with 400 (catches camelCase/snake_case mismatches)
+- [x] sourcePath validation checks `project.path` (design team's branch), not staging worktrees
+- [x] Ingest script parses `files:` frontmatter (code written, not yet tested)
 
 ---
 
@@ -377,8 +392,10 @@ On agent deregistration (`DELETE /agents/:name`):
 - [ ] Each agent gets its own staging worktree under `stagingWorktreeRoot/`
 - [ ] Builds use the correct per-agent worktree as cwd
 - [ ] UBT lock still serializes builds (one at a time)
-- [ ] Backwards-compatible: single `stagingWorktreePath` still works
-- [ ] `cd server && npm test` passes
+- [x] Backwards-compatible: single `stagingWorktreePath` still works
+- [ ] `cd server && npm test` passes (tests not yet written for Phase 3)
+
+**Status:** Config, launch.sh, and server path resolution are done (see Infrastructure section above). The server resolves per-agent worktree and bare repo paths. What remains is writing the Phase 3 tests.
 
 ---
 

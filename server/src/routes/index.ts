@@ -4,3 +4,5 @@ export { default as messagesPlugin } from './messages.js';
 export { default as ubtPlugin } from './ubt.js';
 export { default as buildPlugin } from './build.js';
 export { default as tasksPlugin } from './tasks.js';
+export { default as filesPlugin } from './files.js';
+export { default as searchPlugin } from './search.js';

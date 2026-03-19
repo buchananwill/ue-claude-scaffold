@@ -114,3 +114,7 @@ Agent type definitions live in `agents/` as markdown files (e.g. `agents/contain
   - `01-debrief.md` — debrief/reporting instructions
   - `02-messages.md` — message board and monitoring guidance
   - `03-task-worker.md` — task worker mode protocol
+
+### Issues
+
+The `issues/` directory contains markdown files raised by any team member (interactive sessions, dev teams, the user). Each file has frontmatter (`title`, `priority`, `reported-by`, `date`) and a short description of the problem or suggestion. Issues are work items to discuss with the user when prompted — if an idea gains momentum, it gets developed further.

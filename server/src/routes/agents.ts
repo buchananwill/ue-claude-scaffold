@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db.js';
 
-interface AgentRow {
+export interface AgentRow {
   name: string;
   worktree: string;
   plan_doc: string | null;
@@ -9,7 +9,7 @@ interface AgentRow {
   registered_at: string;
 }
 
-function formatAgent(row: AgentRow) {
+export function formatAgent(row: AgentRow) {
   return {
     name: row.name,
     worktree: row.worktree,
@@ -37,6 +37,10 @@ const agentsPlugin: FastifyPluginAsync = async (fastify) => {
 
   const deleteAllAgents = db.prepare('DELETE FROM agents');
 
+  const releaseAgentFiles = db.prepare(
+    'UPDATE files SET claimant = NULL, claimed_at = NULL WHERE claimant = ?'
+  );
+
   fastify.post<{
     Body: { name: string; worktree: string; planDoc?: string };
   }>('/agents/register', async (request) => {
@@ -47,6 +51,17 @@ const agentsPlugin: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/agents', async () => {
     return (allAgents.all() as AgentRow[]).map(formatAgent);
+  });
+
+  // GET /agents/:name — fetch a single agent by name
+  fastify.get<{
+    Params: { name: string };
+  }>('/agents/:name', async (request, reply) => {
+    const row = getAgent.get({ name: request.params.name }) as AgentRow | undefined;
+    if (!row) {
+      return reply.notFound(`Agent '${request.params.name}' not registered`);
+    }
+    return formatAgent(row);
   });
 
   fastify.post<{
@@ -68,8 +83,14 @@ const agentsPlugin: FastifyPluginAsync = async (fastify) => {
     Params: { name: string };
   }>('/agents/:name', async (request, reply) => {
     const { name } = request.params;
-    const info = deleteAgent.run({ name });
-    if (info.changes === 0) {
+    const result = db.transaction(() => {
+      const info = deleteAgent.run({ name });
+      if (info.changes === 0) return false;
+      releaseAgentFiles.run(name);
+      return true;
+    })();
+
+    if (!result) {
       return reply.notFound(`Agent '${name}' not registered`);
     }
     return { ok: true };
@@ -77,8 +98,12 @@ const agentsPlugin: FastifyPluginAsync = async (fastify) => {
 
   // DELETE /agents — deregister all agents (e.g. server restart cleanup)
   fastify.delete('/agents', async () => {
-    const info = deleteAllAgents.run();
-    return { ok: true, removed: info.changes };
+    const result = db.transaction(() => {
+      const info = deleteAllAgents.run();
+      db.prepare('UPDATE files SET claimant = NULL, claimed_at = NULL').run();
+      return info.changes;
+    })();
+    return { ok: true, removed: result };
   });
 };
 

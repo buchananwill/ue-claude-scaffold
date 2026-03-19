@@ -408,6 +408,95 @@ The server already supports `?type=` filtering. This phase exposes it in the das
 
 ---
 
+## Phase 6 — Message Feed Improvements
+
+Two usability gaps in the message feed that become obvious once search links you into specific channels.
+
+### 6A: Pagination / Virtual Scrolling
+
+The current `useMessages` hook appends every message since the cursor, unbounded (capped at 1000 client-side). The server's `GET /messages/:channel` has no `LIMIT` — it returns all matching rows. On a long-running session with hundreds of messages per channel, this causes:
+- Large payloads on initial page load (all messages dumped at once)
+- DOM bloat (every message rendered in the ScrollArea)
+- The 1000-message client-side cap silently drops older messages with no way to scroll back to them
+
+#### Server: add `limit` and `before` params to `GET /messages/:channel`
+
+**File: `server/src/routes/messages.ts`** (modify)
+
+- Add optional `limit` and `before` query params:
+  ```
+  GET /messages/:channel?since=<id>&before=<id>&type=<type>&limit=<n>
+  ```
+- `limit` defaults to 100. Caps maximum per-request payload.
+- `before` enables backward pagination: `WHERE id < ? ORDER BY id DESC LIMIT ? → reverse the result`. Combined with the existing `since` param, this gives bidirectional cursor pagination.
+- When neither `since` nor `before` is set, return the most recent `limit` messages (not all messages from the beginning of time).
+
+#### Dashboard: paginated feed with "load older" affordance
+
+**File: `dashboard/src/hooks/useMessages.ts`** (modify)
+
+- On initial load, fetch the most recent `limit` messages (no `since` param — server returns newest)
+- Continue polling with `since=<lastId>` for new messages (existing behavior)
+- Add a `loadOlder()` callback that fetches `?before=<oldestId>&limit=100` and prepends to the buffer
+- Track `hasOlder: boolean` (false when a `loadOlder` response returns fewer than `limit` messages)
+- Remove the hard 1000-message cap — pagination makes it unnecessary. If memory is a concern, consider virtualizing the DOM (see below) rather than dropping data.
+
+**File: `dashboard/src/components/MessagesFeed.tsx`** (modify)
+
+- Add "Load older messages" button at the top of the ScrollArea, visible when `hasOlder` is true
+- Consider using Mantine's `ScrollArea` with a virtualizer (e.g., `@tanstack/react-virtual`) for large message lists — only render visible rows. This is optional for Phase 6A but recommended.
+- Preserve scroll position when prepending older messages (the viewport should not jump)
+
+### 6B: Search-to-Message Highlight
+
+When the user clicks a message search result, they should land on the right channel AND see the specific message highlighted, not just dumped at the bottom of a feed.
+
+#### Server: add `GET /messages/:id` endpoint
+
+**File: `server/src/routes/messages.ts`** (modify)
+
+- Add `GET /messages/by-id/:id` — returns a single formatted message. This gives the dashboard the message's channel and position without needing to scan the feed.
+- Alternative: the search results already include the channel and ID, so this may not be strictly necessary if the dashboard can use `?before=` and `?since=` to load a window around the target message.
+
+#### Dashboard: scroll-to and highlight
+
+**File: `dashboard/src/components/SearchBar.tsx`** (modify)
+
+- Message click: navigate to `/messages/$channel` with search param `?highlight=<messageId>`
+
+**File: `dashboard/src/pages/MessagesPage.tsx`** (modify)
+
+- Read `highlight` search param from URL
+- Pass `highlightMessageId` to `useMessages` and `MessagesFeed`
+
+**File: `dashboard/src/hooks/useMessages.ts`** (modify)
+
+- When `highlightMessageId` is provided, ensure the message is in the buffer:
+  - If the message ID is within the initially-loaded range, it's already there
+  - If not, load a page centered around that ID using `before`/`since` params
+- Expose the highlight ID to the component
+
+**File: `dashboard/src/components/MessagesFeed.tsx`** (modify)
+
+- When `highlightMessageId` is set:
+  - Scroll to that message row (via ref + `scrollIntoView`)
+  - Apply a flash highlight (background color transition, auto-clears after 2-3s)
+  - Clear the URL search param after highlighting (so refresh doesn't re-flash)
+
+### Acceptance criteria
+
+- [ ] Initial message load fetches only the most recent 100, not the entire history
+- [ ] "Load older" button appears at the top → clicking loads the previous 100
+- [ ] Scroll position preserved when loading older messages
+- [ ] Poll continues appending new messages at the bottom
+- [ ] Search → click message result → navigates to channel, scrolls to message, flash-highlights it
+- [ ] Highlight auto-clears after 2-3 seconds
+- [ ] Refreshing the page does not re-trigger the highlight
+- [ ] `cd server && npm test` passes
+- [ ] `cd dashboard && npx tsc -b && npx vite build` passes
+
+---
+
 ## Phase ordering and dependencies
 
 ```
@@ -416,17 +505,19 @@ Phase 2 (Column Filters)   — independent, can start immediately
 Phase 3 (Agent Detail)     — depends on Phase 2 (reuses filtered TasksPanel)
 Phase 4 (Build Logs)       — independent, can start immediately (server schema change)
 Phase 5 (Message Filters)  — independent, can start immediately
+Phase 6 (Message Feed)     — depends on Phase 1 (search links to messages) and Phase 5 (type filter)
 ```
 
 Phases 1, 2, 4, 5 are parallelizable. Phase 3 should follow Phase 2 so the agent detail page gets column filtering for free.
 
-Recommended execution order for a single implementer: **2 → 1 → 5 → 3 → 4**
+Recommended execution order for a single implementer: **2 → 1 → 5 → 3 → 4 → 6**
 
 - Phase 2 first because it's pure client-side, low risk, and Phase 3 depends on it
 - Phase 1 next because search is the highest user-value feature
 - Phase 5 is small and self-contained
 - Phase 3 composes existing pieces
-- Phase 4 last because it has the broadest surface area (schema migration, new server route, new dashboard page)
+- Phase 4 next because it has the broadest surface area (schema migration, new server route, new dashboard page)
+- Phase 6 last because it depends on Phase 1 (search) and Phase 5 (type filter) being in place
 
 ## Verification (full V3)
 
@@ -440,3 +531,5 @@ Recommended execution order for a single implementer: **2 → 1 → 5 → 3 → 
 8. All pages deep-linkable (paste URL → correct page renders)
 9. Browser back/forward works across all new routes
 10. Leave dashboard open 30+ min → memory stable (no unbounded growth)
+11. Messages page loads only recent 100 messages; "Load older" fetches more
+12. Search → click message → channel loads, message highlighted

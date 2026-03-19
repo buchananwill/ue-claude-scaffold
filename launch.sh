@@ -250,7 +250,33 @@ if [[ ! -d "$BARE_REPO_PATH" ]]; then
   echo "Creating bare repo from $CLONE_SOURCE ..."
   git clone --bare "$CLONE_SOURCE" "$BARE_REPO_PATH"
 else
-  echo "Updating bare repo from $CLONE_SOURCE ..."
+  # Ensure the staging worktree has the bare repo as a remote ("exchange")
+  _existing_remote=$(git -C "$CLONE_SOURCE" remote get-url exchange 2>/dev/null || true)
+  if [[ -z "$_existing_remote" ]]; then
+    echo "Adding bare repo as 'exchange' remote on staging worktree..."
+    git -C "$CLONE_SOURCE" remote add exchange "$BARE_REPO_PATH"
+  elif [[ "$_existing_remote" != "$BARE_REPO_PATH" ]]; then
+    git -C "$CLONE_SOURCE" remote set-url exchange "$BARE_REPO_PATH"
+  fi
+
+  # Fetch from bare repo first — picks up any work the previous container left behind
+  echo "Syncing staging worktree from bare repo..."
+  if git -C "$CLONE_SOURCE" fetch exchange "$WORK_BRANCH" 2>/dev/null; then
+    # If the bare repo's branch is ahead, fast-forward the staging worktree
+    _local=$(git -C "$CLONE_SOURCE" rev-parse HEAD 2>/dev/null)
+    _remote=$(git -C "$CLONE_SOURCE" rev-parse FETCH_HEAD 2>/dev/null)
+    if [[ "$_local" != "$_remote" ]]; then
+      if git -C "$CLONE_SOURCE" merge-base --is-ancestor "$_local" "$_remote" 2>/dev/null; then
+        echo "Fast-forwarding staging worktree to bare repo's latest..."
+        git -C "$CLONE_SOURCE" reset --hard FETCH_HEAD
+      else
+        echo "Warning: staging worktree and bare repo have diverged. Pushing staging state."
+      fi
+    fi
+  fi
+
+  # Push staging worktree state to bare repo (ensures any local staging changes are included)
+  echo "Updating bare repo from staging worktree..."
   git -C "$CLONE_SOURCE" push "$BARE_REPO_PATH" "HEAD:refs/heads/${WORK_BRANCH}" --force 2>/dev/null || true
 fi
 
