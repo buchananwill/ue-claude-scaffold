@@ -24,11 +24,11 @@ Options:
   --worker            Run in task-queue worker mode (no plan file needed)
   --pump              Run in pump mode (multi-task worker with claim-next)
   --parallel N        Launch N parallel pump agents (implies --pump)
-  --fresh             Delete and re-clone the bare repo (clean start)
+  --fresh             Reset agent branch to docker/current-root HEAD (clean start)
   --dry-run           Print resolved configuration and exit without launching
   --help              Show this help message and exit
 
-Branch is determined automatically from the agent's staging worktree.
+Branch is docker/{agent-name}, forked from docker/current-root.
 
 Examples:
   ./launch.sh --plan plans/add-inventory.md
@@ -102,16 +102,11 @@ _cfg="$SCRIPT_DIR/scaffold.config.json"
 UE_ENGINE_PATH="$(jq -r '.engine.path // empty' "$_cfg")"
 PROJECT_PATH="$(jq -r '.project.path // empty' "$_cfg")"
 BARE_REPO_PATH="$(jq -r '.server.bareRepoPath // empty' "$_cfg")"
-BARE_REPO_ROOT="$(jq -r '.server.bareRepoRoot // empty' "$_cfg")"
 TASKS_PATH="$(jq -r '.tasks.path // empty' "$_cfg")"
-STAGING_WORKTREE="$(jq -r '.server.stagingWorktreePath // empty' "$_cfg")"
-STAGING_WORKTREE_ROOT="$(jq -r '.server.stagingWorktreeRoot // empty' "$_cfg")"
 SERVER_PORT="$(jq -r '.server.port // 9100' "$_cfg")"
 BUILD_SCRIPT_NAME="$(jq -r '.build.scriptPath // "build.py"' "$_cfg" | xargs basename)"
 TEST_SCRIPT_NAME="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)"
 DEFAULT_TEST_FILTERS="$(jq -r '.build.defaultTestFilters // [] | join(" ")' "$_cfg")"
-
-# CLONE_SOURCE and BARE_REPO_PATH are resolved after AGENT_NAME is known (below)
 
 # ── Apply CLI overrides ─────────────────────────────────────────────────────
 AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
@@ -137,34 +132,10 @@ WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
 LOG_VERBOSITY="${_CLI_VERBOSITY:-${LOG_VERBOSITY:-normal}}"
 
-# ── Resolve per-agent paths (staging worktree + bare repo) ──────────────────
-# If root directories are configured, derive per-agent paths from AGENT_NAME.
-# Otherwise fall back to the single-path values (V2 backwards-compatible).
-if [[ -n "$STAGING_WORKTREE_ROOT" ]]; then
-  STAGING_WORKTREE="${STAGING_WORKTREE_ROOT}/${AGENT_NAME}"
-  if [[ ! -d "$STAGING_WORKTREE" ]]; then
-    echo "Error: Staging worktree for $AGENT_NAME not found at $STAGING_WORKTREE" >&2
-    echo "Create it first: git clone --branch <branch> <source> \"$STAGING_WORKTREE\"" >&2
-    exit 1
-  fi
-fi
-CLONE_SOURCE="${STAGING_WORKTREE:-${PROJECT_PATH}}"
-
-# Derive WORK_BRANCH from the staging worktree's current branch.
-# Falls back to WORK_BRANCH from .env or "main" for legacy single-path mode.
-if [[ -n "$STAGING_WORKTREE_ROOT" ]]; then
-  WORK_BRANCH="$(git -C "$CLONE_SOURCE" branch --show-current 2>/dev/null)" || true
-  if [[ -z "$WORK_BRANCH" ]]; then
-    echo "Error: Could not determine branch from staging worktree at $CLONE_SOURCE" >&2
-    exit 1
-  fi
-else
-  WORK_BRANCH="${WORK_BRANCH:-main}"
-fi
-
-if [[ -n "$BARE_REPO_ROOT" ]]; then
-  BARE_REPO_PATH="${BARE_REPO_ROOT}/${AGENT_NAME}.git"
-fi
+# ── Compute branch names ─────────────────────────────────────────────────────
+AGENT_BRANCH="docker/${AGENT_NAME}"
+ROOT_BRANCH="${ROOT_BRANCH:-docker/current-root}"
+WORK_BRANCH="$AGENT_BRANCH"
 
 # Validate verbosity
 case "$LOG_VERBOSITY" in
@@ -195,13 +166,6 @@ if [[ -z "${TASKS_PATH:-}" ]]; then
   _errors+=("TASKS_PATH is not set. Set it in scaffold.config.json.")
 fi
 
-if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null && [[ -z "${STAGING_WORKTREE_ROOT:-}" ]]; then
-  _errors+=("--parallel requires server.stagingWorktreeRoot to be set in scaffold.config.json")
-fi
-if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null && [[ -z "${BARE_REPO_ROOT:-}" ]]; then
-  _errors+=("--parallel requires server.bareRepoRoot to be set in scaffold.config.json")
-fi
-
 if [[ ${#_errors[@]} -gt 0 ]]; then
   echo "Configuration errors:" >&2
   for err in "${_errors[@]}"; do
@@ -226,10 +190,11 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo ""
   echo "=== Dry Run — Resolved Configuration ==="
   echo "  AGENT_NAME:       $AGENT_NAME"
+  echo "  AGENT_BRANCH:     $AGENT_BRANCH"
+  echo "  ROOT_BRANCH:      $ROOT_BRANCH"
   echo "  WORK_BRANCH:      $WORK_BRANCH"
   echo "  AGENT_TYPE:       $AGENT_TYPE"
   echo "  MAX_TURNS:        $MAX_TURNS"
-  echo "  CLONE_SOURCE:     $CLONE_SOURCE"
   echo "  BARE_REPO_PATH:   $BARE_REPO_PATH"
   echo "  UE_ENGINE_PATH:   $UE_ENGINE_PATH"
   echo "  TASKS_PATH:       $TASKS_PATH"
@@ -242,6 +207,13 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo "  LOG_VERBOSITY:    $LOG_VERBOSITY"
   echo "  PARALLEL:         $_CLI_PARALLEL"
   echo "  FRESH:            $_CLI_FRESH"
+  if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
+    echo ""
+    echo "Parallel agent branches:"
+    for i in $(seq 1 "$_CLI_PARALLEL"); do
+      echo "  agent-${i} → docker/agent-${i}"
+    done
+  fi
   echo ""
   exit 0
 fi
@@ -269,51 +241,37 @@ fi
   $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" down 2>/dev/null || true
 )
 
-# ── Bare repo setup ─────────────────────────────────────────────────────────
-if [ "$_CLI_FRESH" = "true" ] && [ -d "$BARE_REPO_PATH" ]; then
-    echo "Removing existing bare repo (--fresh)..."
-    rm -rf "$BARE_REPO_PATH"
-fi
+# ── Branch setup in persistent bare repo ────────────────────────────────────
 
 if [[ ! -d "$BARE_REPO_PATH" ]]; then
-  echo "Creating bare repo from $CLONE_SOURCE ..."
-  git clone --bare "$CLONE_SOURCE" "$BARE_REPO_PATH"
-else
-  # Ensure the staging worktree has the bare repo as a remote ("exchange")
-  _existing_remote=$(git -C "$CLONE_SOURCE" remote get-url exchange 2>/dev/null || true)
-  if [[ -z "$_existing_remote" ]]; then
-    echo "Adding bare repo as 'exchange' remote on staging worktree..."
-    git -C "$CLONE_SOURCE" remote add exchange "$BARE_REPO_PATH"
-  elif [[ "$_existing_remote" != "$BARE_REPO_PATH" ]]; then
-    git -C "$CLONE_SOURCE" remote set-url exchange "$BARE_REPO_PATH"
-  fi
-
-  # Fetch from bare repo first — picks up any work the previous container left behind
-  echo "Syncing staging worktree from bare repo..."
-  if git -C "$CLONE_SOURCE" fetch exchange "$WORK_BRANCH" 2>/dev/null; then
-    # If the bare repo's branch is ahead, fast-forward the staging worktree
-    _local=$(git -C "$CLONE_SOURCE" rev-parse HEAD 2>/dev/null)
-    _remote=$(git -C "$CLONE_SOURCE" rev-parse FETCH_HEAD 2>/dev/null)
-    if [[ "$_local" != "$_remote" ]]; then
-      if git -C "$CLONE_SOURCE" merge-base --is-ancestor "$_local" "$_remote" 2>/dev/null; then
-        echo "Fast-forwarding staging worktree to bare repo's latest..."
-        git -C "$CLONE_SOURCE" reset --hard FETCH_HEAD
-      else
-        echo "Warning: staging worktree and bare repo have diverged. Pushing staging state."
-      fi
-    fi
-  fi
-
-  # Push staging worktree state to bare repo (ensures any local staging changes are included)
-  echo "Updating bare repo from staging worktree..."
-  git -C "$CLONE_SOURCE" push "$BARE_REPO_PATH" "HEAD:refs/heads/${WORK_BRANCH}" --force 2>/dev/null || true
+  echo "Error: Bare repo not found at $BARE_REPO_PATH" >&2
+  echo "Run ./setup.sh to create it, or create it manually:" >&2
+  echo "  git clone --bare <your-project> $BARE_REPO_PATH" >&2
+  exit 1
 fi
 
-# Ensure target branch exists in the bare repo
-if ! git -C "$BARE_REPO_PATH" rev-parse --verify "$WORK_BRANCH" &>/dev/null; then
-  echo "Branch '$WORK_BRANCH' does not exist in bare repo. Creating from default branch..."
-  _default_branch=$(git -C "$BARE_REPO_PATH" symbolic-ref HEAD 2>/dev/null | sed 's|refs/heads/||')
-  git -C "$BARE_REPO_PATH" branch "$WORK_BRANCH" "$_default_branch"
+if ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${ROOT_BRANCH}" &>/dev/null; then
+  echo "Error: Branch '${ROOT_BRANCH}' not found in bare repo." >&2
+  echo "Push it from your project:" >&2
+  echo "  git push $BARE_REPO_PATH HEAD:refs/heads/${ROOT_BRANCH}" >&2
+  exit 1
+fi
+
+if ! [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
+  # Single-agent branch setup
+  if [ "$_CLI_FRESH" = "true" ]; then
+    echo "Resetting ${AGENT_BRANCH} to ${ROOT_BRANCH} (--fresh)..."
+    ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
+    git -C "$BARE_REPO_PATH" update-ref "refs/heads/${AGENT_BRANCH}" "$ROOT_SHA"
+  else
+    if ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${AGENT_BRANCH}" &>/dev/null; then
+      echo "No existing branch ${AGENT_BRANCH}. Creating from ${ROOT_BRANCH}..."
+      ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
+      git -C "$BARE_REPO_PATH" update-ref "refs/heads/${AGENT_BRANCH}" "$ROOT_SHA"
+    else
+      echo "Resuming from existing branch ${AGENT_BRANCH}."
+    fi
+  fi
 fi
 
 # ── Export vars for docker-compose ───────────────────────────────────────────
@@ -326,33 +284,27 @@ export SERVER_PORT="${SERVER_PORT:-9100}"
 # ── Launch ───────────────────────────────────────────────────────────────────
 if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
   echo "=== Launching $_CLI_PARALLEL parallel agents ==="
-  BASE_BRANCH="$WORK_BRANCH"
 
   for i in $(seq 1 "$_CLI_PARALLEL"); do
     _AGENT="agent-${i}"
-    _BRANCH="${BASE_BRANCH}-${i}"
-    _STAGING="${STAGING_WORKTREE_ROOT}/${_AGENT}"
-    _BARE="${BARE_REPO_ROOT}/${_AGENT}.git"
+    _BRANCH="docker/${_AGENT}"
 
-    # Validate staging worktree exists
-    if [[ ! -d "$_STAGING" ]]; then
-      echo "Error: Staging worktree for $_AGENT not found at $_STAGING" >&2
-      exit 1
+    if [ "$_CLI_FRESH" = "true" ]; then
+      _ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
+      git -C "$BARE_REPO_PATH" update-ref "refs/heads/${_BRANCH}" "$_ROOT_SHA"
+      echo "  Reset branch ${_BRANCH} to ${ROOT_BRANCH} (--fresh)"
+    elif ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${_BRANCH}" &>/dev/null; then
+      _ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
+      git -C "$BARE_REPO_PATH" update-ref "refs/heads/${_BRANCH}" "$_ROOT_SHA"
+      echo "  Created branch ${_BRANCH} from ${ROOT_BRANCH}"
+    else
+      echo "  Resuming existing branch ${_BRANCH}"
     fi
 
-    # Create bare repo if needed
-    if [[ ! -d "$_BARE" ]]; then
-      git clone --bare "$_STAGING" "$_BARE"
-    fi
-
-    # Fork branch
-    git -C "$_BARE" branch "$_BRANCH" "$BASE_BRANCH" 2>/dev/null || \
-      git -C "$_BARE" branch -f "$_BRANCH" "$BASE_BRANCH"
-
-    # Launch container
     (cd "$SCRIPT_DIR/container" && \
       AGENT_NAME="$_AGENT" \
       WORK_BRANCH="$_BRANCH" \
+      BARE_REPO_PATH="$BARE_REPO_PATH" \
       WORKER_MODE=true \
       WORKER_SINGLE_TASK=false \
       AGENT_MODE=pump \
@@ -363,7 +315,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
 
   echo ""
   echo "=== $_CLI_PARALLEL Agents Launched ==="
-  echo "  Base branch: $BASE_BRANCH"
+  echo "  Root branch: $ROOT_BRANCH"
   echo ""
   echo "Monitor progress:"
   echo "  ./status.sh --follow"
