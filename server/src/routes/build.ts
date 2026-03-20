@@ -94,19 +94,16 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     if (config.server.stagingWorktreeRoot && agentName) {
       return path.join(config.server.stagingWorktreeRoot, agentName);
     }
-    return config.server.stagingWorktreePath ?? config.project.path;
+    return config.project.path;
   }
 
-  function getBareRepoPath(agentName: string | undefined): string {
-    if (config.server.bareRepoRoot && agentName) {
-      return path.join(config.server.bareRepoRoot, `${agentName}.git`);
-    }
-    return config.server.bareRepoPath ?? path.join(config.project.path, '..', 'repo.git');
+  function getBareRepoPath(): string {
+    return config.server.bareRepoPath || path.join(config.project.path, '..', 'repo.git');
   }
 
   async function syncWorktree(agentName: string | undefined): Promise<SpawnResult | null> {
     const worktreePath = getStagingWorktree(agentName);
-    const bareRepo = getBareRepoPath(agentName);
+    const bareRepo = getBareRepoPath();
 
     const agentRow = agentName
       ? (db.prepare('SELECT worktree FROM agents WHERE name = ?').get(agentName) as { worktree: string } | undefined)

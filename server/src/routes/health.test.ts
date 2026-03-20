@@ -4,7 +4,7 @@ import { createTestApp, createTestConfig } from '../test-helper.js';
 import healthPlugin from './health.js';
 
 describe('GET /health', () => {
-  const config = createTestConfig({ server: { port: 9200, ubtLockTimeoutMs: 300000 } });
+  const config = createTestConfig({ server: { port: 9200, ubtLockTimeoutMs: 300000, bareRepoPath: '/tmp/repo.git' } });
   let cleanup: () => void;
 
   it('returns 200 with status, dbPath, and config summary', async () => {

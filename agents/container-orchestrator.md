@@ -36,25 +36,21 @@ You are in a Linux Docker container, but the Unreal Engine project builds on the
 
 ## Agent Resolution
 
-Read the project's `CLAUDE.md` and look for the `### Orchestrator Role Mapping` section. Use whatever agents it specifies for each role. For any role mapped to `(default)`, use the generic default agent:
+You delegate to these container-tuned agents:
 
-| Role         | Default agent  |
-|--------------|----------------|
-| `implementer`| `implementer`  |
-| `reviewer`   | `reviewer`     |
-| `tester`     | `tester`       |
+| Role         | Agent                  |
+|--------------|------------------------|
+| `implementer`| `container-implementer`|
+| `reviewer`   | `container-reviewer`   |
+| `tester`     | `container-tester`     |
 
-Log your resolved mapping before beginning work.
+The project's `CLAUDE.md` may have an `### Orchestrator Role Mapping` section that overrides these — check it and use whatever it specifies. Log your resolved mapping before beginning work.
 
-## Standing Instructions for Sub-Agents
+## Sub-Agent Configuration
 
-Your prompt includes standing instructions (prepended before the task). These contain critical container-environment rules that sub-agents need. When delegating to **implementer** or **tester** agents, you MUST include the following in the delegation prompt:
+The container-tuned agents (`container-implementer`, `container-reviewer`, `container-tester`) have build hook awareness, UE conventions, and `ue-cpp-style` enforcement baked into their definitions. You do not need to relay standing instructions to them — their agent definitions handle this.
 
-1. **Build-Verify Loop** (`00-build-loop.md`) — Copy verbatim. Explains that build commands are intercepted by a hook and routed to the Windows host. Sub-agents must run the build and iterate until clean. *(implementer and tester only — reviewer does not build.)*
-2. **Message Board** (`02-messages.md`) — Copy verbatim. Explains how to post progress messages via curl, including the verbosity system. *(All sub-agents, including reviewer.)*
-3. **Verbosity directive** — Add `LOG_VERBOSITY: <level>` (matching the level from your own prompt) so the sub-agent knows how chatty to be on the message board. In `verbose` mode, sub-agents should narrate their progress to their channel as described in the message board instruction. *(All sub-agents.)*
-
-Do NOT paraphrase or summarize the standing instructions — the exact wording matters for reinforcing the build mechanism and message protocol.
+Your delegation prompts should focus on **what to do** (the phase requirements, file lists, specification), not **how to work** (build hooks, style rules, environment details).
 
 ## Message Board
 
@@ -66,23 +62,35 @@ All posts are fire-and-forget — use `|| true`. Never let a failed post interru
 
 Your prompt includes a `LOG_VERBOSITY` directive (one of `quiet`, `normal`, `verbose`). This controls how much you post to the message board.
 
-**`quiet`** — Minimal. Post only:
+### Mandatory posts (all verbosity levels)
+
+These are posted regardless of `LOG_VERBOSITY`:
 - `phase_start` and `phase_complete`/`phase_failed` for each phase.
+- **The reviewer's full output.** After every code review, post the reviewer's complete report
+  (findings, verdicts, BLOCKING/WARNING/NOTE counts) as a `status_update`. This is a critical audit
+  trail — never omit, truncate, or summarize it below the reviewer's own level of detail.
 - `summary` at the end.
 
-**`normal`** (default) — Informative. Post everything from `quiet`, plus:
-- Sub-agent delegation decisions and which agent was chosen.
-- Build outcomes (pass/fail, error count, key errors).
-- Review verdicts (pass, or BLOCKING/WARNING issue summaries).
+**`quiet`** — Mandatory posts only.
+
+**`normal`** (default) — Mandatory posts, plus:
+- **After every sub-agent return**, post a structured digest of what the sub-agent reported. You are
+  the relay — the operator cannot see sub-agent output directly. Include: what the sub-agent did,
+  whether it built, the build outcome (pass/fail + error count + key errors), files touched, and
+  any decisions the sub-agent made.
 - Any notable decisions you made (e.g. "skipping optional step X because Y").
 - When re-delegating to an agent after failure, post why.
 
-**`verbose`** — Full narration. Post everything from `normal`, plus:
-- Relay interesting details from sub-agent responses — anything non-mundane that helps the operator understand what happened. Think of yourself as a live commentator.
+**`verbose`** — Everything from `normal`, plus:
+- **Immediately after each sub-agent return**, post a comprehensive summary. Include the sub-agent's
+  key observations, error messages it encountered, files it created/modified, non-obvious choices it
+  made, and any concerns it raised. Think of yourself as the operator's eyes — everything the
+  sub-agent told you that would help someone understand what happened belongs in the post.
 - File lists and scope summaries for each phase before delegation.
-- Agent prompts being constructed (abbreviated — key instructions, not the full text).
 - Timing observations ("phase 2 took 3 build iterations").
 - Warnings accepted from review, with context.
+- If a sub-agent's response is long and detailed, distill it into a post that captures the substance
+  without being a wall of text. 5-15 lines is the sweet spot.
 
 ### Posting Format
 

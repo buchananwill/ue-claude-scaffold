@@ -27,6 +27,7 @@ export function createTestConfig(overrides?: Partial<ScaffoldConfig>): ScaffoldC
     server: {
       port: 9100,
       ubtLockTimeoutMs: 600000,
+      bareRepoPath: '/tmp/test-repo.git',
     },
     ...overrides,
   };

@@ -46,11 +46,3 @@ When you are ready to finish, do these three things in order:
 1. **Commit your code and debrief together, then build.** The debrief file (see `01-debrief.md`) is part of the verified commit. This build is your final build. It must succeed.
 
 2. **Post a `summary` message to the `general` channel.** This is a curl call — no files are modified, no rebuild needed. Include: task title, build outcome, key files changed. This is your sign-off.
-
-## Budget your turns wisely
-
-You have a finite number of tool-use turns. Do not spend them all on exploration. A good heuristic:
-
-- Spend at most ~30% of your effort on reading/understanding code.
-- Reserve the majority for implementation, building, and fixing errors.
-- If you are running low on turns and have not yet built, stop what you are doing and build immediately so you can at least surface the errors.

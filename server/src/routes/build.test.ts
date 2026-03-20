@@ -37,7 +37,6 @@ process.exit(0);
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
-        stagingWorktreePath: ctx.tmpDir,
         bareRepoPath: ctx.tmpDir,
       },
     });

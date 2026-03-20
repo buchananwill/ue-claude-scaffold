@@ -8,7 +8,8 @@
   },
 
   "tasks": {
-    "path": ""
+    "path": "",
+    "planBranch": "docker/current-root"
   },
 
   "engine": {
@@ -31,15 +32,13 @@
   "container": {
     "agentType": "container-orchestrator",
     "maxTurns": 200,
-    "defaultBranch": "main"
+    "defaultBranch": "docker/current-root"
   },
 
   "server": {
     "port": 9100,
     "ubtLockTimeoutMs": 600000,
     "stagingWorktreeRoot": "",
-    "bareRepoRoot": "",
-    "stagingWorktreePath": "",
     "bareRepoPath": ""
   },
 

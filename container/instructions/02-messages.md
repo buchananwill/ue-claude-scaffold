@@ -47,16 +47,14 @@ Keep payloads concise — they are stored in SQLite. Include at minimum:
 - **Status updates**: `{ "message": "<your message>" }`
 - **Summary**: `{ "summary": "<markdown block>" }`
 
-## When you must post
+## Who posts
 
-If you are the **orchestrator**: post `phase_start` and `phase_complete`/`phase_failed` for every phase, and `summary`
-at the end.
+The **orchestrator** is the primary message poster. It posts `phase_start`, `phase_complete`/`phase_failed`, and
+`summary` at the mandatory points, and relays sub-agent output as `status_update` posts in between.
 
-If you are an **implementer**: post `build_result` after each build attempt to the `implementer` channel.
-
-If you are a **reviewer**: post your review verdict to the `reviewer` channel as a `status_update`. Include the
-BLOCKING/WARNING/NOTE counts and a brief summary of each BLOCKING and WARNING issue. The orchestrator may compress or
-misinterpret your findings — posting them directly ensures the human operator sees exactly what you found.
+Sub-agents (implementer, reviewer, tester) do not post to the message board. The orchestrator reads their output and
+relays the relevant parts. This avoids fragile multi-hop messaging chains — the orchestrator is the single entity that
+reliably has the server URL, agent name, and conversation context.
 
 ## Verbosity
 

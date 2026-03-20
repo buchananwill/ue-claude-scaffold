@@ -28,34 +28,26 @@ import agentsPlugin from './agents.js';
 // This mirrors the exact implementation to verify the contract.
 
 function getStagingWorktree(
-  config: { stagingWorktreeRoot?: string; stagingWorktreePath?: string },
+  config: { stagingWorktreeRoot?: string },
   projectPath: string,
   agentName: string | undefined,
 ): string {
   if (config.stagingWorktreeRoot && agentName) {
     return path.join(config.stagingWorktreeRoot, agentName);
   }
-  return config.stagingWorktreePath ?? projectPath;
+  return projectPath;
 }
 
 function getBareRepoPathBuild(
-  config: { bareRepoRoot?: string; bareRepoPath?: string },
+  config: { bareRepoPath: string },
   projectPath: string,
-  agentName: string | undefined,
 ): string {
-  if (config.bareRepoRoot && agentName) {
-    return path.join(config.bareRepoRoot, `${agentName}.git`);
-  }
-  return config.bareRepoPath ?? path.join(projectPath, '..', 'repo.git');
+  return config.bareRepoPath || path.join(projectPath, '..', 'repo.git');
 }
 
 function getBareRepoPathTasks(
-  config: { bareRepoRoot?: string; bareRepoPath?: string },
-  agentName?: string,
-): string | undefined {
-  if (config.bareRepoRoot && agentName) {
-    return path.join(config.bareRepoRoot, `${agentName}.git`);
-  }
+  config: { bareRepoPath: string },
+): string {
   return config.bareRepoPath;
 }
 
@@ -80,161 +72,81 @@ describe('parallel worktrees — path resolution contract', () => {
       assert.equal(path2, path.join('/staging', 'agent-2'));
     });
 
-    it('falls back to stagingWorktreePath when root is not set', () => {
+    it('falls back to project.path when root is not set', () => {
       const result = getStagingWorktree(
-        { stagingWorktreePath: '/legacy/staging' },
+        {},
         '/project',
         'agent-1',
       );
-      assert.equal(result, '/legacy/staging');
+      assert.equal(result, '/project');
     });
 
-    it('falls back to stagingWorktreePath when agentName is undefined', () => {
+    it('falls back to project.path when agentName is undefined', () => {
       const result = getStagingWorktree(
-        { stagingWorktreeRoot: '/staging', stagingWorktreePath: '/legacy/staging' },
+        { stagingWorktreeRoot: '/staging' },
         '/project',
         undefined,
       );
-      assert.equal(result, '/legacy/staging');
+      assert.equal(result, '/project');
     });
 
-    it('falls back to project.path when neither root nor path is set', () => {
+    it('falls back to project.path when neither root nor agent is set', () => {
       const result = getStagingWorktree({}, '/my/project', undefined);
-      assert.equal(result, '/my/project');
-    });
-
-    it('falls back to project.path when root is set but no agent name', () => {
-      const result = getStagingWorktree(
-        { stagingWorktreeRoot: '/staging' },
-        '/my/project',
-        undefined,
-      );
       assert.equal(result, '/my/project');
     });
   });
 
   describe('getBareRepoPath (build route variant)', () => {
-    it('returns <bareRepoRoot>/<agentName>.git when root is set and agent provided', () => {
+    it('returns bareRepoPath when set', () => {
       const result = getBareRepoPathBuild(
-        { bareRepoRoot: '/bare-repos' },
+        { bareRepoPath: '/some/repo.git' },
         '/project',
-        'agent-1',
       );
-      assert.equal(result, path.join('/bare-repos', 'agent-1.git'));
+      assert.equal(result, '/some/repo.git');
     });
 
-    it('two agents get different bare repo paths', () => {
-      const config = { bareRepoRoot: '/bare-repos' };
-      const path1 = getBareRepoPathBuild(config, '/project', 'agent-1');
-      const path2 = getBareRepoPathBuild(config, '/project', 'agent-2');
-      assert.notEqual(path1, path2);
-    });
-
-    it('falls back to bareRepoPath when root is not set', () => {
-      const result = getBareRepoPathBuild(
-        { bareRepoPath: '/legacy/repo.git' },
-        '/project',
-        'agent-1',
-      );
-      assert.equal(result, '/legacy/repo.git');
-    });
-
-    it('falls back to bareRepoPath when agentName is undefined', () => {
-      const result = getBareRepoPathBuild(
-        { bareRepoRoot: '/bare-repos', bareRepoPath: '/legacy/repo.git' },
-        '/project',
-        undefined,
-      );
-      assert.equal(result, '/legacy/repo.git');
-    });
-
-    it('falls back to <project.path>/../repo.git when nothing is set', () => {
-      const result = getBareRepoPathBuild({}, '/my/project', undefined);
+    it('falls back to <project.path>/../repo.git when bareRepoPath is empty', () => {
+      const result = getBareRepoPathBuild({ bareRepoPath: '' }, '/my/project');
       assert.equal(result, path.join('/my/project', '..', 'repo.git'));
     });
   });
 
   describe('getBareRepoPath (tasks route variant)', () => {
-    it('returns <bareRepoRoot>/<agentName>.git when root is set and agent provided', () => {
+    it('returns bareRepoPath', () => {
       const result = getBareRepoPathTasks(
-        { bareRepoRoot: '/bare-repos' },
-        'agent-1',
+        { bareRepoPath: '/some/repo.git' },
       );
-      assert.equal(result, path.join('/bare-repos', 'agent-1.git'));
-    });
-
-    it('returns bareRepoPath when root is not set', () => {
-      const result = getBareRepoPathTasks(
-        { bareRepoPath: '/legacy/repo.git' },
-        'agent-1',
-      );
-      assert.equal(result, '/legacy/repo.git');
-    });
-
-    it('returns undefined when neither root nor path is set', () => {
-      const result = getBareRepoPathTasks({});
-      assert.equal(result, undefined);
-    });
-
-    it('returns bareRepoPath when agentName is undefined', () => {
-      const result = getBareRepoPathTasks(
-        { bareRepoRoot: '/bare-repos', bareRepoPath: '/fallback.git' },
-        undefined,
-      );
-      assert.equal(result, '/fallback.git');
+      assert.equal(result, '/some/repo.git');
     });
   });
 });
 
 describe('parallel worktrees — config shape', () => {
-  it('ScaffoldConfig supports stagingWorktreeRoot and bareRepoRoot fields', () => {
+  it('ScaffoldConfig supports stagingWorktreeRoot and bareRepoPath fields', () => {
     const config = createTestConfig({
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
         stagingWorktreeRoot: '/staging',
-        bareRepoRoot: '/bare-repos',
+        bareRepoPath: '/some/repo.git',
       },
     });
 
     assert.equal(config.server.stagingWorktreeRoot, '/staging');
-    assert.equal(config.server.bareRepoRoot, '/bare-repos');
-    assert.equal(config.server.stagingWorktreePath, undefined);
-    assert.equal(config.server.bareRepoPath, undefined);
+    assert.equal(config.server.bareRepoPath, '/some/repo.git');
   });
 
-  it('ScaffoldConfig supports legacy single-worktree fields', () => {
+  it('ScaffoldConfig supports bareRepoPath without stagingWorktreeRoot', () => {
     const config = createTestConfig({
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
-        stagingWorktreePath: '/single/staging',
         bareRepoPath: '/single/repo.git',
       },
     });
 
-    assert.equal(config.server.stagingWorktreePath, '/single/staging');
     assert.equal(config.server.bareRepoPath, '/single/repo.git');
     assert.equal(config.server.stagingWorktreeRoot, undefined);
-    assert.equal(config.server.bareRepoRoot, undefined);
-  });
-
-  it('ScaffoldConfig supports both Root and Path fields simultaneously', () => {
-    const config = createTestConfig({
-      server: {
-        port: 9100,
-        ubtLockTimeoutMs: 600000,
-        stagingWorktreeRoot: '/staging',
-        bareRepoRoot: '/bare-repos',
-        stagingWorktreePath: '/fallback/staging',
-        bareRepoPath: '/fallback/repo.git',
-      },
-    });
-
-    assert.equal(config.server.stagingWorktreeRoot, '/staging');
-    assert.equal(config.server.bareRepoRoot, '/bare-repos');
-    assert.equal(config.server.stagingWorktreePath, '/fallback/staging');
-    assert.equal(config.server.bareRepoPath, '/fallback/repo.git');
   });
 });
 
@@ -246,14 +158,14 @@ describe('parallel worktrees — tasks route integration', () => {
     ctx.cleanup();
   });
 
-  it('claim succeeds with per-agent bareRepoRoot config (no sourcePath)', async () => {
+  it('claim succeeds with bareRepoPath config (no sourcePath)', async () => {
     ctx = await createTestApp();
 
     const config = createTestConfig({
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
-        bareRepoRoot: '/bare-repos',
+        bareRepoPath: '/some/repo.git',
       },
     });
 
@@ -319,15 +231,10 @@ describe('parallel worktrees — tasks route integration', () => {
     assert.deepEqual(claimRes.json(), { ok: true });
   });
 
-  it('claim succeeds when neither bareRepoRoot nor bareRepoPath is set', async () => {
+  it('claim succeeds with default config (no sourcePath on task)', async () => {
     ctx = await createTestApp();
 
-    const config = createTestConfig({
-      server: {
-        port: 9100,
-        ubtLockTimeoutMs: 600000,
-      },
-    });
+    const config = createTestConfig();
 
     await ctx.app.register(agentsPlugin);
     await ctx.app.register(tasksPlugin, { config });
@@ -341,11 +248,10 @@ describe('parallel worktrees — tasks route integration', () => {
     const createRes = await ctx.app.inject({
       method: 'POST',
       url: '/tasks',
-      payload: { title: 'No bare repo config' },
+      payload: { title: 'Default config test' },
     });
     const taskId = createRes.json().id;
 
-    // getBareRepoPath returns undefined => sourcePath validation skipped
     const claimRes = await ctx.app.inject({
       method: 'POST',
       url: `/tasks/${taskId}/claim`,
@@ -362,7 +268,7 @@ describe('parallel worktrees — tasks route integration', () => {
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
-        bareRepoRoot: '/bare-repos',
+        bareRepoPath: '/some/repo.git',
         stagingWorktreeRoot: '/staging',
       },
     });
@@ -426,7 +332,7 @@ describe('parallel worktrees — tasks route integration', () => {
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
-        bareRepoRoot: '/bare-repos',
+        bareRepoPath: '/some/repo.git',
         stagingWorktreeRoot: '/staging',
       },
     });
@@ -485,7 +391,7 @@ describe('parallel worktrees — tasks route integration', () => {
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
-        bareRepoRoot: '/bare-repos',
+        bareRepoPath: '/some/repo.git',
         stagingWorktreeRoot: '/staging',
       },
     });

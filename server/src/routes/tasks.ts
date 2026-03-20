@@ -258,10 +258,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     return config.project.path;
   }
 
-  function getBareRepoPath(agentName?: string): string | undefined {
-    if (config.server.bareRepoRoot && agentName) {
-      return path.join(config.server.bareRepoRoot, `${agentName}.git`);
-    }
+  function getBareRepoPath(): string {
     return config.server.bareRepoPath;
   }
 
@@ -706,7 +703,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     if (task.source_path) {
-      const bareRepo = getBareRepoPath(agent);
+      const bareRepo = getBareRepoPath();
       if (bareRepo) {
         // Determine the branch from the agent's registration
         const agentRow = db.prepare('SELECT worktree FROM agents WHERE name = ?').get(agent) as
