@@ -31,7 +31,7 @@ const server = Fastify({
 
 await server.register(sensible);
 await server.register(healthPlugin, { dbPath, config });
-await server.register(agentsPlugin);
+await server.register(agentsPlugin, { config });
 await server.register(messagesPlugin);
 await server.register(ubtPlugin, { config });
 await server.register(buildPlugin, { config });

@@ -1,5 +1,9 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db.js';
+import type { ScaffoldConfig } from '../config.js';
+import { mergeIntoBranch } from '../git-utils.js';
+
+interface AgentsOpts { config: ScaffoldConfig }
 
 export interface AgentRow {
   name: string;
@@ -21,7 +25,8 @@ export function formatAgent(row: AgentRow) {
   };
 }
 
-const agentsPlugin: FastifyPluginAsync = async (fastify) => {
+const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
+  const { config } = opts;
   const insertAgent = db.prepare(
     `INSERT OR REPLACE INTO agents (name, worktree, plan_doc, status, mode, registered_at)
      VALUES (@name, @worktree, @planDoc, 'idle', @mode, CURRENT_TIMESTAMP)`
@@ -106,6 +111,35 @@ const agentsPlugin: FastifyPluginAsync = async (fastify) => {
       return info.changes;
     })();
     return { ok: true, removed: result };
+  });
+
+  // POST /agents/:name/sync — merge plan branch into agent's branch
+  fastify.post<{ Params: { name: string } }>('/agents/:name/sync', async (request, reply) => {
+    const { name } = request.params;
+
+    const agent = db.prepare('SELECT name, worktree FROM agents WHERE name = ?').get(name);
+    if (!agent) {
+      return reply.notFound(`Agent '${name}' not found`);
+    }
+
+    const bareRepo = config.server.bareRepoPath;
+    if (!bareRepo) {
+      return reply.code(422).send({
+        statusCode: 422,
+        error: 'Unprocessable Entity',
+        message: 'sync requires server.bareRepoPath to be configured',
+      });
+    }
+
+    const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+    const targetBranch = `docker/${name}`;
+
+    const result = mergeIntoBranch(bareRepo, planBranch, targetBranch);
+    if (result.ok) {
+      return reply.send({ ok: true, ...(result.commitSha ? { commitSha: result.commitSha } : {}) });
+    } else {
+      return reply.code(409).send({ ok: false, reason: result.reason });
+    }
   });
 };
 

@@ -1,6 +1,8 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, type TestContext } from '../test-helper.js';
+import { execSync, spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
 import agentsPlugin from './agents.js';
 
 describe('agents routes', () => {
@@ -8,7 +10,7 @@ describe('agents routes', () => {
 
   beforeEach(async () => {
     ctx = await createTestApp();
-    await ctx.app.register(agentsPlugin);
+    await ctx.app.register(agentsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
@@ -171,5 +173,125 @@ describe('agents routes', () => {
 
     const list = await ctx.app.inject({ method: 'GET', url: '/agents' });
     assert.deepEqual(list.json(), []);
+  });
+});
+
+describe('POST /agents/:name/sync', () => {
+  let ctx: TestContext;
+  let tmpBareRepo: string;
+
+  function initBareRepoWithBranch(tmpDir: string, branchName: string): { repo: string; initSha: string } {
+    const repo = path.join(tmpDir, 'test.git');
+    execSync(`git init --bare "${repo}"`);
+    const emptyTree = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+    const initSha = execSync(`git -C "${repo}" commit-tree ${emptyTree} -m "init"`, { encoding: 'utf-8' }).trim();
+    execSync(`git -C "${repo}" update-ref refs/heads/${branchName} ${initSha}`);
+    return { repo, initSha };
+  }
+
+  function writeFileToBranch(repo: string, branch: string, filePath: string, content: string): string {
+    const blobResult = spawnSync('git', ['-C', repo, 'hash-object', '-w', '--stdin'], {
+      input: content, encoding: 'utf-8', timeout: 5000,
+    });
+    const blobSha = blobResult.stdout.trim();
+    const parentSha = execSync(`git -C "${repo}" rev-parse refs/heads/${branch}`, { encoding: 'utf-8' }).trim();
+    const treeEntry = `100644 blob ${blobSha}\t${filePath}\n`;
+    const mkTree = spawnSync('git', ['-C', repo, 'mktree'], {
+      input: treeEntry, encoding: 'utf-8', timeout: 5000,
+    });
+    const treeSha = mkTree.stdout.trim();
+    const commitSha = execSync(`git -C "${repo}" commit-tree ${treeSha} -p ${parentSha} -m "add ${filePath}"`, { encoding: 'utf-8' }).trim();
+    execSync(`git -C "${repo}" update-ref refs/heads/${branch} ${commitSha}`);
+    return commitSha;
+  }
+
+  beforeEach(async () => {
+    ctx = await createTestApp();
+    const { repo, initSha } = initBareRepoWithBranch(ctx.tmpDir, 'docker/current-root');
+    tmpBareRepo = repo;
+
+    // Create agent branch from the same initial commit
+    execSync(`git -C "${tmpBareRepo}" update-ref refs/heads/docker/test-agent ${initSha}`);
+
+    const config = createTestConfig({
+      server: { port: 9100, ubtLockTimeoutMs: 600000, bareRepoPath: tmpBareRepo },
+      tasks: { path: '/tmp/tasks', planBranch: 'docker/current-root' },
+    });
+    await ctx.app.register(agentsPlugin, { config });
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    ctx.cleanup();
+  });
+
+  it('returns 404 when agent not found', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/nonexistent/sync',
+    });
+    assert.equal(res.statusCode, 404);
+  });
+
+  it('merges docker/current-root into docker/{name}', async () => {
+    // Register the agent
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'test-agent', worktree: '/tmp/wt1' },
+    });
+
+    // Add a file to docker/current-root so there is something to merge
+    writeFileToBranch(tmpBareRepo, 'docker/current-root', 'plan.md', '# Plan');
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/test-agent/sync',
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.ok(body.commitSha);
+
+    // Verify the file is now on docker/test-agent
+    const content = execSync(`git -C "${tmpBareRepo}" show docker/test-agent:plan.md`, { encoding: 'utf-8' });
+    assert.equal(content, '# Plan');
+  });
+
+  it('returns 409 when target branch does not exist', async () => {
+    // Register agent but do NOT create docker/no-branch branch
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'no-branch', worktree: '/tmp/wt1' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/no-branch/sync',
+    });
+    assert.equal(res.statusCode, 409);
+    const body = res.json();
+    assert.equal(body.ok, false);
+    assert.ok(body.reason.includes('does not exist'));
+  });
+
+  it('returns ok true with no commitSha when already up to date', async () => {
+    // Register the agent
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'test-agent', worktree: '/tmp/wt1' },
+    });
+
+    // Both branches at same commit, nothing to merge
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/test-agent/sync',
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.commitSha, undefined);
   });
 });

@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
+import { mergeIntoBranch } from '../git-utils.js';
 
 export interface TaskRow {
   id: number;
@@ -270,6 +271,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     acceptanceCriteria?: string;
     priority?: number;
     files?: string[];
+    targetAgents?: string[] | string;
   }
 
   /** Returns unknown field names from a request body, inferred from a type's keys. */
@@ -286,9 +288,10 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     acceptanceCriteria: true,
     priority: true,
     files: true,
+    targetAgents: true,
   };
 
-  type PatchBody = Omit<TaskBody, 'sourceContent'>;
+  type PatchBody = Omit<TaskBody, 'sourceContent' | 'targetAgents'>;
   const patchBodyKeys: { [K in keyof Required<PatchBody>]: true } = {
     title: true,
     description: true,
@@ -366,7 +369,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       );
     }
 
-    const { title, description, sourcePath, sourceContent, acceptanceCriteria, priority, files } = request.body;
+    const { title, description, sourcePath, sourceContent, acceptanceCriteria, priority, files, targetAgents } = request.body;
 
     let commitSha: string | undefined;
 
@@ -375,6 +378,24 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       if (typeof sourcePath === 'string' && (sourcePath.includes('..') || sourcePath.startsWith('/') || sourcePath === '')) {
         return reply.badRequest(`Invalid sourcePath: ${sourcePath}`);
       }
+    }
+
+    // B1: targetAgents requires sourceContent (merge needs a commit to propagate)
+    if (targetAgents && !sourceContent) {
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'targetAgents requires sourceContent',
+      });
+    }
+
+    // N1: Validate targetAgents shape before any git writes
+    if (targetAgents && targetAgents !== '*' && !Array.isArray(targetAgents)) {
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'targetAgents must be an array of agent names or "*"',
+      });
     }
 
     if (sourceContent) {
@@ -427,6 +448,40 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       if (err) return reply.badRequest(err);
     }
 
+    // Merge into agent branches if requested
+    let mergedAgents: string[] = [];
+    let failedMerges: Array<{ agent: string; reason: string }> = [];
+
+    if (targetAgents && commitSha) {
+      let agentNames: string[];
+      if (targetAgents === '*') {
+        const activeAgents = db.prepare(
+          "SELECT name FROM agents WHERE status NOT IN ('done', 'error')"
+        ).all() as Array<{ name: string }>;
+        agentNames = activeAgents.map(a => a.name);
+      } else {
+        agentNames = targetAgents as string[];
+      }
+
+      const bareRepo = getBareRepoPath();
+      if (!bareRepo) {
+        fastify.log.warn('targetAgents requested but bareRepoPath is not configured');
+      } else {
+        const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+
+        for (const agentName of agentNames) {
+          const targetBranch = `docker/${agentName}`;
+          const result = mergeIntoBranch(bareRepo, planBranch, targetBranch);
+          if (result.ok) {
+            mergedAgents.push(agentName);
+          } else {
+            failedMerges.push({ agent: agentName, reason: result.reason });
+            fastify.log.warn(`Failed to merge ${planBranch} into ${targetBranch}: ${result.reason}`);
+          }
+        }
+      }
+    }
+
     const id = db.transaction(() => {
       const result = insertTask.run({
         title,
@@ -442,7 +497,13 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       return taskId;
     })();
 
-    return { id, ok: true, ...(commitSha ? { commitSha } : {}) };
+    return {
+      id,
+      ok: true,
+      ...(commitSha ? { commitSha } : {}),
+      ...(mergedAgents.length ? { mergedAgents } : {}),
+      ...(failedMerges.length ? { failedMerges } : {}),
+    };
   });
 
   // POST /tasks/batch — bulk creation

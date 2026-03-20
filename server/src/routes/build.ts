@@ -98,7 +98,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   }
 
   function getBareRepoPath(): string {
-    return config.server.bareRepoPath || path.join(config.project.path, '..', 'repo.git');
+    return config.server.bareRepoPath;
   }
 
   async function syncWorktree(agentName: string | undefined): Promise<SpawnResult | null> {
@@ -108,7 +108,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const agentRow = agentName
       ? (db.prepare('SELECT worktree FROM agents WHERE name = ?').get(agentName) as { worktree: string } | undefined)
       : undefined;
-    const branch = agentRow?.worktree ?? 'main';
+    const branch = agentRow?.worktree ?? 'docker/current-root';
 
     const fetchResult = await runCommand('git', ['fetch', bareRepo, branch], worktreePath, 30000);
     if (!fetchResult.success) {

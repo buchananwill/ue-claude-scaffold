@@ -4,6 +4,7 @@ import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
 import tasksPlugin from './tasks.js';
+import agentsPlugin from './agents.js';
 
 describe('tasks routes', () => {
   let ctx: TestContext;
@@ -1422,5 +1423,179 @@ describe('sourceContent / atomic plan write', () => {
     const task = get.json();
     assert.equal(task.sourceContent, undefined);
     assert.equal(task.sourcePath, 'plans/check.md');
+  });
+});
+
+describe('targetAgents / merge into agent branches', () => {
+  let ctx: TestContext;
+  let tmpBareRepo: string;
+
+  function initBareRepoWithBranch(tmpDir: string, branchName: string): { repo: string; initSha: string } {
+    const repo = path.join(tmpDir, 'test.git');
+    execSync(`git init --bare "${repo}"`);
+    const emptyTree = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+    const initSha = execSync(`git -C "${repo}" commit-tree ${emptyTree} -m "init"`, { encoding: 'utf-8' }).trim();
+    execSync(`git -C "${repo}" update-ref refs/heads/${branchName} ${initSha}`);
+    return { repo, initSha };
+  }
+
+  beforeEach(async () => {
+    ctx = await createTestApp();
+    const { repo, initSha } = initBareRepoWithBranch(ctx.tmpDir, 'docker/current-root');
+    tmpBareRepo = repo;
+
+    // Create agent branches from the same initial commit
+    execSync(`git -C "${tmpBareRepo}" update-ref refs/heads/docker/agent-1 ${initSha}`);
+    execSync(`git -C "${tmpBareRepo}" update-ref refs/heads/docker/agent-2 ${initSha}`);
+
+    const config = createTestConfig({
+      server: { port: 9100, ubtLockTimeoutMs: 600000, bareRepoPath: tmpBareRepo },
+      tasks: { path: '/tmp/tasks', planBranch: 'docker/current-root' },
+    });
+    await ctx.app.register(agentsPlugin, { config });
+    await ctx.app.register(tasksPlugin, { config });
+
+    // Register agents in DB
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-2', worktree: '/tmp/wt2' },
+    });
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    ctx.cleanup();
+  });
+
+  it('POST /tasks with targetAgents array merges into named agent branch', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'Plan for agent-1',
+        sourcePath: 'plans/my-plan.md',
+        sourceContent: '# Plan\nDo the thing.',
+        targetAgents: ['agent-1'],
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.ok(body.commitSha);
+    assert.deepEqual(body.mergedAgents, ['agent-1']);
+
+    // Verify the plan file exists on docker/agent-1
+    const fileContent = execSync(`git -C "${tmpBareRepo}" show docker/agent-1:plans/my-plan.md`, { encoding: 'utf-8' });
+    assert.equal(fileContent, '# Plan\nDo the thing.');
+  });
+
+  it('POST /tasks with targetAgents "*" merges into all active agent branches', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'Plan for all',
+        sourcePath: 'plans/broadcast.md',
+        sourceContent: '# Broadcast plan',
+        targetAgents: '*',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.ok(body.mergedAgents);
+    assert.ok(body.mergedAgents.includes('agent-1'));
+    assert.ok(body.mergedAgents.includes('agent-2'));
+
+    // Verify both branches have the file
+    const content1 = execSync(`git -C "${tmpBareRepo}" show docker/agent-1:plans/broadcast.md`, { encoding: 'utf-8' });
+    assert.equal(content1, '# Broadcast plan');
+    const content2 = execSync(`git -C "${tmpBareRepo}" show docker/agent-2:plans/broadcast.md`, { encoding: 'utf-8' });
+    assert.equal(content2, '# Broadcast plan');
+  });
+
+  it('POST /tasks without targetAgents does not merge', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'No merge needed',
+        sourcePath: 'plans/solo.md',
+        sourceContent: '# Solo plan',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.mergedAgents, undefined);
+  });
+
+  it('POST /tasks with targetAgents for nonexistent branch reports failure', async () => {
+    // Register agent 'ghost' in DB but do NOT create docker/ghost branch
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'ghost', worktree: '/tmp/ghost' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'Plan for ghost',
+        sourcePath: 'plans/ghost-plan.md',
+        sourceContent: '# Ghost plan',
+        targetAgents: ['ghost'],
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.ok(body.failedMerges);
+    assert.equal(body.failedMerges.length, 1);
+    assert.equal(body.failedMerges[0].agent, 'ghost');
+    assert.ok(body.failedMerges[0].reason.includes('does not exist'));
+  });
+
+  it('POST /tasks with targetAgents but no sourceContent returns 400', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'No content',
+        targetAgents: ['agent-1'],
+      },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('targetAgents requires sourceContent'));
+  });
+
+  it('POST /tasks with targetAgents "*" skips agents with done/error status', async () => {
+    // Set agent-2 to done
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/agent-2/status',
+      payload: { status: 'done' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'Active only',
+        sourcePath: 'plans/active.md',
+        sourceContent: '# Active agents only',
+        targetAgents: '*',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.deepEqual(body.mergedAgents, ['agent-1']);
   });
 });

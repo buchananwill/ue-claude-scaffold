@@ -12,7 +12,7 @@ describe('coalesce routes', () => {
   beforeEach(async () => {
     ctx = await createTestApp();
     const config = createTestConfig();
-    await ctx.app.register(agentsPlugin);
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
     await ctx.app.register(filesPlugin);
     await ctx.app.register(coalescePlugin);

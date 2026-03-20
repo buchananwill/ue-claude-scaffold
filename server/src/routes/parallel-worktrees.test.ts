@@ -40,9 +40,8 @@ function getStagingWorktree(
 
 function getBareRepoPathBuild(
   config: { bareRepoPath: string },
-  projectPath: string,
 ): string {
-  return config.bareRepoPath || path.join(projectPath, '..', 'repo.git');
+  return config.bareRepoPath;
 }
 
 function getBareRepoPathTasks(
@@ -97,17 +96,11 @@ describe('parallel worktrees — path resolution contract', () => {
   });
 
   describe('getBareRepoPath (build route variant)', () => {
-    it('returns bareRepoPath when set', () => {
+    it('returns bareRepoPath', () => {
       const result = getBareRepoPathBuild(
         { bareRepoPath: '/some/repo.git' },
-        '/project',
       );
       assert.equal(result, '/some/repo.git');
-    });
-
-    it('falls back to <project.path>/../repo.git when bareRepoPath is empty', () => {
-      const result = getBareRepoPathBuild({ bareRepoPath: '' }, '/my/project');
-      assert.equal(result, path.join('/my/project', '..', 'repo.git'));
     });
   });
 
@@ -169,7 +162,7 @@ describe('parallel worktrees — tasks route integration', () => {
       },
     });
 
-    await ctx.app.register(agentsPlugin);
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
 
     await ctx.app.inject({
@@ -206,7 +199,7 @@ describe('parallel worktrees — tasks route integration', () => {
       },
     });
 
-    await ctx.app.register(agentsPlugin);
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
 
     await ctx.app.inject({
@@ -236,7 +229,7 @@ describe('parallel worktrees — tasks route integration', () => {
 
     const config = createTestConfig();
 
-    await ctx.app.register(agentsPlugin);
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
 
     await ctx.app.inject({
@@ -273,7 +266,7 @@ describe('parallel worktrees — tasks route integration', () => {
       },
     });
 
-    await ctx.app.register(agentsPlugin);
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
 
     // Register two agents
@@ -337,7 +330,7 @@ describe('parallel worktrees — tasks route integration', () => {
       },
     });
 
-    await ctx.app.register(agentsPlugin);
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
 
     await ctx.app.inject({
@@ -396,7 +389,7 @@ describe('parallel worktrees — tasks route integration', () => {
       },
     });
 
-    await ctx.app.register(agentsPlugin);
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
 
     await ctx.app.inject({
