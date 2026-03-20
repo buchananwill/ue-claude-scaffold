@@ -40,8 +40,9 @@ The dashboard talks to the coordination server (default `http://localhost:9100`)
 
 ```bash
 ./setup.sh               # First-time setup (prereqs, config files, deps)
-./launch.sh --plan path/to/plan.md   # Launch container agent
-./launch.sh --dry-run    # Preview resolved config without launching
+./launch.sh --plan path/to/plan.md   # Launch container agent (resumes existing branch by default)
+./launch.sh --fresh --plan path/to/plan.md  # Reset agent branch to docker/current-root before launch
+./launch.sh --dry-run    # Preview resolved config and branch names without launching
 ./status.sh --follow     # Monitor agent progress (polls every 5s)
 ./scripts/ingest-tasks.sh --tasks-dir ./tasks  # Ingest task markdown files into task queue
 ```
@@ -57,7 +58,8 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
 2. **Coordination server** (`server/`) — Fastify + TypeScript, SQLite via better-sqlite3 (WAL mode). Runs on the host (default port 9100). Provides:
    - `GET /health` — server health check (returns status, db path, config summary)
    - `POST /build`, `POST /test` — sync worktree from bare repo, run host-side build/test scripts, return structured `{success, exit_code, output, stderr}`
-   - `POST /agents/register`, `GET /agents`, `POST /agents/{name}/status`, `DELETE /agents/{name}` — agent lifecycle
+   - `POST /agents/register`, `GET /agents`, `GET /agents/{name}`, `POST /agents/{name}/status`, `DELETE /agents/{name}` — agent lifecycle
+   - `POST /agents/{name}/sync` — merge `docker/current-root` into `docker/{name}`; propagates plans to running containers
    - `GET /messages`, `POST /messages`, `GET /messages/{channel}` — SQLite-backed message board for agent progress
    - UBT lock (`/ubt/lock`, `/ubt/release`) — singleton mutex with stale-lock sweeping (60s interval)
    - `/tasks/*` — task queue with claim/complete/fail/release lifecycle for worker mode
@@ -69,14 +71,17 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
 ### Git Data Flow
 
 ```
-Host Project Worktree → [bare repo] → Container Clone
-                                           ↓
-                                      Agent works
-                                           ↓
-                                  Container pushes → [bare repo]
-                                                          ↓
-                          Server fetches → Staging Worktree → Build/Test
+Host Project → [bare repo] ← Container (clone/push)
+                   │
+          docker/current-root   ← integration branch; user pushes here
+          docker/agent-1        ← agent-1's working branch
+          docker/agent-2        ← agent-2's working branch
+                   │
+          Server fetches agent branch → Staging Worktree → Build/Test
 ```
+
+Containers clone from `docker/{agent-name}` and push back to it. The bare repo is
+persistent — created once by `setup.sh`, never recreated on launch.
 
 ### Build Hook Interception
 
@@ -87,8 +92,22 @@ Container agents don't run builds directly. Two PreToolUse hooks in `container/h
 
 ### Two Execution Modes
 
-- **Plan mode** (default): `launch.sh --plan plan.md` copies the plan to `tasks/prompt.md`, container reads it and executes E2E. Plan documents live in `plans/` (e.g. `plans/dashboard-v3.md`).
-- **Worker mode**: `launch.sh --worker` — container polls `GET /tasks?status=pending`, claims tasks, executes them, reports results
+- **Plan mode** (default): `launch.sh --plan plan.md` launches a container on branch `docker/{agent-name}`. By default the container resumes its existing branch; `--fresh` resets it to `docker/current-root` HEAD first. Plan documents live in `plans/`.
+- **Worker mode**: `launch.sh --worker` — container polls `GET /tasks?status=pending`, claims tasks, executes them, reports results. Uses the same branch model.
+
+### Branch Model
+
+```
+docker/current-root    ← integration branch (user-controlled)
+docker/agent-1         ← agent-1's working branch
+docker/agent-2         ← agent-2's working branch
+```
+
+- The interactive session controls `docker/current-root` — merging in user changes and reviewed container work.
+- Containers fork from `docker/current-root` on first launch and push to `docker/{agent-name}`.
+- `--fresh` resets the agent branch to `docker/current-root` HEAD.
+- Default (no `--fresh`) resumes from the agent's existing branch.
+- Plans committed to `docker/current-root` can be merged into agent branches via `POST /agents/{name}/sync` or `targetAgents` on `POST /tasks`.
 
 ### Agent Definitions
 
