@@ -36,6 +36,10 @@ cd /workspace
 # Ensure we're on the right branch
 git checkout "$WORK_BRANCH" 2>/dev/null || git checkout -b "$WORK_BRANCH"
 
+# Pull latest from bare repo (picks up plans merged by the server)
+git fetch origin "$WORK_BRANCH" 2>/dev/null || true
+git reset --hard "origin/${WORK_BRANCH}" 2>/dev/null || true
+
 # Configure git for container commits
 git config user.email "claude-docker@localhost"
 git config user.name "Claude Code (Docker)"
