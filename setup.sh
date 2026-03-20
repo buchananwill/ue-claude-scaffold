@@ -91,30 +91,37 @@ echo ""
 # ── Bare repo initialization ────────────────────────────────────────────────
 # Read paths from scaffold.config.json
 _bare=""
-_clone_source=""
 if [[ -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
     _bare="$(jq -r '.server.bareRepoPath // empty' "$SCRIPT_DIR/scaffold.config.json")"
     _proj="$(jq -r '.project.path // empty' "$SCRIPT_DIR/scaffold.config.json")"
-    _staging="$(jq -r '.server.stagingWorktreePath // empty' "$SCRIPT_DIR/scaffold.config.json")"
-    _clone_source="${_staging:-${_proj}}"
 fi
 
-if [[ -n "$_bare" && -n "$_clone_source" && ! -d "$_bare" && -d "$_clone_source" ]]; then
+if [[ -n "$_bare" && -n "$_proj" && ! -d "$_bare" && -d "$_proj" ]]; then
   if [[ "$NON_INTERACTIVE" == true ]]; then
     echo "Creating bare repo at $_bare ..."
-    git clone --bare "$_clone_source" "$_bare"
+    git clone --bare "$_proj" "$_bare"
+    _head=$(git -C "$_bare" rev-parse HEAD)
+    git -C "$_bare" update-ref refs/heads/docker/current-root "$_head"
+    echo "Created docker/current-root branch in bare repo."
     echo "Bare repo created."
   else
-    read -rp "Create bare repo at $_bare from $_clone_source? [y/N] " _answer
+    read -rp "Create bare repo at $_bare from $_proj? [y/N] " _answer
     if [[ "${_answer,,}" == "y" ]]; then
-      git clone --bare "$_clone_source" "$_bare"
+      git clone --bare "$_proj" "$_bare"
+      _head=$(git -C "$_bare" rev-parse HEAD)
+      git -C "$_bare" update-ref refs/heads/docker/current-root "$_head"
+      echo "Created docker/current-root branch in bare repo."
       echo "Bare repo created."
     else
       echo "Skipped bare repo creation. You can create it later or launch.sh will create it."
     fi
   fi
 elif [[ -n "$_bare" && -d "$_bare" ]]; then
-  echo "Bare repo already exists at $_bare — skipping."
+  echo "Bare repo already exists at $_bare."
+  if ! git -C "$_bare" rev-parse --verify refs/heads/docker/current-root &>/dev/null; then
+    echo "  Warning: docker/current-root branch missing. Create it:"
+    echo "    git -C $_bare branch docker/current-root HEAD"
+  fi
 fi
 
 echo ""
