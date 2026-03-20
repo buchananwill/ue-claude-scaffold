@@ -28,6 +28,7 @@ export interface ScaffoldConfig {
   };
   tasks?: {
     path: string;
+    planBranch?: string;
   };
   claudeMdPatches?: {
     pathRemaps: Record<string, string>;
@@ -84,6 +85,7 @@ export function loadConfig(): ScaffoldConfig {
     },
     tasks: {
       path: raw.tasks?.path ?? '',
+      planBranch: raw.tasks?.planBranch,
     },
   };
 

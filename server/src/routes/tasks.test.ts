@@ -1,5 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { execSync } from 'node:child_process';
+import path from 'node:path';
 import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
 import tasksPlugin from './tasks.js';
 
@@ -1173,5 +1175,252 @@ describe('tasks routes', () => {
     });
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().task.title, 'Still pending');
+  });
+});
+
+describe('sourceContent / atomic plan write', () => {
+  let ctx: TestContext;
+  let tmpBareRepo: string;
+
+  function initBareRepo(tmpDir: string): string {
+    const repo = path.join(tmpDir, 'test.git');
+    execSync(`git init --bare "${repo}"`);
+    const emptyTree = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+    const initCommit = execSync(`git -C "${repo}" commit-tree ${emptyTree} -m "init"`, { encoding: 'utf-8' }).trim();
+    execSync(`git -C "${repo}" update-ref refs/heads/main ${initCommit}`);
+    return repo;
+  }
+
+  beforeEach(async () => {
+    ctx = await createTestApp();
+    tmpBareRepo = initBareRepo(ctx.tmpDir);
+    const config = createTestConfig({
+      server: { port: 9100, ubtLockTimeoutMs: 600000, bareRepoPath: tmpBareRepo },
+      tasks: { path: '/tmp/tasks', planBranch: 'main' },
+    });
+    await ctx.app.register(tasksPlugin, { config });
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    ctx.cleanup();
+  });
+
+  it('POST /tasks with sourceContent + sourcePath writes file to bare repo and returns commitSha', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'Plan task',
+        sourcePath: 'plans/my-plan.md',
+        sourceContent: '# My Plan\nDo the thing.',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.equal(typeof body.id, 'number');
+    assert.equal(typeof body.commitSha, 'string');
+    assert.ok(body.commitSha.length > 0);
+
+    // Verify file exists in bare repo
+    const fileContent = execSync(`git -C "${tmpBareRepo}" show main:plans/my-plan.md`, { encoding: 'utf-8' });
+    assert.equal(fileContent, '# My Plan\nDo the thing.');
+  });
+
+  it('POST /tasks with sourceContent but no sourcePath returns 400', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'No path',
+        sourceContent: '# Content without path',
+      },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('sourceContent requires sourcePath'));
+  });
+
+  it('POST /tasks with sourcePath only, file exists in bare repo, succeeds', async () => {
+    // Write a file first via sourceContent
+    const setup = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'Setup',
+        sourcePath: 'plans/exists.md',
+        sourceContent: 'existing content',
+      },
+    });
+    assert.equal(setup.statusCode, 200);
+
+    // Now create a task referencing it without sourceContent
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'Reference existing',
+        sourcePath: 'plans/exists.md',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().ok, true);
+    assert.equal(res.json().commitSha, undefined);
+  });
+
+  it('POST /tasks with sourcePath only, file missing, returns 422', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'Missing file',
+        sourcePath: 'plans/nonexistent.md',
+      },
+    });
+    assert.equal(res.statusCode, 422);
+    assert.ok(res.json().message.includes('not found'));
+  });
+
+  it('POST /tasks with nested sourcePath writes file at correct path', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'Nested plan',
+        sourcePath: 'Notes/ui/deep/plan.md',
+        sourceContent: 'nested content here',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(typeof res.json().commitSha, 'string');
+
+    const fileContent = execSync(`git -C "${tmpBareRepo}" show main:Notes/ui/deep/plan.md`, { encoding: 'utf-8' });
+    assert.equal(fileContent, 'nested content here');
+  });
+
+  it('POST /tasks without sourceContent or sourcePath succeeds (unchanged behavior)', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Plain task' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().ok, true);
+    assert.equal(res.json().commitSha, undefined);
+  });
+
+  it('POST /tasks/batch with mixed sourceContent tasks succeeds', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/batch',
+      payload: {
+        tasks: [
+          { title: 'With content', sourcePath: 'plans/a.md', sourceContent: 'plan A content' },
+          { title: 'Without content' },
+        ],
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.ids.length, 2);
+    assert.ok(Array.isArray(body.commitShas));
+    // commitShas is positionally aligned: [sha, null]
+    assert.equal(body.commitShas.length, 2);
+    assert.equal(typeof body.commitShas[0], 'string');
+    assert.equal(body.commitShas[1], null);
+
+    // Verify file in bare repo
+    const fileContent = execSync(`git -C "${tmpBareRepo}" show main:plans/a.md`, { encoding: 'utf-8' });
+    assert.equal(fileContent, 'plan A content');
+  });
+
+  it('POST /tasks/batch commitShas positional alignment: [noContent, withContent]', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/batch',
+      payload: {
+        tasks: [
+          { title: 'No content task' },
+          { title: 'With content', sourcePath: 'plans/b.md', sourceContent: 'plan B content' },
+        ],
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.ids.length, 2);
+    assert.ok(Array.isArray(body.commitShas));
+    assert.equal(body.commitShas.length, 2);
+    assert.equal(body.commitShas[0], null);
+    assert.equal(typeof body.commitShas[1], 'string');
+    assert.ok(body.commitShas[1].length > 0);
+  });
+
+  it('POST /tasks rejects sourcePath with path traversal', async () => {
+    const cases = [
+      { sourcePath: '../etc/passwd', label: '..' },
+      { sourcePath: '/absolute/path.md', label: 'absolute' },
+      { sourcePath: '', label: 'empty' },
+    ];
+    for (const { sourcePath, label } of cases) {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: `Bad sourcePath (${label})`, sourcePath },
+      });
+      assert.equal(res.statusCode, 400, `Expected 400 for ${label} sourcePath`);
+      assert.ok(res.json().message.includes('Invalid sourcePath'), `Expected Invalid sourcePath message for ${label}`);
+    }
+  });
+
+  it('POST /tasks/batch rejects sourcePath with path traversal', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/batch',
+      payload: {
+        tasks: [
+          { title: 'Good task' },
+          { title: 'Bad task', sourcePath: '../escape.md', sourceContent: 'content' },
+        ],
+      },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid sourcePath'));
+  });
+
+  it('PATCH /tasks/:id with sourceContent returns 400', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Patchable' },
+    });
+    const { id } = post.json();
+
+    const patch = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/tasks/${id}`,
+      payload: { sourceContent: 'should be rejected' },
+    });
+    assert.equal(patch.statusCode, 400);
+    assert.ok(patch.json().message.includes('sourceContent'));
+  });
+
+  it('sourceContent is NOT stored in the task record', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: {
+        title: 'Content task',
+        sourcePath: 'plans/check.md',
+        sourceContent: 'should not be stored',
+      },
+    });
+    const { id } = post.json();
+
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const task = get.json();
+    assert.equal(task.sourceContent, undefined);
+    assert.equal(task.sourcePath, 'plans/check.md');
   });
 });

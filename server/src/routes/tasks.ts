@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
@@ -74,6 +74,129 @@ function existsInBareRepo(bareRepoPath: string, branch: string, filePath: string
   }
 }
 
+/**
+ * Write a file to a bare repo using git plumbing (no checkout needed).
+ * Returns the commit SHA.
+ */
+function writeContentToBareRepo(
+  bareRepoPath: string,
+  branch: string,
+  filePath: string,
+  content: string,
+): string {
+  // Step 1: Create blob from content
+  const blobSha = spawnSync('git', ['-C', bareRepoPath, 'hash-object', '-w', '--stdin'], {
+    input: content,
+    encoding: 'utf-8',
+    timeout: 10000,
+  });
+  if (blobSha.status !== 0) throw new Error(`git hash-object failed: ${blobSha.stderr}`);
+  const blob = blobSha.stdout.trim();
+
+  // Step 2: Get the current tree for the branch (if branch exists)
+  let parentCommit: string | null = null;
+  let rootTree: string | null = null;
+  try {
+    parentCommit = execFileSync('git', ['-C', bareRepoPath, 'rev-parse', `refs/heads/${branch}`], {
+      encoding: 'utf-8', timeout: 5000,
+    }).trim();
+    rootTree = execFileSync('git', ['-C', bareRepoPath, 'rev-parse', `${parentCommit}^{tree}`], {
+      encoding: 'utf-8', timeout: 5000,
+    }).trim();
+  } catch {
+    // Branch doesn't exist yet — will create first commit without parent
+  }
+
+  // Step 3: Build tree with the new file — handle nested paths
+  const parts = filePath.split('/');
+  const newRootTree = buildTreeWithFile(bareRepoPath, rootTree, parts, blob);
+
+  // Step 4: Create commit
+  const commitArgs = ['-C', bareRepoPath, 'commit-tree', newRootTree, '-m', `Add plan: ${filePath}`];
+  if (parentCommit) {
+    commitArgs.splice(4, 0, '-p', parentCommit);
+  }
+  const commitSha = execFileSync('git', commitArgs, {
+    encoding: 'utf-8', timeout: 5000,
+  }).trim();
+
+  // Step 5: Update branch ref
+  execFileSync('git', ['-C', bareRepoPath, 'update-ref', `refs/heads/${branch}`, commitSha], {
+    timeout: 5000,
+  });
+
+  return commitSha;
+}
+
+function buildTreeWithFile(
+  bareRepoPath: string,
+  currentTreeSha: string | null,
+  pathParts: string[],
+  blobSha: string,
+): string {
+  if (pathParts.length === 1) {
+    const fileName = pathParts[0];
+    const entries: string[] = [];
+
+    if (currentTreeSha) {
+      const existing = execFileSync('git', ['-C', bareRepoPath, 'ls-tree', currentTreeSha], {
+        encoding: 'utf-8', timeout: 5000,
+      });
+      for (const line of existing.split('\n').filter(Boolean)) {
+        const entryName = line.split('\t')[1];
+        if (entryName !== fileName) entries.push(line);
+      }
+    }
+
+    entries.push(`100644 blob ${blobSha}\t${fileName}`);
+
+    const mkTree = spawnSync('git', ['-C', bareRepoPath, 'mktree'], {
+      input: entries.join('\n') + '\n',
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+    if (mkTree.status !== 0) throw new Error(`git mktree failed: ${mkTree.stderr}`);
+    return mkTree.stdout.trim();
+  }
+
+  const dirName = pathParts[0];
+  const remaining = pathParts.slice(1);
+
+  let subtreeSha: string | null = null;
+  if (currentTreeSha) {
+    try {
+      const lsOutput = execFileSync('git', ['-C', bareRepoPath, 'ls-tree', currentTreeSha, dirName + '/'], {
+        encoding: 'utf-8', timeout: 5000,
+      }).trim();
+      if (lsOutput) {
+        subtreeSha = lsOutput.split(/\s+/)[2];
+      }
+    } catch { /* directory doesn't exist yet */ }
+  }
+
+  const newSubtreeSha = buildTreeWithFile(bareRepoPath, subtreeSha, remaining, blobSha);
+
+  const entries: string[] = [];
+  if (currentTreeSha) {
+    const existing = execFileSync('git', ['-C', bareRepoPath, 'ls-tree', currentTreeSha], {
+      encoding: 'utf-8', timeout: 5000,
+    });
+    for (const line of existing.split('\n').filter(Boolean)) {
+      const entryName = line.split('\t')[1];
+      if (entryName !== dirName) entries.push(line);
+    }
+  }
+  entries.push(`040000 tree ${newSubtreeSha}\t${dirName}`);
+
+  const mkTree = spawnSync('git', ['-C', bareRepoPath, 'mktree'], {
+    input: entries.join('\n') + '\n',
+    encoding: 'utf-8',
+    timeout: 5000,
+  });
+  if (mkTree.status !== 0) throw new Error(`git mktree failed: ${mkTree.stderr}`);
+  return mkTree.stdout.trim();
+}
+
 interface ConflictInfo {
   file: string;
   claimant: string;
@@ -146,6 +269,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     title: string;
     description?: string;
     sourcePath?: string;
+    sourceContent?: string;
     acceptanceCriteria?: string;
     priority?: number;
     files?: string[];
@@ -158,6 +282,17 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   }
 
   const taskBodyKeys: { [K in keyof Required<TaskBody>]: true } = {
+    title: true,
+    description: true,
+    sourcePath: true,
+    sourceContent: true,
+    acceptanceCriteria: true,
+    priority: true,
+    files: true,
+  };
+
+  type PatchBody = Omit<TaskBody, 'sourceContent'>;
+  const patchBodyKeys: { [K in keyof Required<PatchBody>]: true } = {
     title: true,
     description: true,
     sourcePath: true,
@@ -234,16 +369,58 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       );
     }
 
-    const { title, description, sourcePath, acceptanceCriteria, priority, files } = request.body;
+    const { title, description, sourcePath, sourceContent, acceptanceCriteria, priority, files } = request.body;
 
-    // Validate sourcePath is committed in the main project worktree
-    if (sourcePath) {
-      const worktree = getValidationWorktree();
-      if (!isCommittedInRepo(worktree, sourcePath)) {
-        return reply.unprocessableEntity(
-          `sourcePath '${sourcePath}' is not committed in the project worktree (${worktree}). ` +
-          `Commit it first: git add ${sourcePath} && git commit`
-        );
+    let commitSha: string | undefined;
+
+    // Validate sourcePath for path traversal before any git operations
+    if (sourcePath !== undefined && sourcePath !== null) {
+      if (typeof sourcePath === 'string' && (sourcePath.includes('..') || sourcePath.startsWith('/') || sourcePath === '')) {
+        return reply.badRequest(`Invalid sourcePath: ${sourcePath}`);
+      }
+    }
+
+    if (sourceContent) {
+      if (!sourcePath) {
+        return reply.badRequest('sourceContent requires sourcePath');
+      }
+      const bareRepo = config.server.bareRepoPath;
+      if (!bareRepo) {
+        return reply.code(422).send({
+          statusCode: 422,
+          error: 'Unprocessable Entity',
+          message: 'sourceContent requires server.bareRepoPath to be configured',
+        });
+      }
+      const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+      try {
+        commitSha = writeContentToBareRepo(bareRepo, planBranch, sourcePath, sourceContent);
+      } catch (err: any) {
+        return reply.code(422).send({
+          statusCode: 422,
+          error: 'Unprocessable Entity',
+          message: `Failed to write plan to bare repo: ${err.message}`,
+        });
+      }
+    } else if (sourcePath) {
+      const bareRepo = config.server.bareRepoPath;
+      if (bareRepo) {
+        const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+        if (!existsInBareRepo(bareRepo, planBranch, sourcePath)) {
+          return reply.code(422).send({
+            statusCode: 422,
+            error: 'Unprocessable Entity',
+            message: `sourcePath '${sourcePath}' not found on branch '${planBranch}' in bare repo`,
+          });
+        }
+      } else {
+        const worktree = getValidationWorktree();
+        if (!isCommittedInRepo(worktree, sourcePath)) {
+          return reply.unprocessableEntity(
+            `sourcePath '${sourcePath}' is not committed in the project worktree (${worktree}). ` +
+            `Commit it first: git add ${sourcePath} && git commit`
+          );
+        }
       }
     }
 
@@ -268,7 +445,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       return taskId;
     })();
 
-    return { id, ok: true };
+    return { id, ok: true, ...(commitSha ? { commitSha } : {}) };
   });
 
   // POST /tasks/batch — bulk creation
@@ -297,36 +474,111 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         const err = validateFilePaths(t.files);
         if (err) return reply.badRequest(`Task ${i}: ${err}`);
       }
-      if (t.sourcePath) {
-        const worktree = getValidationWorktree();
-        if (!isCommittedInRepo(worktree, t.sourcePath)) {
-          return reply.unprocessableEntity(
-            `Task ${i}: sourcePath '${t.sourcePath}' is not committed in the project worktree (${worktree}).`
-          );
+      // Validate sourcePath for path traversal
+      if (t.sourcePath !== undefined && t.sourcePath !== null) {
+        if (typeof t.sourcePath === 'string' && (t.sourcePath.includes('..') || t.sourcePath.startsWith('/') || t.sourcePath === '')) {
+          return reply.badRequest(`Task ${i}: Invalid sourcePath: ${t.sourcePath}`);
+        }
+      }
+      if (t.sourceContent && !t.sourcePath) {
+        return reply.badRequest(`Task ${i}: sourceContent requires sourcePath`);
+      }
+      if (t.sourceContent) {
+        const bareRepo = config.server.bareRepoPath;
+        if (!bareRepo) {
+          return reply.code(422).send({
+            statusCode: 422,
+            error: 'Unprocessable Entity',
+            message: `Task ${i}: sourceContent requires server.bareRepoPath to be configured`,
+          });
+        }
+      } else if (t.sourcePath) {
+        const bareRepo = config.server.bareRepoPath;
+        if (bareRepo) {
+          const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+          if (!existsInBareRepo(bareRepo, planBranch, t.sourcePath)) {
+            return reply.code(422).send({
+              statusCode: 422,
+              error: 'Unprocessable Entity',
+              message: `Task ${i}: sourcePath '${t.sourcePath}' not found on branch '${planBranch}' in bare repo`,
+            });
+          }
+        } else {
+          const worktree = getValidationWorktree();
+          if (!isCommittedInRepo(worktree, t.sourcePath)) {
+            return reply.unprocessableEntity(
+              `Task ${i}: sourcePath '${t.sourcePath}' is not committed in the project worktree (${worktree}).`
+            );
+          }
         }
       }
     }
 
-    const ids = db.transaction(() => {
-      const result: number[] = [];
-      for (const t of tasks) {
-        const r = insertTask.run({
-          title: t.title,
-          description: t.description ?? '',
-          sourcePath: t.sourcePath ?? null,
-          acceptanceCriteria: t.acceptanceCriteria ?? null,
-          priority: t.priority ?? 0,
-        });
-        const taskId = Number(r.lastInsertRowid);
-        if (t.files?.length) {
-          linkFilesToTask(taskId, t.files);
-        }
-        result.push(taskId);
-      }
-      return result;
-    })();
+    // Write sourceContent for tasks that have it
+    const commitShas: Record<number, string> = {};
+    const bareRepo = config.server.bareRepoPath;
+    const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+    const tasksWithContent = tasks.filter((t, _i) => t.sourceContent && t.sourcePath && bareRepo);
 
-    return { ok: true, ids };
+    // Capture pre-batch ref for rollback if DB transaction fails
+    let preBatchRef: string | undefined;
+    if (bareRepo && tasksWithContent.length > 0) {
+      try {
+        preBatchRef = execFileSync('git', ['-C', bareRepo, 'rev-parse', `refs/heads/${planBranch}`], {
+          encoding: 'utf-8', timeout: 5000,
+        }).trim();
+      } catch { /* branch doesn't exist yet */ }
+    }
+
+    for (let i = 0; i < tasks.length; i++) {
+      const t = tasks[i];
+      if (t.sourceContent && t.sourcePath && bareRepo) {
+        try {
+          commitShas[i] = writeContentToBareRepo(bareRepo, planBranch, t.sourcePath, t.sourceContent);
+        } catch (err: any) {
+          return reply.code(422).send({
+            statusCode: 422,
+            error: 'Unprocessable Entity',
+            message: `Task ${i}: Failed to write plan to bare repo: ${err.message}`,
+          });
+        }
+      }
+    }
+
+    let ids: number[];
+    try {
+      ids = db.transaction(() => {
+        const result: number[] = [];
+        for (const t of tasks) {
+          const r = insertTask.run({
+            title: t.title,
+            description: t.description ?? '',
+            sourcePath: t.sourcePath ?? null,
+            acceptanceCriteria: t.acceptanceCriteria ?? null,
+            priority: t.priority ?? 0,
+          });
+          const taskId = Number(r.lastInsertRowid);
+          if (t.files?.length) {
+            linkFilesToTask(taskId, t.files);
+          }
+          result.push(taskId);
+        }
+        return result;
+      })();
+    } catch (err) {
+      // Roll back git writes
+      if (preBatchRef && bareRepo) {
+        try {
+          execFileSync('git', ['-C', bareRepo, 'update-ref', `refs/heads/${planBranch}`, preBatchRef], { timeout: 5000 });
+        } catch { /* best effort */ }
+      }
+      throw err;
+    }
+
+    // Build positionally aligned commitShas array
+    const hasAnyShas = Object.keys(commitShas).length > 0;
+    const commitShasArray = hasAnyShas ? ids.map((_id, i) => commitShas[i] ?? null) : undefined;
+    return { ok: true, ids, ...(commitShasArray ? { commitShas: commitShasArray } : {}) };
   });
 
   // GET /tasks
@@ -583,11 +835,11 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const id = Number(request.params.id);
     const body = request.body;
 
-    const extra = unknownFields<TaskBody>(body, taskBodyKeys);
+    const extra = unknownFields<PatchBody>(body, patchBodyKeys);
     if (extra.length > 0) {
       return reply.badRequest(
         `Unknown fields: ${extra.join(', ')}. ` +
-        `Valid fields: ${Object.keys(taskBodyKeys).join(', ')}`
+        `Valid fields: ${Object.keys(patchBodyKeys).join(', ')}`
       );
     }
 
