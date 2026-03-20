@@ -12,6 +12,8 @@ let insertLock: Database.Statement;
 let clearLock: Database.Statement;
 let popNext: Database.Statement;
 
+let isAgentRegistered: Database.Statement;
+
 let insertBuildHistory: Database.Statement;
 let updateBuildHistory: Database.Statement;
 let avgBuildDuration: Database.Statement;
@@ -44,6 +46,7 @@ export function initUbtStatements(): void {
        SELECT id FROM ubt_queue ORDER BY priority DESC, id ASC LIMIT 1
      ) RETURNING *`
   );
+  isAgentRegistered = db.prepare('SELECT 1 FROM agents WHERE name = @holder');
   initBuildHistoryStatements();
 }
 
@@ -93,6 +96,8 @@ export function sweepStaleLock(): void {
   } | undefined;
 
   if (lock && isStale(lock.acquired_at)) {
+    clearLockAndPromote();
+  } else if (lock && lock.holder != null && !isAgentRegistered.get({ holder: lock.holder })) {
     clearLockAndPromote();
   }
 }

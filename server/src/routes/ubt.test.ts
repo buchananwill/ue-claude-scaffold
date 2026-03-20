@@ -1,7 +1,8 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
-import ubtPlugin from './ubt.js';
+import agentsPlugin from './agents.js';
+import ubtPlugin, { sweepStaleLock } from './ubt.js';
 
 describe('ubt routes', () => {
   let ctx: TestContext;
@@ -9,6 +10,7 @@ describe('ubt routes', () => {
 
   beforeEach(async () => {
     ctx = await createTestApp();
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(ubtPlugin, { config });
   });
 
@@ -191,5 +193,124 @@ describe('ubt routes', () => {
     assert.equal(rel.statusCode, 200);
     assert.equal(rel.json().ok, false);
     assert.equal(rel.json().reason, 'not_held');
+  });
+
+  it('sweepStaleLock does NOT clear lock held by registered agent', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/w' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/ubt/acquire',
+      payload: { agent: 'agent-1' },
+    });
+
+    sweepStaleLock();
+
+    const status = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
+    assert.equal(status.json().holder, 'agent-1');
+  });
+
+  it('sweepStaleLock clears lock held by deregistered agent', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/w' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/ubt/acquire',
+      payload: { agent: 'agent-1' },
+    });
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: '/agents/agent-1',
+    });
+
+    sweepStaleLock();
+
+    const status = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
+    assert.equal(status.json().holder, null);
+  });
+
+  it('sweepStaleLock clears lock held by never-registered agent', async () => {
+    // Acquire lock directly without registering the agent first
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/ubt/acquire',
+      payload: { agent: 'ghost-agent' },
+    });
+
+    // Verify lock is held
+    const before = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
+    assert.equal(before.json().holder, 'ghost-agent');
+
+    sweepStaleLock();
+
+    // Lock should be released because agent was never registered
+    const after = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
+    assert.equal(after.json().holder, null);
+  });
+
+  it('sweepStaleLock promotes queued agent when holder was never registered', async () => {
+    // Register agent-2 but NOT agent-1
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-2', worktree: '/tmp/w2' },
+    });
+
+    // agent-1 (never registered) acquires lock
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/ubt/acquire',
+      payload: { agent: 'agent-1' },
+    });
+    // agent-2 queues
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/ubt/acquire',
+      payload: { agent: 'agent-2' },
+    });
+
+    sweepStaleLock();
+
+    // agent-2 should be promoted
+    const status = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
+    assert.equal(status.json().holder, 'agent-2');
+  });
+
+  it('sweepStaleLock promotes queued agent when holder is deregistered', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/w' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-2', worktree: '/tmp/w2' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/ubt/acquire',
+      payload: { agent: 'agent-1' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/ubt/acquire',
+      payload: { agent: 'agent-2' },
+    });
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: '/agents/agent-1',
+    });
+
+    sweepStaleLock();
+
+    const status = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
+    assert.equal(status.json().holder, 'agent-2');
   });
 });

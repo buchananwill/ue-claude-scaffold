@@ -79,7 +79,10 @@ cd server && npm run dev
 ```
 ue-claude-scaffold/
 ├── agents/                    # Claude Code agent definitions
-│   └── container-orchestrator.md
+│   ├── container-orchestrator.md   # Default: E2E plan executor
+│   ├── container-implementer.md    # Code writer
+│   ├── container-reviewer.md       # Code reviewer
+│   └── container-tester.md         # Test writer
 ├── container/                 # Docker container infrastructure
 │   ├── Dockerfile
 │   ├── docker-compose.example.yml  # Template — copy to docker-compose.yml
@@ -106,6 +109,7 @@ ue-claude-scaffold/
 ├── launch.sh                  # Parameterized agent launcher
 ├── setup.sh                   # First-time setup script
 ├── status.sh                  # Agent monitoring script
+├── stop.sh                    # Stop agent containers (supports --drain)
 ├── .env.example
 ├── .gitattributes
 ├── scaffold.config.example.json
@@ -143,7 +147,11 @@ A Fastify + TypeScript server running on the host. Provides:
 - **Build/test proxy** -- routes container build requests to the host UE installation
 - **Message board** -- SQLite-backed pub/sub for agent progress reporting
 - **Agent registry** -- tracks active agents and their status
-- **UBT lock** -- serializes build tool access (for future multi-agent support)
+- **UBT lock** -- serializes build tool access with priority queue (multi-agent support)
+- **Build history** -- queryable record of all builds with duration and outcome
+- **File ownership** -- tracks which agent owns which files during task execution
+- **Search** -- full-text search across tasks, messages, and agents
+- **Coalesce** -- system-wide coordination for graceful shutdown (pause pumps, release files)
 
 ### Git Data Flow
 
@@ -238,6 +246,24 @@ First-time setup. Checks prerequisites, creates configuration files, installs se
 ./setup.sh --non-interactive
 ```
 
+### `stop.sh`
+
+Stop running agent containers.
+
+```bash
+# Stop all agent containers
+./stop.sh
+
+# Stop a specific agent
+./stop.sh --agent agent-1
+
+# Graceful drain — pause pumps, wait for in-flight tasks, stop containers
+./stop.sh --drain
+
+# Drain with custom timeout (default 600s)
+./stop.sh --drain --timeout 300
+```
+
 ### `status.sh`
 
 Monitoring dashboard. Shows registered agents and message board activity.
@@ -268,10 +294,14 @@ install them manually:
 cp agents/*.md ~/.claude/agents/
 ```
 
-### `container-orchestrator`
+### Available Agent Types
 
-The default agent type for container execution. Executes a pre-authored plan autonomously -- no human approval gates.
-Each phase must build and pass code review before advancing.
+| Type | Description |
+|------|-------------|
+| `container-orchestrator` | Default. Executes a pre-authored plan E2E — delegates to sub-agents, no human approval gates. |
+| `container-implementer` | Writes code according to a plan or fix instructions. Builds after each change and iterates until clean. |
+| `container-reviewer` | Reviews implementation against the original spec and project style. Uses confidence scoring to minimize false positives. |
+| `container-tester` | Writes tests for an implementation, runs them, and iterates until passing. |
 
 ### Customising for your project
 
@@ -330,7 +360,7 @@ Change `server.port` in `scaffold.config.json` and restart the server.
 1. Fork the repository
 2. Create a feature branch
 3. Ensure the server builds and tests pass: `cd server && npm run typecheck && npm run build && npm test`
-4. Ensure shell scripts pass syntax checks: `bash -n launch.sh && bash -n setup.sh && bash -n status.sh`
+4. Ensure shell scripts pass syntax checks: `bash -n launch.sh && bash -n setup.sh && bash -n status.sh && bash -n stop.sh`
 5. Submit a pull request
 
 ## License

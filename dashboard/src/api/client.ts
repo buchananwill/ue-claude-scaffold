@@ -34,7 +34,7 @@ export async function apiPost<T = unknown>(path: string, body?: unknown): Promis
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: JSON.stringify(body ?? {}),
   });
   if (!res.ok) {
     throw new ApiError(await extractError(res), res.status);

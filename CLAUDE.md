@@ -43,26 +43,33 @@ The dashboard talks to the coordination server (default `http://localhost:9100`)
 ./launch.sh --plan path/to/plan.md   # Launch container agent (resumes existing branch by default)
 ./launch.sh --fresh --plan path/to/plan.md  # Reset agent branch to docker/current-root before launch
 ./launch.sh --dry-run    # Preview resolved config and branch names without launching
+./stop.sh                # Stop all running agent containers
+./stop.sh --agent agent-1  # Stop a specific agent
+./stop.sh --drain        # Graceful shutdown (pause pumps, wait for in-flight tasks, stop)
 ./status.sh --follow     # Monitor agent progress (polls every 5s)
 ./scripts/ingest-tasks.sh --tasks-dir ./tasks  # Ingest task markdown files into task queue
 ```
 
-Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status.sh`
+Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status.sh && bash -n stop.sh`
 
 ## Architecture
 
-### Three-Layer System
+### Four-Layer System
 
-1. **Shell scripts** (`launch.sh`, `setup.sh`, `status.sh`) — orchestrate Docker and config. Read structural config from `scaffold.config.json` and secrets from `.env`.
+1. **Shell scripts** (`launch.sh`, `setup.sh`, `status.sh`, `stop.sh`) — orchestrate Docker and config. Read structural config from `scaffold.config.json` and secrets from `.env`.
 
 2. **Coordination server** (`server/`) — Fastify + TypeScript, SQLite via better-sqlite3 (WAL mode). Runs on the host (default port 9100). Provides:
    - `GET /health` — server health check (returns status, db path, config summary)
    - `POST /build`, `POST /test` — sync worktree from bare repo, run host-side build/test scripts, return structured `{success, exit_code, output, stderr}`
-   - `POST /agents/register`, `GET /agents`, `GET /agents/{name}`, `POST /agents/{name}/status`, `DELETE /agents/{name}` — agent lifecycle
+   - `GET /builds` — query build history with filtering
+   - `POST /agents/register`, `GET /agents`, `GET /agents/{name}`, `POST /agents/{name}/status`, `DELETE /agents/{name}`, `DELETE /agents` — agent lifecycle
    - `POST /agents/{name}/sync` — merge `docker/current-root` into `docker/{name}`; propagates plans to running containers
-   - `GET /messages`, `POST /messages`, `GET /messages/{channel}` — SQLite-backed message board for agent progress
-   - UBT lock (`/ubt/lock`, `/ubt/release`) — singleton mutex with stale-lock sweeping (60s interval)
+   - `GET /messages`, `POST /messages`, `GET /messages/{channel}`, `POST /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve` — SQLite-backed message board for agent progress
+   - UBT lock (`GET /ubt/status`, `POST /ubt/acquire`, `POST /ubt/release`) — singleton mutex with priority queue and stale-lock sweeping (60s interval)
    - `/tasks/*` — task queue with claim/complete/fail/release lifecycle for worker mode
+   - `GET /search` — full-text search across tasks, messages, agents
+   - `GET /files` — file ownership registry (tracks which agent owns which files)
+   - `/coalesce/*` — system-wide coordination: pause pump agents, wait for in-flight tasks, release file ownership
 
 3. **Docker container** (`container/`) — runs a single Claude Code instance in non-interactive mode (`claude -p`). The entrypoint (`entrypoint.sh`) clones from a bare repo, runs `patch_workspace.py` to remap host paths to container mount points and strip interactive-only sections, registers with the coordination server, and delegates to the specified agent type.
 
@@ -111,7 +118,12 @@ docker/agent-2         ← agent-2's working branch
 
 ### Agent Definitions
 
-Agent type definitions live in `agents/` as markdown files (e.g. `agents/container-orchestrator.md`). Each defines the agent's role, available tools, and behavioral instructions. The `AGENT_TYPE` env var in `.env` selects which definition to use at launch.
+Agent type definitions live in `agents/` as markdown files. Each defines the agent's role, available tools, and behavioral instructions. The `AGENT_TYPE` env var in `.env` selects which definition to use at launch. Current agent types:
+
+- `container-orchestrator` — default for container execution; executes a plan E2E by delegating to sub-agents
+- `container-implementer` — writes code according to a plan or fix instructions
+- `container-reviewer` — reviews implementation against spec and project style
+- `container-tester` — writes and runs tests for an implementation
 
 ### Server Code Conventions
 
