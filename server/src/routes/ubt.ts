@@ -46,7 +46,7 @@ export function initUbtStatements(): void {
        SELECT id FROM ubt_queue ORDER BY priority DESC, id ASC LIMIT 1
      ) RETURNING *`
   );
-  isAgentRegistered = db.prepare('SELECT 1 FROM agents WHERE name = @holder');
+  isAgentRegistered = db.prepare("SELECT 1 FROM agents WHERE name = @holder AND status != 'stopping'");
   initBuildHistoryStatements();
 }
 

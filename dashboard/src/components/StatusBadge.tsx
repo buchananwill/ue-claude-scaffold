@@ -7,6 +7,7 @@ const colorMap: Record<string, string> = {
   building: 'blue',
   testing: 'violet',
   done: 'green',
+  stopping: 'orange',
   error: 'red',
   // task statuses
   pending: 'gray',

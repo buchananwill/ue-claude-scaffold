@@ -4,6 +4,7 @@ import { execSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
 import agentsPlugin from './agents.js';
+import tasksPlugin from './tasks.js';
 
 describe('agents routes', () => {
   let ctx: TestContext;
@@ -110,7 +111,7 @@ describe('agents routes', () => {
     assert.equal(res.statusCode, 404);
   });
 
-  it('DELETE /agents/:name deregisters an agent', async () => {
+  it('DELETE /agents/:name (first call) sets status to stopping and leaves row', async () => {
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/register',
@@ -119,10 +120,45 @@ describe('agents routes', () => {
 
     const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
     assert.equal(del.statusCode, 200);
-    assert.deepEqual(del.json(), { ok: true });
+    assert.deepEqual(del.json(), { ok: true, stopping: true });
 
-    const list = await ctx.app.inject({ method: 'GET', url: '/agents' });
-    assert.deepEqual(list.json(), []);
+    // Agent should still exist with status 'stopping'
+    const get = await ctx.app.inject({ method: 'GET', url: '/agents/agent-1' });
+    assert.equal(get.statusCode, 200);
+    assert.equal(get.json().status, 'stopping');
+  });
+
+  it('DELETE /agents/:name (second call) hard-deletes the row', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    // First call — sets stopping
+    await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
+
+    // Second call — hard-delete
+    const del2 = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
+    assert.equal(del2.statusCode, 200);
+    assert.deepEqual(del2.json(), { ok: true });
+
+    // Agent should be gone
+    const get = await ctx.app.inject({ method: 'GET', url: '/agents/agent-1' });
+    assert.equal(get.statusCode, 404);
+  });
+
+  it('DELETE /agents/:name releases file ownership on first call', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    // First call sets stopping and releases files — should not error
+    const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
+    assert.equal(del.statusCode, 200);
+    assert.equal(del.json().stopping, true);
   });
 
   it('DELETE /agents/:name returns 404 for unknown agent', async () => {
@@ -293,5 +329,170 @@ describe('POST /agents/:name/sync', () => {
     const body = res.json();
     assert.equal(body.ok, true);
     assert.equal(body.commitSha, undefined);
+  });
+});
+
+describe('DELETE /agents task release', () => {
+  let ctx: TestContext;
+
+  beforeEach(async () => {
+    ctx = await createTestApp();
+    const config = createTestConfig();
+    await ctx.app.register(agentsPlugin, { config });
+    await ctx.app.register(tasksPlugin, { config });
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    ctx.cleanup();
+  });
+
+  it('DELETE /agents/:name (first call) releases claimed tasks to pending', async () => {
+    // Register agent
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    // Create a task
+    const createRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'task-1' },
+    });
+    const taskId = createRes.json().id;
+
+    // Claim the task
+    const claimRes = await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${taskId}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(claimRes.statusCode, 200);
+
+    // Verify task is claimed
+    const beforeDel = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+    assert.equal(beforeDel.json().status, 'claimed');
+    assert.equal(beforeDel.json().claimedBy, 'agent-1');
+
+    // First DELETE — sets stopping and releases tasks
+    const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
+    assert.equal(del.statusCode, 200);
+    assert.equal(del.json().stopping, true);
+
+    // Verify task reverted to pending with no claimant
+    const afterDel = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+    assert.equal(afterDel.json().status, 'pending');
+    assert.equal(afterDel.json().claimedBy, null);
+  });
+
+  it('DELETE /agents (bulk) releases claimed tasks to pending', async () => {
+    // Register agent
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    // Create and claim a task
+    const createRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'bulk-task' },
+    });
+    const taskId = createRes.json().id;
+
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${taskId}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+
+    // Bulk DELETE all agents
+    const del = await ctx.app.inject({ method: 'DELETE', url: '/agents' });
+    assert.equal(del.statusCode, 200);
+    assert.equal(del.json().ok, true);
+
+    // Verify task reverted to pending
+    const afterDel = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+    assert.equal(afterDel.json().status, 'pending');
+    assert.equal(afterDel.json().claimedBy, null);
+  });
+
+  it('DELETE /agents/:name (first call) releases in_progress tasks to pending', async () => {
+    // Register agent
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    // Create a task
+    const createRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'in-progress-task' },
+    });
+    const taskId = createRes.json().id;
+
+    // Claim the task
+    const claimRes = await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${taskId}/claim`,
+      headers: { 'x-agent-name': 'agent-1' },
+    });
+    assert.equal(claimRes.statusCode, 200);
+
+    // Transition to in_progress via update
+    const updateRes = await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${taskId}/update`,
+      payload: { progress: 'Working on it' },
+    });
+    assert.equal(updateRes.statusCode, 200);
+
+    // Verify task is in_progress
+    const beforeDel = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+    assert.equal(beforeDel.json().status, 'in_progress');
+    assert.equal(beforeDel.json().claimedBy, 'agent-1');
+
+    // First DELETE — sets stopping and releases tasks
+    const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
+    assert.equal(del.statusCode, 200);
+    assert.equal(del.json().stopping, true);
+
+    // Verify task reverted to pending with no claimant
+    const afterDel = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+    assert.equal(afterDel.json().status, 'pending');
+    assert.equal(afterDel.json().claimedBy, null);
+  });
+
+  it('DELETE /agents/:name is idempotent — first sets stopping, second hard-deletes', async () => {
+    // Register agent
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    // First DELETE — sets stopping
+    const del1 = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
+    assert.equal(del1.statusCode, 200);
+    assert.deepEqual(del1.json(), { ok: true, stopping: true });
+
+    // Agent still exists with stopping status
+    const get1 = await ctx.app.inject({ method: 'GET', url: '/agents/agent-1' });
+    assert.equal(get1.statusCode, 200);
+    assert.equal(get1.json().status, 'stopping');
+
+    // Second DELETE — hard-deletes
+    const del2 = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
+    assert.equal(del2.statusCode, 200);
+    assert.deepEqual(del2.json(), { ok: true });
+
+    // Agent is gone
+    const get2 = await ctx.app.inject({ method: 'GET', url: '/agents/agent-1' });
+    assert.equal(get2.statusCode, 404);
   });
 });

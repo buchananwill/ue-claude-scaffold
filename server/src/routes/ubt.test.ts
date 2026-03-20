@@ -282,6 +282,31 @@ describe('ubt routes', () => {
     assert.equal(status.json().holder, 'agent-2');
   });
 
+  it('sweepStaleLock clears lock held by agent in stopping status', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/w' },
+    });
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/ubt/acquire',
+      payload: { agent: 'agent-1' },
+    });
+
+    // Set agent to stopping status
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/agent-1/status',
+      payload: { status: 'stopping' },
+    });
+
+    sweepStaleLock();
+
+    const status = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
+    assert.equal(status.json().holder, null);
+  });
+
   it('sweepStaleLock promotes queued agent when holder is deregistered', async () => {
     await ctx.app.inject({
       method: 'POST',

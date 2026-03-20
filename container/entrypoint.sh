@@ -95,6 +95,22 @@ _shutdown() {
 }
 trap _shutdown EXIT
 
+_watch_for_stop() {
+    local target_pid=$1
+    while kill -0 "$target_pid" 2>/dev/null; do
+        sleep 15
+        local st
+        st=$(curl -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
+            --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || st="unknown"
+        if [ "$st" = "stopping" ]; then
+            echo "Stop signal received — terminating Claude (pid $target_pid)"
+            touch /tmp/.stop_requested
+            kill -TERM "$target_pid" 2>/dev/null || true
+            return
+        fi
+    done
+}
+
 REG_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SERVER_URL}/agents/register" \
     -H "Content-Type: application/json" \
     -H "X-Agent-Name: ${AGENT_NAME}" \
@@ -116,6 +132,16 @@ poll_and_claim_task() {
 
     while [ $attempt -lt $max_attempts ]; do
         attempt=$((attempt + 1))
+
+        # Stop detection: worst-case latency is one WORKER_POLL_INTERVAL (default 30s)
+        # between the operator's DELETE and this check firing. The _watch_for_stop
+        # watchdog (15s interval) only covers the period while Claude is actively running.
+        local agent_st
+        agent_st=$(curl -sf "${SERVER_URL}/agents/${AGENT_NAME}" --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || agent_st="unknown"
+        if [ "$agent_st" = "stopping" ]; then
+            echo "Stop signal received during task poll — shutting down."
+            exit 0
+        fi
 
         # Use claim-next endpoint — server picks the best task atomically
         local response
@@ -248,12 +274,24 @@ ${FULL_PROMPT}"
         --dangerously-skip-permissions \
         --output-format text \
         --max-turns "$MAX_TURNS" \
-        2>&1
+        2>&1 &
+    CLAUDE_PID=$!
+    _watch_for_stop "$CLAUDE_PID" &
+    WATCHDOG_PID=$!
+    wait "$CLAUDE_PID" || true
     EXIT_CODE=$?
+    kill "$WATCHDOG_PID" 2>/dev/null || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
     set -e
 
     echo ""
     echo "=== Claude Code exited with code $EXIT_CODE ==="
+
+    # If stopped externally, skip post-run flow and let the EXIT trap handle cleanup
+    if [ -f /tmp/.stop_requested ]; then
+        echo "Stopped by operator — skipping post-run status update"
+        exit 0
+    fi
 
     # Final push — commit any uncommitted work, then push all commits to bare repo
     cd /workspace
@@ -315,12 +353,21 @@ if [ "$WORKER_MODE" = "true" ] && [ "$WORKER_SINGLE_TASK" = "false" ]; then
         # Check if agent has been paused
         AGENT_STATUS=$(curl -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
             --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || AGENT_STATUS="unknown"
+        if [ "$AGENT_STATUS" = "stopping" ]; then
+            echo "Agent deregistered — shutting down."
+            exit 0
+        fi
+
         if [ "$AGENT_STATUS" = "paused" ]; then
             echo "Agent is paused. Waiting for resume..."
             while true; do
                 sleep "$WORKER_POLL_INTERVAL"
                 AGENT_STATUS=$(curl -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
                     --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || AGENT_STATUS="unknown"
+                if [ "$AGENT_STATUS" = "stopping" ]; then
+                    echo "Agent deregistered — shutting down."
+                    exit 0
+                fi
                 if [ "$AGENT_STATUS" != "paused" ]; then
                     echo "Agent resumed (status: ${AGENT_STATUS})."
                     break

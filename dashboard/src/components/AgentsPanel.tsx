@@ -69,10 +69,10 @@ export function AgentsPanel({ agents }: AgentsPanelProps) {
                 </Popover.Target>
                 <Popover.Dropdown>
                   <Stack gap="xs">
-                    <Text size="sm">Deregister {a.name}?</Text>
+                    <Text size="sm">Stop and deregister {a.name}? This will signal the container to shut down.</Text>
                     <Group gap="xs">
                       <Button size="xs" color="red" onClick={() => handleDelete(a.name)}>
-                        Yes
+                        Stop agent
                       </Button>
                       <Button size="xs" variant="default" onClick={() => setConfirming(null)}>
                         No

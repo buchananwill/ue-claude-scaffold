@@ -48,6 +48,11 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     'UPDATE files SET claimant = NULL, claimed_at = NULL WHERE claimant = ?'
   );
 
+  const releaseAgentTasks = db.prepare(
+    `UPDATE tasks SET status = 'pending', claimed_by = NULL, claimed_at = NULL
+     WHERE claimed_by = @name AND status IN ('claimed', 'in_progress')`
+  );
+
   fastify.post<{
     Body: { name: string; worktree: string; planDoc?: string; mode?: 'single' | 'pump' };
   }>('/agents/register', async (request) => {
@@ -85,22 +90,38 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     return { ok: true };
   });
 
+  const setStoppingStatus = db.prepare(
+    "UPDATE agents SET status = 'stopping' WHERE name = @name"
+  );
+
   // DELETE /agents/:name — deregister a single agent
+  // First call (operator): sets status to 'stopping', releases file ownership.
+  // Second call (container self-deregister): hard-deletes the row.
   fastify.delete<{
     Params: { name: string };
   }>('/agents/:name', async (request, reply) => {
     const { name } = request.params;
-    const result = db.transaction(() => {
-      const info = deleteAgent.run({ name });
-      if (info.changes === 0) return false;
-      releaseAgentFiles.run(name);
-      return true;
-    })();
-
-    if (!result) {
+    const agent = getAgent.get({ name }) as AgentRow | undefined;
+    if (!agent) {
       return reply.notFound(`Agent '${name}' not registered`);
     }
-    return { ok: true };
+
+    if (agent.status === 'stopping') {
+      // Second call — container acknowledging stop; hard-delete the row
+      db.transaction(() => {
+        deleteAgent.run({ name });
+        releaseAgentFiles.run(name);
+      })();
+      return { ok: true };
+    }
+
+    // First call — operator initiating shutdown; set status to stopping
+    db.transaction(() => {
+      setStoppingStatus.run({ name });
+      releaseAgentFiles.run(name);
+      releaseAgentTasks.run({ name });
+    })();
+    return { ok: true, stopping: true };
   });
 
   // DELETE /agents — deregister all agents (e.g. server restart cleanup)
@@ -108,6 +129,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     const result = db.transaction(() => {
       const info = deleteAllAgents.run();
       db.prepare('UPDATE files SET claimant = NULL, claimed_at = NULL').run();
+      db.prepare("UPDATE tasks SET status = 'pending', claimed_by = NULL, claimed_at = NULL WHERE status IN ('claimed', 'in_progress')").run();
       return info.changes;
     })();
     return { ok: true, removed: result };
