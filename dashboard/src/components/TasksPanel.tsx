@@ -289,7 +289,14 @@ export function TasksPanel({ tasks, isFetching, statusFilter, onFilterChange, fi
                 >
                   <Table.Td>{t.id}</Table.Td>
                   <Table.Td>{t.priority}</Table.Td>
-                  <Table.Td><StatusBadge value={t.status} /></Table.Td>
+                  <Table.Td>
+                    <Group gap={4} wrap="nowrap">
+                      <StatusBadge value={t.status} />
+                      {t.status === 'pending' && t.blockedBy && t.blockedBy.length > 0 && (
+                        <Badge size="xs" color="orange" variant="dot">blocked</Badge>
+                      )}
+                    </Group>
+                  </Table.Td>
                   <Table.Td fw={500}>
                     <Link
                       to="/tasks/$taskId"
@@ -389,6 +396,24 @@ export function TasksPanel({ tasks, isFetching, statusFilter, onFilterChange, fi
                             <div>
                               <Text size="xs" fw={600} c="dimmed">Result</Text>
                               <Code block>{JSON.stringify(t.result, null, 2)}</Code>
+                            </div>
+                          )}
+                          {t.blockedBy && t.blockedBy.length > 0 && (
+                            <div>
+                              <Text size="xs" fw={600} c="dimmed">Blocked by</Text>
+                              <Group gap={4}>
+                                {t.blockedBy.map((depId) => (
+                                  <Link
+                                    key={depId}
+                                    to="/tasks/$taskId"
+                                    params={{ taskId: String(depId) }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{ textDecoration: 'none' }}
+                                  >
+                                    <Badge size="sm" color="orange" variant="light">#{depId}</Badge>
+                                  </Link>
+                                ))}
+                              </Group>
                             </div>
                           )}
                           <Group gap="xs">

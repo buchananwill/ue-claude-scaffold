@@ -25,6 +25,8 @@ export interface Task {
   status: string;
   priority: number;
   files: string[];
+  dependsOn: number[];
+  blockedBy: number[];
   claimedBy: string | null;
   claimedAt: string | null;
   completedAt: string | null;

@@ -1,0 +1,7 @@
+{
+  "name": "@ue-claude/scaffold",
+  "version": "0.2.0",
+  "description": "Run autonomous Claude Code agents in Docker containers against Unreal Engine projects",
+  "private": true,
+  "license": "MIT"
+}

@@ -9,7 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (6);
+INSERT OR IGNORE INTO schema_version(version) VALUES (7);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
@@ -101,6 +101,16 @@ CREATE TABLE IF NOT EXISTS task_files (
   PRIMARY KEY (task_id, file_path)
 );
 CREATE INDEX IF NOT EXISTS idx_task_files_path ON task_files(file_path);
+
+-- Task dependency graph
+CREATE TABLE IF NOT EXISTS task_dependencies (
+  task_id     INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  depends_on  INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  PRIMARY KEY (task_id, depends_on),
+  CHECK (task_id != depends_on)
+);
+CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_deps_dep  ON task_dependencies(depends_on);
 `;
 
 export let db: Database.Database;

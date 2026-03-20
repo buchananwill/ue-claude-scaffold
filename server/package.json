@@ -1,6 +1,6 @@
 {
   "name": "@ue-claude/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Coordination server for running Claude Code agents in Docker against Unreal Engine projects",
   "license": "MIT",
   "repository": {

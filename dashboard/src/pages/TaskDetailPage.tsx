@@ -1,6 +1,6 @@
 import { useParams } from '@tanstack/react-router';
 import { Link } from '@tanstack/react-router';
-import { Stack, Group, Card, Title, Text, Code, Loader } from '@mantine/core';
+import { Stack, Group, Card, Title, Text, Code, Loader, Badge } from '@mantine/core';
 import { useTask } from '../hooks/useTask.ts';
 import { StatusBadge } from '../components/StatusBadge.tsx';
 import { RelativeTime } from '../components/RelativeTime.tsx';
@@ -63,6 +63,28 @@ export function TaskDetailPage() {
                     <Text key={f} size="sm" ff="monospace">{f}</Text>
                   ))}
                 </Stack>
+              : <Text size="sm" c="dimmed" fs="italic">(none)</Text>}
+          </div>
+
+          <div>
+            <Text size="xs" fw={600} c="dimmed">Dependencies</Text>
+            {task.dependsOn && task.dependsOn.length > 0
+              ? <Group gap="xs">
+                  {task.dependsOn.map((depId) => (
+                    <Group key={depId} gap={4}>
+                      <Link
+                        to="/tasks/$taskId"
+                        params={{ taskId: String(depId) }}
+                        style={{ textDecoration: 'none', fontSize: '0.875rem' }}
+                      >
+                        #{depId}
+                      </Link>
+                      {task.blockedBy?.includes(depId) && (
+                        <Badge size="xs" color="orange" variant="light">blocking</Badge>
+                      )}
+                    </Group>
+                  ))}
+                </Group>
               : <Text size="sm" c="dimmed" fs="italic">(none)</Text>}
           </div>
 

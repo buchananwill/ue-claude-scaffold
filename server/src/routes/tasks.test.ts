@@ -1598,4 +1598,582 @@ describe('targetAgents / merge into agent branches', () => {
     const body = res.json();
     assert.deepEqual(body.mergedAgents, ['agent-1']);
   });
+
+  // ── Task Dependencies ────────────────────────────────────────────────
+
+  describe('task dependencies', () => {
+    it('POST /tasks with dependsOn inserts dependency rows and returns them', async () => {
+      const r1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Dep A' },
+      });
+      const depId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Dep B', dependsOn: [depId] },
+      });
+      assert.equal(r2.statusCode, 200);
+      assert.equal(r2.json().ok, true);
+
+      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${r2.json().id}` });
+      const task = get.json();
+      assert.deepEqual(task.dependsOn, [depId]);
+      assert.deepEqual(task.blockedBy, [depId]);
+    });
+
+    it('POST /tasks with dependsOn referencing non-existent task returns 400', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Bad dep', dependsOn: [99999] },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.ok(res.json().message.includes('does not exist'));
+    });
+
+    it('POST /tasks/claim-next skips tasks with unmet dependencies', async () => {
+      const r1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Blocker' },
+      });
+      const blockerId = r1.json().id;
+
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Blocked task', dependsOn: [blockerId] },
+      });
+
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim.statusCode, 200);
+      const body = claim.json();
+      assert.ok(body.task);
+      assert.equal(body.task.title, 'Blocker');
+    });
+
+    it('POST /tasks/claim-next claims task when dependency is completed', async () => {
+      const r1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Prereq' },
+      });
+      const prereqId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Dependent', dependsOn: [prereqId] },
+      });
+      const depTaskId = r2.json().id;
+
+      // Claim and complete the prereq
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${prereqId}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${prereqId}/complete`,
+        payload: { result: { done: true } },
+      });
+
+      // Now claim-next should pick up the dependent task
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(claim.statusCode, 200);
+      assert.ok(claim.json().task);
+      assert.equal(claim.json().task.id, depTaskId);
+    });
+
+    it('POST /tasks/:id/claim returns 409 with blockedBy when dependency unmet', async () => {
+      const r1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Blocker for claim' },
+      });
+      const blockerId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Cannot claim yet', dependsOn: [blockerId] },
+      });
+      const taskId = r2.json().id;
+
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${taskId}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim.statusCode, 409);
+      const body = claim.json();
+      assert.equal(body.message, 'Task has unmet dependencies');
+      assert.deepEqual(body.blockedBy, [blockerId]);
+    });
+
+    it('POST /tasks/:id/claim succeeds when all dependencies completed', async () => {
+      const r1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Prereq for claim' },
+      });
+      const prereqId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Claimable after prereq', dependsOn: [prereqId] },
+      });
+      const taskId = r2.json().id;
+
+      // Complete prereq
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${prereqId}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${prereqId}/complete`,
+        payload: { result: { done: true } },
+      });
+
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${taskId}/claim`,
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(claim.statusCode, 200);
+      assert.deepEqual(claim.json(), { ok: true });
+    });
+
+    it('POST /tasks/batch with dependsOnIndex resolves cross-references', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/batch',
+        payload: {
+          tasks: [
+            { title: 'Batch A' },
+            { title: 'Batch B', dependsOnIndex: [0] },
+            { title: 'Batch C', dependsOnIndex: [0, 1] },
+          ],
+        },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.ids.length, 3);
+
+      // Verify deps
+      const getB = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[1]}` });
+      assert.deepEqual(getB.json().dependsOn, [body.ids[0]]);
+
+      const getC = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[2]}` });
+      assert.deepEqual(getC.json().dependsOn.sort(), [body.ids[0], body.ids[1]].sort());
+    });
+
+    it('POST /tasks/batch with dependsOnIndex self-reference returns 400', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/batch',
+        payload: {
+          tasks: [
+            { title: 'Self ref', dependsOnIndex: [0] },
+          ],
+        },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.ok(res.json().message.includes('self'));
+    });
+
+    it('GET /tasks/:id returns dependsOn and blockedBy arrays', async () => {
+      const r1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Parent' },
+      });
+      const parentId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Child', dependsOn: [parentId] },
+      });
+      const childId = r2.json().id;
+
+      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${childId}` });
+      const task = get.json();
+      assert.deepEqual(task.dependsOn, [parentId]);
+      assert.deepEqual(task.blockedBy, [parentId]);
+
+      // Complete parent, blockedBy should become empty
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${parentId}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${parentId}/complete`,
+        payload: { result: {} },
+      });
+
+      const get2 = await ctx.app.inject({ method: 'GET', url: `/tasks/${childId}` });
+      const task2 = get2.json();
+      assert.deepEqual(task2.dependsOn, [parentId]);
+      assert.deepEqual(task2.blockedBy, []);
+    });
+
+    it('PATCH /tasks/:id with dependsOn updates dependency list', async () => {
+      const r1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Dep X' },
+      });
+      const depX = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Dep Y' },
+      });
+      const depY = r2.json().id;
+
+      const r3 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Patchable', dependsOn: [depX] },
+      });
+      const taskId = r3.json().id;
+
+      // Verify initial deps
+      const get1 = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+      assert.deepEqual(get1.json().dependsOn, [depX]);
+
+      // Patch to new deps
+      const patch = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/tasks/${taskId}`,
+        payload: { dependsOn: [depY] },
+      });
+      assert.equal(patch.statusCode, 200);
+
+      const get2 = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+      assert.deepEqual(get2.json().dependsOn, [depY]);
+    });
+
+    it('PATCH /tasks/:id with dependsOn creating a mutual cycle returns 400', async () => {
+      const r1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Cycle A' },
+      });
+      const idA = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Cycle B', dependsOn: [idA] },
+      });
+      const idB = r2.json().id;
+
+      // Try to make A depend on B — should fail with cycle error
+      const patch = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/tasks/${idA}`,
+        payload: { dependsOn: [idB] },
+      });
+      assert.equal(patch.statusCode, 400);
+      assert.ok(patch.json().message.includes('Cycle detected'));
+    });
+
+    it('task with multiple deps where only some are completed remains blocked', async () => {
+      // Create two prerequisite tasks
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 1' } });
+      const r2 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 2' } });
+      const dep1 = r1.json().id;
+      const dep2 = r2.json().id;
+
+      // Create a task that depends on both
+      const r3 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Needs both', dependsOn: [dep1, dep2] },
+      });
+      const taskId = r3.json().id;
+
+      // Complete only dep1
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/complete`, payload: { result: { done: true } } });
+
+      // blockedBy should only contain dep2 now
+      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+      const task = get.json();
+      assert.deepEqual(task.dependsOn.sort(), [dep1, dep2].sort());
+      assert.deepEqual(task.blockedBy, [dep2]);
+
+      // claim should still fail
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${taskId}/claim`,
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(claim.statusCode, 409);
+      assert.deepEqual(claim.json().blockedBy, [dep2]);
+
+      // claim-next should not return the blocked task (should return dep2 instead)
+      const claimNext = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(claimNext.statusCode, 200);
+      assert.equal(claimNext.json().task.title, 'Dep 2');
+    });
+
+    it('full lifecycle: complete dependency then claim dependent task', async () => {
+      // Create prerequisite
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Prerequisite' } });
+      const prereqId = r1.json().id;
+
+      // Create dependent task
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Dependent task', dependsOn: [prereqId] },
+      });
+      const depId = r2.json().id;
+
+      // Verify initially blocked
+      const claim1 = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${depId}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim1.statusCode, 409);
+
+      // Claim, update, complete the prerequisite
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/update`, payload: { progress: 'Working on it' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/complete`, payload: { result: { summary: 'All done' } } });
+
+      // Now the dependent task should be claimable
+      const claim2 = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${depId}/claim`,
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(claim2.statusCode, 200);
+      assert.deepEqual(claim2.json(), { ok: true });
+
+      // Verify the claimed state
+      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${depId}` });
+      const task = get.json();
+      assert.equal(task.status, 'claimed');
+      assert.equal(task.claimedBy, 'agent-2');
+      assert.deepEqual(task.dependsOn, [prereqId]);
+      assert.deepEqual(task.blockedBy, []);
+    });
+
+    it('GET /tasks list returns dependsOn and blockedBy for all tasks', async () => {
+      // Create tasks: one independent, one with dependency
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Independent' } });
+      const indepId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Has dependency', dependsOn: [indepId] },
+      });
+
+      const list = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+      assert.equal(list.statusCode, 200);
+      const tasks = list.json();
+      assert.equal(tasks.length, 2);
+
+      // Independent task should have empty arrays
+      const indepTask = tasks.find((t: any) => t.title === 'Independent');
+      assert.ok(indepTask);
+      assert.deepEqual(indepTask.dependsOn, []);
+      assert.deepEqual(indepTask.blockedBy, []);
+
+      // Dependent task should have populated arrays
+      const depTask = tasks.find((t: any) => t.title === 'Has dependency');
+      assert.ok(depTask);
+      assert.deepEqual(depTask.dependsOn, [indepId]);
+      assert.deepEqual(depTask.blockedBy, [indepId]);
+    });
+
+    it('POST /tasks/batch with dependsOnIndex forming a chain A -> B -> C', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/batch',
+        payload: {
+          tasks: [
+            { title: 'Chain A' },
+            { title: 'Chain B', dependsOnIndex: [0] },
+            { title: 'Chain C', dependsOnIndex: [1] },
+          ],
+        },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      const [idA, idB, idC] = body.ids;
+
+      // Verify the chain
+      const getA = await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` });
+      assert.deepEqual(getA.json().dependsOn, []);
+      assert.deepEqual(getA.json().blockedBy, []);
+
+      const getB = await ctx.app.inject({ method: 'GET', url: `/tasks/${idB}` });
+      assert.deepEqual(getB.json().dependsOn, [idA]);
+      assert.deepEqual(getB.json().blockedBy, [idA]);
+
+      const getC = await ctx.app.inject({ method: 'GET', url: `/tasks/${idC}` });
+      assert.deepEqual(getC.json().dependsOn, [idB]);
+      assert.deepEqual(getC.json().blockedBy, [idB]);
+
+      // claim-next should only return A (B and C are blocked)
+      const claim1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim1.json().task.title, 'Chain A');
+
+      // Complete directly from 'claimed' — the server permits this transition.
+      // If status constraints are tightened in the future, add an /update step here.
+      // Complete A, then B should become claimable but C should still be blocked
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${idA}/complete`, payload: { result: {} } });
+
+      const claim2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(claim2.json().task.title, 'Chain B');
+
+      // C is still blocked by B
+      const getC2 = await ctx.app.inject({ method: 'GET', url: `/tasks/${idC}` });
+      assert.deepEqual(getC2.json().blockedBy, [idB]);
+    });
+
+    it('PATCH /tasks/:id with dependsOn: [] clears dependencies and makes task claimable', async () => {
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Blocker' } });
+      const blockerId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Was blocked', dependsOn: [blockerId] },
+      });
+      const taskId = r2.json().id;
+
+      // Verify it is blocked
+      const claim1 = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${taskId}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim1.statusCode, 409);
+
+      // Clear dependencies
+      const patch = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/tasks/${taskId}`,
+        payload: { dependsOn: [] },
+      });
+      assert.equal(patch.statusCode, 200);
+
+      // Verify dependencies are cleared
+      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+      assert.deepEqual(get.json().dependsOn, []);
+      assert.deepEqual(get.json().blockedBy, []);
+
+      // Now it should be claimable
+      const claim2 = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${taskId}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim2.statusCode, 200);
+      assert.deepEqual(claim2.json(), { ok: true });
+    });
+
+    it('POST /tasks rejects dependsOnIndex in single create', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Bad', dependsOnIndex: [0] },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.ok(res.json().message.includes('dependsOnIndex is only valid in POST /tasks/batch'));
+    });
+
+    it('POST /tasks/batch with mutual dependsOnIndex cycle returns 400', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/batch',
+        payload: {
+          tasks: [
+            { title: 'A', dependsOnIndex: [1] },
+            { title: 'B', dependsOnIndex: [0] },
+          ],
+        },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.ok(res.json().message.includes('Cycle detected'));
+    });
+
+    it('PATCH /tasks/:id with dependsOn containing self-reference returns 400', async () => {
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Self dep' } });
+      const taskId = r1.json().id;
+
+      const patch = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/tasks/${taskId}`,
+        payload: { dependsOn: [taskId] },
+      });
+      assert.equal(patch.statusCode, 400);
+      assert.ok(patch.json().message.includes('cannot depend on itself'));
+    });
+
+    it('claim-next depBlocked count reflects tasks blocked by dependencies', async () => {
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Blocker task' } });
+      const blockerId = r1.json().id;
+
+      // Claim the blocker so it is no longer pending
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${blockerId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+
+      // Create a task blocked by the dependency
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Dep blocked', dependsOn: [blockerId] },
+      });
+
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.task, null);
+      assert.equal(body.pending, 1);
+      assert.equal(body.depBlocked, 1);
+      assert.ok(body.reason.includes('unmet dependencies'));
+    });
+  });
 });
