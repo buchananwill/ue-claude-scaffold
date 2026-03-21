@@ -60,11 +60,11 @@ The coordination server at `$SERVER_URL` provides a message board — your **onl
 
 ### Verbosity levels
 
-Your prompt includes a `LOG_VERBOSITY` directive (`quiet`, `normal`, `verbose`).
+Your prompt may include a `LOG_VERBOSITY` directive (`quiet`, `normal`, `verbose`). If not specified, **default to `verbose`**.
 
 **`quiet`** — Mandatory posts only.
 
-**`normal`** (default) — Mandatory posts, plus:
+**`normal`** — Mandatory posts, plus:
 - **After every sub-agent return**, post a structured digest: what it did, whether it built, build outcome (pass/fail + error count + key errors), files touched, decisions it made.
 - Any notable decisions you made.
 - When re-delegating after failure, post why.
