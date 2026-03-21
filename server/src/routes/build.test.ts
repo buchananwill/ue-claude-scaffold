@@ -35,6 +35,8 @@ process.exit(0);
         defaultTestFilters: ['TestFilter1'],
         buildTimeoutMs: 660_000,
         testTimeoutMs: 700_000,
+        ubtRetryCount: 5,
+        ubtRetryDelayMs: 30_000,
       },
       server: {
         port: 9100,
@@ -128,6 +130,8 @@ process.exit(0);
         defaultTestFilters: ['TestFilter1'],
         buildTimeoutMs: 660_000,
         testTimeoutMs: 700_000,
+        ubtRetryCount: 5,
+        ubtRetryDelayMs: 30_000,
       },
       server: {
         port: 9100,

@@ -13,6 +13,24 @@
             "command": "bash /claude-hooks/block-push-passthrough.sh"
           }
         ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /claude-hooks/lint-cpp-diff.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /claude-hooks/lint-cpp-diff.py"
+          }
+        ]
       }
     ]
   }

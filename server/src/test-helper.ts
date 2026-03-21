@@ -23,6 +23,8 @@ export function createTestConfig(overrides?: Partial<ScaffoldConfig>): ScaffoldC
       defaultTestFilters: [],
       buildTimeoutMs: 660_000,
       testTimeoutMs: 700_000,
+      ubtRetryCount: 5,
+      ubtRetryDelayMs: 30_000,
     },
     server: {
       port: 9100,

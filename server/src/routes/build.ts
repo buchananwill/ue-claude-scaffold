@@ -55,6 +55,39 @@ function runCommand(
   });
 }
 
+export function isUbtContentionResult(result: SpawnResult): boolean {
+  const marker = 'already set, indicating that a conflicting instance';
+  return result.output.includes(marker) || result.stderr.includes(marker);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function runWithUbtRetry(
+  thunk: () => Promise<SpawnResult>,
+  maxRetries: number,
+  delayMs: number,
+): Promise<SpawnResult> {
+  let result = await thunk();
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (!isUbtContentionResult(result)) {
+      return result;
+    }
+    await sleep(delayMs);
+    result = await thunk();
+  }
+  if (isUbtContentionResult(result)) {
+    return {
+      success: false,
+      exit_code: -1,
+      output: result.output,
+      stderr: `UBT external lock contention after ${maxRetries} retries. Another process (IDE or interactive session) is holding the UBT mutex. The agent should wait and retry the build request rather than attempting to fix a code problem.`,
+    };
+  }
+  return result;
+}
+
 const SCRIPT_INTERPRETERS: Record<string, string> = {
   '.py': 'python',
   '.sh': 'bash',
@@ -164,7 +197,11 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const agentForHistory = agentName ?? 'unknown';
     const histId = recordBuildStart(agentForHistory, 'build');
     const t0 = Date.now();
-    const result = await runCommand(command, scriptArgs, cwd, config.build.buildTimeoutMs);
+    const result = await runWithUbtRetry(
+      () => runCommand(command, scriptArgs, cwd, config.build.buildTimeoutMs),
+      config.build.ubtRetryCount,
+      config.build.ubtRetryDelayMs,
+    );
     recordBuildEnd(histId, Date.now() - t0, result.success, result.output, result.stderr);
     return result;
   });
@@ -199,7 +236,11 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const agentForHistory = agentName ?? 'unknown';
     const histId = recordBuildStart(agentForHistory, 'test');
     const t0 = Date.now();
-    const result = await runCommand(command, scriptArgs, cwd, config.build.testTimeoutMs);
+    const result = await runWithUbtRetry(
+      () => runCommand(command, scriptArgs, cwd, config.build.testTimeoutMs),
+      config.build.ubtRetryCount,
+      config.build.ubtRetryDelayMs,
+    );
     recordBuildEnd(histId, Date.now() - t0, result.success, result.output, result.stderr);
     return result;
   });

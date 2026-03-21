@@ -17,6 +17,8 @@ export interface ScaffoldConfig {
     defaultTestFilters: string[];
     buildTimeoutMs: number;
     testTimeoutMs: number;
+    ubtRetryCount: number;
+    ubtRetryDelayMs: number;
   };
   server: {
     port: number;
@@ -72,6 +74,8 @@ export function loadConfig(): ScaffoldConfig {
       defaultTestFilters: raw.build?.defaultTestFilters ?? [],
       buildTimeoutMs: raw.build?.buildTimeoutMs ?? 660_000,
       testTimeoutMs: raw.build?.testTimeoutMs ?? 700_000,
+      ubtRetryCount: raw.build?.ubtRetryCount ?? 5,
+      ubtRetryDelayMs: raw.build?.ubtRetryDelayMs ?? 30_000,
     },
     server: {
       port: raw.server?.port ?? 9100,
