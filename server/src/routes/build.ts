@@ -57,10 +57,11 @@ function runCommand(
 
 export function isUbtContentionResult(result: SpawnResult): boolean {
   // UBT emits this when its internal mutex (Global\UnrealBuildTool_Mutex_*) is held by another process.
-  // Observed on Windows with UE 5.x. Linux/Mac UBT uses filesystem locks and may emit different messages.
-  // Source: UBT source code + Epic Developer Community Forums reports.
-  const marker = 'already set, indicating that a conflicting instance';
-  return result.output.includes(marker) || result.stderr.includes(marker);
+  // Two known message variants observed on Windows with UE 5.x:
+  //   1. "A conflicting instance of Global\UnrealBuildTool_Mutex_... is already running."
+  //   2. "...already set, indicating that a conflicting instance..."
+  const combined = result.output + result.stderr;
+  return combined.includes('conflicting instance') || combined.includes('ConflictingInstance');
 }
 
 function sleep(ms: number): Promise<void> {

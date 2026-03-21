@@ -308,6 +308,30 @@ describe('UBT contention detection and retry', () => {
       );
     });
 
+    it('returns true for real UBT ConflictingInstance output', () => {
+      assert.equal(
+        isUbtContentionResult({
+          success: false,
+          exit_code: 1,
+          output: 'A conflicting instance of Global\\UnrealBuildTool_Mutex_bbd244c9f44ece8134630190d834139edc42379d is already running.\n\nResult: Failed (ConflictingInstance)\nTotal execution time: 0.48 seconds',
+          stderr: '',
+        }),
+        true,
+      );
+    });
+
+    it('returns true when Result line contains ConflictingInstance', () => {
+      assert.equal(
+        isUbtContentionResult({
+          success: false,
+          exit_code: 1,
+          output: 'Result: Failed (ConflictingInstance)',
+          stderr: '',
+        }),
+        true,
+      );
+    });
+
     it('returns false for empty output and stderr', () => {
       assert.equal(
         isUbtContentionResult({ success: false, exit_code: 1, output: '', stderr: '' }),
