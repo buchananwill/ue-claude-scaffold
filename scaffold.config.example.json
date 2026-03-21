@@ -22,7 +22,9 @@
     "testScriptPath": "Scripts/run_tests.py",
     "defaultTestFilters": ["MyProject"],
     "buildTimeoutMs": 660000,
-    "testTimeoutMs": 700000
+    "testTimeoutMs": 700000,
+    "ubtRetryCount": 5,
+    "ubtRetryDelayMs": 30000
   },
 
   "plugins": {

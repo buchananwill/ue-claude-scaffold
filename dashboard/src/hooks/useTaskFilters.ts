@@ -19,10 +19,13 @@ const UNASSIGNED = '__unassigned__';
 
 export { UNASSIGNED };
 
+export const TASK_STATUSES = ['pending', 'claimed', 'in_progress', 'completed', 'failed'] as const;
+
 export function useTaskFilters(tasks: Task[]) {
   const [{ column: sortColumn, dir: sortDir }, dispatchSort] = useReducer(sortReducer, { column: null, dir: 'asc' });
   const [agentFilter, setAgentFilter] = useState<Set<string>>(new Set());
   const [priorityFilter, setPriorityFilter] = useState<Set<number>>(new Set());
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
 
   const cycleSort = useCallback((col: NonNullable<SortColumn>) => {
     dispatchSort({ type: 'cycle', col });
@@ -65,6 +68,10 @@ export function useTaskFilters(tasks: Task[]) {
       result = result.filter((t) => priorityFilter.has(t.priority));
     }
 
+    if (statusFilter.size > 0) {
+      result = result.filter((t) => statusFilter.has(t.status));
+    }
+
     if (sortColumn !== null) {
       const col = sortColumn;
       const dir = sortDir === 'asc' ? 1 : -1;
@@ -82,13 +89,14 @@ export function useTaskFilters(tasks: Task[]) {
     }
 
     return result;
-  }, [tasks, agentFilter, priorityFilter, sortColumn, sortDir]);
+  }, [tasks, agentFilter, priorityFilter, statusFilter, sortColumn, sortDir]);
 
-  const hasActiveFilters = agentFilter.size > 0 || priorityFilter.size > 0 || sortColumn !== null;
+  const hasActiveFilters = agentFilter.size > 0 || priorityFilter.size > 0 || statusFilter.size > 0 || sortColumn !== null;
 
   const clearAllFilters = useCallback(() => {
     setAgentFilter(new Set());
     setPriorityFilter(new Set());
+    setStatusFilter(new Set());
     dispatchSort({ type: 'reset' });
   }, []);
 
@@ -98,6 +106,8 @@ export function useTaskFilters(tasks: Task[]) {
     sortDir,
     agentFilter,
     priorityFilter,
+    statusFilter,
+    setStatusFilter,
     cycleSort,
     setAgentFilter,
     setPriorityFilter,

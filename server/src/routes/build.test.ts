@@ -1,10 +1,10 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
-import { writeFileSync, chmodSync, mkdirSync } from 'node:fs';
+import { writeFileSync, chmodSync, mkdirSync, readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
-import buildPlugin from './build.js';
+import buildPlugin, { isUbtContentionResult } from './build.js';
 import agentsPlugin from './agents.js';
 import { initUbtStatements } from './ubt.js';
 
@@ -241,5 +241,317 @@ process.exit(0);
       body.stderr.includes('docker/test-agent'),
       `expected stderr to reference agent branch "docker/test-agent", got: ${body.stderr}`,
     );
+  });
+});
+
+describe('UBT contention detection and retry', () => {
+  describe('isUbtContentionResult', () => {
+    it('returns false for a clean success', () => {
+      assert.equal(
+        isUbtContentionResult({ success: true, exit_code: 0, output: 'Build succeeded', stderr: '' }),
+        false,
+      );
+    });
+
+    it('returns false for a genuine compiler failure', () => {
+      assert.equal(
+        isUbtContentionResult({ success: false, exit_code: 1, output: '', stderr: 'error C2065: undeclared identifier' }),
+        false,
+      );
+    });
+
+    it('returns true when output contains the contention marker', () => {
+      assert.equal(
+        isUbtContentionResult({
+          success: false,
+          exit_code: 1,
+          output: 'Mutex already set, indicating that a conflicting instance of UBT is running',
+          stderr: '',
+        }),
+        true,
+      );
+    });
+
+    it('returns true when stderr contains the contention marker', () => {
+      assert.equal(
+        isUbtContentionResult({
+          success: false,
+          exit_code: 1,
+          output: '',
+          stderr: 'Mutex already set, indicating that a conflicting instance of UBT is running',
+        }),
+        true,
+      );
+    });
+
+    it('returns true when both output and stderr contain the marker', () => {
+      assert.equal(
+        isUbtContentionResult({
+          success: false,
+          exit_code: 1,
+          output: 'Global\\UnrealBuildTool_Mutex already set, indicating that a conflicting instance is running',
+          stderr: 'ERROR: Mutex already set, indicating that a conflicting instance of UBT is running',
+        }),
+        true,
+      );
+    });
+
+    it('returns true when the marker is embedded in a longer message', () => {
+      assert.equal(
+        isUbtContentionResult({
+          success: false,
+          exit_code: 1,
+          output: '',
+          stderr: 'ERROR: Global\\UnrealBuildTool_Mutex_LargeProject was already set, indicating that a conflicting instance of UnrealBuildTool is already running. Aborting.',
+        }),
+        true,
+      );
+    });
+
+    it('returns false for empty output and stderr', () => {
+      assert.equal(
+        isUbtContentionResult({ success: false, exit_code: 1, output: '', stderr: '' }),
+        false,
+      );
+    });
+  });
+
+  describe('integration', () => {
+    let ctx: TestContext;
+    let projectPath: string;
+    let bareRepoDir: string;
+
+    beforeEach(async () => {
+      ctx = await createTestApp();
+      initUbtStatements();
+
+      // Set up a bare repo with a docker/current-root branch so syncWorktree succeeds
+      bareRepoDir = path.join(ctx.tmpDir, 'bare.git');
+      mkdirSync(bareRepoDir);
+      execSync('git init --bare', { cwd: bareRepoDir, stdio: 'ignore' });
+
+      // Create a temporary repo, make a commit, push to the bare repo's docker/current-root
+      const seedDir = path.join(ctx.tmpDir, 'seed');
+      mkdirSync(seedDir);
+      execSync('git init', { cwd: seedDir, stdio: 'ignore' });
+      execSync('git checkout -b docker/current-root', { cwd: seedDir, stdio: 'ignore' });
+      writeFileSync(path.join(seedDir, 'dummy.txt'), 'seed');
+      execSync('git add .', { cwd: seedDir, stdio: 'ignore' });
+      execSync('git -c user.email="t@t" -c user.name="t" commit -m "seed"', { cwd: seedDir, stdio: 'ignore' });
+      execSync(`git push "${bareRepoDir}" docker/current-root`, { cwd: seedDir, stdio: 'ignore' });
+
+      // Create a project path that is a clone so git fetch + reset work
+      projectPath = path.join(ctx.tmpDir, 'project');
+      execSync(`git clone "${bareRepoDir}" "${projectPath}"`, { stdio: 'ignore' });
+      execSync('git checkout -b docker/current-root origin/docker/current-root', { cwd: projectPath, stdio: 'ignore' });
+    });
+
+    afterEach(async () => {
+      await ctx.app.close();
+      ctx.cleanup();
+    });
+
+    it('POST /build retries and succeeds after transient contention', async () => {
+      const counterFile = path.join(ctx.tmpDir, 'build-counter.txt');
+      writeFileSync(counterFile, '0');
+
+      const mockScript = path.join(ctx.tmpDir, 'contention-build.sh');
+      writeFileSync(
+        mockScript,
+        `#!/bin/bash
+COUNTER_FILE="${counterFile.replace(/\\/g, '/')}"
+COUNT=$(cat "$COUNTER_FILE")
+COUNT=$((COUNT + 1))
+echo -n "$COUNT" > "$COUNTER_FILE"
+if [ "$COUNT" -eq 1 ]; then
+  echo -n "Mutex already set, indicating that a conflicting instance of UBT is running" >&2
+  exit 1
+else
+  echo -n "Build succeeded"
+  exit 0
+fi
+`
+      );
+
+      const config = createTestConfig({
+        project: {
+          name: 'TestProject',
+          path: projectPath,
+          uprojectFile: path.join(projectPath, 'Test.uproject'),
+        },
+        build: {
+          scriptPath: mockScript,
+          testScriptPath: mockScript,
+          defaultTestFilters: [],
+          buildTimeoutMs: 660_000,
+          testTimeoutMs: 700_000,
+          ubtRetryCount: 3,
+          ubtRetryDelayMs: 50,
+        },
+        server: {
+          port: 9100,
+          ubtLockTimeoutMs: 600000,
+          bareRepoPath: bareRepoDir,
+        },
+      });
+
+      await ctx.app.register(buildPlugin, { config });
+
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/build',
+        payload: {},
+      });
+      const body = res.json();
+      assert.equal(body.success, true);
+    });
+
+    it('POST /build returns contention error after exhausting retries', async () => {
+      const mockScript = path.join(ctx.tmpDir, 'always-contention.sh');
+      writeFileSync(
+        mockScript,
+        `#!/bin/bash
+echo -n "Mutex already set, indicating that a conflicting instance of UBT is running" >&2
+exit 1
+`
+      );
+
+      const config = createTestConfig({
+        project: {
+          name: 'TestProject',
+          path: projectPath,
+          uprojectFile: path.join(projectPath, 'Test.uproject'),
+        },
+        build: {
+          scriptPath: mockScript,
+          testScriptPath: mockScript,
+          defaultTestFilters: [],
+          buildTimeoutMs: 660_000,
+          testTimeoutMs: 700_000,
+          ubtRetryCount: 2,
+          ubtRetryDelayMs: 50,
+        },
+        server: {
+          port: 9100,
+          ubtLockTimeoutMs: 600000,
+          bareRepoPath: bareRepoDir,
+        },
+      });
+
+      await ctx.app.register(buildPlugin, { config });
+
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/build',
+        payload: {},
+      });
+      const body = res.json();
+      assert.equal(body.success, false);
+      assert.equal(body.exit_code, -1);
+      assert.ok(body.stderr.includes('UBT external lock contention'));
+    });
+
+    it('POST /test retries and succeeds after transient contention', async () => {
+      const counterFile = path.join(ctx.tmpDir, 'test-counter.txt');
+      writeFileSync(counterFile, '0');
+
+      const mockScript = path.join(ctx.tmpDir, 'contention-test.sh');
+      writeFileSync(
+        mockScript,
+        `#!/bin/bash
+COUNTER_FILE="${counterFile.replace(/\\/g, '/')}"
+COUNT=$(cat "$COUNTER_FILE")
+COUNT=$((COUNT + 1))
+echo -n "$COUNT" > "$COUNTER_FILE"
+if [ "$COUNT" -eq 1 ]; then
+  echo -n "Mutex already set, indicating that a conflicting instance of UBT is running" >&2
+  exit 1
+else
+  echo -n "Tests passed"
+  exit 0
+fi
+`
+      );
+
+      const config = createTestConfig({
+        project: {
+          name: 'TestProject',
+          path: projectPath,
+          uprojectFile: path.join(projectPath, 'Test.uproject'),
+        },
+        build: {
+          scriptPath: mockScript,
+          testScriptPath: mockScript,
+          defaultTestFilters: [],
+          buildTimeoutMs: 660_000,
+          testTimeoutMs: 700_000,
+          ubtRetryCount: 3,
+          ubtRetryDelayMs: 50,
+        },
+        server: {
+          port: 9100,
+          ubtLockTimeoutMs: 600000,
+          bareRepoPath: bareRepoDir,
+        },
+      });
+
+      await ctx.app.register(buildPlugin, { config });
+
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/test',
+        payload: {},
+      });
+      const body = res.json();
+      assert.equal(body.success, true);
+    });
+
+    it('POST /build succeeds immediately without retrying when no contention', async () => {
+      const mockScript = path.join(ctx.tmpDir, 'instant-success.sh');
+      writeFileSync(
+        mockScript,
+        `#!/bin/bash
+echo -n "Build succeeded"
+exit 0
+`
+      );
+
+      const config = createTestConfig({
+        project: {
+          name: 'TestProject',
+          path: projectPath,
+          uprojectFile: path.join(projectPath, 'Test.uproject'),
+        },
+        build: {
+          scriptPath: mockScript,
+          testScriptPath: mockScript,
+          defaultTestFilters: [],
+          buildTimeoutMs: 660_000,
+          testTimeoutMs: 700_000,
+          ubtRetryCount: 3,
+          ubtRetryDelayMs: 60_000, // long delay proves we did not retry
+        },
+        server: {
+          port: 9100,
+          ubtLockTimeoutMs: 600000,
+          bareRepoPath: bareRepoDir,
+        },
+      });
+
+      await ctx.app.register(buildPlugin, { config });
+
+      const t0 = Date.now();
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/build',
+        payload: {},
+      });
+      const elapsed = Date.now() - t0;
+      const body = res.json();
+      assert.equal(body.success, true);
+      assert.equal(body.output, 'Build succeeded');
+      // If it retried even once, it would have waited 60s. A generous bound of 10s proves no retry occurred.
+      assert.ok(elapsed < 10_000, `Expected fast completion (no retry), but took ${elapsed}ms`);
+    });
   });
 });

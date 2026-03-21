@@ -64,14 +64,35 @@ expect_allow("east-const", "void Foo(FVector const& V);", "correct east-const re
 expect_allow("east-const", "FString const& Name = TEXT(\"hello\");", "correct east-const local")
 expect_allow("east-const", "int32 const* Ptr = nullptr;", "correct east-const pointer")
 expect_allow("east-const", "constexpr int32 MaxSize = 100;", "constexpr keyword")
-expect_allow("east-const", "const_cast<FString*>(Ptr);", "const_cast keyword")
+expect_allow("east-const", "consteval int32 Value = 42;", "consteval keyword")
 expect_allow("east-const", "// const FVector& is wrong", "comment line")
 expect_allow("east-const", "#define MACRO const int& x", "preprocessor line")
 expect_allow("east-const", "FSlateBrush const* const Result = nullptr;", "const pointer to const")
 
-# ─── Rule 2: Greedy captures ────────────────────────────────────────────────
+# ─── Rule 2: const_cast banned ──────────────────────────────────────────────
 
-print("Rule 2: Greedy captures")
+print("Rule 2: const_cast banned")
+
+expect_catch("const_cast", "const_cast<FString*>(Ptr);", "const_cast usage")
+expect_catch("const_cast", "    auto* Mutable = const_cast<FMyClass*>(Obj);", "const_cast in assignment")
+
+expect_allow("const_cast", "// const_cast is banned", "comment mentioning const_cast")
+
+# ─── Rule 3: Anonymous namespaces ───────────────────────────────────────────
+
+print("Rule 3: Anonymous namespaces")
+
+expect_catch("anon-namespace", "namespace {", "anonymous namespace opening")
+expect_catch("anon-namespace", "namespace{", "anonymous namespace no space")
+expect_catch("anon-namespace", "    namespace {", "indented anonymous namespace")
+
+expect_allow("anon-namespace", "namespace UE::ResortModule {", "named namespace")
+expect_allow("anon-namespace", "namespace UE::ResortModule::Private {", "nested named namespace")
+expect_allow("anon-namespace", "// namespace {", "commented anonymous namespace")
+
+# ─── Rule 4: Greedy captures ────────────────────────────────────────────────
+
+print("Rule 4: Greedy captures")
 
 expect_catch("greedy-capture", "auto Lambda = [&](int32 X) { return X; };", "[&] with params")
 expect_catch("greedy-capture", "auto Lambda = [=](int32 X) { return X; };", "[=] with params")
@@ -83,9 +104,9 @@ expect_allow("greedy-capture", "auto Lambda = [Self = this]() { Self->Do(); };",
 expect_allow("greedy-capture", "TArray<int32> Arr = {1, 2, 3};", "braced init (not a lambda)")
 expect_allow("greedy-capture", "// [&] is bad", "comment")
 
-# ─── Rule 3: Raw new ────────────────────────────────────────────────────────
+# ─── Rule 5: Raw new ────────────────────────────────────────────────────────
 
-print("Rule 3: Raw new")
+print("Rule 5: Raw new")
 
 expect_catch("raw-new", "FMyClass* Obj = new FMyClass();", "raw new FMyClass")
 expect_catch("raw-new", "return new FWidget(Args);", "raw new in return")
@@ -101,9 +122,9 @@ expect_allow("raw-new", "void OnNewMember();", "function with New in name")
 expect_allow("raw-new", 'checkf(Ptr, TEXT("Received nullptr for new BuildableSaveData"));', "new inside TEXT macro")
 expect_allow("raw-new", 'UE_LOG(LogResort, Error, TEXT("Failed to create new Instance"));', "new inside UE_LOG string")
 
-# ─── Rule 4: Multiple declarations ──────────────────────────────────────────
+# ─── Rule 6: Multiple declarations ──────────────────────────────────────────
 
-print("Rule 4: Multiple declarations")
+print("Rule 6: Multiple declarations")
 
 expect_catch("multi-decl", "int32 X, Y;", "two ints on one line")
 expect_catch("multi-decl", "float A, B = 0.f;", "two floats, one initialised")
@@ -121,9 +142,9 @@ print("Regression: Block comments")
 expect_allow("east-const", "* PreProcessors run exclusively when a new Buildable is created.", "block comment continuation")
 expect_allow("raw-new", "* and choose to start a new Framework or return to their current one.", "block comment with 'new' in prose")
 
-# ─── Rule 5: Uninitialised TSharedRef ───────────────────────────────────────
+# ─── Rule 7: Uninitialised TSharedRef ───────────────────────────────────────
 
-print("Rule 5: Uninitialised TSharedRef")
+print("Rule 7: Uninitialised TSharedRef")
 
 expect_catch("tsharedref", "TSharedRef<FMyThing> Thing;", "uninitialised TSharedRef field")
 expect_catch("tsharedref", "    TSharedRef<SWidget> Widget;", "indented uninitialised TSharedRef")
@@ -134,9 +155,9 @@ expect_allow("tsharedref", "TSharedPtr<FMyThing> Thing;", "TSharedPtr is fine un
 expect_allow("tsharedref", "// TSharedRef<FMyThing> Thing;", "comment")
 expect_allow("tsharedref", "void Foo(TSharedRef<FMyThing> Thing);", "function parameter (has parens)")
 
-# ─── Rule 6: IILE ───────────────────────────────────────────────────────────
+# ─── Rule 8: IILE ───────────────────────────────────────────────────────────
 
-print("Rule 6: IILE")
+print("Rule 8: IILE")
 
 expect_catch("iile", "auto X = [this]() -> int32 { return 42; }();", "IILE with return type")
 expect_catch("iile", "auto X = []() { return 42; }();", "IILE minimal")

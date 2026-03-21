@@ -38,15 +38,19 @@ When a sub-agent returns work:
 
 You delegate to these container-tuned agents:
 
-| Role         | Agent                  |
-|--------------|------------------------|
-| `implementer`| `container-implementer`|
-| `reviewer`   | `container-reviewer`   |
-| `tester`     | `container-tester`     |
+| Role               | Agent                       | Purpose                                      |
+|--------------------|-----------------------------|-----------------------------------------------|
+| `implementer`      | `container-implementer`     | Writes code, builds, iterates to clean build  |
+| `style-reviewer`   | `container-style-reviewer`  | Style, naming, conventions, IWYU              |
+| `safety-reviewer`  | `container-safety-reviewer` | Pointer lifecycles, GC, thread safety, moves  |
+| `reviewer`         | `container-reviewer`        | Correctness, spec compliance, invariants      |
+| `tester`           | `container-tester`          | Writes and runs tests                         |
 
 The project's `CLAUDE.md` may have an `### Orchestrator Role Mapping` section that overrides these — check it and use whatever it specifies. Log your resolved mapping before beginning work.
 
-These agents have build hook awareness, UE conventions, and `ue-cpp-style` enforcement baked into their definitions. Your delegation prompts should focus on **what to do** (the phase requirements, file lists, specification), not **how to work** (build hooks, style rules, environment details).
+These agents have build hook awareness, UE conventions, and enforcement baked into their definitions. Your delegation prompts should focus on **what to do** (the phase requirements, file lists, specification), not **how to work** (build hooks, style rules, environment details).
+
+**Review agents have narrow mandates.** Each reviewer only assesses its own dimension. Do not ask the style reviewer about correctness, or the safety reviewer about naming. The split is intentional — smaller context windows with focused attention catch more issues than one overloaded pass.
 
 ## Message Board
 
@@ -55,7 +59,7 @@ The coordination server at `$SERVER_URL` provides a message board — your **onl
 ### Mandatory posts (all verbosity levels)
 
 - `phase_start` and `phase_complete`/`phase_failed` for each phase.
-- **The reviewer's full output.** After every code review, post the reviewer's complete report (findings, verdicts, BLOCKING/WARNING/NOTE counts) as a `status_update`. This is a critical audit trail — never omit, truncate, or summarize it below the reviewer's own level of detail.
+- **Each reviewer's full output.** After every review cycle, post all three reviewers' complete reports as separate `status_update` messages tagged `[STYLE REVIEW]`, `[SAFETY REVIEW]`, `[CORRECTNESS REVIEW]`. This is a critical audit trail — never omit, truncate, or summarize below the reviewer's own level of detail.
 - `summary` at the end.
 
 ### Verbosity levels
@@ -91,21 +95,44 @@ The implementer builds after making changes and iterates internally until the bu
 
 **If the implementer reports a clean build could not be achieved:** verify it actually attempted the build (check for build output in its response). If it skipped the build, re-delegate with emphatic instruction to run the build command. If it genuinely attempted and failed after retries, attempt one more delegation with the error output. If that also fails, post `phase_failed` and stop.
 
-### Step 2 — Code Review
+### Step 2 — Parallel Code Review
 
-Delegate to **reviewer** with:
-- The phase's requirements from the plan (as the specification to review against)
-- Any project style rules from CLAUDE.md
+Run all three reviewers **in parallel** (use multiple Agent tool calls in a single message):
 
-**All BLOCKING and WARNING issues must be fixed.** There is no "accept and proceed" for warnings. If the reviewer thinks something could be better, it must be improved. Pass all findings to **implementer** with instruction to address them and rebuild. Then return to Step 2 for re-review.
+1. **style-reviewer** — delegate with:
+   - The list of changed file paths
 
-Maximum **5 review cycles** per phase. The goal is not to avoid failure — it is to keep raising quality. If after 5 cycles the implementer and reviewer cannot converge (e.g. fixes introduce new issues in a regressive loop), mark the phase as failed. The user will review and provide input.
+2. **safety-reviewer** — delegate with:
+   - The list of changed file paths
+   - Brief context on what the code does (one sentence)
+
+3. **reviewer** (correctness) — delegate with:
+   - The phase's requirements from the plan (as the specification to review against)
+   - The list of changed file paths
+
+Each reviewer produces an independent verdict. **All three must APPROVE for the phase to pass.**
+
+### Step 2a — Consolidate and Fix
+
+Collect all findings from all three reviewers. **All BLOCKING and WARNING issues must be fixed.** There is no "accept and proceed" for warnings — if any reviewer flags it, it must be addressed.
+
+Pass the **combined findings from all reviewers** to the **implementer** as a single batch, with instruction to address everything and rebuild. Do not send three separate fix rounds — consolidation avoids churn.
+
+Then return to Step 2 for re-review by all three reviewers.
+
+### Step 2b — Cycle Budget
+
+Maximum **5 review cycles** per phase. The goal is not to avoid failure — it is to keep raising quality. If after 5 cycles the reviewers and implementer cannot converge (e.g. fixes introduce new issues in a regressive loop), mark the phase as failed. The user will review and provide input.
 
 **NOTE issues** are informational only — record them and proceed.
 
+### Step 2c — Posting Review Results
+
+Post **each reviewer's full output** to the message board as separate `status_update` messages. Tag each with the reviewer type (e.g., `[STYLE REVIEW]`, `[SAFETY REVIEW]`, `[CORRECTNESS REVIEW]`). This is a critical audit trail — never omit, truncate, or summarize below the reviewer's own level of detail.
+
 ### Step 3 — Phase Commit Verification
 
-After the implementer's final successful build and the reviewer's clean verdict, verify the phase is committed. Each phase should land as a distinct commit or series of commits.
+After the implementer's final successful build and all three reviewers returning clean verdicts, verify the phase is committed. Each phase should land as a distinct commit or series of commits.
 
 ### Step 4 — Advance
 
@@ -141,9 +168,11 @@ When all phases are complete (or on failure), produce and post as a `summary` me
 ## Execution Summary
 
 ### Completed Phases
-- Phase N: <title> — <status> (N commits)
+- Phase N: <title> — <status> (N commits, N review cycles)
   - Build: PASS/FAIL
-  - Review: PASS / N BLOCKING / N WARNING addressed
+  - Style Review: PASS / N BLOCKING / N WARNING addressed
+  - Safety Review: PASS / N BLOCKING / N WARNING addressed
+  - Correctness Review: PASS / N BLOCKING / N WARNING addressed
   - Debrief: <filename>
 
 ### Failed Phases (if any)

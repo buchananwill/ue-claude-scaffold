@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PostToolUse lint hook for Edit/Write on C++ files.
+PreToolUse lint hook for Edit/Write on C++ files.
 
 Checks the new content (from Edit's new_string or Write's content) against
 mechanical rules that are always wrong in Unreal Engine C++. Returns feedback
@@ -12,8 +12,7 @@ Input: JSON on stdin with tool_input containing either:
   - file_path
 
 Exit 0: no issues (tool proceeds)
-Exit 0 with stdout: issues found (tool proceeds, agent sees feedback)
-We never block the write — just surface the problems immediately.
+Exit 2 + stdout: issues found (tool is BLOCKED, agent sees feedback and must fix)
 """
 
 import json
@@ -50,7 +49,25 @@ def check_lines(lines: list[str], file_path: str) -> list[str]:
                         f"Line: {stripped[:80]}"
                     )
 
-        # Rule 2: Greedy lambda captures [&] or [=]
+        # Rule 2: const_cast is banned
+        if "const_cast" in line:
+            issues.append(
+                f"  LINT [{file_path}:{i}] const_cast: "
+                f"const_cast is banned — fix the const-correctness of the API instead. "
+                f"Line: {stripped[:80]}"
+            )
+
+        # Rule 3: Anonymous namespaces (break unity builds)
+        if re.search(r"\bnamespace\s*\{", line):
+            issues.append(
+                f"  LINT [{file_path}:{i}] Anonymous namespace: "
+                f"breaks unity builds. Before adding a named namespace like Resort::X::Private, "
+                f"check: (1) does this helper already exist elsewhere in the module? "
+                f"(2) should it be exposed in the header in a proper namespace instead? "
+                f"Line: {stripped[:80]}"
+            )
+
+        # Rule 4: Greedy lambda captures [&] or [=]
         if re.search(r"\[&\]\s*\(", line) or re.search(r"\[=\]\s*\(", line):
             issues.append(
                 f"  LINT [{file_path}:{i}] Greedy capture: "
@@ -65,7 +82,7 @@ def check_lines(lines: list[str], file_path: str) -> list[str]:
                 f"Line: {stripped[:80]}"
             )
 
-        # Rule 3: Raw new (outside blessed functions)
+        # Rule 5: Raw new (outside blessed functions)
         # Match "new TypeName" but exclude NewObject, MakeShared, MakeUnique,
         # CreateDefaultSubobject, placement new, and operator new
         # Strip string literals before checking for raw new
@@ -82,7 +99,7 @@ def check_lines(lines: list[str], file_path: str) -> list[str]:
                     f"Line: {stripped[:80]}"
                 )
 
-        # Rule 4: Multiple declarations on one line
+        # Rule 6: Multiple declarations on one line
         # Detect "Type Name1, Name2;" pattern (simplified)
         if re.search(r"^\s*\w[\w:<>*&\s]+\s+\w+\s*,\s*\w+\s*[;=]", line):
             # Exclude function parameter lists, for-loop inits, and template parameter lists
@@ -95,7 +112,7 @@ def check_lines(lines: list[str], file_path: str) -> list[str]:
                     f"Line: {stripped[:80]}"
                 )
 
-        # Rule 5: Uninitialised TSharedRef member field
+        # Rule 7: Uninitialised TSharedRef member field
         # TSharedRef<SomeType> FieldName; (no = or { initialiser)
         if re.search(r"\bTSharedRef\s*<[^>]+>\s+\w+\s*;", line):
             if "=" not in line and "{" not in line:
@@ -106,7 +123,7 @@ def check_lines(lines: list[str], file_path: str) -> list[str]:
                     f"Line: {stripped[:80]}"
                 )
 
-    # Rule 6: IILE detection (multiline — scan full text)
+    # Rule 8: IILE detection (multiline — scan full text)
     # Pattern: ](optional-params) -> optional-return { ... }()
     iile_pattern = re.compile(
         r"\]\s*\([^)]*\)\s*(?:->[^{]+)?\s*\{[^}]*\}\s*\(\)",
@@ -156,6 +173,7 @@ def main():
             print(issue)
         print()
         print("Fix these before proceeding. These patterns are always wrong in this codebase.")
+        sys.exit(2)  # Block the write
 
     sys.exit(0)
 

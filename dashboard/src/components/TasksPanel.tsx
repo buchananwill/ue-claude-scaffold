@@ -1,6 +1,6 @@
 import {
   Table,
-  SegmentedControl,
+  Chip,
   Button,
   Collapse,
   Text,
@@ -28,26 +28,24 @@ import { apiPost, apiDelete } from '../api/client.ts';
 import { notifications } from '@mantine/notifications';
 import type { Task } from '../api/types.ts';
 import type { TaskFilters } from '../hooks/useTaskFilters.ts';
-import { UNASSIGNED } from '../hooks/useTaskFilters.ts';
+import { UNASSIGNED, TASK_STATUSES } from '../hooks/useTaskFilters.ts';
 import type { SortColumn } from '../hooks/useTaskFilters.ts';
 import { StatusBadge } from './StatusBadge.tsx';
 import { RelativeTime } from './RelativeTime.tsx';
 
-const statusFilters = [
-  { label: 'All', value: '' },
-  { label: 'Pending', value: 'pending' },
-  { label: 'Claimed', value: 'claimed' },
-  { label: 'In Progress', value: 'in_progress' },
-  { label: 'Completed', value: 'completed' },
-  { label: 'Failed', value: 'failed' },
-];
+const STATUS_LABELS: Record<string, string> = {
+  pending: 'Pending',
+  claimed: 'Claimed',
+  in_progress: 'In Progress',
+  completed: 'Completed',
+  failed: 'Failed',
+};
 
 interface TasksPanelProps {
   tasks: Task[] | null;
   isFetching: boolean;
-  statusFilter: string;
-  onFilterChange: (f: string) => void;
   filters: TaskFilters;
+  excludeStatuses?: Set<string>;
 }
 
 function SortHeader({
@@ -80,7 +78,7 @@ function SortHeader({
   );
 }
 
-export function TasksPanel({ tasks, isFetching, statusFilter, onFilterChange, filters }: TasksPanelProps) {
+export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: TasksPanelProps) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<number | null>(null);
   const [confirmingBulk, setConfirmingBulk] = useState(false);
@@ -93,6 +91,8 @@ export function TasksPanel({ tasks, isFetching, statusFilter, onFilterChange, fi
     sortDir,
     agentFilter,
     priorityFilter,
+    statusFilter,
+    setStatusFilter,
     cycleSort,
     setAgentFilter,
     setPriorityFilter,
@@ -148,18 +148,26 @@ export function TasksPanel({ tasks, isFetching, statusFilter, onFilterChange, fi
     }
   };
 
-  const bulkDeletable = displayedTasks.filter((t) => t.status === statusFilter);
-  const showBulkDelete = (statusFilter === 'completed' || statusFilter === 'failed' || statusFilter === 'pending') && bulkDeletable.length > 0;
+  const deletableStatuses = new Set(['completed', 'failed', 'pending']);
+  const bulkDeletable = displayedTasks.filter((t) => deletableStatuses.has(t.status));
+  const showBulkDelete = bulkDeletable.length > 0;
+  const bulkDeletableStatusSet = new Set(bulkDeletable.map((t) => t.status));
+  const singleDeletableStatus = bulkDeletableStatusSet.size === 1 ? Array.from(bulkDeletableStatusSet)[0] : null;
 
   return (
     <Stack gap="sm">
       <Group justify="space-between" align="center">
-        <SegmentedControl
-          size="xs"
-          data={statusFilters}
-          value={statusFilter}
-          onChange={onFilterChange}
-        />
+        <Chip.Group
+          multiple
+          value={Array.from(statusFilter)}
+          onChange={(vals: string[]) => setStatusFilter(new Set(vals))}
+        >
+          <Group gap="xs">
+            {TASK_STATUSES.filter((s) => !excludeStatuses?.has(s)).map((s) => (
+              <Chip key={s} size="xs" value={s}>{STATUS_LABELS[s] ?? s}</Chip>
+            ))}
+          </Group>
+        </Chip.Group>
         <Group gap="xs">
           {hasActiveFilters && (
             <Anchor size="xs" onClick={clearAllFilters}>Clear all filters</Anchor>
@@ -174,13 +182,13 @@ export function TasksPanel({ tasks, isFetching, statusFilter, onFilterChange, fi
             >
               <Popover.Target>
                 <Button size="compact-xs" variant="light" color="red" onClick={() => { setBulkDeleteTargets(bulkDeletable); setConfirmingBulk(true); }}>
-                  Delete {bulkDeletable.length} {statusFilter} task{bulkDeletable.length !== 1 ? 's' : ''}
+                  Delete {bulkDeletable.length}{singleDeletableStatus ? ` ${singleDeletableStatus}` : ' deletable'} task{bulkDeletable.length !== 1 ? 's' : ''}
                 </Button>
               </Popover.Target>
               <Popover.Dropdown>
                 <Stack gap="xs">
                   <Text size="sm" fw={500}>
-                    Delete {bulkDeleteTargets.length} {statusFilter} task{bulkDeleteTargets.length !== 1 ? 's' : ''}?
+                    Delete {bulkDeleteTargets.length}{singleDeletableStatus ? ` ${singleDeletableStatus}` : ' deletable'} task{bulkDeleteTargets.length !== 1 ? 's' : ''}?
                   </Text>
                   <Stack
                     gap={2}
@@ -205,6 +213,13 @@ export function TasksPanel({ tasks, isFetching, statusFilter, onFilterChange, fi
 
       {(!tasks || tasks.length === 0) ? (
         <Text c="dimmed" ta="center" py="md" size="sm">No tasks</Text>
+      ) : displayedTasks.length === 0 ? (
+        <Stack gap="xs" align="center" py="md">
+          <Text c="dimmed" size="sm">No tasks match the current filters.</Text>
+          {hasActiveFilters && (
+            <Anchor size="sm" onClick={clearAllFilters}>Clear all filters</Anchor>
+          )}
+        </Stack>
       ) : (
         <Table striped highlightOnHover fz="sm" style={{ opacity: isFetching ? 0.7 : 1, transition: 'opacity 150ms' }}>
           <Table.Thead>

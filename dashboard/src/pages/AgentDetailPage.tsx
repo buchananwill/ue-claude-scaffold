@@ -1,6 +1,6 @@
 import { useParams } from '@tanstack/react-router';
 import { Link } from '@tanstack/react-router';
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Badge, Grid, Card, Title, Text, Loader, Stack, Group } from '@mantine/core';
 import { useAgent } from '../hooks/useAgent.ts';
 import { useTasks } from '../hooks/useTasks.ts';
@@ -21,7 +21,6 @@ export function AgentDetailPage() {
   const agents = useAgents();
   const [typeFilter, setTypeFilter] = useState('');
   const messages = useMessages(agentName, typeFilter);
-  const [statusFilter, setStatusFilter] = useState('');
 
   const is404 = isError && error instanceof ApiError && error.status === 404;
   const isDeregistered = is404;
@@ -32,6 +31,7 @@ export function AgentDetailPage() {
     return tasks.data.filter((t) => t.claimedBy === agentName);
   }, [tasks.data, agentName]);
 
+  const excludeStatuses = new Set(['pending']);
   const taskFilters = useTaskFilters(agentTasks);
 
   if (isLoading) return <Loader display="block" mx="auto" my="xl" />;
@@ -69,9 +69,8 @@ export function AgentDetailPage() {
             <TasksPanel
               tasks={agentTasks}
               isFetching={tasks.isFetching}
-              statusFilter={statusFilter}
-              onFilterChange={setStatusFilter}
               filters={taskFilters}
+              excludeStatuses={excludeStatuses}
             />
           </Card>
         </Grid.Col>
