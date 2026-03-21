@@ -467,7 +467,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     // Tasks are a union: EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode).
     // Mixed-protocol requests are rejected to prevent ambiguous task definitions.
-    if (sourcePath && (description || acceptanceCriteria)) {
+    if (hasValue(sourcePath) && (hasValue(description) || hasValue(acceptanceCriteria))) {
       return reply.badRequest(
         'Mixed task protocol: a task must use EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode), not both. ' +
         'Plan-mode tasks read their full specification from the sourcePath file. ' +
@@ -655,7 +655,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         }
       }
       // Mixed-protocol check
-      if (t.sourcePath && (t.description || t.acceptanceCriteria)) {
+      if (hasValue(t.sourcePath) && (hasValue(t.description) || hasValue(t.acceptanceCriteria))) {
         return reply.badRequest(
           `Task ${i}: Mixed task protocol: use EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode), not both.`
         );
@@ -1150,7 +1150,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const resultSourcePath = 'sourcePath' in body ? body.sourcePath : row.source_path;
     const resultDesc = 'description' in body ? body.description : row.description;
     const resultAC = 'acceptanceCriteria' in body ? body.acceptanceCriteria : row.acceptance_criteria;
-    if (resultSourcePath && (resultDesc || resultAC)) {
+    if (hasValue(resultSourcePath) && (hasValue(resultDesc) || hasValue(resultAC))) {
       return reply.badRequest(
         'Mixed task protocol: a task must use EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode), not both. ' +
         'To switch modes, set the other fields to null.'
