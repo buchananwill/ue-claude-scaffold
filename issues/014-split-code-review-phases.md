@@ -3,6 +3,7 @@ title: "Split code review into separate phases with dedicated agents"
 priority: high
 reported-by: interactive-session
 date: 2026-03-21
+status: done
 ---
 
 # Split code review into separate phases with dedicated agents

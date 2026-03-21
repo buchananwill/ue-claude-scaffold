@@ -3,6 +3,7 @@ title: "PATCH /tasks/:id should support status changes"
 priority: medium
 reported-by: interactive-session
 date: 2026-03-19
+status: done
 ---
 
 # PATCH /tasks/:id should support status changes

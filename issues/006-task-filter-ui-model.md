@@ -3,6 +3,7 @@ title: "Task filter segmented control is the wrong UI model"
 priority: low
 reported-by: interactive-session
 date: 2026-03-20
+status: done
 ---
 
 # Task filter segmented control is the wrong UI model

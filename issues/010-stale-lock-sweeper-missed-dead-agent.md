@@ -3,6 +3,7 @@ title: "Stale UBT lock sweeper didn't release lock from dead agent"
 priority: high
 reported-by: interactive-session
 date: 2026-03-20
+status: done
 ---
 
 # Stale UBT lock sweeper didn't release lock from dead agent

@@ -3,6 +3,7 @@ title: "Simplify architecture to a single bare repo with branches"
 priority: medium
 reported-by: interactive-session
 date: 2026-03-19
+status: done
 ---
 
 # Simplify architecture to a single bare repo with branches

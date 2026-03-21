@@ -3,6 +3,7 @@ title: "Dashboard doesn't surface why a task can't be claimed"
 priority: high
 reported-by: interactive-session
 date: 2026-03-20
+status: done
 ---
 
 # Dashboard doesn't surface why a task can't be claimed

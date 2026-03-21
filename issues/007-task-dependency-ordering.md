@@ -3,6 +3,7 @@ title: "Task dependencies: dependsOn relation and claim-time enforcement"
 priority: high
 reported-by: interactive-session
 date: 2026-03-20
+status: done
 ---
 
 # Task dependencies: dependsOn relation and claim-time enforcement

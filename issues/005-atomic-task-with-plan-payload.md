@@ -3,6 +3,7 @@ title: "Atomic task creation: accept plan content inline, write to repo, push ta
 priority: high
 reported-by: interactive-session
 date: 2026-03-19
+status: done
 ---
 
 # Atomic task creation with plan payload

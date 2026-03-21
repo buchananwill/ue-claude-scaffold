@@ -3,6 +3,7 @@ title: "Deregistering an agent doesn't stop the container or halt its work"
 priority: high
 reported-by: interactive-session
 date: 2026-03-20
+status: done
 ---
 
 # Deregistering an agent doesn't stop the container or halt its work

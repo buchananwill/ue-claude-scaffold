@@ -3,6 +3,7 @@ title: "Server must retry builds that fail due to external UBT lock contention"
 priority: medium
 reported-by: interactive-session
 date: 2026-03-20
+status: done
 ---
 
 # Server must retry builds that fail due to external UBT lock contention

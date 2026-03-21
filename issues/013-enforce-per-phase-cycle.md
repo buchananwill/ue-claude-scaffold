@@ -3,6 +3,7 @@ title: "Orchestrator must enforce full plan/implement/review/test/review cycle p
 priority: high
 reported-by: interactive-session
 date: 2026-03-21
+status: done
 ---
 
 # Orchestrator must enforce full cycle per phase
