@@ -156,13 +156,70 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       };
     }
 
-    const resetResult = await runCommand('git', ['reset', '--hard', 'FETCH_HEAD'], worktreePath, 30000);
-    if (!resetResult.success) {
+    // Diff-based sync: only touch files that actually changed between HEAD and
+    // FETCH_HEAD.  This preserves timestamps on unchanged files so UBT's
+    // incremental build cache stays valid (a full `reset --hard` rewrites every
+    // file's mtime, forcing a near-full rebuild every time).
+    const diffResult = await runCommand(
+      'git', ['diff', '--name-only', 'HEAD', 'FETCH_HEAD'], worktreePath, 15000,
+    );
+
+    if (!diffResult.success) {
+      // If diff fails (e.g. first sync with no HEAD), fall back to hard reset.
+      const resetResult = await runCommand('git', ['reset', '--hard', 'FETCH_HEAD'], worktreePath, 30000);
+      if (!resetResult.success) {
+        return {
+          success: false,
+          exit_code: resetResult.exit_code,
+          output: resetResult.output,
+          stderr: `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
+        };
+      }
+      return null;
+    }
+
+    const changedFiles = diffResult.output.trim();
+
+    if (changedFiles.length === 0) {
+      // No files changed — just move HEAD to FETCH_HEAD without touching the worktree.
+      const resetSoft = await runCommand('git', ['reset', '--soft', 'FETCH_HEAD'], worktreePath, 15000);
+      if (!resetSoft.success) {
+        return {
+          success: false,
+          exit_code: resetSoft.exit_code,
+          output: resetSoft.output,
+          stderr: `syncWorktree: git reset --soft failed: ${resetSoft.stderr}`,
+        };
+      }
+      return null;
+    }
+
+    // Checkout only the changed files from FETCH_HEAD, then move HEAD.
+    const checkoutResult = await runCommand(
+      'git', ['checkout', 'FETCH_HEAD', '--', ...changedFiles.split('\n')], worktreePath, 30000,
+    );
+    if (!checkoutResult.success) {
+      // If selective checkout fails (e.g. deleted files), fall back to hard reset.
+      const resetResult = await runCommand('git', ['reset', '--hard', 'FETCH_HEAD'], worktreePath, 30000);
+      if (!resetResult.success) {
+        return {
+          success: false,
+          exit_code: resetResult.exit_code,
+          output: resetResult.output,
+          stderr: `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
+        };
+      }
+      return null;
+    }
+
+    // Move HEAD to match FETCH_HEAD without touching the worktree.
+    const resetSoft = await runCommand('git', ['reset', '--soft', 'FETCH_HEAD'], worktreePath, 15000);
+    if (!resetSoft.success) {
       return {
         success: false,
-        exit_code: resetResult.exit_code,
-        output: resetResult.output,
-        stderr: `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
+        exit_code: resetSoft.exit_code,
+        output: resetSoft.output,
+        stderr: `syncWorktree: git reset --soft failed: ${resetSoft.stderr}`,
       };
     }
 

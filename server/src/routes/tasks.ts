@@ -169,7 +169,7 @@ function buildTreeWithFile(
   let subtreeSha: string | null = null;
   if (currentTreeSha) {
     try {
-      const lsOutput = execFileSync('git', ['-C', bareRepoPath, 'ls-tree', currentTreeSha, dirName + '/'], {
+      const lsOutput = execFileSync('git', ['-C', bareRepoPath, 'ls-tree', currentTreeSha, '--', dirName], {
         encoding: 'utf-8', timeout: 5000,
       }).trim();
       if (lsOutput) {
@@ -256,6 +256,11 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
          progress_log = NULL
      WHERE id = @id AND status IN ('completed', 'failed')`
   );
+
+  /** True if a string field has a meaningful value (not null, undefined, or empty string). */
+  function hasValue(v: string | null | undefined): boolean {
+    return v !== null && v !== undefined && v !== '';
+  }
 
   /** Validate sourcePath against the main project worktree (design team's canonical branch). */
   function getValidationWorktree(): string {
@@ -460,6 +465,16 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
+    // Tasks are a union: EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode).
+    // Mixed-protocol requests are rejected to prevent ambiguous task definitions.
+    if (sourcePath && (description || acceptanceCriteria)) {
+      return reply.badRequest(
+        'Mixed task protocol: a task must use EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode), not both. ' +
+        'Plan-mode tasks read their full specification from the sourcePath file. ' +
+        'Inline tasks carry their specification in description + acceptanceCriteria fields.'
+      );
+    }
+
     // B1: targetAgents requires sourceContent (merge needs a commit to propagate)
     if (targetAgents && !sourceContent) {
       return reply.code(400).send({
@@ -638,6 +653,12 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         if (typeof t.sourcePath === 'string' && (t.sourcePath.includes('..') || t.sourcePath.startsWith('/') || t.sourcePath === '')) {
           return reply.badRequest(`Task ${i}: Invalid sourcePath: ${t.sourcePath}`);
         }
+      }
+      // Mixed-protocol check
+      if (t.sourcePath && (t.description || t.acceptanceCriteria)) {
+        return reply.badRequest(
+          `Task ${i}: Mixed task protocol: use EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode), not both.`
+        );
       }
       // Validate dependsOnIndex
       if (t.dependsOnIndex?.length) {
@@ -1123,6 +1144,17 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
     if (row.status !== 'pending') {
       return reply.conflict('task can only be edited when pending');
+    }
+
+    // Mixed-protocol check: evaluate resulting state (existing row + patch)
+    const resultSourcePath = 'sourcePath' in body ? body.sourcePath : row.source_path;
+    const resultDesc = 'description' in body ? body.description : row.description;
+    const resultAC = 'acceptanceCriteria' in body ? body.acceptanceCriteria : row.acceptance_criteria;
+    if (resultSourcePath && (resultDesc || resultAC)) {
+      return reply.badRequest(
+        'Mixed task protocol: a task must use EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode), not both. ' +
+        'To switch modes, set the other fields to null.'
+      );
     }
 
     // Validate dependsOn IDs if provided

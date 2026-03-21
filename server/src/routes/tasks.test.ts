@@ -1300,6 +1300,47 @@ describe('sourceContent / atomic plan write', () => {
     assert.equal(fileContent, 'nested content here');
   });
 
+  it('POST /tasks with nested sourcePath preserves sibling files (regression: data loss bug)', async () => {
+    // Seed the bare repo with two existing files under Notes/
+    await ctx.app.inject({
+      method: 'POST', url: '/tasks',
+      payload: { title: 'Seed A', sourcePath: 'Notes/design/doc-a.md', sourceContent: 'doc A content' },
+    });
+    await ctx.app.inject({
+      method: 'POST', url: '/tasks',
+      payload: { title: 'Seed B', sourcePath: 'Notes/design/doc-b.md', sourceContent: 'doc B content' },
+    });
+    // Also seed a sibling directory
+    await ctx.app.inject({
+      method: 'POST', url: '/tasks',
+      payload: { title: 'Seed C', sourcePath: 'Notes/plans/existing.md', sourceContent: 'existing plan' },
+    });
+
+    // Now write a new file under a different Notes/ subdirectory
+    const res = await ctx.app.inject({
+      method: 'POST', url: '/tasks',
+      payload: { title: 'New plan', sourcePath: 'Notes/plans/new-plan.md', sourceContent: 'new plan content' },
+    });
+    assert.equal(res.statusCode, 200);
+
+    // All pre-existing files must still be present
+    const docA = execSync(`git -C "${tmpBareRepo}" show main:Notes/design/doc-a.md`, { encoding: 'utf-8' });
+    assert.equal(docA, 'doc A content');
+    const docB = execSync(`git -C "${tmpBareRepo}" show main:Notes/design/doc-b.md`, { encoding: 'utf-8' });
+    assert.equal(docB, 'doc B content');
+    const existing = execSync(`git -C "${tmpBareRepo}" show main:Notes/plans/existing.md`, { encoding: 'utf-8' });
+    assert.equal(existing, 'existing plan');
+
+    // The new file must also exist
+    const newPlan = execSync(`git -C "${tmpBareRepo}" show main:Notes/plans/new-plan.md`, { encoding: 'utf-8' });
+    assert.equal(newPlan, 'new plan content');
+
+    // Verify Notes/ tree has both subdirectories
+    const notesTree = execSync(`git -C "${tmpBareRepo}" ls-tree main Notes/`, { encoding: 'utf-8' });
+    assert.ok(notesTree.includes('design'), 'Notes/design should still exist');
+    assert.ok(notesTree.includes('plans'), 'Notes/plans should still exist');
+  });
+
   it('POST /tasks without sourceContent or sourcePath succeeds (unchanged behavior)', async () => {
     const res = await ctx.app.inject({
       method: 'POST',

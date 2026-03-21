@@ -1,14 +1,15 @@
 # Standing Instruction: Task Worker
 
-If your prompt contains a `TASK_ID` and `TASK_TITLE` header, your work was assigned
-from the task queue — not from a static plan file.
+Your work is assigned from the task queue. Tasks arrive in one of two formats:
 
-## What this means
+1. **Plan mode** — the prompt directs you to read a plan file at a given path.
+   That file is the complete specification. Read it and execute according to your
+   standard protocol.
+2. **Inline mode** — the prompt contains `## Task Description` and
+   `## Acceptance Criteria` sections with the full task definition inline.
 
-- Your task description and acceptance criteria are in the prompt below the headers.
-- Do not look for a `prompt.md` file — the task content is already provided.
-- The entrypoint handles claiming and completing the task in the coordination server.
-  You do not need to call the `/tasks` API yourself.
+The entrypoint handles claiming and completing the task in the coordination server.
+You do not need to call the `/tasks` API yourself.
 
 ## When you finish
 

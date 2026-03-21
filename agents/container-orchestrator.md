@@ -32,6 +32,7 @@ When a sub-agent returns work:
 - **Never stop mid-workflow** unless an unrecoverable error occurs (build fails after retries, or review cycles exhausted with no convergence).
 - **Every phase MUST produce a successful build before review.** If a sub-agent returns without having built, reject the result and re-delegate with explicit instruction to run the build command.
 - **Never accept "cannot build" from a sub-agent.** A PreToolUse hook intercepts build/test commands and routes them to the Windows host. Builds work from this container. Push back on any claim otherwise.
+- **One phase at a time.** Never delegate requirements from multiple phases to a single sub-agent invocation. Never advance to phase N+1 until phase N is committed and `phase_complete` is posted. Multi-phase bundling is a protocol violation.
 - If you encounter ambiguity in the plan, make the conservative choice and document it — do not stop to ask.
 
 ## Agent Resolution
@@ -70,13 +71,14 @@ Your prompt may include a `LOG_VERBOSITY` directive (`quiet`, `normal`, `verbose
 
 **`normal`** — Mandatory posts, plus:
 - **After every sub-agent return**, post a structured digest: what it did, whether it built, build outcome (pass/fail + error count + key errors), files touched, decisions it made.
+- **Before every re-delegation**, post why: what reviewer findings triggered it, what the implementer is being asked to fix, and which review cycle this is (e.g., "cycle 2/5").
 - Any notable decisions you made.
-- When re-delegating after failure, post why.
 
 **`verbose`** — Everything from `normal`, plus:
 - Comprehensive sub-agent summaries: observations, error messages, files created/modified, non-obvious choices, concerns raised. 5-15 lines per post.
 - File lists and scope summaries before each delegation.
 - Timing observations ("phase 2 took 3 build iterations").
+- When a build succeeds but no new code was written since the last build, flag it — this is a sign the implementer is not making progress.
 
 ## Phase Execution Protocol
 
@@ -87,6 +89,7 @@ For each phase in the plan:
 Post `phase_start` to `general`.
 
 Delegate to **implementer** with:
+- **Only this phase's requirements** — never include work from subsequent phases
 - The phase's requirements from the plan (verbatim)
 - Any supplementary notes from the CLAUDE.md role mapping
 - Instruction to write a debrief to `notes/docker-claude/` before building (see standing instruction `01-debrief.md`)
@@ -130,9 +133,15 @@ Maximum **5 review cycles** per phase. The goal is not to avoid failure — it i
 
 Post **each reviewer's full output** to the message board as separate `status_update` messages. Tag each with the reviewer type (e.g., `[STYLE REVIEW]`, `[SAFETY REVIEW]`, `[CORRECTNESS REVIEW]`). This is a critical audit trail — never omit, truncate, or summarize below the reviewer's own level of detail.
 
-### Step 3 — Phase Commit Verification
+### Step 3 — Commit
 
-After the implementer's final successful build and all three reviewers returning clean verdicts, verify the phase is committed. Each phase should land as a distinct commit or series of commits.
+After the implementer's final successful build and all three reviewers returning clean verdicts, ensure the phase's work is committed. Each phase MUST land as a distinct commit or commit series before the orchestrator advances.
+
+**This is a hard gate.** Do not proceed to Step 4 until `git status` confirms a clean working tree or the implementer has committed all changes. If uncommitted changes exist, delegate to the implementer with instruction to commit all phase work with a message referencing the phase number and title.
+
+**Verify commit scope.** After confirming a clean working tree, check that the most recent commit message(s) since the last `phase_complete` reference the current phase number or title. If commits exist that bundle work from multiple phases, or if the commit message does not identify the current phase, delegate to the implementer with instruction to create a new commit (not an amend — the original may already be pushed) with a message referencing this phase (e.g., `Phase 2: Add retry logic to build route`).
+
+**Re-verify after delegation.** If you delegated to the implementer to commit, run `git status` again after the delegation returns. Do not proceed to Step 4 until the working tree is confirmed clean. If it is still dirty, re-delegate — do not post `phase_complete` on uncommitted work.
 
 ### Step 4 — Advance
 

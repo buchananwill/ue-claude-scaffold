@@ -69,7 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_claimed ON messages(claimed_by);
 CREATE TABLE IF NOT EXISTS tasks (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
   title               TEXT NOT NULL,
-  description         TEXT NOT NULL DEFAULT '',
+  description         TEXT DEFAULT '',
   source_path         TEXT,
   acceptance_criteria TEXT,
   status              TEXT NOT NULL DEFAULT 'pending'

@@ -2,12 +2,10 @@
 set -euo pipefail
 
 WORK_BRANCH="${WORK_BRANCH:-main}"
-TASK_PROMPT_FILE="${TASK_PROMPT_FILE:-/task/prompt.md}"
 AGENT_TYPE="${AGENT_TYPE:-container-orchestrator}"
 AGENT_NAME="${AGENT_NAME:-agent-1}"
 MAX_TURNS="${MAX_TURNS:-200}"
 SERVER_URL="${SERVER_URL:-http://host.docker.internal:9100}"
-WORKER_MODE="${WORKER_MODE:-false}"
 WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
 AGENT_MODE="${AGENT_MODE:-single}"
@@ -16,7 +14,6 @@ LOG_VERBOSITY="${LOG_VERBOSITY:-normal}"
 echo "=== Claude Code Docker Worker ==="
 echo "Agent:  $AGENT_NAME"
 echo "Branch: $WORK_BRANCH"
-echo "Task:   $TASK_PROMPT_FILE"
 echo "Type:   $AGENT_TYPE"
 echo "Turns:  $MAX_TURNS"
 echo ""
@@ -168,6 +165,8 @@ poll_and_claim_task() {
             CURRENT_TASK_TITLE=$(echo "$body" | jq -r '.task.title // "Untitled"')
             CURRENT_TASK_DESC=$(echo "$body" | jq -r '.task.description // ""')
             CURRENT_TASK_AC=$(echo "$body" | jq -r '.task.acceptanceCriteria // "None specified"')
+            CURRENT_TASK_SOURCE=$(echo "$body" | jq -r '.task.sourcePath // ""')
+            CURRENT_TASK_FILES=$(echo "$body" | jq -r '(.task.files // []) | join(", ")')
             echo "Claimed task #${CURRENT_TASK_ID}: ${CURRENT_TASK_TITLE}"
             return 0
         fi
@@ -224,12 +223,21 @@ TASK_PROMPT="${TASK_PROMPT}LOG_VERBOSITY: ${LOG_VERBOSITY}
 run_claude_task() {
     local FULL_PROMPT="$TASK_PROMPT"
 
-    if [ "$WORKER_MODE" = "true" ]; then
-        echo "Worker mode: polling for tasks..."
-        if ! poll_and_claim_task; then
-            exit 1
-        fi
+    echo "Polling for tasks..."
+    if ! poll_and_claim_task; then
+        exit 1
+    fi
 
+    if [ -n "$CURRENT_TASK_SOURCE" ]; then
+        # Plan mode: the sourcePath file IS the task specification.
+        FULL_PROMPT="${FULL_PROMPT}TASK_ID: ${CURRENT_TASK_ID}
+TASK_TITLE: ${CURRENT_TASK_TITLE}
+
+Read the plan at \`${CURRENT_TASK_SOURCE}\` and carry out the work in accordance with your standard protocol.
+
+The plan file is the complete specification — it contains all phases, file lists, and requirements. File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
+    else
+        # Inline mode: description + acceptance criteria from the task record.
         FULL_PROMPT="${FULL_PROMPT}TASK_ID: ${CURRENT_TASK_ID}
 TASK_TITLE: ${CURRENT_TASK_TITLE}
 
@@ -239,15 +247,9 @@ ${CURRENT_TASK_DESC}
 
 ## Acceptance Criteria
 
-${CURRENT_TASK_AC}"
-    else
-        # Existing static prompt assembly
-        if [ ! -f "$TASK_PROMPT_FILE" ]; then
-            echo "ERROR: Task prompt file not found: $TASK_PROMPT_FILE"
-            _post_status "error"
-            exit 1
-        fi
-        FULL_PROMPT="${FULL_PROMPT}$(cat "$TASK_PROMPT_FILE")"
+${CURRENT_TASK_AC}
+
+File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
     fi
 
     # If an agent type is specified, wrap the prompt so the top-level Claude
@@ -302,8 +304,8 @@ ${FULL_PROMPT}"
     git push origin "HEAD:${WORK_BRANCH}" --force
     echo "Final state pushed to bare repo"
 
-    # ── Report task completion (worker mode) ──────────────────────────────────
-    if [ "$WORKER_MODE" = "true" ] && [ -n "$CURRENT_TASK_ID" ]; then
+    # ── Report task completion ──────────────────────────────────────────────
+    if [ -n "$CURRENT_TASK_ID" ]; then
         if [ $EXIT_CODE -eq 0 ]; then
             curl -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/complete" \
                 -H "Content-Type: application/json" \
@@ -330,8 +332,8 @@ ${FULL_PROMPT}"
 
 # ── Main execution loop ─────────────────────────────────────────────────────
 
-if [ "$WORKER_MODE" = "true" ] && [ "$WORKER_SINGLE_TASK" = "false" ]; then
-    # Multi-task worker loop
+if [ "$WORKER_SINGLE_TASK" = "false" ]; then
+    # Multi-task pump loop
     while true; do
         set +e
         run_claude_task
@@ -349,6 +351,8 @@ if [ "$WORKER_MODE" = "true" ] && [ "$WORKER_SINGLE_TASK" = "false" ]; then
         CURRENT_TASK_TITLE=""
         CURRENT_TASK_DESC=""
         CURRENT_TASK_AC=""
+        CURRENT_TASK_SOURCE=""
+        CURRENT_TASK_FILES=""
 
         # Check if agent has been paused
         AGENT_STATUS=$(curl -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
