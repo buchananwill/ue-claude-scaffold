@@ -27,6 +27,7 @@ export interface Task {
   files: string[];
   dependsOn: number[];
   blockedBy: number[];
+  blockReasons: string[];
   claimedBy: string | null;
   claimedAt: string | null;
   completedAt: string | null;

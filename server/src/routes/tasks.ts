@@ -21,7 +21,7 @@ export interface TaskRow {
   created_at: string;
 }
 
-export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[], blockedBy?: number[]) {
+export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[], blockedBy?: number[], blockReasons?: string[]) {
   return {
     id: row.id,
     title: row.title,
@@ -33,6 +33,7 @@ export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[],
     files: files ?? [],
     dependsOn: dependsOn ?? [],
     blockedBy: blockedBy ?? [],
+    blockReasons: blockReasons ?? [],
     claimedBy: row.claimed_by,
     claimedAt: row.claimed_at,
     completedAt: row.completed_at,
@@ -353,6 +354,16 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
      WHERE tf.task_id = ? AND f.claimant IS NOT NULL AND f.claimant != ?`
   );
 
+  // NOTE: This query returns ALL file locks, not filtered by requesting agent.
+  // For pending tasks this is correct since pending tasks cannot hold file locks.
+  // If a task is released back to pending while the agent still holds files,
+  // the block reason may incorrectly include the original agent's locks.
+  const getFileConflictsForTask = db.prepare(
+    `SELECT f.path, f.claimant FROM task_files tf
+     JOIN files f ON f.path = tf.file_path
+     WHERE tf.task_id = ? AND f.claimant IS NOT NULL`
+  );
+
   function checkAndClaimFiles(taskId: number, agent: string): ConflictInfo[] | null {
     const deps = (getTaskFiles.all(taskId) as { file_path: string }[]).map(r => r.file_path);
     if (deps.length === 0) return null;
@@ -373,8 +384,51 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     return (getTaskFiles.all(taskId) as { file_path: string }[]).map(r => r.file_path);
   }
 
+  function blockReasonsForTask(row: TaskRow): string[] {
+    if (row.status !== 'pending') return [];
+    const reasons: string[] = [];
+
+    // Missing sourcePath check
+    if (row.source_path) {
+      const bareRepo = config.server.bareRepoPath;
+      if (bareRepo) {
+        const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+        // NOTE: existsInBareRepo runs git cat-file synchronously per pending task.
+        // For large queues (50+ pending tasks with sourcePaths), this could cause
+        // latency spikes. Consider batch validation or caching if this becomes
+        // a bottleneck in practice.
+        if (!existsInBareRepo(bareRepo, planBranch, row.source_path)) {
+          reasons.push(`sourcePath '${row.source_path}' not found on ${planBranch}`);
+        }
+      }
+    }
+
+    // File-lock conflicts
+    const conflicts = getFileConflictsForTask.all(row.id) as { path: string; claimant: string }[];
+    if (conflicts.length > 0) {
+      const byClaimant = new Map<string, string[]>();
+      for (const c of conflicts) {
+        const list = byClaimant.get(c.claimant) ?? [];
+        list.push(c.path);
+        byClaimant.set(c.claimant, list);
+      }
+      for (const [claimant, paths] of byClaimant) {
+        reasons.push(`files locked by agent '${claimant}': ${paths.join(', ')}`);
+      }
+    }
+
+    // Unmet dependencies
+    const blockers = blockersForTask(row.id);
+    if (blockers.length > 0) {
+      reasons.push(`blocked by incomplete task(s): #${blockers.join(', #')}`);
+    }
+
+    return reasons;
+  }
+
   function formatTaskWithFiles(row: TaskRow) {
-    return formatTask(row, filesForTask(row.id), depsForTask(row.id), blockersForTask(row.id));
+    const reasons = blockReasonsForTask(row);
+    return formatTask(row, filesForTask(row.id), depsForTask(row.id), blockersForTask(row.id), reasons);
   }
 
   /** Register files and link them to a task. Must be called within a transaction. */

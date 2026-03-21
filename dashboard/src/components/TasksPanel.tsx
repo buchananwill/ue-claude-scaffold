@@ -12,6 +12,7 @@ import {
   Checkbox,
   Anchor,
   Badge,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconChevronUp,
@@ -295,6 +296,13 @@ export function TasksPanel({ tasks, isFetching, statusFilter, onFilterChange, fi
                       {t.status === 'pending' && t.blockedBy && t.blockedBy.length > 0 && (
                         <Badge size="xs" color="orange" variant="dot">blocked</Badge>
                       )}
+                      {t.status === 'pending' && t.blockReasons?.length > 0 && (
+                        <Tooltip label={t.blockReasons.join('\n')} multiline maw={320} withArrow>
+                          <Badge size="xs" color="red" variant="dot" style={{ cursor: 'default' }}>
+                            warning
+                          </Badge>
+                        </Tooltip>
+                      )}
                     </Group>
                   </Table.Td>
                   <Table.Td fw={500}>
@@ -414,6 +422,16 @@ export function TasksPanel({ tasks, isFetching, statusFilter, onFilterChange, fi
                                   </Link>
                                 ))}
                               </Group>
+                            </div>
+                          )}
+                          {t.blockReasons?.length > 0 && (
+                            <div>
+                              <Text size="xs" fw={600} c="dimmed">Block Reasons</Text>
+                              <Stack gap={2}>
+                                {t.blockReasons.map((r, i) => (
+                                  <Text key={i} size="xs" c="red">{r}</Text>
+                                ))}
+                              </Stack>
                             </div>
                           )}
                           <Group gap="xs">

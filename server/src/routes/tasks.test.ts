@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
+import { db } from '../db.js';
 import tasksPlugin from './tasks.js';
 import agentsPlugin from './agents.js';
 
@@ -2174,6 +2175,239 @@ describe('targetAgents / merge into agent branches', () => {
       assert.equal(body.pending, 1);
       assert.equal(body.depBlocked, 1);
       assert.ok(body.reason.includes('unmet dependencies'));
+    });
+
+    describe('blockReasons field', () => {
+      it('pending task with no conflicts and no deps has empty blockReasons', async () => {
+        const post = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Clean task' },
+        });
+        const { id } = post.json();
+
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+        const task = get.json();
+        assert.equal(task.status, 'pending');
+        assert.deepEqual(task.blockReasons, []);
+      });
+
+      it('pending task with files locked by another agent has file-lock block reason', async () => {
+        // Create and claim a task to lock files
+        const r1 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Locker', files: ['Widget.cpp', 'Widget.h'] },
+        });
+        const lockerId = r1.json().id;
+        await ctx.app.inject({
+          method: 'POST',
+          url: `/tasks/${lockerId}/claim`,
+          headers: { 'x-agent-name': 'agent-1' },
+        });
+
+        // Create a pending task that needs the same files
+        const r2 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Blocked by files', files: ['Widget.cpp'] },
+        });
+        const blockedId = r2.json().id;
+
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${blockedId}` });
+        const task = get.json();
+        assert.equal(task.status, 'pending');
+        assert.ok(task.blockReasons.length > 0);
+        assert.ok(task.blockReasons.some((r: string) => r.includes("files locked by agent 'agent-1'")));
+        assert.ok(task.blockReasons.some((r: string) => r.includes('Widget.cpp')));
+      });
+
+      it('pending task with unmet dependency has dependency block reason', async () => {
+        const r1 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Prereq' },
+        });
+        const prereqId = r1.json().id;
+
+        const r2 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Dep task', dependsOn: [prereqId] },
+        });
+        const depTaskId = r2.json().id;
+
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${depTaskId}` });
+        const task = get.json();
+        assert.equal(task.status, 'pending');
+        assert.ok(task.blockReasons.length > 0);
+        assert.ok(task.blockReasons.some((r: string) => r.includes('blocked by incomplete task(s)')));
+        assert.ok(task.blockReasons.some((r: string) => r.includes(`#${prereqId}`)));
+      });
+
+      it('pending task with missing sourcePath has sourcePath block reason', async () => {
+        const post = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Missing source task' },
+        });
+        const { id } = post.json();
+
+        // Bypass route validation by directly setting source_path in the DB
+        db.prepare('UPDATE tasks SET source_path = ? WHERE id = ?').run('plans/nonexistent.md', id);
+
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+        const task = get.json();
+        assert.equal(task.status, 'pending');
+        assert.ok(task.blockReasons.length > 0);
+        assert.ok(task.blockReasons.some((r: string) => r.includes('sourcePath')));
+        assert.ok(task.blockReasons.some((r: string) => r.includes('not found')));
+      });
+
+      it('completed task has empty blockReasons regardless of deps', async () => {
+        const r1 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Done prereq' },
+        });
+        const prereqId = r1.json().id;
+
+        // Claim and complete the prereq
+        await ctx.app.inject({
+          method: 'POST',
+          url: `/tasks/${prereqId}/claim`,
+          headers: { 'x-agent-name': 'agent-1' },
+        });
+        await ctx.app.inject({
+          method: 'POST',
+          url: `/tasks/${prereqId}/complete`,
+          payload: { result: { done: true } },
+        });
+
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${prereqId}` });
+        const task = get.json();
+        assert.equal(task.status, 'completed');
+        assert.deepEqual(task.blockReasons, []);
+      });
+
+      it('pending task with BOTH file conflict and unmet dependency has multiple block reasons', async () => {
+        // Create a task and claim it to lock files
+        const r1 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'File locker', files: ['Shared.cpp'] },
+        });
+        const lockerId = r1.json().id;
+        await ctx.app.inject({
+          method: 'POST',
+          url: `/tasks/${lockerId}/claim`,
+          headers: { 'x-agent-name': 'agent-lock' },
+        });
+
+        // Create an incomplete prereq task
+        const r2 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Prereq task' },
+        });
+        const prereqId = r2.json().id;
+
+        // Create a task that has both a file conflict AND a dependency blocker
+        const r3 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Doubly blocked', files: ['Shared.cpp'], dependsOn: [prereqId] },
+        });
+        const blockedId = r3.json().id;
+
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${blockedId}` });
+        const task = get.json();
+        assert.equal(task.status, 'pending');
+        // Should have at least 2 reasons: file lock + dependency
+        assert.ok(task.blockReasons.length >= 2, `Expected >= 2 block reasons, got ${task.blockReasons.length}`);
+        assert.ok(task.blockReasons.some((r: string) => r.includes("files locked by agent 'agent-lock'")));
+        assert.ok(task.blockReasons.some((r: string) => r.includes('Shared.cpp')));
+        assert.ok(task.blockReasons.some((r: string) => r.includes('blocked by incomplete task(s)')));
+        assert.ok(task.blockReasons.some((r: string) => r.includes(`#${prereqId}`)));
+      });
+
+      it('GET /tasks list includes blockReasons on every task', async () => {
+        // Create a prereq (pending, no blocks)
+        const r1 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Independent' },
+        });
+        const indId = r1.json().id;
+
+        // Create a task blocked by the prereq
+        const r2 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Dependent', dependsOn: [indId] },
+        });
+        const depId = r2.json().id;
+
+        const list = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+        const tasks = list.json();
+        assert.equal(tasks.length, 2);
+
+        // Every task in the list should have a blockReasons array
+        for (const t of tasks) {
+          assert.ok(Array.isArray(t.blockReasons), `Task ${t.id} missing blockReasons array`);
+        }
+
+        // Independent task should have no block reasons
+        const indTask = tasks.find((t: any) => t.id === indId);
+        assert.deepEqual(indTask.blockReasons, []);
+
+        // Dependent task should show blocked
+        const depTask = tasks.find((t: any) => t.id === depId);
+        assert.ok(depTask.blockReasons.length > 0);
+        assert.ok(depTask.blockReasons.some((r: string) => r.includes('blocked by incomplete task(s)')));
+      });
+
+      it('block reasons disappear after the blocking condition is resolved', async () => {
+        // Create a prereq task
+        const r1 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Prereq to complete' },
+        });
+        const prereqId = r1.json().id;
+
+        // Create a dependent task
+        const r2 = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: 'Waiting on prereq', dependsOn: [prereqId] },
+        });
+        const waiterId = r2.json().id;
+
+        // Confirm it is blocked initially
+        const getBefore = await ctx.app.inject({ method: 'GET', url: `/tasks/${waiterId}` });
+        const before = getBefore.json();
+        assert.ok(before.blockReasons.length > 0, 'Should be blocked before prereq completes');
+        assert.ok(before.blockReasons.some((r: string) => r.includes('blocked by incomplete task(s)')));
+
+        // Now complete the prereq
+        await ctx.app.inject({
+          method: 'POST',
+          url: `/tasks/${prereqId}/claim`,
+          headers: { 'x-agent-name': 'agent-resolver' },
+        });
+        await ctx.app.inject({
+          method: 'POST',
+          url: `/tasks/${prereqId}/complete`,
+          payload: { result: { done: true } },
+        });
+
+        // Re-fetch the dependent task -- block reason should be gone
+        const getAfter = await ctx.app.inject({ method: 'GET', url: `/tasks/${waiterId}` });
+        const after = getAfter.json();
+        assert.equal(after.status, 'pending');
+        assert.deepEqual(after.blockReasons, [], 'Block reasons should be empty after prereq is completed');
+      });
     });
   });
 });

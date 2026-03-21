@@ -115,6 +115,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     files: [],
     dependsOn: [],
     blockedBy: [],
+    blockReasons: [],
     claimedBy: null,
     claimedAt: null,
     completedAt: null,

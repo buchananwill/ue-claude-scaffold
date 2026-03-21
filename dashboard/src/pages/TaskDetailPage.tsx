@@ -88,6 +88,17 @@ export function TaskDetailPage() {
               : <Text size="sm" c="dimmed" fs="italic">(none)</Text>}
           </div>
 
+          {task.blockReasons?.length > 0 && (
+            <div>
+              <Text size="xs" fw={600} c="dimmed">Block Reasons</Text>
+              <Stack gap={2} mt={4}>
+                {task.blockReasons.map((r, i) => (
+                  <Text key={i} size="sm" c="red">{r}</Text>
+                ))}
+              </Stack>
+            </div>
+          )}
+
           <div>
             <Text size="xs" fw={600} c="dimmed">Source Path</Text>
             {task.sourcePath
