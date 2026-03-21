@@ -51,9 +51,32 @@ These could run as a PreToolUse or PostToolUse hook on the build step, or as a s
 pass. Mechanical checks free up the LLM reviewer to focus on things only an LLM can catch
 (logic errors, spec compliance, architectural concerns).
 
+## Additional Tier 1 lint rules (always wrong, no exceptions)
+
+- **`new` keyword** — raw `new` is never correct in UE (2026). `NewObject` for GC objects,
+  `MakeShared`/`MakeUnique` for everything else. Regex: `new ` followed by a type name, excluding
+  `NewObject`, `MakeShared`, `MakeUnique`, `CreateDefaultSubobject`, placement new.
+
+## Broader observation: task size vs. nuance
+
+The implementer is struggling to integrate large tasks with complex style/safety rules in a single
+pass. The orchestrator is YOLO-ing phases as one-shot delegations, and the implementer can't hold
+(large_task + complex_nuance_ruleset) in working memory simultaneously. The code comes back
+structurally correct but riddled with style and safety violations.
+
+This is a Swiss cheese problem — no single layer catches everything. The fix is more layers with
+smaller holes:
+- **Smaller phases** — break work into units the implementer can fully hold in context
+- **Mechanical linting** — catches the patterns that are always wrong, before the LLM reviewer
+  even sees the code
+- **Focused review agents** — each reviewer has a narrow mandate and short context
+- **Per-phase enforcement** (issue #013) — no multi-phase bundling, so each unit stays small
+
 ## Scope
 
 - Define 2-3 review sub-agents with tightly scoped prompts
 - Update the orchestrator's phase execution protocol to run review phases in sequence
-- Investigate which style/safety checks can be automated as hooks or scripts
+- Build a lint script/hook for Tier 1 patterns (IILE, raw new, TSharedRef misuse, east-const)
+- Investigate Tier 2 heuristic patterns (raw pointer lifecycle, lambda captures)
+- Feed lint output into the build result so agents see it alongside compiler output
 - Measure: are fewer issues missed per phase with focused reviewers?
