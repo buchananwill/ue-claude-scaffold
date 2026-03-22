@@ -138,7 +138,10 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     return config.server.bareRepoPath;
   }
 
-  async function syncWorktree(agentName: string | undefined): Promise<SpawnResult | null> {
+  /** Sync the staging worktree from the agent's branch in the bare repo.
+   *  Returns 'changed' if files were updated, 'unchanged' if nothing new.
+   *  Throws on infrastructure failure (git errors the agent can't fix). */
+  async function syncWorktree(agentName: string | undefined): Promise<'changed' | 'unchanged'> {
     const worktreePath = getStagingWorktree(agentName);
     const bareRepo = getBareRepoPath();
 
@@ -149,12 +152,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
 
     const fetchResult = await runCommand('git', ['fetch', bareRepo, branch], worktreePath, 30000);
     if (!fetchResult.success) {
-      return {
-        success: false,
-        exit_code: fetchResult.exit_code,
-        output: fetchResult.output,
-        stderr: `syncWorktree: git fetch failed: ${fetchResult.stderr}`,
-      };
+      throw new Error(`syncWorktree: git fetch failed: ${fetchResult.stderr}`);
     }
 
     // Diff-based sync: only touch files that actually changed between HEAD and
@@ -181,14 +179,9 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       // If diff fails (e.g. first sync with no HEAD), fall back to hard reset.
       const resetResult = await runCommand('git', ['reset', '--hard', 'FETCH_HEAD'], worktreePath, 30000);
       if (!resetResult.success) {
-        return {
-          success: false,
-          exit_code: resetResult.exit_code,
-          output: resetResult.output,
-          stderr: `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
-        };
+        throw new Error(`syncWorktree: git reset --hard failed: ${resetResult.stderr}`);
       }
-      return null;
+      return 'changed';
     }
 
     const addModFiles = addModResult.output.trim();
@@ -198,14 +191,9 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       // No files changed — just move HEAD to FETCH_HEAD without touching the worktree.
       const resetSoft = await runCommand('git', ['reset', '--soft', 'FETCH_HEAD'], worktreePath, 15000);
       if (!resetSoft.success) {
-        return {
-          success: false,
-          exit_code: resetSoft.exit_code,
-          output: resetSoft.output,
-          stderr: `syncWorktree: git reset --soft failed: ${resetSoft.stderr}`,
-        };
+        throw new Error(`syncWorktree: git reset --soft failed: ${resetSoft.stderr}`);
       }
-      return null;
+      return 'unchanged';
     }
 
     // Remove deleted files from the worktree.
@@ -227,29 +215,19 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
         // Last resort — hard reset. This should be rare now.
         const resetResult = await runCommand('git', ['reset', '--hard', 'FETCH_HEAD'], worktreePath, 30000);
         if (!resetResult.success) {
-          return {
-            success: false,
-            exit_code: resetResult.exit_code,
-            output: resetResult.output,
-            stderr: `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
-          };
+          throw new Error(`syncWorktree: git reset --hard failed: ${resetResult.stderr}`);
         }
-        return null;
+        return 'changed';
       }
     }
 
     // Move HEAD to match FETCH_HEAD without touching the worktree.
     const resetSoft = await runCommand('git', ['reset', '--soft', 'FETCH_HEAD'], worktreePath, 15000);
     if (!resetSoft.success) {
-      return {
-        success: false,
-        exit_code: resetSoft.exit_code,
-        output: resetSoft.output,
-        stderr: `syncWorktree: git reset --soft failed: ${resetSoft.stderr}`,
-      };
+      throw new Error(`syncWorktree: git reset --soft failed: ${resetSoft.stderr}`);
     }
 
-    return null;
+    return 'changed';
   }
 
   fastify.post<{
@@ -266,9 +244,25 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       };
     }
 
-    const syncError = await syncWorktree(agentName);
-    if (syncError) {
-      return syncError;
+    let syncResult: 'changed' | 'unchanged';
+    try {
+      syncResult = await syncWorktree(agentName);
+    } catch (err) {
+      return {
+        success: false,
+        exit_code: -1,
+        output: '',
+        stderr: `Infrastructure error: ${(err as Error).message}. Agent should shut down.`,
+      };
+    }
+
+    if (syncResult === 'unchanged' && !request.body.clean) {
+      return {
+        success: true,
+        exit_code: 0,
+        output: 'No source changes since last build. Skipping rebuild.',
+        stderr: '',
+      };
     }
 
     const args = ['--summary'];
@@ -306,9 +300,25 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       };
     }
 
-    const syncError = await syncWorktree(agentName);
-    if (syncError) {
-      return syncError;
+    let syncResult: 'changed' | 'unchanged';
+    try {
+      syncResult = await syncWorktree(agentName);
+    } catch (err) {
+      return {
+        success: false,
+        exit_code: -1,
+        output: '',
+        stderr: `Infrastructure error: ${(err as Error).message}. Agent should shut down.`,
+      };
+    }
+
+    if (syncResult === 'unchanged') {
+      return {
+        success: true,
+        exit_code: 0,
+        output: 'No source changes since last test. Skipping.',
+        stderr: '',
+      };
     }
 
     const filters = request.body.filters?.length
