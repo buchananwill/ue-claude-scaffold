@@ -161,11 +161,23 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     // FETCH_HEAD.  This preserves timestamps on unchanged files so UBT's
     // incremental build cache stays valid (a full `reset --hard` rewrites every
     // file's mtime, forcing a near-full rebuild every time).
-    const diffResult = await runCommand(
-      'git', ['diff', '--name-only', 'HEAD', 'FETCH_HEAD'], worktreePath, 15000,
+    //
+    // We split the diff into added/modified vs deleted files because
+    // `git checkout FETCH_HEAD -- <deleted-file>` fails (the file doesn't exist
+    // in FETCH_HEAD), which previously caused a fallback to `reset --hard` and
+    // killed caching entirely.
+
+    // Files added or modified in FETCH_HEAD — need to be checked out.
+    const addModResult = await runCommand(
+      'git', ['diff', '--name-only', '--diff-filter=AMCR', 'HEAD', 'FETCH_HEAD'], worktreePath, 15000,
     );
 
-    if (!diffResult.success) {
+    // Files deleted in FETCH_HEAD — need to be removed from the worktree.
+    const delResult = await runCommand(
+      'git', ['diff', '--name-only', '--diff-filter=D', 'HEAD', 'FETCH_HEAD'], worktreePath, 15000,
+    );
+
+    if (!addModResult.success || !delResult.success) {
       // If diff fails (e.g. first sync with no HEAD), fall back to hard reset.
       const resetResult = await runCommand('git', ['reset', '--hard', 'FETCH_HEAD'], worktreePath, 30000);
       if (!resetResult.success) {
@@ -179,9 +191,10 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       return null;
     }
 
-    const changedFiles = diffResult.output.trim();
+    const addModFiles = addModResult.output.trim();
+    const delFiles = delResult.output.trim();
 
-    if (changedFiles.length === 0) {
+    if (addModFiles.length === 0 && delFiles.length === 0) {
       // No files changed — just move HEAD to FETCH_HEAD without touching the worktree.
       const resetSoft = await runCommand('git', ['reset', '--soft', 'FETCH_HEAD'], worktreePath, 15000);
       if (!resetSoft.success) {
@@ -195,22 +208,34 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       return null;
     }
 
-    // Checkout only the changed files from FETCH_HEAD, then move HEAD.
-    const checkoutResult = await runCommand(
-      'git', ['checkout', 'FETCH_HEAD', '--', ...changedFiles.split('\n')], worktreePath, 30000,
-    );
-    if (!checkoutResult.success) {
-      // If selective checkout fails (e.g. deleted files), fall back to hard reset.
-      const resetResult = await runCommand('git', ['reset', '--hard', 'FETCH_HEAD'], worktreePath, 30000);
-      if (!resetResult.success) {
-        return {
-          success: false,
-          exit_code: resetResult.exit_code,
-          output: resetResult.output,
-          stderr: `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
-        };
+    // Remove deleted files from the worktree.
+    if (delFiles.length > 0) {
+      const rmResult = await runCommand(
+        'git', ['rm', '--quiet', '--force', '--', ...delFiles.split('\n')], worktreePath, 15000,
+      );
+      if (!rmResult.success) {
+        // Non-fatal: files may already be gone. Proceed with checkout.
       }
-      return null;
+    }
+
+    // Checkout added/modified files from FETCH_HEAD.
+    if (addModFiles.length > 0) {
+      const checkoutResult = await runCommand(
+        'git', ['checkout', 'FETCH_HEAD', '--', ...addModFiles.split('\n')], worktreePath, 30000,
+      );
+      if (!checkoutResult.success) {
+        // Last resort — hard reset. This should be rare now.
+        const resetResult = await runCommand('git', ['reset', '--hard', 'FETCH_HEAD'], worktreePath, 30000);
+        if (!resetResult.success) {
+          return {
+            success: false,
+            exit_code: resetResult.exit_code,
+            output: resetResult.output,
+            stderr: `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
+          };
+        }
+        return null;
+      }
     }
 
     // Move HEAD to match FETCH_HEAD without touching the worktree.

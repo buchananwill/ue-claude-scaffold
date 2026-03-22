@@ -9,7 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (7);
+INSERT OR IGNORE INTO schema_version(version) VALUES (8);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   source_path         TEXT,
   acceptance_criteria TEXT,
   status              TEXT NOT NULL DEFAULT 'pending'
-                        CHECK (status IN ('pending','claimed','in_progress','completed','failed')),
+                        CHECK (status IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')),
   priority            INTEGER NOT NULL DEFAULT 0,
   claimed_by          TEXT,
   claimed_at          DATETIME,
@@ -128,6 +128,31 @@ export function openDb(dbPath: string): Database.Database {
   // Migration: add output/stderr columns to build_history (v5 -> v6)
   try { instance.exec("ALTER TABLE build_history ADD COLUMN output TEXT"); } catch { /* column already exists */ }
   try { instance.exec("ALTER TABLE build_history ADD COLUMN stderr TEXT"); } catch { /* column already exists */ }
+
+  // Migration: expand tasks status CHECK constraint (v7 -> v8)
+  // Instead of rebuilding the table (which risks FK corruption from the rename),
+  // rewrite the CHECK constraint in-place via writable_schema.
+  const schemaRow = instance.prepare('SELECT MIN(version) as version FROM schema_version').get() as { version: number } | undefined;
+  if (!schemaRow || schemaRow.version < 8) {
+    const tasksSchema = instance.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
+    ).get() as { sql: string } | undefined;
+    if (tasksSchema) {
+      const oldCheck = "status IN ('pending','claimed','in_progress','completed','failed')";
+      const newCheck = "status IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')";
+      if (tasksSchema.sql.includes(oldCheck)) {
+        const fixedSql = tasksSchema.sql.replace(oldCheck, newCheck);
+        const escapedSql = fixedSql.replace(/'/g, "''");
+        instance.exec(`PRAGMA writable_schema = ON; UPDATE sqlite_master SET sql = '${escapedSql}' WHERE type = 'table' AND name = 'tasks'; PRAGMA writable_schema = OFF;`);
+        // Bump schema cookie to force SQLite to reload its internal schema cache
+        const sv = (instance.pragma('schema_version', { simple: true }) as number) || 0;
+        instance.pragma(`schema_version = ${sv + 1}`);
+      }
+    }
+    // Clean up the dual version rows: SCHEMA_SQL inserted 8, old DB had 7
+    instance.exec('DELETE FROM schema_version WHERE version < 8');
+    console.log('[db] Migrated tasks CHECK constraint to v8 (integrated, cycle)');
+  }
 
   db = instance;
   return instance;

@@ -2,8 +2,11 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
+import { mkdtempSync, unlinkSync, rmdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
-import { db } from '../db.js';
+import { db, openDb } from '../db.js';
+import Database from 'better-sqlite3';
 import tasksPlugin from './tasks.js';
 import agentsPlugin from './agents.js';
 
@@ -2449,6 +2452,368 @@ describe('targetAgents / merge into agent branches', () => {
         assert.equal(after.status, 'pending');
         assert.deepEqual(after.blockReasons, [], 'Block reasons should be empty after prereq is completed');
       });
+    });
+  });
+
+  describe('v8 schema — integrated and cycle statuses', () => {
+    it('accepts integrated status on direct insert', () => {
+      const stmt = db.prepare("INSERT INTO tasks (title, status) VALUES (?, 'integrated')");
+      const info = stmt.run('Integrated task');
+      assert.equal(info.changes, 1);
+
+      const row = db.prepare('SELECT status FROM tasks WHERE id = ?').get(info.lastInsertRowid) as { status: string };
+      assert.equal(row.status, 'integrated');
+    });
+
+    it('accepts cycle status on direct insert', () => {
+      const stmt = db.prepare("INSERT INTO tasks (title, status) VALUES (?, 'cycle')");
+      const info = stmt.run('Cycle task');
+      assert.equal(info.changes, 1);
+
+      const row = db.prepare('SELECT status FROM tasks WHERE id = ?').get(info.lastInsertRowid) as { status: string };
+      assert.equal(row.status, 'cycle');
+    });
+
+    it('rejects invalid status values', () => {
+      assert.throws(() => {
+        db.prepare("INSERT INTO tasks (title, status) VALUES (?, 'invalid')").run('Bad task');
+      }, /CHECK constraint failed/);
+    });
+
+    it('CHECK constraint includes all expected statuses', () => {
+      const validStatuses = ['pending', 'claimed', 'in_progress', 'completed', 'failed', 'integrated', 'cycle'];
+      for (const status of validStatuses) {
+        const info = db.prepare('INSERT INTO tasks (title, status) VALUES (?, ?)').run(`Task ${status}`, status);
+        assert.equal(info.changes, 1, `Status '${status}' should be accepted`);
+      }
+    });
+
+    it('schema_version is 8 on fresh database', () => {
+      const row = db.prepare('SELECT version FROM schema_version').get() as { version: number };
+      assert.equal(row.version, 8);
+    });
+  });
+
+  describe('v7 to v8 migration', () => {
+    it('openDb on a v7 database migrates CHECK constraint via writable_schema to v8', () => {
+      const v7TmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-v7-'));
+      const v7DbPath = path.join(v7TmpDir, 'v7.db');
+      const v7db = new Database(v7DbPath);
+      v7db.pragma('journal_mode = WAL');
+
+      // Create a realistic v7 schema: tasks table with the old CHECK constraint
+      // that lacks 'integrated' and 'cycle', plus all other tables that SCHEMA_SQL
+      // expects to exist (so CREATE TABLE IF NOT EXISTS is a no-op for them).
+      v7db.exec(`
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+        INSERT INTO schema_version(version) VALUES (7);
+
+        CREATE TABLE agents (
+          name        TEXT PRIMARY KEY,
+          worktree    TEXT NOT NULL,
+          plan_doc    TEXT,
+          status      TEXT NOT NULL DEFAULT 'idle',
+          mode        TEXT NOT NULL DEFAULT 'single',
+          registered_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE ubt_lock (
+          id          INTEGER PRIMARY KEY CHECK (id = 1),
+          holder      TEXT,
+          acquired_at DATETIME,
+          priority    INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE ubt_queue (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          agent       TEXT NOT NULL,
+          priority    INTEGER DEFAULT 0,
+          requested_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE build_history (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          agent        TEXT NOT NULL,
+          type         TEXT NOT NULL CHECK (type IN ('build', 'test')),
+          started_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          duration_ms  INTEGER,
+          success      INTEGER,
+          output       TEXT,
+          stderr       TEXT
+        );
+
+        CREATE TABLE messages (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          from_agent  TEXT NOT NULL,
+          channel     TEXT NOT NULL,
+          type        TEXT NOT NULL,
+          payload     TEXT NOT NULL,
+          claimed_by  TEXT,
+          claimed_at  DATETIME,
+          resolved_at DATETIME,
+          result      TEXT,
+          created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX idx_messages_channel ON messages(channel);
+        CREATE INDEX idx_messages_channel_id ON messages(channel, id);
+        CREATE INDEX idx_messages_claimed ON messages(claimed_by);
+
+        CREATE TABLE tasks (
+          id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+          title               TEXT NOT NULL,
+          description         TEXT DEFAULT '',
+          source_path         TEXT,
+          acceptance_criteria TEXT,
+          status              TEXT NOT NULL DEFAULT 'pending'
+                                CHECK (status IN ('pending','claimed','in_progress','completed','failed')),
+          priority            INTEGER NOT NULL DEFAULT 0,
+          claimed_by          TEXT,
+          claimed_at          DATETIME,
+          completed_at        DATETIME,
+          result              TEXT,
+          progress_log        TEXT,
+          created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX idx_tasks_status ON tasks(status);
+        CREATE INDEX idx_tasks_priority ON tasks(priority DESC, id ASC);
+
+        CREATE TABLE files (
+          path       TEXT PRIMARY KEY,
+          claimant   TEXT,
+          claimed_at DATETIME
+        );
+
+        CREATE TABLE task_files (
+          task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          file_path  TEXT NOT NULL REFERENCES files(path),
+          PRIMARY KEY (task_id, file_path)
+        );
+        CREATE INDEX idx_task_files_path ON task_files(file_path);
+
+        CREATE TABLE task_dependencies (
+          task_id     INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          depends_on  INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          PRIMARY KEY (task_id, depends_on),
+          CHECK (task_id != depends_on)
+        );
+        CREATE INDEX idx_task_deps_task ON task_dependencies(task_id);
+        CREATE INDEX idx_task_deps_dep  ON task_dependencies(depends_on);
+      `);
+
+      // Seed a pre-existing row to verify data survives
+      v7db.prepare("INSERT INTO tasks (title, status) VALUES ('Existing task', 'completed')").run();
+
+      // Confirm the old constraint rejects 'integrated' before migration
+      assert.throws(() => {
+        v7db.prepare("INSERT INTO tasks (title, status) VALUES ('x', 'integrated')").run();
+      }, /CHECK constraint/, 'v7 schema should reject integrated status');
+
+      v7db.close();
+
+      // Run openDb which should migrate via writable_schema
+      const migratedDb = openDb(v7DbPath);
+
+      // 1. schema_version bumped to 8 (old version 7 row deleted)
+      const row = migratedDb.prepare('SELECT version FROM schema_version').get() as any;
+      assert.strictEqual(row.version, 8, 'Schema version should be 8 after migration');
+
+      // 2. Existing data survived
+      const task = migratedDb.prepare("SELECT title, status FROM tasks WHERE title = 'Existing task'").get() as any;
+      assert.ok(task, 'Existing task should survive migration');
+      assert.strictEqual(task.status, 'completed');
+
+      // 3. New statuses accepted (writable_schema rewrote the CHECK constraint)
+      assert.doesNotThrow(() => {
+        migratedDb.prepare("INSERT INTO tasks (title, status) VALUES ('integrated task', 'integrated')").run();
+      }, 'integrated status should be accepted after migration');
+
+      assert.doesNotThrow(() => {
+        migratedDb.prepare("INSERT INTO tasks (title, status) VALUES ('cycle task', 'cycle')").run();
+      }, 'cycle status should be accepted after migration');
+
+      // 4. Invalid statuses still rejected
+      assert.throws(() => {
+        migratedDb.prepare("INSERT INTO tasks (title, status) VALUES ('bad task', 'invalid')").run();
+      }, /CHECK constraint/, 'invalid status should still be rejected after migration');
+
+      // 5. Verify the CHECK constraint in sqlite_master was actually rewritten
+      const schema = migratedDb.prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
+      ).get() as any;
+      assert.ok(schema.sql.includes("'integrated'"), 'CHECK constraint should include integrated');
+      assert.ok(schema.sql.includes("'cycle'"), 'CHECK constraint should include cycle');
+
+      migratedDb.close();
+
+      // Cleanup
+      try { unlinkSync(v7DbPath); } catch {}
+      try { unlinkSync(v7DbPath + '-wal'); } catch {}
+      try { unlinkSync(v7DbPath + '-shm'); } catch {}
+      try { rmdirSync(v7TmpDir); } catch {}
+    });
+  });
+
+  // ── Phase 2: integrate endpoints ──────────────────────────────────────
+
+  describe('POST /tasks/:id/integrate', () => {
+    /** Helper: create a task, claim it, complete it, return the id */
+    async function createCompletedTask(app: typeof ctx.app, result: Record<string, unknown> = { summary: 'done', agent: 'agent-1' }) {
+      const post = await app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Integrate me' } });
+      const id = post.json().id;
+      await app.inject({ method: 'POST', url: `/tasks/${id}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await app.inject({ method: 'POST', url: `/tasks/${id}/complete`, payload: { result } });
+      return id;
+    }
+
+    it('on a completed task returns 200 and status is integrated', async () => {
+      const id = await createCompletedTask(ctx.app);
+
+      const res = await ctx.app.inject({ method: 'POST', url: `/tasks/${id}/integrate` });
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.json(), { ok: true });
+
+      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+      assert.equal(get.json().status, 'integrated');
+    });
+
+    it('on a pending task returns 400', async () => {
+      const post = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Still pending' } });
+      const id = post.json().id;
+
+      const res = await ctx.app.inject({ method: 'POST', url: `/tasks/${id}/integrate` });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('on a claimed task returns 400', async () => {
+      const post = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Claimed only' } });
+      const id = post.json().id;
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${id}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+
+      const res = await ctx.app.inject({ method: 'POST', url: `/tasks/${id}/integrate` });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('returns 404 for missing task', async () => {
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/99999/integrate' });
+      assert.equal(res.statusCode, 404);
+    });
+  });
+
+  describe('POST /tasks/integrate-batch', () => {
+    async function createCompletedTaskWithAgent(app: typeof ctx.app, agent: string) {
+      const post = await app.inject({ method: 'POST', url: '/tasks', payload: { title: `Task by ${agent}` } });
+      const id = post.json().id;
+      await app.inject({ method: 'POST', url: `/tasks/${id}/claim`, headers: { 'x-agent-name': agent } });
+      await app.inject({ method: 'POST', url: `/tasks/${id}/complete`, payload: { result: { summary: 'done', agent } } });
+      return id;
+    }
+
+    it('integrates only the specified agent completed tasks', async () => {
+      const id1 = await createCompletedTaskWithAgent(ctx.app, 'agent-1');
+      const id2 = await createCompletedTaskWithAgent(ctx.app, 'agent-1');
+      const id3 = await createCompletedTaskWithAgent(ctx.app, 'agent-2');
+
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/integrate-batch', payload: { agent: 'agent-1' } });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.ok, true);
+      assert.equal(body.count, 2);
+      assert.deepEqual(body.ids.sort(), [id1, id2].sort());
+
+      // agent-2's task should still be completed
+      const get3 = await ctx.app.inject({ method: 'GET', url: `/tasks/${id3}` });
+      assert.equal(get3.json().status, 'completed');
+    });
+
+    it('with no matching tasks returns count 0', async () => {
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/integrate-batch', payload: { agent: 'nobody' } });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.ok, true);
+      assert.equal(body.count, 0);
+      assert.deepEqual(body.ids, []);
+    });
+
+    it('returns 400 when agent is missing', async () => {
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/integrate-batch', payload: {} });
+      assert.equal(res.statusCode, 400);
+    });
+  });
+
+  describe('POST /tasks/integrate-all', () => {
+    async function createCompletedTaskWithAgent(app: typeof ctx.app, agent: string) {
+      const post = await app.inject({ method: 'POST', url: '/tasks', payload: { title: `Task by ${agent}` } });
+      const id = post.json().id;
+      await app.inject({ method: 'POST', url: `/tasks/${id}/claim`, headers: { 'x-agent-name': agent } });
+      await app.inject({ method: 'POST', url: `/tasks/${id}/complete`, payload: { result: { summary: 'done', agent } } });
+      return id;
+    }
+
+    it('integrates all completed tasks regardless of agent', async () => {
+      const id1 = await createCompletedTaskWithAgent(ctx.app, 'agent-1');
+      const id2 = await createCompletedTaskWithAgent(ctx.app, 'agent-2');
+      // Also create a pending task that should NOT be integrated
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Still pending' } });
+
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/integrate-all' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.ok, true);
+      assert.equal(body.count, 2);
+      assert.deepEqual(body.ids.sort(), [id1, id2].sort());
+    });
+
+    it('when no completed tasks returns count 0', async () => {
+      // Only create a pending task
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending' } });
+
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/integrate-all' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.ok, true);
+      assert.equal(body.count, 0);
+      assert.deepEqual(body.ids, []);
+    });
+  });
+
+  describe('GET /tasks with integrated status', () => {
+    it('returns tasks with integrated status', async () => {
+      const post = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Will integrate' } });
+      const id = post.json().id;
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${id}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${id}/complete`, payload: { result: { summary: 'done' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${id}/integrate` });
+
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=integrated' });
+      assert.equal(res.statusCode, 200);
+      const tasks = res.json();
+      assert.equal(tasks.length, 1);
+      assert.equal(tasks[0].status, 'integrated');
+      assert.equal(tasks[0].id, id);
+    });
+  });
+
+  describe('formatTask completedBy field', () => {
+    it('includes completedBy extracted from result.agent', async () => {
+      const post = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Has agent' } });
+      const id = post.json().id;
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${id}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${id}/complete`, payload: { result: { summary: 'done', agent: 'agent-1' } } });
+
+      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+      const task = get.json();
+      assert.equal(task.completedBy, 'agent-1');
+    });
+
+    it('completedBy is null when result has no agent field', async () => {
+      const post = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'No agent field' } });
+      const id = post.json().id;
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${id}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${id}/complete`, payload: { result: { summary: 'done' } } });
+
+      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+      const task = get.json();
+      assert.equal(task.completedBy, null);
     });
   });
 });

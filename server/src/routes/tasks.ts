@@ -38,6 +38,10 @@ export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[],
     claimedAt: row.claimed_at,
     completedAt: row.completed_at,
     result: row.result ? JSON.parse(row.result) : null,
+    completedBy: (() => {
+      if (!row.result) return null;
+      try { return JSON.parse(row.result)?.agent ?? null; } catch { return null; }
+    })(),
     progressLog: row.progress_log,
     createdAt: row.created_at,
   };
@@ -255,6 +259,26 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
          result = NULL,
          progress_log = NULL
      WHERE id = @id AND status IN ('completed', 'failed')`
+  );
+
+  const integrateTask = db.prepare(
+    `UPDATE tasks SET status = 'integrated' WHERE id = @id AND status = 'completed'`
+  );
+
+  const integrateBatch = db.prepare(
+    `UPDATE tasks SET status = 'integrated' WHERE status = 'completed' AND json_extract(result, '$.agent') = ?`
+  );
+
+  const integrateAll = db.prepare(
+    `UPDATE tasks SET status = 'integrated' WHERE status = 'completed'`
+  );
+
+  const selectCompletedByAgent = db.prepare(
+    `SELECT id FROM tasks WHERE status = 'completed' AND json_extract(result, '$.agent') = ?`
+  );
+
+  const selectAllCompleted = db.prepare(
+    `SELECT id FROM tasks WHERE status = 'completed'`
   );
 
   /** True if a string field has a meaningful value (not null, undefined, or empty string). */
@@ -815,6 +839,37 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     return { ok: true, ids, ...(commitShasArray ? { commitShas: commitShasArray } : {}) };
   });
 
+  // POST /tasks/integrate-batch — mark all completed tasks by a specific agent as integrated
+  fastify.post<{
+    Body: { agent: string };
+  }>('/tasks/integrate-batch', async (request, reply) => {
+    const { agent } = request.body ?? {};
+    if (!agent || typeof agent !== 'string') {
+      return reply.badRequest('agent must be a string');
+    }
+
+    const result = db.transaction(() => {
+      const rows = selectCompletedByAgent.all(agent) as { id: number }[];
+      const ids = rows.map(r => r.id);
+      integrateBatch.run(agent);
+      return { ok: true, count: ids.length, ids };
+    })();
+
+    return result;
+  });
+
+  // POST /tasks/integrate-all — mark all completed tasks as integrated
+  fastify.post('/tasks/integrate-all', async () => {
+    const result = db.transaction(() => {
+      const rows = selectAllCompleted.all() as { id: number }[];
+      const ids = rows.map(r => r.id);
+      integrateAll.run();
+      return { ok: true, count: ids.length, ids };
+    })();
+
+    return result;
+  });
+
   // GET /tasks
   fastify.get<{
     Querystring: { status?: string; limit?: string };
@@ -1237,6 +1292,27 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const info = resetTask.run({ id });
     if (info.changes === 0) {
       return reply.conflict('task is no longer completed or failed');
+    }
+    return { ok: true };
+  });
+
+  // POST /tasks/:id/integrate — mark a single completed task as integrated
+  fastify.post<{
+    Params: { id: string };
+  }>('/tasks/:id/integrate', async (request, reply) => {
+    const id = Number(request.params.id);
+
+    const row = getTaskById.get({ id }) as TaskRow | undefined;
+    if (!row) {
+      return reply.notFound('task not found');
+    }
+    if (row.status !== 'completed') {
+      return reply.badRequest('task must be in completed status to integrate');
+    }
+
+    const info = integrateTask.run({ id });
+    if (info.changes === 0) {
+      return reply.conflict('task status changed concurrently');
     }
     return { ok: true };
   });
