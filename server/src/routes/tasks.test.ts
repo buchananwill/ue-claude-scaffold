@@ -3339,43 +3339,85 @@ describe('targetAgents / merge into agent branches', () => {
     });
 
     it('priority accumulation through chain', async () => {
-      // Leaf (p=10, no deps) <- Middle (p=0, depends on Leaf) <- Root (p=0, depends on Middle)
-      const idLeaf = await createTask('Leaf', 10);
-      const idMiddle = await createTask('Middle', 0, [idLeaf]);
-      const idRoot = await createTask('Root', 0, [idMiddle]);
+      // Root (p=0, no deps) <- Middle (p=0, depends on Root) <- Leaf (p=10, depends on Middle)
+      // Priority flows leaves→roots: Root accumulates all downstream weight.
+      const idRoot = await createTask('Root', 0);
+      const idMiddle = await createTask('Middle', 0, [idRoot]);
+      const idLeaf = await createTask('Leaf', 10, [idMiddle]);
 
       const res = await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
       assert.equal(res.statusCode, 200);
 
-      const tLeaf = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idLeaf}` })).json();
-      const tMiddle = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idMiddle}` })).json();
       const tRoot = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idRoot}` })).json();
+      const tMiddle = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idMiddle}` })).json();
+      const tLeaf = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idLeaf}` })).json();
 
-      assert.equal(tLeaf.priority, 10);
-      assert.equal(tMiddle.priority, 10); // 0 + 10 from Leaf
-      assert.equal(tRoot.priority, 10);   // 0 + 10 from Middle
+      assert.equal(tLeaf.priority, 10);   // leaf: keeps base priority
+      assert.equal(tMiddle.priority, 11); // 0 + (10 + 1) from child Leaf
+      assert.equal(tRoot.priority, 12);   // 0 + (11 + 1) from child Middle
     });
 
     it('idempotent: calling twice returns same priorities', async () => {
-      const idLeaf = await createTask('Leaf', 10);
-      const idMiddle = await createTask('Middle', 0, [idLeaf]);
-      const idRoot = await createTask('Root', 0, [idMiddle]);
+      const idRoot = await createTask('Root', 0);
+      const idMiddle = await createTask('Middle', 0, [idRoot]);
+      const idLeaf = await createTask('Leaf', 10, [idMiddle]);
 
       // First replan
       await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
-      const tLeaf1 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idLeaf}` })).json();
-      const tMiddle1 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idMiddle}` })).json();
       const tRoot1 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idRoot}` })).json();
+      const tMiddle1 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idMiddle}` })).json();
+      const tLeaf1 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idLeaf}` })).json();
 
       // Second replan
       await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
-      const tLeaf2 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idLeaf}` })).json();
-      const tMiddle2 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idMiddle}` })).json();
       const tRoot2 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idRoot}` })).json();
+      const tMiddle2 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idMiddle}` })).json();
+      const tLeaf2 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idLeaf}` })).json();
 
-      assert.equal(tLeaf1.priority, tLeaf2.priority);
-      assert.equal(tMiddle1.priority, tMiddle2.priority);
       assert.equal(tRoot1.priority, tRoot2.priority);
+      assert.equal(tMiddle1.priority, tMiddle2.priority);
+      assert.equal(tLeaf1.priority, tLeaf2.priority);
+    });
+
+    it('invariant: every dependency has priority >= its dependents', async () => {
+      // Build a non-trivial DAG:
+      //   A (p=0) ← B (p=0) ← D (p=10)
+      //   A (p=0) ← C (p=5) ← E (p=3)
+      // After replan, A must have the highest priority (blocks everything).
+      // Every parent must have priority >= each of its children.
+      const idA = await createTask('A', 0);
+      const idB = await createTask('B', 0, [idA]);
+      const idC = await createTask('C', 5, [idA]);
+      const idD = await createTask('D', 10, [idB]);
+      const idE = await createTask('E', 3, [idC]);
+
+      await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+
+      const tasks = await Promise.all(
+        [idA, idB, idC, idD, idE].map(async (id) =>
+          (await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` })).json()
+        )
+      );
+      const byId = new Map(tasks.map((t: { id: number }) => [t.id, t]));
+
+      // Check invariant: for every dependency edge, the parent's priority is strictly
+      // greater than the child's. Strict inequality guarantees unambiguous ordering —
+      // workers always pick the blocker before the thing it unblocks.
+      const edges = [
+        [idA, idB], [idA, idC], [idB, idD], [idC, idE],
+      ];
+      for (const [parentId, childId] of edges) {
+        const parent = byId.get(parentId)!;
+        const child = byId.get(childId)!;
+        assert.ok(
+          parent.priority > child.priority,
+          `Dependency ${parent.title} (p=${parent.priority}) must have priority strictly > dependent ${child.title} (p=${child.priority})`
+        );
+      }
+
+      // Root A should have the highest priority of all
+      const maxPriority = Math.max(...tasks.map((t: { priority: number }) => t.priority));
+      assert.equal(byId.get(idA)!.priority, maxPriority, 'Root blocker A should have highest priority');
     });
 
     it('reset accepts cycle status', async () => {

@@ -1056,12 +1056,20 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     for (const id of sorted) {
       computedPriority.set(id, nodeMap.get(id)!.basePriority);
     }
-    for (const id of sorted) {
-      const prereqs = prerequisites.get(id) || [];
-      for (const dep of prereqs) {
-        if (sortedSet.has(dep)) {
-          computedPriority.set(id, computedPriority.get(id)! + computedPriority.get(dep)!);
+    // Walk in reverse topological order: leaves first, roots last.
+    // Each node accumulates the priority of all its direct dependents (children),
+    // so roots that block the most downstream work get the highest priority.
+    // Add 1 if the node has any children, guaranteeing strict ordering:
+    // a blocker always has strictly higher priority than anything it unblocks.
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      const id = sorted[i];
+      const children = (dependents.get(id) || []).filter(c => sortedSet.has(c));
+      if (children.length > 0) {
+        let childSum = 0;
+        for (const child of children) {
+          childSum += computedPriority.get(child)!;
         }
+        computedPriority.set(id, computedPriority.get(id)! + childSum + 1);
       }
     }
 
@@ -1145,7 +1153,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       new_locks ASC,
       t.priority DESC,
       t.id ASC
-    LIMIT 1
+    LIMIT 10
   `);
 
   const countPending = db.prepare(
@@ -1177,44 +1185,87 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       )
   `);
 
+  /** Validate a task's sourcePath exists in the bare repo on an appropriate branch. */
+  function validateSourcePathForClaim(
+    task: { source_path: string | null },
+    agent: string,
+  ): { valid: boolean; branch?: string } {
+    if (!task.source_path) return { valid: true };
+    const bareRepo = getBareRepoPath();
+    if (!bareRepo) return { valid: true };
+
+    const agentRow = db.prepare('SELECT worktree FROM agents WHERE name = ?').get(agent) as
+      | { worktree: string }
+      | undefined;
+    const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+    const branch = agentRow?.worktree ?? planBranch;
+
+    if (existsInBareRepo(bareRepo, branch, task.source_path)) {
+      return { valid: true, branch };
+    }
+    // Fallback: if agent branch differs from planBranch, try planBranch
+    if (branch !== planBranch && existsInBareRepo(bareRepo, planBranch, task.source_path)) {
+      return { valid: true, branch: planBranch };
+    }
+    return { valid: false, branch };
+  }
+
   fastify.post('/tasks/claim-next', async (request) => {
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
 
     const result = db.transaction(() => {
-      const candidate = claimNextCandidate.get(agent, agent, agent) as
-        | { id: number; new_locks: number }
-        | undefined;
+      // Query returns up to 10 candidates sorted by priority; we iterate to find
+      // the first one whose sourcePath is valid (the DB can't check the bare repo).
+      const candidates = claimNextCandidate.all(agent, agent, agent) as
+        Array<{ id: number; new_locks: number }>;
 
-      if (!candidate) {
-        const { count: pendingCount } = countPending.get() as { count: number };
-        if (pendingCount === 0) {
-          return { task: null, pending: 0, blocked: 0 };
+      const skippedSourcePath: number[] = [];
+
+      for (const candidate of candidates) {
+        const taskRow = getTaskById.get({ id: candidate.id }) as TaskRow;
+        const spCheck = validateSourcePathForClaim(taskRow, agent);
+        if (!spCheck.valid) {
+          skippedSourcePath.push(candidate.id);
+          continue;
         }
-        // Note: blocked (file-conflict) and depBlocked (dependency) counts may overlap —
-        // a single task can be blocked by both reasons. Both fields are kept for diagnostic value.
-        const { count: blockedCount } = countBlocked.get(agent) as { count: number };
-        const { count: depBlockedCount } = countDepBlocked.get(agent) as { count: number };
-        return {
-          task: null,
-          pending: pendingCount,
-          blocked: blockedCount,
-          depBlocked: depBlockedCount,
-          reason: 'all pending tasks have file conflicts or unmet dependencies',
-        };
+
+        // Claim the task
+        claimTask.run({ id: candidate.id, agent });
+
+        // Claim its files
+        const fileDeps = (getTaskFiles.all(candidate.id) as { file_path: string }[])
+          .map(r => r.file_path);
+        for (const fp of fileDeps) {
+          claimFilesForAgent.run(agent, fp);
+        }
+
+        const row = getTaskById.get({ id: candidate.id }) as TaskRow;
+        const response: Record<string, unknown> = { task: formatTaskWithFiles(row, agent) };
+        if (skippedSourcePath.length > 0) {
+          response.skippedSourcePath = skippedSourcePath;
+        }
+        return response;
       }
 
-      // Claim the task
-      claimTask.run({ id: candidate.id, agent });
-
-      // Claim its files
-      const deps = (getTaskFiles.all(candidate.id) as { file_path: string }[])
-        .map(r => r.file_path);
-      for (const dep of deps) {
-        claimFilesForAgent.run(agent, dep);
+      // No candidate was claimable
+      const { count: pendingCount } = countPending.get() as { count: number };
+      if (pendingCount === 0 && skippedSourcePath.length === 0) {
+        return { task: null, pending: 0, blocked: 0 };
       }
-
-      const row = getTaskById.get({ id: candidate.id }) as TaskRow;
-      return { task: formatTaskWithFiles(row, agent) };
+      const { count: blockedCount } = countBlocked.get(agent) as { count: number };
+      const { count: depBlockedCount } = countDepBlocked.get(agent) as { count: number };
+      const response: Record<string, unknown> = {
+        task: null,
+        pending: pendingCount,
+        blocked: blockedCount,
+        depBlocked: depBlockedCount,
+        reason: 'all pending tasks have file conflicts, unmet dependencies, or missing sourcePaths',
+      };
+      if (skippedSourcePath.length > 0) {
+        response.skippedSourcePath = skippedSourcePath;
+        response.sourcePathNote = 'these task IDs were skipped because their sourcePath was not found in the bare repo';
+      }
+      return response;
     })();
 
     return result;
@@ -1236,26 +1287,16 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       return reply.conflict('task not pending');
     }
 
-    if (task.source_path) {
-      const bareRepo = getBareRepoPath();
-      if (bareRepo) {
-        // Determine the branch from the agent's registration
-        const agentRow = db.prepare('SELECT worktree FROM agents WHERE name = ?').get(agent) as
-          | { worktree: string }
-          | undefined;
-        const branch = agentRow?.worktree ?? 'main';
-
-        if (!existsInBareRepo(bareRepo, branch, task.source_path)) {
-          return reply.code(409).send({
-            statusCode: 409,
-            error: 'Conflict',
-            message:
-              `sourcePath '${task.source_path}' not found on branch '${branch}' in bare repo. ` +
-              `The file may not be committed or pushed. ` +
-              `Commit and re-run launch.sh to refresh the bare repo.`,
-          });
-        }
-      }
+    const spCheck = validateSourcePathForClaim(task, agent);
+    if (!spCheck.valid) {
+      return reply.code(409).send({
+        statusCode: 409,
+        error: 'Conflict',
+        message:
+          `sourcePath '${task.source_path}' not found on branch '${spCheck.branch}' in bare repo. ` +
+          `The file may not be committed or pushed. ` +
+          `Commit and re-run launch.sh to refresh the bare repo.`,
+      });
     }
 
     const blockers = blockersForTask(id, agent);
@@ -1462,12 +1503,22 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     if ('sourcePath' in body && typeof body.sourcePath === 'string') {
-      const worktree = getValidationWorktree();
-      if (!isCommittedInRepo(worktree, body.sourcePath)) {
-        return reply.unprocessableEntity(
-          `sourcePath '${body.sourcePath}' is not committed in the staging worktree (${worktree}). ` +
-          `Commit it first: git add ${body.sourcePath} && git commit`
-        );
+      const bareRepo = getBareRepoPath();
+      if (bareRepo) {
+        const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+        if (!existsInBareRepo(bareRepo, planBranch, body.sourcePath)) {
+          return reply.unprocessableEntity(
+            `sourcePath '${body.sourcePath}' not found on branch '${planBranch}' in bare repo`
+          );
+        }
+      } else {
+        const worktree = getValidationWorktree();
+        if (!isCommittedInRepo(worktree, body.sourcePath)) {
+          return reply.unprocessableEntity(
+            `sourcePath '${body.sourcePath}' is not committed in the staging worktree (${worktree}). ` +
+            `Commit it first: git add ${body.sourcePath} && git commit`
+          );
+        }
       }
     }
 
@@ -1509,11 +1560,21 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     if (row.source_path && row.status !== 'cycle') {
-      const worktree = getValidationWorktree();
-      if (!isCommittedInRepo(worktree, row.source_path)) {
-        return reply.unprocessableEntity(
-          `sourcePath '${row.source_path}' is no longer committed in the staging worktree`
-        );
+      const bareRepo = getBareRepoPath();
+      if (bareRepo) {
+        const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+        if (!existsInBareRepo(bareRepo, planBranch, row.source_path)) {
+          return reply.unprocessableEntity(
+            `sourcePath '${row.source_path}' not found on branch '${planBranch}' in bare repo`
+          );
+        }
+      } else {
+        const worktree = getValidationWorktree();
+        if (!isCommittedInRepo(worktree, row.source_path)) {
+          return reply.unprocessableEntity(
+            `sourcePath '${row.source_path}' is no longer committed in the staging worktree`
+          );
+        }
       }
     }
 

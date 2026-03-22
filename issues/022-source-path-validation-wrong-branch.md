@@ -3,7 +3,7 @@ title: "sourcePath validation checks wrong branch during claim, blocking valid t
 priority: high
 reported-by: interactive-session
 date: 2026-03-22
-status: open
+status: fixed
 ---
 
 # sourcePath validation checks wrong branch during claim
