@@ -10,13 +10,17 @@ status: open
 
 ## Context
 
-The scaffold has grown from a UBT-serialization workaround into a multi-agent project management system with dependency graphs, critical-path solving, and auditable logging. The UE-specific parts are now a minority of the surface area. This issue tracks the structural changes needed to make the scaffold project-agnostic while keeping UE as a first-class configuration.
+The scaffold has grown from a UBT-serialization workaround into a multi-agent project management system with dependency
+graphs, critical-path solving, and auditable logging. The UE-specific parts are now a minority of the surface area. This
+issue tracks the structural changes needed to make the scaffold project-agnostic while keeping UE as a first-class
+configuration.
 
 ## What changes
 
 ### 1. Build system becomes a pluggable strategy, not a hardcoded pipeline
 
-Today, every build routes through the UBT lock, the staging worktree sync, and the host-side script runner. For a Node.js or Rust project, none of that applies — the container can `npm run build` or `cargo build` directly.
+Today, every build routes through the UBT lock, the staging worktree sync, and the host-side script runner. For a
+Node.js or Rust project, none of that applies — the container can `npm run build` or `cargo build` directly.
 
 **Config change** — add `build.strategy` to `scaffold.config.json`:
 
@@ -44,12 +48,17 @@ Today, every build routes through the UBT lock, the staging worktree sync, and t
 ```
 
 **Hook injection becomes conditional.** `launch.sh` reads `build.strategy`:
-- `"external"` → inject `intercept_build_test.sh` and `block-push-passthrough.sh` into container hooks (current behavior).
-- `"local"` → do not inject build hooks. The container runs build commands natively. The UBT lock endpoints still exist on the server but are unused.
 
-**Server-side** — `/build` and `/test` endpoints remain available for external-strategy projects. No code removed, just not called when strategy is local.
+- `"external"` → inject `intercept_build_test.sh` and `block-push-passthrough.sh` into container hooks (current
+  behavior).
+- `"local"` → do not inject build hooks. The container runs build commands natively. The UBT lock endpoints still exist
+  on the server but are unused.
 
-**Agent definitions** — the implementer's "do not skip builds" and "build.py --summary" instructions are UE-specific. These belong in a project-level instruction file, not baked into the agent definition. See §3 below.
+**Server-side** — `/build` and `/test` endpoints remain available for external-strategy projects. No code removed, just
+not called when strategy is local.
+
+**Agent definitions** — the implementer's "do not skip builds" and "build.py --summary" instructions are UE-specific.
+These belong in a project-level instruction file, not baked into the agent definition. See §3 below.
 
 ### 2. Project-type presets replace hardcoded UE assumptions
 
@@ -66,20 +75,23 @@ Instead of a single `engine` config block, support project-type presets that con
 ```
 
 Each preset implies:
-| Setting | `unreal` | `node` | `rust` | `generic` |
-|---------|----------|--------|--------|-----------|
-| `build.strategy` | `external` | `local` | `local` | `local` |
-| Build hooks injected | yes | no | no | no |
-| UBT lock active | yes | no | no | no |
-| `engine` config block | required | ignored | ignored | ignored |
-| Staging worktree sync | yes | no | no | no |
-| Default agent type | `container-orchestrator` | `container-orchestrator` | `container-orchestrator` | `container-orchestrator` |
 
-Presets are defaults — any field can be overridden explicitly. A Node project that still wants external builds (e.g., cross-compiling on host) can set `build.strategy: "external"`.
+| Setting               | `unreal`                 | `node`                   | `rust`                   | `generic`                |
+|-----------------------|--------------------------|--------------------------|--------------------------|--------------------------|
+| `build.strategy`      | `external`               | `local`                  | `local`                  | `local`                  |
+| Build hooks injected  | yes                      | no                       | no                       | no                       |
+| UBT lock active       | yes                      | no                       | no                       | no                       |
+| `engine` config block | required                 | ignored                  | ignored                  | ignored                  |
+| Staging worktree sync | yes                      | no                       | no                       | no                       |
+| Default agent type    | `container-orchestrator` | `container-orchestrator` | `container-orchestrator` | `container-orchestrator` |
+
+Presets are defaults — any field can be overridden explicitly. A Node project that still wants external builds (e.g.,
+cross-compiling on host) can set `build.strategy: "external"`.
 
 ### 3. Agent definitions become project-composable
 
-Currently the implementer agent definition hardcodes UE C++ conventions, `build.py` references, and the `ue-cpp-style` skill. For a Node project, none of that applies.
+Currently the implementer agent definition hardcodes UE C++ conventions, `build.py` references, and the `ue-cpp-style`
+skill. For a Node project, none of that applies.
 
 **Split agent definitions into layers:**
 
@@ -102,9 +114,11 @@ agents/
       reviewer-overlay.md        # async/await patterns, error handling
 ```
 
-The entrypoint composes the agent definition at launch: `core/{type}.md` + `overlays/{project.type}/{type}-overlay.md`. Overlays are optional — a `generic` project type uses only the core definitions.
+The entrypoint composes the agent definition at launch: `core/{type}.md` + `overlays/{project.type}/{type}-overlay.md`.
+Overlays are optional — a `generic` project type uses only the core definitions.
 
 **Config:**
+
 ```jsonc
 {
   "container": {
@@ -136,7 +150,8 @@ Entrypoint prepends `core/*` then `overlays/{project.type}/*` (sorted by filenam
 
 ### 5. Config example and setup accommodate non-UE projects
 
-`scaffold.config.example.json` currently has `engine.path`, `engine.version`, `uprojectFile`. These move under the `unreal` project-type preset:
+`scaffold.config.example.json` currently has `engine.path`, `engine.version`, `uprojectFile`. These move under the
+`unreal` project-type preset:
 
 ```jsonc
 {
@@ -154,11 +169,13 @@ Entrypoint prepends `core/*` then `overlays/{project.type}/*` (sorted by filenam
 }
 ```
 
-`setup.sh` skips bare-repo creation and staging-worktree setup when `build.strategy` is `"local"` — containers work directly on their branch clone.
+`setup.sh` skips bare-repo creation and staging-worktree setup when `build.strategy` is `"local"` — containers work
+directly on their branch clone.
 
 ### 6. Naming
 
 The repo is currently `ue-claude-scaffold`. The generalized version should drop the UE prefix. Candidates:
+
 - `claude-scaffold`
 - `agent-scaffold`
 - `orchestrator`
@@ -177,7 +194,8 @@ This is a rename, not a rewrite. The existing README and CLAUDE.md update to ref
 
 ## Migration path
 
-1. Add `build.strategy` and `project.type` to config schema with defaults matching current behavior (`external`, `unreal`).
+1. Add `build.strategy` and `project.type` to config schema with defaults matching current behavior (`external`,
+   `unreal`).
 2. Make hook injection conditional in `launch.sh`.
 3. Split agent definitions into core + overlays.
 4. Split container instructions into core + overlays.
