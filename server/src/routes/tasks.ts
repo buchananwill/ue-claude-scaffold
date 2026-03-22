@@ -667,6 +667,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   // POST /tasks/batch — bulk creation
   fastify.post<{
     Body: { tasks: TaskBody[] };
+    Querystring: { replan?: string };
   }>('/tasks/batch', async (request, reply) => {
     const { tasks } = request.body;
     if (!Array.isArray(tasks) || tasks.length === 0) {
@@ -854,7 +855,11 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     // Build positionally aligned commitShas array
     const hasAnyShas = Object.keys(commitShas).length > 0;
     const commitShasArray = hasAnyShas ? ids.map((_id, i) => commitShas[i] ?? null) : undefined;
-    return { ok: true, ids, ...(commitShasArray ? { commitShas: commitShasArray } : {}) };
+    const base = { ok: true as const, ids, ...(commitShasArray ? { commitShas: commitShasArray } : {}) };
+    if (request.query.replan === 'true') {
+      return { ...base, replan: runReplan() };
+    }
+    return base;
   });
 
   // POST /tasks/integrate-batch — mark all completed tasks by a specific agent as integrated
@@ -925,11 +930,10 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   const markTaskCycle = db.prepare("UPDATE tasks SET status = 'cycle' WHERE id = ?");
   const setTaskPriority = db.prepare("UPDATE tasks SET priority = ? WHERE id = ?");
 
-  // POST /tasks/replan — recompute priority via topological sort, detect cycles
-  fastify.post('/tasks/replan', async () => {
+  function runReplan() {
     const rows = getNonTerminalTasksForReplan.all() as { id: number; title: string; base_priority: number }[];
     if (rows.length === 0) {
-      return { ok: true, replanned: 0, cycles: [], maxPriority: 0, roots: [] };
+      return { ok: true as const, replanned: 0, cycles: [] as { taskIds: number[]; titles: string[] }[], maxPriority: 0, roots: [] as number[] };
     }
 
     const edges = getNonTerminalDepsForReplan.all() as { task_id: number; depends_on: number }[];
@@ -1078,12 +1082,17 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     })();
 
     return {
-      ok: true,
+      ok: true as const,
       replanned: sorted.length + actualCycleIds.length,
       cycles: cycleGroups,
       maxPriority,
       roots: rootIds,
     };
+  }
+
+  // POST /tasks/replan — recompute priority via topological sort, detect cycles
+  fastify.post('/tasks/replan', async () => {
+    return runReplan();
   });
 
   // GET /tasks/:id

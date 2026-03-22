@@ -239,6 +239,21 @@ for file in "$TASKS_DIR"/*.md; do
   ingested=$((ingested + 1))
 done
 
+# Post-ingest replan
+if [[ "$DRY_RUN" == false && "$ingested" -gt 0 ]]; then
+  echo "Running replan..."
+  replan_response=$(curl -sf -X POST "${SERVER_URL}/tasks/replan" \
+    -H "Content-Type: application/json" \
+    --max-time 10 2>/dev/null) || {
+    echo "Warning: replan request failed (non-fatal)" >&2
+    replan_response=""
+  }
+  if [[ -n "$replan_response" ]]; then
+    replanned=$(echo "$replan_response" | jq -r '.replanned // 0')
+    echo "Replan complete. $replanned task(s) reprioritised."
+  fi
+fi
+
 echo ""
 if [[ "$DRY_RUN" == true ]]; then
   echo "Dry run complete. $ingested task(s) would be ingested, $skipped skipped (already ingested)."

@@ -143,12 +143,12 @@ export function openDb(dbPath: string): Database.Database {
       const newCheck = "status IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')";
       if (tasksSchema.sql.includes(oldCheck)) {
         const fixedSql = tasksSchema.sql.replace(oldCheck, newCheck);
+        const escapedSql = fixedSql.replace(/'/g, "''");
         instance.unsafeMode(true);
         instance.pragma('writable_schema = ON');
-        instance.prepare("UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'tasks'").run(fixedSql);
+        instance.exec(`UPDATE sqlite_master SET sql = '${escapedSql}' WHERE type = 'table' AND name = 'tasks'`);
         instance.pragma('writable_schema = OFF');
         instance.unsafeMode(false);
-        // Force SQLite to reload the schema after writable_schema modification
         const sv = (instance.pragma('schema_version', { simple: true }) as number) || 0;
         instance.pragma(`schema_version = ${sv + 1}`);
       }
