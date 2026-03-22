@@ -43,9 +43,11 @@ git config user.name "Claude Code (Docker)"
 git config core.autocrlf false
 
 # ── Set up Claude Code project settings ──────────────────────────────────────
+# Install to user-level settings (not project-level) to keep them out of the
+# git working tree entirely.  Claude Code merges user + project settings, so
+# hooks defined here still apply to /workspace.
 
-mkdir -p /workspace/.claude
-cp /container-settings.json /workspace/.claude/settings.json
+cp /container-settings.json /home/claude/.claude/settings.json
 
 # ── Patch workspace for container environment ────────────────────────────────
 # Remaps paths, substitutes agents, symlinks plugins.
