@@ -17,6 +17,7 @@ export interface TaskRow {
   claimed_at: string | null;
   completed_at: string | null;
   result: string | null;
+  base_priority: number;
   progress_log: string | null;
   created_at: string;
 }
@@ -218,8 +219,8 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   const config = opts.config;
 
   const insertTask = db.prepare(
-    `INSERT INTO tasks (title, description, source_path, acceptance_criteria, priority)
-     VALUES (@title, @description, @sourcePath, @acceptanceCriteria, @priority)`
+    `INSERT INTO tasks (title, description, source_path, acceptance_criteria, priority, base_priority)
+     VALUES (@title, @description, @sourcePath, @acceptanceCriteria, @priority, @priority)`
   );
 
   const getTaskById = db.prepare('SELECT * FROM tasks WHERE id = @id');
@@ -258,7 +259,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
          completed_at = NULL,
          result = NULL,
          progress_log = NULL
-     WHERE id = @id AND status IN ('completed', 'failed')`
+     WHERE id = @id AND status IN ('completed', 'failed', 'cycle')`
   );
 
   const integrateTask = db.prepare(
@@ -355,18 +356,29 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
   const insertDep = db.prepare('INSERT OR IGNORE INTO task_dependencies (task_id, depends_on) VALUES (?, ?)');
   const getDepsForTask = db.prepare('SELECT depends_on FROM task_dependencies WHERE task_id = ?');
-  const getBlockersForTask = db.prepare(`
+  const getIncompleteBlockersForTask = db.prepare(`
     SELECT d.depends_on FROM task_dependencies d
     JOIN tasks dep ON dep.id = d.depends_on
-    WHERE d.task_id = ? AND dep.status != 'completed'
+    WHERE d.task_id = ?
+      AND dep.status NOT IN ('completed', 'integrated')
+  `);
+  const getWrongBranchBlockersForTask = db.prepare(`
+    SELECT d.depends_on FROM task_dependencies d
+    JOIN tasks dep ON dep.id = d.depends_on
+    WHERE d.task_id = ?
+      AND dep.status = 'completed'
+      AND (json_extract(dep.result, '$.agent') IS NULL
+           OR json_extract(dep.result, '$.agent') != ?)
   `);
   const deleteDepsForTask = db.prepare('DELETE FROM task_dependencies WHERE task_id = ?');
 
   function depsForTask(taskId: number): number[] {
     return (getDepsForTask.all(taskId) as { depends_on: number }[]).map(r => r.depends_on);
   }
-  function blockersForTask(taskId: number): number[] {
-    return (getBlockersForTask.all(taskId) as { depends_on: number }[]).map(r => r.depends_on);
+  function blockersForTask(taskId: number, agent: string): number[] {
+    const incomplete = (getIncompleteBlockersForTask.all(taskId) as { depends_on: number }[]).map(r => r.depends_on);
+    const wrongBranch = (getWrongBranchBlockersForTask.all(taskId, agent) as { depends_on: number }[]).map(r => r.depends_on);
+    return [...incomplete, ...wrongBranch];
   }
   function linkDepsToTask(taskId: number, depIds: number[]): void {
     for (const depId of depIds) insertDep.run(taskId, depId);
@@ -413,7 +425,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     return (getTaskFiles.all(taskId) as { file_path: string }[]).map(r => r.file_path);
   }
 
-  function blockReasonsForTask(row: TaskRow): string[] {
+  function blockReasonsForTask(row: TaskRow, agent: string): string[] {
     if (row.status !== 'pending') return [];
     const reasons: string[] = [];
 
@@ -446,18 +458,24 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    // Unmet dependencies
-    const blockers = blockersForTask(row.id);
-    if (blockers.length > 0) {
-      reasons.push(`blocked by incomplete task(s): #${blockers.join(', #')}`);
+    // Unmet dependencies — incomplete (not completed/integrated)
+    const incomplete = (getIncompleteBlockersForTask.all(row.id) as { depends_on: number }[]).map(r => r.depends_on);
+    if (incomplete.length > 0) {
+      reasons.push(`blocked by incomplete task(s): #${incomplete.join(', #')}`);
+    }
+
+    // Unmet dependencies — completed on a different agent's branch
+    const wrongBranch = (getWrongBranchBlockersForTask.all(row.id, agent) as { depends_on: number }[]).map(r => r.depends_on);
+    if (wrongBranch.length > 0) {
+      reasons.push(`blocked by work on another branch: #${wrongBranch.join(', #')}`);
     }
 
     return reasons;
   }
 
-  function formatTaskWithFiles(row: TaskRow) {
-    const reasons = blockReasonsForTask(row);
-    return formatTask(row, filesForTask(row.id), depsForTask(row.id), blockersForTask(row.id), reasons);
+  function formatTaskWithFiles(row: TaskRow, agent: string) {
+    const reasons = blockReasonsForTask(row, agent);
+    return formatTask(row, filesForTask(row.id), depsForTask(row.id), blockersForTask(row.id, agent), reasons);
   }
 
   /** Register files and link them to a task. Must be called within a transaction. */
@@ -889,7 +907,183 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     params.push(limitNum);
 
     const rows = db.prepare(sql).all(...params) as TaskRow[];
-    return rows.map(formatTaskWithFiles);
+    const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
+    return rows.map(r => formatTaskWithFiles(r, agent));
+  });
+
+  // Prepared statements for replan
+  const getNonTerminalTasksForReplan = db.prepare(
+    "SELECT id, title, base_priority FROM tasks WHERE status NOT IN ('completed', 'failed', 'integrated')"
+  );
+
+  const getNonTerminalDepsForReplan = db.prepare(
+    `SELECT td.task_id, td.depends_on FROM task_dependencies td
+     JOIN tasks t ON t.id = td.task_id AND t.status NOT IN ('completed','failed','integrated')
+     JOIN tasks dep ON dep.id = td.depends_on AND dep.status NOT IN ('completed','failed','integrated')`
+  );
+
+  const markTaskCycle = db.prepare("UPDATE tasks SET status = 'cycle' WHERE id = ?");
+  const setTaskPriority = db.prepare("UPDATE tasks SET priority = ? WHERE id = ?");
+
+  // POST /tasks/replan — recompute priority via topological sort, detect cycles
+  fastify.post('/tasks/replan', async () => {
+    const rows = getNonTerminalTasksForReplan.all() as { id: number; title: string; base_priority: number }[];
+    if (rows.length === 0) {
+      return { ok: true, replanned: 0, cycles: [], maxPriority: 0, roots: [] };
+    }
+
+    const edges = getNonTerminalDepsForReplan.all() as { task_id: number; depends_on: number }[];
+
+    const nodeMap = new Map<number, { title: string; basePriority: number }>();
+    const inDegree = new Map<number, number>();
+    const dependents = new Map<number, number[]>();
+    const prerequisites = new Map<number, number[]>();
+
+    for (const row of rows) {
+      nodeMap.set(row.id, { title: row.title, basePriority: row.base_priority });
+      inDegree.set(row.id, 0);
+      dependents.set(row.id, []);
+      prerequisites.set(row.id, []);
+    }
+
+    for (const edge of edges) {
+      inDegree.set(edge.task_id, (inDegree.get(edge.task_id) || 0) + 1);
+      dependents.get(edge.depends_on)!.push(edge.task_id);
+      prerequisites.get(edge.task_id)!.push(edge.depends_on);
+    }
+
+    const queue: number[] = [];
+    for (const [id, deg] of inDegree) {
+      if (deg === 0) queue.push(id);
+    }
+    queue.sort((a, b) => a - b);
+
+    const sorted: number[] = [];
+    while (queue.length > 0) {
+      const u = queue.shift()!;
+      sorted.push(u);
+      for (const v of dependents.get(u) || []) {
+        const newDeg = (inDegree.get(v) || 1) - 1;
+        inDegree.set(v, newDeg);
+        if (newDeg === 0) queue.push(v);
+      }
+    }
+
+    const sortedSet = new Set(sorted);
+    const cycleIds = [...nodeMap.keys()].filter(id => !sortedSet.has(id));
+
+    const cycleIdSet = new Set(cycleIds);
+
+    // Tarjan's SCC on the unprocessed subgraph to distinguish actual cycle
+    // members from nodes that are merely downstream of a cycle.
+    const actualCycleIds: number[] = [];
+    {
+      let index = 0;
+      const nodeIndex = new Map<number, number>();
+      const nodeLowlink = new Map<number, number>();
+      const onStack = new Set<number>();
+      const stack: number[] = [];
+
+      function strongconnect(v: number) {
+        nodeIndex.set(v, index);
+        nodeLowlink.set(v, index);
+        index++;
+        stack.push(v);
+        onStack.add(v);
+
+        for (const w of (dependents.get(v) || [])) {
+          if (!cycleIdSet.has(w)) continue;
+          if (!nodeIndex.has(w)) {
+            strongconnect(w);
+            nodeLowlink.set(v, Math.min(nodeLowlink.get(v)!, nodeLowlink.get(w)!));
+          } else if (onStack.has(w)) {
+            nodeLowlink.set(v, Math.min(nodeLowlink.get(v)!, nodeIndex.get(w)!));
+          }
+        }
+
+        if (nodeLowlink.get(v) === nodeIndex.get(v)) {
+          const scc: number[] = [];
+          let w: number;
+          do {
+            w = stack.pop()!;
+            onStack.delete(w);
+            scc.push(w);
+          } while (w !== v);
+          if (scc.length > 1) {
+            actualCycleIds.push(...scc);
+          }
+        }
+      }
+
+      for (const id of cycleIds) {
+        if (!nodeIndex.has(id)) {
+          strongconnect(id);
+        }
+      }
+    }
+
+    const actualCycleIdSet = new Set(actualCycleIds);
+    const visited = new Set<number>();
+    const cycleGroups: { taskIds: number[]; titles: string[] }[] = [];
+
+    for (const startId of actualCycleIds) {
+      if (visited.has(startId)) continue;
+      const group: number[] = [];
+      const bfsQueue = [startId];
+      visited.add(startId);
+      while (bfsQueue.length > 0) {
+        const node = bfsQueue.shift()!;
+        group.push(node);
+        for (const neighbor of [...(dependents.get(node) || []), ...(prerequisites.get(node) || [])]) {
+          if (actualCycleIdSet.has(neighbor) && !visited.has(neighbor)) {
+            visited.add(neighbor);
+            bfsQueue.push(neighbor);
+          }
+        }
+      }
+      group.sort((a, b) => a - b);
+      cycleGroups.push({
+        taskIds: group,
+        titles: group.map(id => nodeMap.get(id)!.title),
+      });
+    }
+
+    const computedPriority = new Map<number, number>();
+    for (const id of sorted) {
+      computedPriority.set(id, nodeMap.get(id)!.basePriority);
+    }
+    for (const id of sorted) {
+      const prereqs = prerequisites.get(id) || [];
+      for (const dep of prereqs) {
+        if (sortedSet.has(dep)) {
+          computedPriority.set(id, computedPriority.get(id)! + computedPriority.get(dep)!);
+        }
+      }
+    }
+
+    const rootIds = sorted.filter(id => {
+      const prereqs = prerequisites.get(id) || [];
+      return prereqs.length === 0;
+    });
+
+    const maxPriority = sorted.length > 0 ? Math.max(...sorted.map(id => computedPriority.get(id)!)) : 0;
+
+    db.transaction(() => {
+      for (const id of actualCycleIds) {
+        markTaskCycle.run(id);
+      }
+      for (const id of sorted) {
+        setTaskPriority.run(computedPriority.get(id)!, id);
+      }
+    })();
+
+    return {
+      ok: true,
+      replanned: sorted.length + actualCycleIds.length,
+      cycles: cycleGroups,
+      maxPriority,
+      roots: rootIds,
+    };
   });
 
   // GET /tasks/:id
@@ -900,7 +1094,8 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if (!row) {
       return reply.notFound('task not found');
     }
-    return formatTaskWithFiles(row);
+    const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
+    return formatTaskWithFiles(row, agent);
   });
 
   // POST /tasks/claim-next — atomically find and claim the best available task
@@ -923,10 +1118,24 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       AND NOT EXISTS (
         SELECT 1 FROM task_dependencies d
         JOIN tasks dep ON dep.id = d.depends_on
-        WHERE d.task_id = t.id AND dep.status != 'completed'
+        WHERE d.task_id = t.id
+          AND NOT (
+            dep.status = 'integrated'
+            OR (dep.status = 'completed' AND json_extract(dep.result, '$.agent') = ?)
+          )
       )
     GROUP BY t.id
-    ORDER BY new_locks ASC, t.priority DESC, t.id ASC
+    ORDER BY
+      CASE WHEN EXISTS (
+        SELECT 1 FROM task_dependencies d
+        JOIN tasks dep ON dep.id = d.depends_on
+        WHERE d.task_id = t.id
+          AND dep.status = 'completed'
+          AND json_extract(dep.result, '$.agent') = ?
+      ) THEN 0 ELSE 1 END ASC,
+      new_locks ASC,
+      t.priority DESC,
+      t.id ASC
     LIMIT 1
   `);
 
@@ -951,7 +1160,11 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       AND EXISTS (
         SELECT 1 FROM task_dependencies d
         JOIN tasks dep ON dep.id = d.depends_on
-        WHERE d.task_id = t.id AND dep.status != 'completed'
+        WHERE d.task_id = t.id
+          AND NOT (
+            dep.status = 'integrated'
+            OR (dep.status = 'completed' AND json_extract(dep.result, '$.agent') = ?)
+          )
       )
   `);
 
@@ -959,7 +1172,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
 
     const result = db.transaction(() => {
-      const candidate = claimNextCandidate.get(agent) as
+      const candidate = claimNextCandidate.get(agent, agent, agent) as
         | { id: number; new_locks: number }
         | undefined;
 
@@ -971,7 +1184,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         // Note: blocked (file-conflict) and depBlocked (dependency) counts may overlap —
         // a single task can be blocked by both reasons. Both fields are kept for diagnostic value.
         const { count: blockedCount } = countBlocked.get(agent) as { count: number };
-        const { count: depBlockedCount } = countDepBlocked.get() as { count: number };
+        const { count: depBlockedCount } = countDepBlocked.get(agent) as { count: number };
         return {
           task: null,
           pending: pendingCount,
@@ -992,7 +1205,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
 
       const row = getTaskById.get({ id: candidate.id }) as TaskRow;
-      return { task: formatTaskWithFiles(row) };
+      return { task: formatTaskWithFiles(row, agent) };
     })();
 
     return result;
@@ -1036,13 +1249,15 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    const blockers = blockersForTask(id);
+    const blockers = blockersForTask(id, agent);
     if (blockers.length > 0) {
+      const blockReasons = blockReasonsForTask(task, agent).filter(r => r.startsWith('blocked by'));
       return reply.code(409).send({
         statusCode: 409,
         error: 'Conflict',
         message: 'Task has unmet dependencies',
         blockedBy: blockers,
+        blockReasons,
       });
     }
 
@@ -1180,6 +1395,10 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
+    if ('priority' in body) {
+      setClauses.push('base_priority = @priority');
+    }
+
     const hasFiles = 'files' in body && Array.isArray(body.files);
     const hasDeps = 'dependsOn' in body && Array.isArray(body.dependsOn);
 
@@ -1276,11 +1495,11 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if (!row) {
       return reply.notFound('task not found');
     }
-    if (row.status !== 'completed' && row.status !== 'failed') {
-      return reply.conflict('task can only be reset when completed or failed');
+    if (row.status !== 'completed' && row.status !== 'failed' && row.status !== 'cycle') {
+      return reply.conflict('task can only be reset when completed, failed, or cycle');
     }
 
-    if (row.source_path) {
+    if (row.source_path && row.status !== 'cycle') {
       const worktree = getValidationWorktree();
       if (!isCommittedInRepo(worktree, row.source_path)) {
         return reply.unprocessableEntity(
@@ -1291,7 +1510,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     const info = resetTask.run({ id });
     if (info.changes === 0) {
-      return reply.conflict('task is no longer completed or failed');
+      return reply.conflict('task is no longer in a resettable state');
     }
     return { ok: true };
   });

@@ -9,7 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (8);
+INSERT OR IGNORE INTO schema_version(version) VALUES (9);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   status              TEXT NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')),
   priority            INTEGER NOT NULL DEFAULT 0,
+  base_priority       INTEGER NOT NULL DEFAULT 0,
   claimed_by          TEXT,
   claimed_at          DATETIME,
   completed_at        DATETIME,
@@ -129,11 +130,11 @@ export function openDb(dbPath: string): Database.Database {
   try { instance.exec("ALTER TABLE build_history ADD COLUMN output TEXT"); } catch { /* column already exists */ }
   try { instance.exec("ALTER TABLE build_history ADD COLUMN stderr TEXT"); } catch { /* column already exists */ }
 
-  // Migration: expand tasks status CHECK constraint (v7 -> v8)
-  // Instead of rebuilding the table (which risks FK corruption from the rename),
-  // rewrite the CHECK constraint in-place via writable_schema.
+  // Migration: expand tasks status CHECK constraint and add base_priority (v7 -> v9)
+  // Uses writable_schema to patch the CHECK constraint in-place (no table rebuild).
   const schemaRow = instance.prepare('SELECT MIN(version) as version FROM schema_version').get() as { version: number } | undefined;
-  if (!schemaRow || schemaRow.version < 8) {
+  if (!schemaRow || schemaRow.version < 9) {
+    // v7→v8: expand CHECK constraint via writable_schema (no table rebuild needed)
     const tasksSchema = instance.prepare(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
     ).get() as { sql: string } | undefined;
@@ -142,16 +143,23 @@ export function openDb(dbPath: string): Database.Database {
       const newCheck = "status IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')";
       if (tasksSchema.sql.includes(oldCheck)) {
         const fixedSql = tasksSchema.sql.replace(oldCheck, newCheck);
-        const escapedSql = fixedSql.replace(/'/g, "''");
-        instance.exec(`PRAGMA writable_schema = ON; UPDATE sqlite_master SET sql = '${escapedSql}' WHERE type = 'table' AND name = 'tasks'; PRAGMA writable_schema = OFF;`);
-        // Bump schema cookie to force SQLite to reload its internal schema cache
+        instance.unsafeMode(true);
+        instance.pragma('writable_schema = ON');
+        instance.prepare("UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'tasks'").run(fixedSql);
+        instance.pragma('writable_schema = OFF');
+        instance.unsafeMode(false);
+        // Force SQLite to reload the schema after writable_schema modification
         const sv = (instance.pragma('schema_version', { simple: true }) as number) || 0;
         instance.pragma(`schema_version = ${sv + 1}`);
       }
     }
-    // Clean up the dual version rows: SCHEMA_SQL inserted 8, old DB had 7
-    instance.exec('DELETE FROM schema_version WHERE version < 8');
-    console.log('[db] Migrated tasks CHECK constraint to v8 (integrated, cycle)');
+
+    // v8→v9: add base_priority column
+    try { instance.exec("ALTER TABLE tasks ADD COLUMN base_priority INTEGER NOT NULL DEFAULT 0"); } catch (e: any) { console.log('[db] ALTER TABLE base_priority:', e.message); }
+    instance.exec('UPDATE tasks SET base_priority = priority WHERE base_priority = 0 AND priority != 0');
+
+    instance.exec('DELETE FROM schema_version WHERE version < 9');
+    console.log('[db] Migrated to v9');
   }
 
   db = instance;

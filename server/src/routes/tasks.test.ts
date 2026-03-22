@@ -1719,7 +1719,7 @@ describe('targetAgents / merge into agent branches', () => {
       });
       const depTaskId = r2.json().id;
 
-      // Claim and complete the prereq
+      // Claim and complete the prereq (same agent will claim the dependent)
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${prereqId}/claim`,
@@ -1728,14 +1728,14 @@ describe('targetAgents / merge into agent branches', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${prereqId}/complete`,
-        payload: { result: { done: true } },
+        payload: { result: { done: true, agent: 'agent-1' } },
       });
 
-      // Now claim-next should pick up the dependent task
+      // Now claim-next as same agent should pick up the dependent task
       const claim = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 200);
       assert.ok(claim.json().task);
@@ -1768,7 +1768,7 @@ describe('targetAgents / merge into agent branches', () => {
       assert.deepEqual(body.blockedBy, [blockerId]);
     });
 
-    it('POST /tasks/:id/claim succeeds when all dependencies completed', async () => {
+    it('POST /tasks/:id/claim succeeds when all dependencies completed by same agent', async () => {
       const r1 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
@@ -1783,7 +1783,7 @@ describe('targetAgents / merge into agent branches', () => {
       });
       const taskId = r2.json().id;
 
-      // Complete prereq
+      // Complete prereq as agent-1
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${prereqId}/claim`,
@@ -1792,13 +1792,14 @@ describe('targetAgents / merge into agent branches', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${prereqId}/complete`,
-        payload: { result: { done: true } },
+        payload: { result: { done: true, agent: 'agent-1' } },
       });
 
+      // Claim as same agent (agent-1) — branch-aware: dep completed by same agent is met
       const claim = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${taskId}/claim`,
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 200);
       assert.deepEqual(claim.json(), { ok: true });
@@ -1862,7 +1863,7 @@ describe('targetAgents / merge into agent branches', () => {
       assert.deepEqual(task.dependsOn, [parentId]);
       assert.deepEqual(task.blockedBy, [parentId]);
 
-      // Complete parent, blockedBy should become empty
+      // Complete parent with agent tag, blockedBy should become empty for same agent
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${parentId}/claim`,
@@ -1871,10 +1872,15 @@ describe('targetAgents / merge into agent branches', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${parentId}/complete`,
-        payload: { result: {} },
+        payload: { result: { agent: 'agent-1' } },
       });
 
-      const get2 = await ctx.app.inject({ method: 'GET', url: `/tasks/${childId}` });
+      // GET as agent-1 (who completed the parent) — blockedBy should be empty
+      const get2 = await ctx.app.inject({
+        method: 'GET',
+        url: `/tasks/${childId}`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
       const task2 = get2.json();
       assert.deepEqual(task2.dependsOn, [parentId]);
       assert.deepEqual(task2.blockedBy, []);
@@ -1958,36 +1964,40 @@ describe('targetAgents / merge into agent branches', () => {
       });
       const taskId = r3.json().id;
 
-      // Complete only dep1
+      // Complete only dep1 as agent-1
       await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/complete`, payload: { result: { done: true } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/complete`, payload: { result: { done: true, agent: 'agent-1' } } });
 
-      // blockedBy should only contain dep2 now
-      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+      // blockedBy (viewed as agent-1) should only contain dep2 now
+      const get = await ctx.app.inject({
+        method: 'GET',
+        url: `/tasks/${taskId}`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
       const task = get.json();
       assert.deepEqual(task.dependsOn.sort(), [dep1, dep2].sort());
       assert.deepEqual(task.blockedBy, [dep2]);
 
-      // claim should still fail
+      // claim as agent-1 should still fail (dep2 is still pending)
       const claim = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${taskId}/claim`,
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 409);
       assert.deepEqual(claim.json().blockedBy, [dep2]);
 
-      // claim-next should not return the blocked task (should return dep2 instead)
+      // claim-next as agent-1 should not return the blocked task (should return dep2 instead)
       const claimNext = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-agent-name': 'agent-1' },
       });
       assert.equal(claimNext.statusCode, 200);
       assert.equal(claimNext.json().task.title, 'Dep 2');
     });
 
-    it('full lifecycle: complete dependency then claim dependent task', async () => {
+    it('full lifecycle: complete dependency then claim dependent task (same agent)', async () => {
       // Create prerequisite
       const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Prerequisite' } });
       const prereqId = r1.json().id;
@@ -2008,25 +2018,29 @@ describe('targetAgents / merge into agent branches', () => {
       });
       assert.equal(claim1.statusCode, 409);
 
-      // Claim, update, complete the prerequisite
+      // Claim, update, complete the prerequisite as agent-1
       await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
       await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/update`, payload: { progress: 'Working on it' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/complete`, payload: { result: { summary: 'All done' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/complete`, payload: { result: { summary: 'All done', agent: 'agent-1' } } });
 
-      // Now the dependent task should be claimable
+      // Now the dependent task should be claimable by the same agent
       const claim2 = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${depId}/claim`,
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim2.statusCode, 200);
       assert.deepEqual(claim2.json(), { ok: true });
 
-      // Verify the claimed state
-      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${depId}` });
+      // Verify the claimed state (pass agent-1 header so blockedBy is evaluated from agent-1's perspective)
+      const get = await ctx.app.inject({
+        method: 'GET',
+        url: `/tasks/${depId}`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
       const task = get.json();
       assert.equal(task.status, 'claimed');
-      assert.equal(task.claimedBy, 'agent-2');
+      assert.equal(task.claimedBy, 'agent-1');
       assert.deepEqual(task.dependsOn, [prereqId]);
       assert.deepEqual(task.blockedBy, []);
     });
@@ -2434,7 +2448,7 @@ describe('targetAgents / merge into agent branches', () => {
         assert.ok(before.blockReasons.length > 0, 'Should be blocked before prereq completes');
         assert.ok(before.blockReasons.some((r: string) => r.includes('blocked by incomplete task(s)')));
 
-        // Now complete the prereq
+        // Now complete the prereq as agent-resolver
         await ctx.app.inject({
           method: 'POST',
           url: `/tasks/${prereqId}/claim`,
@@ -2443,15 +2457,349 @@ describe('targetAgents / merge into agent branches', () => {
         await ctx.app.inject({
           method: 'POST',
           url: `/tasks/${prereqId}/complete`,
-          payload: { result: { done: true } },
+          payload: { result: { done: true, agent: 'agent-resolver' } },
         });
 
-        // Re-fetch the dependent task -- block reason should be gone
-        const getAfter = await ctx.app.inject({ method: 'GET', url: `/tasks/${waiterId}` });
+        // Re-fetch the dependent task as agent-resolver -- block reason should be gone
+        const getAfter = await ctx.app.inject({
+          method: 'GET',
+          url: `/tasks/${waiterId}`,
+          headers: { 'x-agent-name': 'agent-resolver' },
+        });
         const after = getAfter.json();
         assert.equal(after.status, 'pending');
-        assert.deepEqual(after.blockReasons, [], 'Block reasons should be empty after prereq is completed');
+        assert.deepEqual(after.blockReasons, [], 'Block reasons should be empty after prereq is completed by same agent');
       });
+    });
+
+    it('claim-next prefers chain continuation over higher priority independent task', async () => {
+      // Create task A (priority 5, no deps)
+      const rA = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Task A', priority: 5 },
+      });
+      const idA = rA.json().id;
+
+      // Create task B (priority 5, depends on A)
+      const rB = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Task B', priority: 5, dependsOn: [idA] },
+      });
+      const idB = rB.json().id;
+
+      // Create task C (priority 10, no deps)
+      const rC = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Task C', priority: 10 },
+      });
+      const idC = rC.json().id;
+
+      // Agent-1 claims A and completes it with result.agent = 'agent-1'
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${idA}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${idA}/complete`,
+        payload: { result: { summary: 'done', agent: 'agent-1' } },
+      });
+
+      // claim-next as agent-1 should return B (chain continuation beats C's higher priority)
+      const claim1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim1.statusCode, 200);
+      assert.equal(claim1.json().task.id, idB, 'agent-1 should get task B (chain continuation)');
+      assert.equal(claim1.json().task.title, 'Task B');
+
+      // claim-next as agent-2 should return C (B is already claimed, C is highest priority remaining)
+      const claim2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(claim2.statusCode, 200);
+      assert.equal(claim2.json().task.id, idC, 'agent-2 should get task C');
+      assert.equal(claim2.json().task.title, 'Task C');
+    });
+
+    it('integrated deps resume normal priority ordering', async () => {
+      // Create task A (priority 5, no deps)
+      const rA = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Task A', priority: 5 },
+      });
+      const idA = rA.json().id;
+
+      // Create task B (priority 5, depends on A)
+      const rB = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Task B', priority: 5, dependsOn: [idA] },
+      });
+      const idB = rB.json().id;
+
+      // Create task C (priority 10, no deps)
+      const rC = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Task C', priority: 10 },
+      });
+      const idC = rC.json().id;
+
+      // Agent-1 claims A, completes it, then integrates it
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${idA}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${idA}/complete`,
+        payload: { result: { summary: 'done', agent: 'agent-1' } },
+      });
+      const intRes = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${idA}/integrate`,
+      });
+      assert.equal(intRes.statusCode, 200, 'integrate should succeed');
+
+      // claim-next as agent-1: A is integrated, so preference tier does NOT fire.
+      // Normal priority ordering applies: C (priority 10) beats B (priority 5).
+      const claim1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim1.statusCode, 200);
+      assert.equal(claim1.json().task.id, idC, 'agent-1 should get task C (higher priority, no chain preference after integrate)');
+      assert.equal(claim1.json().task.title, 'Task C');
+    });
+  });
+
+  describe('branch-aware dependency resolution', () => {
+    it('agent-2 cannot claim task whose dep was completed by agent-1', async () => {
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } });
+      const depId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Blocked task', dependsOn: [depId] },
+      });
+      const blockedId = r2.json().id;
+
+      // Complete dep as agent-1
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } });
+
+      // agent-2 tries to claim the blocked task — should be denied (work on another branch)
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${blockedId}/claim`,
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(claim.statusCode, 409);
+      assert.equal(claim.json().message, 'Task has unmet dependencies');
+    });
+
+    it('agent-1 can claim task whose dep was completed by agent-1', async () => {
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } });
+      const depId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Blocked task', dependsOn: [depId] },
+      });
+      const blockedId = r2.json().id;
+
+      // Complete dep as agent-1
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } });
+
+      // agent-1 claims the blocked task — should succeed (same branch)
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${blockedId}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim.statusCode, 200);
+      assert.deepEqual(claim.json(), { ok: true });
+    });
+
+    it('any agent can claim task whose dep is integrated', async () => {
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } });
+      const depId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Blocked task', dependsOn: [depId] },
+      });
+      const blockedId = r2.json().id;
+
+      // Complete dep as agent-1, then integrate it
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/integrate` });
+
+      // agent-2 claims the blocked task — should succeed (dep is integrated, available to all)
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${blockedId}/claim`,
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(claim.statusCode, 200);
+      assert.deepEqual(claim.json(), { ok: true });
+    });
+
+    it('mixed deps: one integrated + one completed by requesting agent is claimable', async () => {
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 1' } });
+      const dep1 = r1.json().id;
+      const r2 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 2' } });
+      const dep2 = r2.json().id;
+
+      const r3 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Needs both', dependsOn: [dep1, dep2] },
+      });
+      const taskId = r3.json().id;
+
+      // Complete dep1 as agent-1 and integrate it
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/complete`, payload: { result: { agent: 'agent-1' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/integrate` });
+
+      // Complete dep2 as agent-1 (not integrated)
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/complete`, payload: { result: { agent: 'agent-1' } } });
+
+      // agent-1 claims — should succeed (dep1 integrated, dep2 completed by same agent)
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${taskId}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim.statusCode, 200);
+      assert.deepEqual(claim.json(), { ok: true });
+    });
+
+    it('mixed deps: one integrated + one completed by different agent is not claimable', async () => {
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 1' } });
+      const dep1 = r1.json().id;
+      const r2 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 2' } });
+      const dep2 = r2.json().id;
+
+      const r3 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Needs both', dependsOn: [dep1, dep2] },
+      });
+      const taskId = r3.json().id;
+
+      // dep1: completed by agent-1, integrated
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/complete`, payload: { result: { agent: 'agent-1' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/integrate` });
+
+      // dep2: completed by agent-1 (not integrated)
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/complete`, payload: { result: { agent: 'agent-1' } } });
+
+      // agent-2 tries to claim — should fail (dep2 completed by agent-1, not integrated)
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${taskId}/claim`,
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(claim.statusCode, 409);
+      const body = claim.json();
+      assert.ok(body.blockReasons.some((r: string) => r.includes('blocked by work on another branch')));
+      // Should NOT say "blocked by incomplete" — dep2 IS completed, just on the wrong branch
+      assert.ok(!body.blockReasons.some((r: string) => r.includes('blocked by incomplete')));
+    });
+
+    it('claim-next skips task whose dep was completed by different agent', async () => {
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } });
+      const depId = r1.json().id;
+
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Blocked task', dependsOn: [depId] },
+      });
+
+      // Complete dep as agent-1
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } });
+
+      // claim-next as agent-2 — should not return the blocked task
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-2' },
+      });
+      assert.equal(claim.statusCode, 200);
+      assert.equal(claim.json().task, null);
+    });
+
+    it('claim-next returns task when dep completed by same agent', async () => {
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } });
+      const depId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Blocked task', dependsOn: [depId] },
+      });
+      const blockedId = r2.json().id;
+
+      // Complete dep as agent-1
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } });
+
+      // claim-next as agent-1 — should return the blocked task
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim.statusCode, 200);
+      assert.ok(claim.json().task);
+      assert.equal(claim.json().task.id, blockedId);
+    });
+
+    it('blockedBy in 409 response includes blockReasons distinguishing branch vs incomplete', async () => {
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending dep' } });
+      const pendingDepId = r1.json().id;
+
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Blocked task', dependsOn: [pendingDepId] },
+      });
+      const blockedId = r2.json().id;
+
+      // Claim the blocked task while dep is still pending — should get "blocked by incomplete"
+      const claim = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${blockedId}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claim.statusCode, 409);
+      const body = claim.json();
+      assert.ok(body.blockReasons.some((r: string) => r.includes('blocked by incomplete task(s)')));
+      assert.ok(body.blockReasons.some((r: string) => r.includes(`#${pendingDepId}`)));
     });
   });
 
@@ -2488,14 +2836,14 @@ describe('targetAgents / merge into agent branches', () => {
       }
     });
 
-    it('schema_version is 8 on fresh database', () => {
+    it('schema_version is 9 on fresh database', () => {
       const row = db.prepare('SELECT version FROM schema_version').get() as { version: number };
-      assert.equal(row.version, 8);
+      assert.equal(row.version, 9);
     });
   });
 
-  describe('v7 to v8 migration', () => {
-    it('openDb on a v7 database migrates CHECK constraint via writable_schema to v8', () => {
+  describe('v7 to v9 migration', () => {
+    it('openDb on a v7 database migrates CHECK constraint via writable_schema to v9', () => {
       const v7TmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-v7-'));
       const v7DbPath = path.join(v7TmpDir, 'v7.db');
       const v7db = new Database(v7DbPath);
@@ -2611,11 +2959,17 @@ describe('targetAgents / merge into agent branches', () => {
       v7db.close();
 
       // Run openDb which should migrate via writable_schema
-      const migratedDb = openDb(v7DbPath);
+      let migratedDb: ReturnType<typeof openDb>;
+      try {
+        migratedDb = openDb(v7DbPath);
+      } catch (e: any) {
+        console.error('openDb failed:', e.message, e.code);
+        throw e;
+      }
 
-      // 1. schema_version bumped to 8 (old version 7 row deleted)
+      // 1. schema_version bumped to 9 (old version 7 row deleted)
       const row = migratedDb.prepare('SELECT version FROM schema_version').get() as any;
-      assert.strictEqual(row.version, 8, 'Schema version should be 8 after migration');
+      assert.strictEqual(row.version, 9, 'Schema version should be 9 after migration');
 
       // 2. Existing data survived
       const task = migratedDb.prepare("SELECT title, status FROM tasks WHERE title = 'Existing task'").get() as any;
@@ -2642,6 +2996,11 @@ describe('targetAgents / merge into agent branches', () => {
       ).get() as any;
       assert.ok(schema.sql.includes("'integrated'"), 'CHECK constraint should include integrated');
       assert.ok(schema.sql.includes("'cycle'"), 'CHECK constraint should include cycle');
+
+      // 6. Verify base_priority column was added by migration
+      migratedDb.prepare("INSERT INTO tasks (title, priority, base_priority) VALUES ('bp test', 5, 5)").run();
+      const bpTask = migratedDb.prepare("SELECT base_priority FROM tasks WHERE title = 'bp test'").get() as any;
+      assert.strictEqual(bpTask.base_priority, 5, 'base_priority column should exist after migration');
 
       migratedDb.close();
 
@@ -2814,6 +3173,231 @@ describe('targetAgents / merge into agent branches', () => {
       const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
       const task = get.json();
       assert.equal(task.completedBy, null);
+    });
+  });
+
+  describe('POST /tasks/replan', () => {
+    /** Helper: create a task and return its id */
+    async function createTask(title: string, priority?: number, dependsOn?: number[]): Promise<number> {
+      const payload: Record<string, unknown> = { title };
+      if (priority !== undefined) payload.priority = priority;
+      if (dependsOn !== undefined) payload.dependsOn = dependsOn;
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks', payload });
+      assert.equal(res.statusCode, 200, `createTask '${title}' failed: ${res.body}`);
+      return res.json().id;
+    }
+
+    /** Helper: add a dependency edge via direct DB insert (needed for cycles) */
+    function addDep(taskId: number, dependsOn: number): void {
+      db.prepare('INSERT OR IGNORE INTO task_dependencies (task_id, depends_on) VALUES (?, ?)').run(taskId, dependsOn);
+    }
+
+    it('empty queue returns zero counts', async () => {
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.deepEqual(body, { ok: true, replanned: 0, cycles: [], maxPriority: 0, roots: [] });
+    });
+
+    it('tasks with no dependencies returns all as roots with unchanged priorities', async () => {
+      const idA = await createTask('A', 1);
+      const idB = await createTask('B', 2);
+      const idC = await createTask('C', 3);
+
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+
+      assert.equal(body.ok, true);
+      assert.equal(body.replanned, 3);
+      assert.deepEqual(body.cycles, []);
+      assert.deepEqual(body.roots.sort((a: number, b: number) => a - b), [idA, idB, idC].sort((a, b) => a - b));
+
+      // Verify priorities unchanged by fetching each task
+      const tA = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` })).json();
+      const tB = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idB}` })).json();
+      const tC = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idC}` })).json();
+      assert.equal(tA.priority, 1);
+      assert.equal(tB.priority, 2);
+      assert.equal(tC.priority, 3);
+    });
+
+    it('detects three-node cycle A->B->C->A', async () => {
+      const idA = await createTask('A', 1);
+      const idB = await createTask('B', 1);
+      const idC = await createTask('C', 1);
+
+      // A depends on B, B depends on C, C depends on A
+      addDep(idA, idB);
+      addDep(idB, idC);
+      addDep(idC, idA);
+
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+
+      // All three should be in a cycle
+      const tA = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` })).json();
+      const tB = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idB}` })).json();
+      const tC = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idC}` })).json();
+      assert.equal(tA.status, 'cycle');
+      assert.equal(tB.status, 'cycle');
+      assert.equal(tC.status, 'cycle');
+
+      assert.equal(body.cycles.length, 1);
+      const cycleTaskIds = body.cycles[0].taskIds.sort((a: number, b: number) => a - b);
+      assert.deepEqual(cycleTaskIds, [idA, idB, idC].sort((a, b) => a - b));
+    });
+
+    it('detects direct mutual cycle A<->B', async () => {
+      const idA = await createTask('A', 1);
+      const idB = await createTask('B', 1);
+
+      // A depends on B, B depends on A
+      addDep(idA, idB);
+      addDep(idB, idA);
+
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+
+      const tA = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` })).json();
+      const tB = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idB}` })).json();
+      assert.equal(tA.status, 'cycle');
+      assert.equal(tB.status, 'cycle');
+
+      assert.equal(body.cycles.length, 1);
+      const cycleTaskIds = body.cycles[0].taskIds.sort((a: number, b: number) => a - b);
+      assert.deepEqual(cycleTaskIds, [idA, idB].sort((a, b) => a - b));
+    });
+
+    it('does not affect acyclic tasks when cycle exists', async () => {
+      const idA = await createTask('A', 1);
+      const idB = await createTask('B', 1);
+      const idC = await createTask('C', 5);
+
+      // A<->B cycle, C is independent
+      addDep(idA, idB);
+      addDep(idB, idA);
+
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+      assert.equal(res.statusCode, 200);
+
+      const tA = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` })).json();
+      const tB = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idB}` })).json();
+      const tC = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idC}` })).json();
+      assert.equal(tA.status, 'cycle');
+      assert.equal(tB.status, 'cycle');
+      assert.equal(tC.status, 'pending');
+    });
+
+    it('priority accumulation through chain', async () => {
+      // Leaf (p=10, no deps) <- Middle (p=0, depends on Leaf) <- Root (p=0, depends on Middle)
+      const idLeaf = await createTask('Leaf', 10);
+      const idMiddle = await createTask('Middle', 0, [idLeaf]);
+      const idRoot = await createTask('Root', 0, [idMiddle]);
+
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+      assert.equal(res.statusCode, 200);
+
+      const tLeaf = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idLeaf}` })).json();
+      const tMiddle = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idMiddle}` })).json();
+      const tRoot = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idRoot}` })).json();
+
+      assert.equal(tLeaf.priority, 10);
+      assert.equal(tMiddle.priority, 10); // 0 + 10 from Leaf
+      assert.equal(tRoot.priority, 10);   // 0 + 10 from Middle
+    });
+
+    it('idempotent: calling twice returns same priorities', async () => {
+      const idLeaf = await createTask('Leaf', 10);
+      const idMiddle = await createTask('Middle', 0, [idLeaf]);
+      const idRoot = await createTask('Root', 0, [idMiddle]);
+
+      // First replan
+      await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+      const tLeaf1 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idLeaf}` })).json();
+      const tMiddle1 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idMiddle}` })).json();
+      const tRoot1 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idRoot}` })).json();
+
+      // Second replan
+      await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+      const tLeaf2 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idLeaf}` })).json();
+      const tMiddle2 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idMiddle}` })).json();
+      const tRoot2 = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idRoot}` })).json();
+
+      assert.equal(tLeaf1.priority, tLeaf2.priority);
+      assert.equal(tMiddle1.priority, tMiddle2.priority);
+      assert.equal(tRoot1.priority, tRoot2.priority);
+    });
+
+    it('reset accepts cycle status', async () => {
+      const idA = await createTask('A', 1);
+      const idB = await createTask('B', 1);
+
+      // Create mutual cycle
+      addDep(idA, idB);
+      addDep(idB, idA);
+
+      await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+
+      // Verify cycle status
+      const tA = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` })).json();
+      assert.equal(tA.status, 'cycle');
+
+      // Reset one of the cycle tasks
+      const resetRes = await ctx.app.inject({ method: 'POST', url: `/tasks/${idA}/reset` });
+      assert.equal(resetRes.statusCode, 200);
+      assert.equal(resetRes.json().ok, true);
+
+      const tAReset = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` })).json();
+      assert.equal(tAReset.status, 'pending');
+    });
+
+    it('task downstream of a cycle is not marked cycle', async () => {
+      const idA = await createTask('A', 1);
+      const idB = await createTask('B', 1, [idA]);
+      const idC = await createTask('C', 1, [idA]); // C depends on A (downstream of cycle)
+
+      // Create mutual cycle: A depends on B, B already depends on A
+      addDep(idA, idB);
+
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+      assert.equal(res.statusCode, 200);
+
+      const tA = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` })).json();
+      const tB = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idB}` })).json();
+      const tC = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idC}` })).json();
+
+      assert.equal(tA.status, 'cycle', 'A should be in cycle');
+      assert.equal(tB.status, 'cycle', 'B should be in cycle');
+      assert.equal(tC.status, 'pending', 'C depends on a cycle member but is not itself cyclic');
+    });
+
+    it('claim-next skips cycle-status tasks', async () => {
+      // Create a cycle pair
+      const idA = await createTask('CycleA', 1);
+      const idB = await createTask('CycleB', 1);
+      addDep(idA, idB);
+      addDep(idB, idA);
+
+      // Create a clean pending task
+      const idC = await createTask('CleanTask', 5);
+
+      // Replan to mark A and B as cycle
+      await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+
+      // claim-next should return the clean task, not the cycle ones
+      const claimRes = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      assert.equal(claimRes.statusCode, 200);
+      const body = claimRes.json();
+      assert.ok(body.task, 'expected a task to be claimed');
+      assert.equal(body.task.id, idC);
+      assert.equal(body.task.title, 'CleanTask');
     });
   });
 });
