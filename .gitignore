@@ -28,3 +28,9 @@ container/docker-compose.yml
 # Ingestion state
 .ingest-state.json
 /.claude/
+
+# Python cache
+__pycache__/
+
+# Obsidian
+.obsidian/
