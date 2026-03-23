@@ -1,7 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { execFileSync } from 'node:child_process';
 import type { ScaffoldConfig } from '../config.js';
-import { mergeIntoBranch } from '../git-utils.js';
+import { syncExteriorToBareRepo, mergeIntoBranch } from '../git-utils.js';
 import { db } from '../db.js';
 
 interface SyncOpts {
@@ -37,59 +36,19 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
     }
 
     const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
-    const tempRef = '_sync/exterior';
 
-    // Step 1: Resolve exterior repo's HEAD
-    let exteriorHead: string;
-    try {
-      exteriorHead = execFileSync('git', ['-C', exteriorRepo, 'rev-parse', 'HEAD'], {
-        encoding: 'utf-8',
-        timeout: 5000,
-      }).trim();
-    } catch (err: any) {
-      return reply.code(422).send({
-        statusCode: 422,
-        error: 'Unprocessable Entity',
-        message: `Failed to resolve HEAD in exterior repo: ${err.message}`,
-      });
-    }
+    const syncResult = syncExteriorToBareRepo(exteriorRepo, bareRepo, planBranch, fastify.log);
 
-    // Step 2: Fetch exterior HEAD into a temp branch in the bare repo
-    try {
-      execFileSync('git', [
-        '-C', bareRepo, 'fetch', exteriorRepo,
-        `+${exteriorHead}:refs/heads/${tempRef}`,
-      ], { timeout: 30_000 });
-    } catch (err: any) {
-      return reply.code(422).send({
-        statusCode: 422,
-        error: 'Unprocessable Entity',
-        message: `Failed to fetch from exterior repo: ${err.message}`,
-      });
-    }
-
-    // Step 3: Merge temp branch into plan branch
-    let mergeResult: ReturnType<typeof mergeIntoBranch>;
-    try {
-      mergeResult = mergeIntoBranch(bareRepo, tempRef, planBranch);
-    } finally {
-      // Clean up temp branch regardless of outcome
-      try {
-        execFileSync('git', ['-C', bareRepo, 'update-ref', '-d', `refs/heads/${tempRef}`], {
-          timeout: 5000,
-        });
-      } catch { /* best effort */ }
-    }
-
-    if (!mergeResult.ok) {
+    if (!syncResult.ok) {
       return reply.code(409).send({
         ok: false,
-        exteriorHead,
-        reason: mergeResult.reason,
+        reason: syncResult.reason,
       });
     }
 
-    // Step 4: Optionally merge plan branch into agent branches
+    const { exteriorHead, commitSha } = syncResult;
+
+    // Optionally merge plan branch into agent branches
     const { targetAgents } = request.body ?? {};
     const mergedAgents: string[] = [];
     const failedMerges: Array<{ agent: string; reason: string }> = [];
@@ -121,7 +80,7 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
     return {
       ok: true,
       exteriorHead,
-      ...(mergeResult.commitSha ? { commitSha: mergeResult.commitSha } : { upToDate: true }),
+      ...(commitSha ? { commitSha } : { upToDate: true }),
       ...(mergedAgents.length ? { mergedAgents } : {}),
       ...(failedMerges.length ? { failedMerges } : {}),
     };

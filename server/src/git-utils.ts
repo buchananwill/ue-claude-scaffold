@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import type { FastifyBaseLogger } from 'fastify';
 
 /**
  * Check whether a file path is committed (tracked in HEAD) at a given repo path.
@@ -33,6 +34,64 @@ export function existsInBareRepo(bareRepoPath: string, branch: string, filePath:
   } catch {
     return false;
   }
+}
+
+/**
+ * Sync the exterior repo's HEAD into the bare repo's plan branch.
+ * This is the core logic behind POST /sync/plans, extracted so task
+ * creation endpoints can auto-sync before validating sourcePath.
+ *
+ * Returns { ok: true } if the sync succeeded (or was already up-to-date),
+ * or { ok: false, reason } on failure.
+ */
+export function syncExteriorToBareRepo(
+  exteriorRepo: string,
+  bareRepo: string,
+  planBranch: string,
+  log?: FastifyBaseLogger,
+): { ok: true; exteriorHead: string; commitSha?: string } | { ok: false; reason: string } {
+  const tempRef = '_sync/exterior';
+
+  // Resolve exterior repo's HEAD
+  let exteriorHead: string;
+  try {
+    exteriorHead = execFileSync('git', ['-C', exteriorRepo, 'rev-parse', 'HEAD'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+  } catch (err: any) {
+    return { ok: false, reason: `Failed to resolve HEAD in exterior repo: ${err.message}` };
+  }
+
+  // Fetch exterior HEAD into a temp branch in the bare repo
+  try {
+    execFileSync('git', [
+      '-C', bareRepo, 'fetch', exteriorRepo,
+      `+${exteriorHead}:refs/heads/${tempRef}`,
+    ], { timeout: 30_000 });
+  } catch (err: any) {
+    return { ok: false, reason: `Failed to fetch from exterior repo: ${err.message}` };
+  }
+
+  // Merge temp branch into plan branch
+  let mergeResult: ReturnType<typeof mergeIntoBranch>;
+  try {
+    mergeResult = mergeIntoBranch(bareRepo, tempRef, planBranch);
+  } finally {
+    // Clean up temp branch regardless of outcome
+    try {
+      execFileSync('git', ['-C', bareRepo, 'update-ref', '-d', `refs/heads/${tempRef}`], {
+        timeout: 5000,
+      });
+    } catch { /* best effort */ }
+  }
+
+  if (!mergeResult.ok) {
+    return { ok: false, reason: mergeResult.reason };
+  }
+
+  log?.info(`Auto-synced exterior repo (${exteriorHead.slice(0, 8)}) into ${planBranch}`);
+  return { ok: true, exteriorHead, commitSha: mergeResult.commitSha };
 }
 
 export function mergeIntoBranch(

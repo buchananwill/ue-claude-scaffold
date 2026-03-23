@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
-import { mergeIntoBranch, isCommittedInRepo, existsInBareRepo } from '../git-utils.js';
+import { mergeIntoBranch, isCommittedInRepo, existsInBareRepo, syncExteriorToBareRepo } from '../git-utils.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
 import { initTasksSharedStatements, type TasksOpts, type TaskBody, type PatchBody, type TasksSharedStatements } from './tasks-files.js';
 import { taskBodyKeys, patchBodyKeys } from './tasks-files.js';
@@ -78,18 +78,26 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       });
     }
 
-    // Validate sourcePath exists in bare repo (plans must be synced via POST /sync/plans first)
+    // Validate sourcePath exists — auto-sync from exterior repo if not found in bare repo
     if (sourcePath) {
       const bareRepo = config.server.bareRepoPath;
       if (bareRepo) {
         const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
         if (!existsInBareRepo(bareRepo, planBranch, sourcePath)) {
-          return reply.code(422).send({
-            statusCode: 422,
-            error: 'Unprocessable Entity',
-            message: `sourcePath '${sourcePath}' not found on branch '${planBranch}' in bare repo. ` +
-              `Commit the plan in the exterior repo, then call POST /sync/plans to sync.`,
-          });
+          // Auto-sync from exterior repo before rejecting
+          const exteriorRepo = config.project.path;
+          if (exteriorRepo) {
+            syncExteriorToBareRepo(exteriorRepo, bareRepo, planBranch, fastify.log);
+          }
+          // Re-check after sync
+          if (!existsInBareRepo(bareRepo, planBranch, sourcePath)) {
+            return reply.code(422).send({
+              statusCode: 422,
+              error: 'Unprocessable Entity',
+              message: `sourcePath '${sourcePath}' not found on branch '${planBranch}' in bare repo. ` +
+                `Commit the plan in the exterior repo and retry.`,
+            });
+          }
         }
       } else {
         const worktree = getValidationWorktree();
@@ -196,6 +204,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       return reply.badRequest('tasks must be a non-empty array');
     }
 
+    // Track whether we've already attempted auto-sync for this batch
+    let batchSynced = false;
+
     // Validate all tasks before inserting any
     for (let i = 0; i < tasks.length; i++) {
       const t = tasks[i];
@@ -253,12 +264,23 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         if (bareRepo) {
           const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
           if (!existsInBareRepo(bareRepo, planBranch, t.sourcePath)) {
-            return reply.code(422).send({
-              statusCode: 422,
-              error: 'Unprocessable Entity',
-              message: `Task ${i}: sourcePath '${t.sourcePath}' not found on branch '${planBranch}' in bare repo. ` +
-                `Commit the plan in the exterior repo, then call POST /sync/plans to sync.`,
-            });
+            // Auto-sync from exterior repo on first miss (once per batch)
+            if (!batchSynced) {
+              const exteriorRepo = config.project.path;
+              if (exteriorRepo) {
+                syncExteriorToBareRepo(exteriorRepo, bareRepo, planBranch, fastify.log);
+              }
+              batchSynced = true;
+            }
+            // Re-check after sync
+            if (!existsInBareRepo(bareRepo, planBranch, t.sourcePath)) {
+              return reply.code(422).send({
+                statusCode: 422,
+                error: 'Unprocessable Entity',
+                message: `Task ${i}: sourcePath '${t.sourcePath}' not found on branch '${planBranch}' in bare repo. ` +
+                  `Commit the plan in the exterior repo and retry.`,
+              });
+            }
           }
         } else {
           const worktree = getValidationWorktree();
