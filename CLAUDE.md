@@ -67,6 +67,7 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `GET /messages`, `POST /messages`, `GET /messages/{channel}`, `POST /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve` — SQLite-backed message board for agent progress
    - UBT lock (`GET /ubt/status`, `POST /ubt/acquire`, `POST /ubt/release`) — singleton mutex with priority queue and stale-lock sweeping (60s interval)
    - `/tasks/*` — task queue with claim/complete/fail/release lifecycle for worker mode
+   - `POST /sync/plans` — merge committed state from the exterior repo into the bare repo's `docker/current-root` branch; optionally propagates to agent branches via `targetAgents` body param
    - `GET /search` — full-text search across tasks, messages, agents
    - `GET /files` — file ownership registry (tracks which agent owns which files)
    - `/coalesce/*` — system-wide coordination: pause pump agents, wait for in-flight tasks, release file ownership
@@ -78,17 +79,19 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
 ### Git Data Flow
 
 ```
-Host Project → [bare repo] ← Container (clone/push)
-                   │
-          docker/current-root   ← integration branch; user pushes here
-          docker/agent-1        ← agent-1's working branch
-          docker/agent-2        ← agent-2's working branch
-                   │
-          Server fetches agent branch → Staging Worktree → Build/Test
+Host Project (exterior repo) → POST /sync/plans → [bare repo] ← Container (clone/push)
+                                                       │
+                                          docker/current-root   ← integration branch; synced from exterior repo
+                                          docker/agent-1        ← agent-1's working branch
+                                          docker/agent-2        ← agent-2's working branch
+                                                       │
+                                          Server fetches agent branch → Staging Worktree → Build/Test
 ```
 
 Containers clone from `docker/{agent-name}` and push back to it. The bare repo is
-persistent — created once by `setup.sh`, never recreated on launch.
+persistent — created once by `setup.sh`, never recreated on launch. The exterior repo
+(where interactive sessions and planning happen) is synced into the bare repo's
+`docker/current-root` branch via `POST /sync/plans`.
 
 ### Build Hook Interception
 
@@ -110,11 +113,12 @@ docker/agent-1         ← agent-1's working branch
 docker/agent-2         ← agent-2's working branch
 ```
 
-- The interactive session controls `docker/current-root` — merging in user changes and reviewed container work.
+- The exterior repo is the source of truth for plans and design work. `POST /sync/plans` merges its committed state into `docker/current-root` in the bare repo.
 - Containers fork from `docker/current-root` on first launch and push to `docker/{agent-name}`.
 - `--fresh` resets the agent branch to `docker/current-root` HEAD.
 - Default (no `--fresh`) resumes from the agent's existing branch.
-- Plans committed to `docker/current-root` can be merged into agent branches via `POST /agents/{name}/sync` or `targetAgents` on `POST /tasks`.
+- Plans must be committed in the exterior repo, then synced to the bare repo via `POST /sync/plans` (or the dashboard's "Sync Bare Repo" button) before tasks can reference them. The server validates plan `sourcePath` references against `docker/current-root` in the bare repo.
+- Plans on `docker/current-root` can be merged into agent branches via `POST /agents/{name}/sync`, `targetAgents` on `POST /tasks`, or `targetAgents` on `POST /sync/plans`.
 
 ### Agent Definitions
 
