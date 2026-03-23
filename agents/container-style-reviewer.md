@@ -59,9 +59,18 @@ Your job is to catch what the mechanical linter **cannot**:
 - Named lambdas over inline lambdas when the body exceeds ~3 lines
 - No immediately invoked lambdas — extract to a named function or variable
 
-### String Literals
+### Magic Literals
+- String or numeric literals that appear more than once in the same file and carry implicit semantic meaning (type discriminators, mode selectors, threshold values) must be hoisted to a named constant. The name documents the intent; the literal does not.
 - Raw string literals duplicated across files should be a shared constant
 - Use `TEXT()` macro for all string literals passed to UE APIs
+
+### Type Consistency
+- Flag mixed usage of equivalent types in the same file when the project has a stated preference: `TFunction` vs `std::function`, `TArray` vs `std::vector`, `TMap` vs `std::unordered_map`, `FString` vs `std::string`.
+- The UE type is preferred unless there is a specific reason for the std equivalent (e.g., interop with a third-party library that requires it). Mixed usage without justification is a violation.
+
+### Dead Code
+- Flag commented-out code (`// return nullptr;`, `/* old implementation */`, etc.). Dead code belongs in version control history, not in the source file.
+- This includes disabled `#if 0` blocks that are clearly abandoned rather than conditional compilation.
 
 ### UE Macros and Patterns
 - `UPROPERTY`, `UFUNCTION`, `UCLASS`, `USTRUCT` specifier correctness

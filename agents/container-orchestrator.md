@@ -39,13 +39,14 @@ When a sub-agent returns work:
 
 You delegate to these container-tuned agents:
 
-| Role               | Agent                       | Purpose                                      |
-|--------------------|-----------------------------|-----------------------------------------------|
-| `implementer`      | `container-implementer`     | Writes code, builds, iterates to clean build  |
-| `style-reviewer`   | `container-style-reviewer`  | Style, naming, conventions, IWYU              |
-| `safety-reviewer`  | `container-safety-reviewer` | Pointer lifecycles, GC, thread safety, moves  |
-| `reviewer`         | `container-reviewer`        | Correctness, spec compliance, invariants      |
-| `tester`           | `container-tester`          | Writes and runs tests                         |
+| Role               | Agent                              | Purpose                                      |
+|--------------------|------------------------------------|-----------------------------------------------|
+| `implementer`      | `container-implementer`            | Writes code, builds, iterates to clean build  |
+| `style-reviewer`   | `container-style-reviewer`         | Style, naming, conventions, IWYU              |
+| `safety-reviewer`  | `container-safety-reviewer`        | Pointer lifecycles, GC, thread safety, moves  |
+| `reviewer`         | `container-reviewer`               | Correctness, spec compliance, invariants      |
+| `tester`           | `container-tester`                 | Writes and runs tests                         |
+| `decomp-reviewer`  | `container-decomposition-reviewer` | File bloat, nesting depth, decomposition      |
 
 The project's `CLAUDE.md` may have an `### Orchestrator Role Mapping` section that overrides these — check it and use whatever it specifies. Log your resolved mapping before beginning work.
 
@@ -61,6 +62,7 @@ The coordination server at `$SERVER_URL` provides a message board — your **onl
 
 - `phase_start` and `phase_complete`/`phase_failed` for each phase.
 - **Each reviewer's full output.** After every review cycle, post all three reviewers' complete reports as separate `status_update` messages tagged `[STYLE REVIEW]`, `[SAFETY REVIEW]`, `[CORRECTNESS REVIEW]`. This is a critical audit trail — never omit, truncate, or summarize below the reviewer's own level of detail.
+- `decomp_review_start` and the decomposition reviewer's full output tagged `[DECOMPOSITION REVIEW]` during the final stage.
 - `summary` at the end.
 
 ### Verbosity levels
@@ -149,6 +151,48 @@ Post `phase_complete` to `general`: `{"phase":"<id>","title":"<title>","build":"
 
 Proceed to the next phase. Do not wait.
 
+## Final Stage — Decomposition Review
+
+After **all phases** have completed successfully, run a final decomposition review pass. This stage exists to catch file bloat, excessive nesting, and missing abstractions introduced across the entire plan — problems that are invisible at the per-phase level.
+
+This stage runs last because it may propose more invasive structural changes than the per-phase reviewers. The tests established during earlier phases are the safety net against regressions.
+
+### Step 1 — Collect Changed Files
+
+Gather the full list of `.h` and `.cpp` files changed across all phases. Use `git diff` against the branch base.
+
+### Step 2 — Decomposition Review
+
+Post `decomp_review_start` to `general`.
+
+Delegate to **decomp-reviewer** with:
+- The complete list of changed `.h` and `.cpp` files
+- Brief context: "Review all files changed during this plan for decomposition opportunities"
+
+Post the reviewer's full output to the message board as a `status_update` tagged `[DECOMPOSITION REVIEW]`.
+
+### Step 3 — Address Findings
+
+If the decomposition reviewer returns **APPROVE** with no BLOCKING or WARNING findings, skip to Step 5.
+
+If findings exist, pass the **full decomposition review report** to the **implementer** with instruction to:
+- Execute the proposed decompositions (file splits, helper extractions)
+- Adjust includes and forward declarations
+- Build and confirm clean
+- Run existing tests to confirm no regressions
+
+### Step 4 — Re-review Decomposition Changes
+
+After the implementer returns with a clean build, run the **standard three-reviewer parallel pass** (style, safety, correctness) on the files touched by the decomposition work. Follow the same Step 2 / Step 2a / Step 2b cycle budget (5 cycles max).
+
+Do NOT re-run the decomposition reviewer. One pass is sufficient — the goal is structural improvement, not convergence to perfection.
+
+After all reviewers approve, ensure the decomposition work is committed as a distinct commit (e.g., `Decomposition: extract helpers from <file>`).
+
+### Step 5 — Proceed to Summary
+
+Continue to the Final Output section.
+
 ## Context Discipline
 
 You maintain only:
@@ -183,6 +227,11 @@ When all phases are complete (or on failure), produce and post as a `summary` me
   - Safety Review: PASS / N BLOCKING / N WARNING addressed
   - Correctness Review: PASS / N BLOCKING / N WARNING addressed
   - Debrief: <filename>
+
+### Decomposition Review
+- Verdict: APPROVE / REQUEST CHANGES (N BLOCKING, N WARNING addressed)
+- Files decomposed: <list, or "none">
+- Post-decomposition review cycles: N
 
 ### Failed Phases (if any)
 - Phase N: <title> — blocked at <step>

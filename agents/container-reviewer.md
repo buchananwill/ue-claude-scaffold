@@ -38,6 +38,14 @@ For each requirement in the spec:
 - Wrong comparison operators, inverted conditions
 - Short-circuit evaluation assumptions
 
+### Implicit vs Explicit Semantics
+
+- Flag code that relies on implicit behaviour when neighbouring code in the same file is explicit about the same concern. Examples:
+  - `FName` comparison silently case-insensitive, while a sibling method uses `ESearchCase::IgnoreCase` explicitly
+  - Default parameter values assumed but not stated, while nearby call sites spell them out
+  - Container ordering assumed stable when a sibling function explicitly sorts
+- The implicit path may be correct today, but it is a latent bug: a reader (or future maintainer) who sees the explicit version will assume the implicit one is different. Make the behaviour explicit to match its neighbours.
+
 ### Invariant Preservation
 
 - **Buildable aligned-array invariant**: `ComponentModels`, `Transforms`, and `Tree` arrays must always be the same size after any operation

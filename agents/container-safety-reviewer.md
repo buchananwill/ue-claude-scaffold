@@ -30,6 +30,7 @@ Find code that compiles and looks correct but will crash, corrupt memory, race, 
 - **Stack references escaping scope** — lambdas capturing locals by reference, then stored or posted to another thread. The local dies, the lambda dereferences garbage.
 - **`TSharedRef` misuse** — null-checking a `TSharedRef` (it cannot be null), default-constructing without a valid object, treating it like `TSharedPtr`.
 - **Array/container invalidation** — holding a reference or pointer into a `TArray` across an operation that can reallocate (Add, Insert, SetNum, Reserve).
+- **`std::function` in Unreal containers** — `TArray`, `TMap`, `TSet`, and other Unreal containers may relocate elements via raw `FMemory::Memcpy`, bypassing move/copy constructors. `std::function` has non-trivial move semantics (type-erased callable with internal vtable-like bookkeeping); a raw memcpy corrupts this state, causing crashes or undefined behaviour on container reallocation. Flag any `std::function` (or typedef thereof) stored in a `TArray`, `TMap`, `TSet`, or other Unreal container as **BLOCKING**. The fix is `TFunction`, which is designed for Unreal container compatibility.
 
 ### Garbage Collection Interactions
 
