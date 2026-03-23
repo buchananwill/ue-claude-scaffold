@@ -2,9 +2,7 @@ import {
   Table,
   Chip,
   Button,
-  Collapse,
   Text,
-  Code,
   Stack,
   Group,
   ActionIcon,
@@ -15,23 +13,19 @@ import {
   Tooltip,
 } from '@mantine/core';
 import {
-  IconChevronUp,
-  IconChevronDown,
-  IconSelector,
   IconFilter,
   IconTrash,
 } from '@tabler/icons-react';
 import { Fragment, useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { useQueryClient } from '@tanstack/react-query';
-import { apiPost, apiDelete } from '../api/client.ts';
-import { notifications } from '@mantine/notifications';
 import type { Task } from '../api/types.ts';
 import type { TaskFilters } from '../hooks/useTaskFilters.ts';
 import { UNASSIGNED, TASK_STATUSES } from '../hooks/useTaskFilters.ts';
-import type { SortColumn } from '../hooks/useTaskFilters.ts';
+import { useTaskActions } from '../hooks/useTaskActions.ts';
+import { SortHeader } from './SortHeader.tsx';
 import { StatusBadge } from './StatusBadge.tsx';
 import { RelativeTime } from './RelativeTime.tsx';
+import { TaskDetailRow } from './TaskDetailRow.tsx';
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
@@ -48,42 +42,18 @@ interface TasksPanelProps {
   excludeStatuses?: Set<string>;
 }
 
-function SortHeader({
-  label,
-  column,
-  activeColumn,
-  dir,
-  onSort,
-}: {
-  label: string;
-  column: NonNullable<SortColumn>;
-  activeColumn: SortColumn;
-  dir: 'asc' | 'desc';
-  onSort: (col: NonNullable<SortColumn>) => void;
-}) {
-  const isActive = activeColumn === column;
-  let icon = <IconSelector size={14} />;
-  if (isActive && dir === 'asc') icon = <IconChevronUp size={14} />;
-  if (isActive && dir === 'desc') icon = <IconChevronDown size={14} />;
-
-  return (
-    <Group
-      gap={2}
-      onClick={() => onSort(column)}
-      style={{ cursor: 'pointer', userSelect: 'none', display: 'inline-flex' }}
-    >
-      <Text size="sm" fw={500}>{label}</Text>
-      {icon}
-    </Group>
-  );
-}
-
 export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: TasksPanelProps) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<number | null>(null);
   const [confirmingBulk, setConfirmingBulk] = useState(false);
   const [bulkDeleteTargets, setBulkDeleteTargets] = useState<Task[]>([]);
-  const queryClient = useQueryClient();
+
+  const { handleRelease, handleDelete, handleBulkDelete } = useTaskActions({
+    setConfirmingDelete,
+    setBulkDeleteTargets,
+    setConfirmingBulk,
+    bulkDeleteTargets,
+  });
 
   const {
     displayedTasks,
@@ -101,52 +71,6 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: Task
     uniqueAgents,
     uniquePriorities,
   } = filters;
-
-  const handleRelease = async (id: number) => {
-    try {
-      await apiPost(`/tasks/${id}/release`);
-      await queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      notifications.show({ title: 'Released', message: `Task #${id} returned to pending`, color: 'green' });
-    } catch (err) {
-      notifications.show({ title: 'Error', message: err instanceof Error ? err.message : String(err), color: 'red' });
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    try {
-      await apiDelete(`/tasks/${id}`);
-      setConfirmingDelete(null);
-      await queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      notifications.show({ title: 'Deleted', message: `Task #${id} deleted`, color: 'green' });
-    } catch (err) {
-      notifications.show({ title: 'Error', message: err instanceof Error ? err.message : String(err), color: 'red' });
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    const results = await Promise.allSettled(
-      bulkDeleteTargets.map((t) => apiDelete(`/tasks/${t.id}`)),
-    );
-    setBulkDeleteTargets([]);
-    setConfirmingBulk(false);
-    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
-    const failed = results.filter((r) => r.status === 'rejected').length;
-    await queryClient.invalidateQueries({ queryKey: ['tasks'] });
-    if (succeeded > 0) {
-      notifications.show({
-        title: 'Deleted',
-        message: `${succeeded} task(s) deleted`,
-        color: 'green',
-      });
-    }
-    if (failed > 0) {
-      notifications.show({
-        title: 'Warning',
-        message: `${failed} task(s) failed to delete`,
-        color: 'orange',
-      });
-    }
-  };
 
   const deletableStatuses = new Set(['completed', 'failed', 'pending']);
   const bulkDeletable = displayedTasks.filter((t) => deletableStatuses.has(t.status));
@@ -393,74 +317,7 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: Task
                   </Table.Td>
                 </Table.Tr>
                 {expanded === t.id && (
-                  <Table.Tr>
-                    <Table.Td colSpan={7}>
-                      <Collapse in={expanded === t.id}>
-                        <Stack gap="xs" p="sm">
-                          {t.description && (
-                            <div>
-                              <Text size="xs" fw={600} c="dimmed">Description</Text>
-                              <Text size="sm">{t.description}</Text>
-                            </div>
-                          )}
-                          {t.acceptanceCriteria && (
-                            <div>
-                              <Text size="xs" fw={600} c="dimmed">Acceptance Criteria</Text>
-                              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{t.acceptanceCriteria}</Text>
-                            </div>
-                          )}
-                          {t.progressLog && (
-                            <div>
-                              <Text size="xs" fw={600} c="dimmed">Progress Log</Text>
-                              <Code block>{t.progressLog}</Code>
-                            </div>
-                          )}
-                          {t.result != null && (
-                            <div>
-                              <Text size="xs" fw={600} c="dimmed">Result</Text>
-                              <Code block>{JSON.stringify(t.result, null, 2)}</Code>
-                            </div>
-                          )}
-                          {t.blockedBy && t.blockedBy.length > 0 && (
-                            <div>
-                              <Text size="xs" fw={600} c="dimmed">Blocked by</Text>
-                              <Group gap={4}>
-                                {t.blockedBy.map((depId) => (
-                                  <Link
-                                    key={depId}
-                                    to="/tasks/$taskId"
-                                    params={{ taskId: String(depId) }}
-                                    onClick={(e) => e.stopPropagation()}
-                                    style={{ textDecoration: 'none' }}
-                                  >
-                                    <Badge size="sm" color="orange" variant="light">#{depId}</Badge>
-                                  </Link>
-                                ))}
-                              </Group>
-                            </div>
-                          )}
-                          {t.blockReasons?.length > 0 && (
-                            <div>
-                              <Text size="xs" fw={600} c="dimmed">Block Reasons</Text>
-                              <Stack gap={2}>
-                                {t.blockReasons.map((r, i) => (
-                                  <Text key={i} size="xs" c="red">{r}</Text>
-                                ))}
-                              </Stack>
-                            </div>
-                          )}
-                          <Group gap="xs">
-                            {t.claimedAt && (
-                              <Text size="xs" c="dimmed">Claimed: <RelativeTime date={t.claimedAt} /></Text>
-                            )}
-                            {t.completedAt && (
-                              <Text size="xs" c="dimmed">Completed: <RelativeTime date={t.completedAt} /></Text>
-                            )}
-                          </Group>
-                        </Stack>
-                      </Collapse>
-                    </Table.Td>
-                  </Table.Tr>
+                  <TaskDetailRow task={t} expanded={expanded === t.id} />
                 )}
               </Fragment>
             ))}

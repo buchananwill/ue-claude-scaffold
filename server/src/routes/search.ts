@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db.js';
-import { formatTask, type TaskRow } from './tasks.js';
+import { formatTask, type TaskRow } from './tasks-types.js';
 import { formatAgent, type AgentRow } from './agents.js';
 import { formatMessage, type MessageRow } from './messages.js';
 
