@@ -48,6 +48,7 @@ export function initUbtStatements(): void {
   );
   isAgentRegistered = db.prepare("SELECT 1 FROM agents WHERE name = @holder AND status != 'stopping'");
   initBuildHistoryStatements();
+  initLastBuildStatement();
 }
 
 export function recordBuildStart(agent: string, type: 'build' | 'test'): number {
@@ -56,6 +57,30 @@ export function recordBuildStart(agent: string, type: 'build' | 'test'): number 
 
 export function recordBuildEnd(id: number, durationMs: number, success: boolean, output: string, stderr: string): void {
   updateBuildHistory.run({ id, durationMs, success: success ? 1 : 0, output, stderr });
+}
+
+export interface LastBuildResult {
+  success: boolean;
+  output: string;
+  stderr: string;
+}
+
+let lastCompletedBuild: Database.Statement;
+
+function initLastBuildStatement(): void {
+  lastCompletedBuild = db.prepare(
+    `SELECT success, output, stderr FROM build_history
+     WHERE agent = @agent AND type = @type AND duration_ms IS NOT NULL
+     ORDER BY id DESC LIMIT 1`
+  );
+}
+
+/** Return the most recent completed build/test result for an agent, or null if none. */
+export function getLastBuildResult(agent: string, type: 'build' | 'test'): LastBuildResult | null {
+  const row = lastCompletedBuild.get({ agent, type }) as
+    { success: number; output: string | null; stderr: string | null } | undefined;
+  if (!row) return null;
+  return { success: row.success === 1, output: row.output ?? '', stderr: row.stderr ?? '' };
 }
 
 export function getEstimatedBuildMs(type?: string): number {

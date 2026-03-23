@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
-import { isStale, recordBuildStart, recordBuildEnd } from './ubt.js';
+import { isStale, recordBuildStart, recordBuildEnd, getLastBuildResult } from './ubt.js';
 
 interface BuildOpts {
   config: ScaffoldConfig;
@@ -257,6 +257,15 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     }
 
     if (syncResult === 'unchanged' && !request.body.clean) {
+      const last = agentName ? getLastBuildResult(agentName, 'build') : null;
+      if (last && !last.success) {
+        return {
+          success: false,
+          exit_code: 1,
+          output: `No source changes since last build, but the previous build failed. You must change code before rebuilding.\n\n--- Previous build output ---\n${last.output}`,
+          stderr: last.stderr,
+        };
+      }
       return {
         success: true,
         exit_code: 0,
@@ -313,6 +322,15 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     }
 
     if (syncResult === 'unchanged') {
+      const last = agentName ? getLastBuildResult(agentName, 'test') : null;
+      if (last && !last.success) {
+        return {
+          success: false,
+          exit_code: 1,
+          output: `No source changes since last test, but the previous test run failed. You must change code before retesting.\n\n--- Previous test output ---\n${last.output}`,
+          stderr: last.stderr,
+        };
+      }
       return {
         success: true,
         exit_code: 0,
