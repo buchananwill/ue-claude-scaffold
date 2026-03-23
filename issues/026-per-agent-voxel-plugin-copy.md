@@ -3,7 +3,7 @@ title: "Give each staging worktree its own Voxel Plugin copy to isolate UBT cach
 priority: high
 reported-by: interactive-session
 date: 2026-03-22
-status: open
+status: implemented
 ---
 
 # Per-agent Voxel Plugin copy for build cache isolation
