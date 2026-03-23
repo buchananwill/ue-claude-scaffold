@@ -49,6 +49,14 @@ unaddressed:
 8. **Dead commented-out code** — `// return nullptr;` left on a line after a live `return`
    statement.
 
+9. **`std::function` stored in Unreal containers** — `TArray`, `TMap`, `TSet` and other Unreal
+   containers may relocate elements via raw `FMemory::Memcpy`, bypassing move/copy constructors.
+   `std::function` has non-trivial move semantics (type-erased callable with internal vtable-like
+   bookkeeping); a raw memcpy corrupts this state. The reviewer must flag any `std::function`
+   stored in a `TArray`, `TMap`, `TSet`, or other Unreal container and recommend `TFunction`
+   instead. This is a **BLOCKING** correctness issue, not a style preference — it causes crashes
+   or undefined behaviour on container reallocation.
+
 ## Why this matters
 
 These are not style nitpicks. Duplicated logic is a bug vector — one copy gets fixed, the other
@@ -95,3 +103,8 @@ Add the following checks to the `ue-code-reviewer` agent's review protocol:
 9. **Extraction is free** — The reviewer must not withhold extraction suggestions due to
    perceived function-call overhead. State in the prompt that unity builds and modern compiler
    inlining make small same-TU helpers zero-cost, and that readability is the default priority.
+10. **`std::function` in Unreal containers** — Flag any `std::function` (or typedef thereof)
+    stored in `TArray`, `TMap`, `TSet`, or other Unreal containers as **BLOCKING**. These
+    containers may memcpy elements, corrupting `std::function`'s non-trivial internal state.
+    The fix is `TFunction`, which is designed for Unreal container compatibility. This is a
+    correctness issue — it causes crashes or UB on container reallocation.
