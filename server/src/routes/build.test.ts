@@ -368,6 +368,13 @@ describe('UBT contention detection and retry', () => {
       projectPath = path.join(ctx.tmpDir, 'project');
       execSync(`git clone "${bareRepoDir}" "${projectPath}"`, { stdio: 'ignore' });
       execSync('git checkout -b docker/current-root origin/docker/current-root', { cwd: projectPath, stdio: 'ignore' });
+
+      // Push a second commit so the staging worktree (projectPath) is behind
+      // the bare repo — syncWorktree will return 'changed' and actually run the build.
+      writeFileSync(path.join(seedDir, 'dummy.txt'), 'updated');
+      execSync('git add .', { cwd: seedDir, stdio: 'ignore' });
+      execSync('git -c user.email="t@t" -c user.name="t" commit -m "trigger change"', { cwd: seedDir, stdio: 'ignore' });
+      execSync(`git push "${bareRepoDir}" docker/current-root`, { cwd: seedDir, stdio: 'ignore' });
     });
 
     afterEach(async () => {

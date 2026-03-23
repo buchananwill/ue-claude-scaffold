@@ -117,7 +117,7 @@ CREATE INDEX IF NOT EXISTS idx_task_deps_dep  ON task_dependencies(depends_on);
 export let db: Database.Database;
 
 export function openDb(dbPath: string): Database.Database {
-  const instance = new Database(dbPath);
+  let instance = new Database(dbPath);
   instance.pragma('journal_mode = WAL');
   instance.pragma('foreign_keys = ON');
 
@@ -134,7 +134,17 @@ export function openDb(dbPath: string): Database.Database {
   // Uses writable_schema to patch the CHECK constraint in-place (no table rebuild).
   const schemaRow = instance.prepare('SELECT MIN(version) as version FROM schema_version').get() as { version: number } | undefined;
   if (!schemaRow || schemaRow.version < 9) {
-    // v7→v8: expand CHECK constraint via writable_schema (no table rebuild needed)
+    // v8→v9: add base_priority column BEFORE writable_schema (ALTER TABLE
+    // cannot validate the schema after writable_schema modifies it in the
+    // same connection — SQLite treats the rewritten SQL as unparsed text
+    // until the next connection).
+    try { instance.exec("ALTER TABLE tasks ADD COLUMN base_priority INTEGER NOT NULL DEFAULT 0"); } catch (e: any) { /* column already exists */ }
+    instance.exec('UPDATE tasks SET base_priority = priority WHERE base_priority = 0 AND priority != 0');
+
+    // v7→v8: expand CHECK constraint via writable_schema (no table rebuild needed).
+    // SQLite caches the compiled schema per-connection, so writable_schema edits
+    // only take effect after closing and reopening. We do that explicitly.
+    let needsReopen = false;
     const tasksSchema = instance.prepare(
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
     ).get() as { sql: string } | undefined;
@@ -143,23 +153,28 @@ export function openDb(dbPath: string): Database.Database {
       const newCheck = "status IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')";
       if (tasksSchema.sql.includes(oldCheck)) {
         const fixedSql = tasksSchema.sql.replace(oldCheck, newCheck);
-        const escapedSql = fixedSql.replace(/'/g, "''");
         instance.unsafeMode(true);
         instance.pragma('writable_schema = ON');
-        instance.exec(`UPDATE sqlite_master SET sql = '${escapedSql}' WHERE type = 'table' AND name = 'tasks'`);
+        instance.prepare("UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'tasks'").run(fixedSql);
         instance.pragma('writable_schema = OFF');
         instance.unsafeMode(false);
         const sv = (instance.pragma('schema_version', { simple: true }) as number) || 0;
         instance.pragma(`schema_version = ${sv + 1}`);
+        needsReopen = true;
       }
     }
 
-    // v8→v9: add base_priority column
-    try { instance.exec("ALTER TABLE tasks ADD COLUMN base_priority INTEGER NOT NULL DEFAULT 0"); } catch (e: any) { console.log('[db] ALTER TABLE base_priority:', e.message); }
-    instance.exec('UPDATE tasks SET base_priority = priority WHERE base_priority = 0 AND priority != 0');
-
     instance.exec('DELETE FROM schema_version WHERE version < 9');
     console.log('[db] Migrated to v9');
+
+    // Reopen to pick up the writable_schema changes in the compiled schema cache.
+    if (needsReopen) {
+      const dbPath = instance.name;
+      instance.close();
+      instance = new Database(dbPath);
+      instance.pragma('journal_mode = WAL');
+      instance.pragma('foreign_keys = ON');
+    }
   }
 
   db = instance;
