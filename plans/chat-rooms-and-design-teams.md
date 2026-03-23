@@ -4,14 +4,41 @@ Implements issues 019 (chat rooms) and 020 (design teams). Chat rooms provide th
 infrastructure. Design teams consume it to enable collaborative agent groups with a chairman, deliberation protocol,
 and task-queue handoff.
 
+## Design decisions (2026-03-23)
+
+Resolved during design session. These are binding — do not re-litigate during implementation.
+
+1. **Push failure handling.** Log and skip on delivery failure. No retry queue. The push payload carries the full
+   message content plus unread-count metadata, so the agent can act immediately on new messages and detect missed
+   ones without polling. Messages are always persisted in the DB regardless of push success.
+
+2. **Dashboard read access.** GET requests with no `X-Agent-Name` header (i.e., the dashboard or operator) bypass
+   membership checks and can read any room. This is tooling autonomy auditing, not surveillance. Posting to a
+   room requires explicit membership so that members see "user" appear as a participant.
+
+3. **Container host discovery.** Registration-based. Agents report `container_host` in `POST /agents/register`.
+   The coordination server uses this to push messages. Add `container_host TEXT` column to the `agents` table.
+
+4. **Pending room members.** `room_members.member` is plain `TEXT` with no FK to `agents`. Teams and rooms can
+   pre-create memberships for agents that haven't registered yet. On agent registration, the server checks for
+   pre-existing room memberships and begins pushing to the new agent immediately.
+
+5. **Auth compatibility.** Confirmed. Container auth protocol (Max plan OAuth token) is compatible with Claude Code
+   channels. Phase 5e risk is retired.
+
+6. **Implementation order.** Phases 1–7 first (chat rooms). Validate with real container messaging before building
+   teams (phases 8+).
+
 ## Phase 1 — Schema: rooms, members, chat messages
 
 Add three new tables to `server/src/db.ts`:
 
 - `rooms` (id TEXT PK, name, type CHECK IN ('group','direct'), created_by, created_at)
-- `room_members` (room_id FK, member TEXT, joined_at, PK(room_id, member))
+- `room_members` (room_id FK, member TEXT, joined_at, PK(room_id, member)) — no FK to agents; supports pending members
 - `chat_messages` (id INTEGER PK AUTOINCREMENT, room_id FK, sender, content, reply_to FK self, created_at)
 - Index: `idx_chat_room_id ON chat_messages(room_id, id)`
+
+Add `container_host TEXT` column to the `agents` table (migration).
 
 Bump the schema version. Existing tables unchanged.
 
@@ -23,7 +50,8 @@ Endpoints:
 
 - `POST /rooms` — create room. Body: `{id, name, type, members[]}`. Auto-adds creator to members. Returns `{ok, id}`.
 - `GET /rooms` — list rooms. Optional `?member=X` filter. Returns rooms with member counts.
-- `GET /rooms/:id` — room detail + full member list.
+  No membership check when called without `X-Agent-Name` header (dashboard/operator access).
+- `GET /rooms/:id` — room detail + full member list. Same dashboard-open read policy.
 - `DELETE /rooms/:id` — delete room. Cascade deletes members and messages.
 - `POST /rooms/:id/members` — add member(s). Body: `{members: string[]}`.
 - `DELETE /rooms/:id/members/:member` — remove member.
@@ -35,21 +63,29 @@ All endpoints identify the caller via `X-Agent-Name` header (agents) or `"user"`
 Add to `server/src/routes/rooms.ts`:
 
 - `POST /rooms/:id/messages` — post message. Body: `{content, replyTo?}`. Sender from header. Returns `{ok, id}`.
+  **Posting requires membership.** Return 403 for non-members. The sender must appear in `room_members`.
 - `GET /rooms/:id/messages` — poll messages. Query params:
   - `since=N` — ascending order, all messages after ID N (real-time poll mode).
   - `before=N` — descending order, messages before ID N (history scroll).
   - `limit` (1–500, default 100).
   - Returns messages with `id, roomId, sender, content, replyTo, createdAt`.
+  **Reading is open** when called without `X-Agent-Name` header (dashboard/operator). Agents must be members.
 
-Validate room membership: only members can post or read. Return 403 for non-members.
+After inserting a message, broadcast to member containers (see phase 5b).
 
 ## Phase 4 — Auto-create direct rooms on agent registration
 
-Modify `server/src/routes/agents.ts`: when `POST /agents/register` succeeds, also create a direct room
-`{agent-name}-direct` with members `[agent-name, "user"]`. This gives every agent a 1:1 channel with the human
-from the moment it starts.
+Modify `server/src/routes/agents.ts`: when `POST /agents/register` succeeds:
 
-If the room already exists (agent re-registering), skip creation.
+1. Create a direct room `{agent-name}-direct` with members `[agent-name, "user"]`. This gives every agent a 1:1
+   channel with the human from the moment it starts. If the room already exists (agent re-registering), skip creation.
+
+2. Check `room_members` for any pre-existing memberships for this agent name (e.g., rooms created by a team before
+   the agent registered). The agent is now reachable — the server can begin pushing to it immediately. No action
+   needed beyond storing `container_host` in the agents table; the push logic in phase 5b resolves addresses at
+   send time.
+
+Accept `container_host` in the registration body. Store it in the `agents` table.
 
 ## Phase 5 — Chat channel MCP server (container-side)
 
@@ -108,20 +144,43 @@ What do you think about using a component-based approach here?
 
 ### 5b. Server-side push to containers
 
-When `POST /rooms/:id/messages` inserts a new chat message, the coordination server must notify member
-containers. Add a broadcast step after the insert:
+When `POST /rooms/:id/messages` inserts a new chat message, the coordination server broadcasts to member
+containers. The push payload carries the full message so the agent can act on it immediately, plus room-level
+metadata so the agent knows if it missed anything.
+
+Broadcast logic after insert:
 
 1. Look up room members from `room_members`.
-2. For each member (except the sender), look up the agent's container address from the `agents` table.
-3. HTTP POST to `http://{container-host}:8788` with the message content, room ID, sender, and message ID.
+2. For each member (except the sender), look up the agent's `container_host` from the `agents` table.
+   If the agent has no row in `agents` (pending member, not yet registered), skip silently.
+3. HTTP POST to `http://{container_host}:8788` with payload:
 
-This requires containers to expose port 8788 (or a configured port) on the Docker network. Add port mapping to
-`docker-compose.yml`. The coordination server needs to know each container's address — store it in the `agents`
-table at registration time (`container_host` column), or derive it from the Docker network name
-(`container-{agent-name}:8788`).
+```json
+{
+  "roomId": "design-team",
+  "message": {
+    "id": 147,
+    "sender": "user",
+    "content": "What do you think about using a component-based approach here?",
+    "replyTo": null,
+    "createdAt": "2026-03-23T14:30:00Z"
+  },
+  "roomMeta": {
+    "unread": 3,
+    "lastMessageId": 147,
+    "lastSender": "user"
+  }
+}
+```
 
-If the POST fails (container not reachable), log and skip — the agent can still poll `GET /rooms/:id/messages`
-as a fallback. Messages are persisted in the database regardless.
+The `roomMeta.unread` count is computed per-recipient (messages in this room after the last message sent by
+that agent). This lets the agent detect gaps: if it receives a push with `unread: 5` but only has context for
+the current message, it knows to poll `GET /rooms/:id/messages?since=N` for the 4 it missed.
+
+4. On push failure (connection refused, timeout), log a warning and continue. No retry. The message is persisted
+   in the DB; the agent catches up on the next successful push or explicit poll.
+
+Container port 8788 must be exposed on the Docker network. Add to `docker-compose.yml`.
 
 ### 5c. Container launch integration
 
@@ -150,12 +209,10 @@ This means:
 - A chairman delegating codebase research to a sub-agent will see messages when the research completes.
 - The sub-agents themselves are never distracted by chat traffic.
 
-### 5e. Authentication prerequisite
+### 5e. Authentication — confirmed compatible
 
-Channels require **Claude.ai login authentication**, not API key auth. Verify that the containers' Claude Code
-authentication method is compatible before building this phase. If containers use API key auth, channels will
-not work and the fallback is a PostToolUse hook with SubagentStart/Stop depth tracking (see issue 019 §3
-alternative approach). Test this early — it is the highest-risk item in the plan.
+Container auth (Max plan OAuth token) satisfies the Claude.ai login requirement for channels. No fallback
+mechanism needed. Risk retired.
 
 ## Phase 6 — Container instruction for chat protocol
 
@@ -167,10 +224,12 @@ Contents:
   `<channel source="chat" room="..." sender="..." message_id="...">` events in your context.
 - When you see a channel event, respond using the `reply` tool (provided by the chat channel). Do not use
   curl — the tool handles posting to the correct room.
+- If a channel event includes `unread` > 1 and you don't have context for all prior messages, catch up:
+  `curl GET $SERVER_URL/rooms/{room}/messages?since={your_last_known_id}&limit=50`.
 - If a message from `user` asks you to change approach, prioritize it. User messages are directives.
 - If a message from another agent proposes something, engage with it — agree, disagree, or build on it.
 - Keep responses focused. This is a working conversation, not a status report.
-- To read message history (e.g., catching up on a room you just joined), use:
+- To read full message history (e.g., catching up on a room you just joined), use:
   `curl GET $SERVER_URL/rooms/{room}/messages?since=0&limit=50`.
 
 ## Phase 7 — Tests for rooms and chat
