@@ -4,6 +4,7 @@ import path from 'node:path';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
 import { isStale, recordBuildStart, recordBuildEnd, getLastBuildResult } from './ubt.js';
+import { ensureStagingPlugins } from '../staging-plugins.js';
 
 interface BuildOpts {
   config: ScaffoldConfig;
@@ -256,6 +257,10 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       };
     }
 
+    // Ensure per-worktree plugin copies exist (replaces junctions with hard copies
+    // so each agent maintains its own UBT intermediate cache).
+    await ensureStagingPlugins(getStagingWorktree(agentName), config);
+
     if (syncResult === 'unchanged' && !request.body.clean) {
       const last = agentName ? getLastBuildResult(agentName, 'build') : null;
       if (last && !last.success) {
@@ -320,6 +325,8 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
         stderr: `Infrastructure error: ${(err as Error).message}. Agent should shut down.`,
       };
     }
+
+    await ensureStagingPlugins(getStagingWorktree(agentName), config);
 
     if (syncResult === 'unchanged') {
       const last = agentName ? getLastBuildResult(agentName, 'test') : null;

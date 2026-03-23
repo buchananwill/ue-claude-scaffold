@@ -26,6 +26,15 @@ export interface ScaffoldConfig {
     stagingWorktreeRoot?: string;
     bareRepoPath: string;
   };
+  plugins?: {
+    /** Plugins to hard-copy into each staging worktree for build-cache isolation.
+     *  Each entry copies `source` → `<worktree>/<relativeDest>`, excluding
+     *  Intermediate/ and Binaries/ so each agent keeps its own UBT cache. */
+    stagingCopies?: Array<{
+      source: string;
+      relativeDest: string;
+    }>;
+  };
   tasks?: {
     path: string;
     planBranch?: string;
@@ -82,6 +91,14 @@ export function loadConfig(): ScaffoldConfig {
       ubtLockTimeoutMs: raw.server?.ubtLockTimeoutMs ?? 600000,
       stagingWorktreeRoot: raw.server?.stagingWorktreeRoot,
       bareRepoPath: raw.server?.bareRepoPath ?? '',
+    },
+    plugins: {
+      stagingCopies: Array.isArray(raw.plugins?.stagingCopies)
+        ? raw.plugins.stagingCopies.map((e: Record<string, unknown>) => ({
+            source: String(e.source ?? ''),
+            relativeDest: String(e.relativeDest ?? ''),
+          }))
+        : [],
     },
     tasks: {
       path: raw.tasks?.path ?? '',

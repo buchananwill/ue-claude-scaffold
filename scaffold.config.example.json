@@ -28,7 +28,13 @@
   },
 
   "plugins": {
-    "readOnlyMounts": []
+    "readOnlyMounts": [],
+    "stagingCopies": [
+      {
+        "source": "D:\\Path\\To\\Voxel\\Plugin",
+        "relativeDest": "Plugins/Voxel"
+      }
+    ]
   },
 
   "container": {
