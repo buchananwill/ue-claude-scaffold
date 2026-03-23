@@ -17,7 +17,6 @@ export interface TaskBody {
   title: string;
   description?: string;
   sourcePath?: string;
-  sourceContent?: string;
   acceptanceCriteria?: string;
   priority?: number;
   files?: string[];
@@ -30,7 +29,6 @@ export const taskBodyKeys: { [K in keyof Required<TaskBody>]: true } = {
   title: true,
   description: true,
   sourcePath: true,
-  sourceContent: true,
   acceptanceCriteria: true,
   priority: true,
   files: true,
@@ -39,7 +37,7 @@ export const taskBodyKeys: { [K in keyof Required<TaskBody>]: true } = {
   dependsOnIndex: true,
 };
 
-export type PatchBody = Omit<TaskBody, 'sourceContent' | 'targetAgents' | 'dependsOnIndex'>;
+export type PatchBody = Omit<TaskBody, 'targetAgents' | 'dependsOnIndex'>;
 export const patchBodyKeys: { [K in keyof Required<PatchBody>]: true } = {
   title: true,
   description: true,

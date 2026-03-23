@@ -1,8 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { execFileSync } from 'node:child_process';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
-import { mergeIntoBranch, writeContentToBareRepo, isCommittedInRepo, existsInBareRepo } from '../git-utils.js';
+import { mergeIntoBranch, isCommittedInRepo, existsInBareRepo } from '../git-utils.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
 import { initTasksSharedStatements, type TasksOpts, type TaskBody, type PatchBody, type TasksSharedStatements } from './tasks-files.js';
 import { taskBodyKeys, patchBodyKeys } from './tasks-files.js';
@@ -51,9 +50,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       );
     }
 
-    const { title, description, sourcePath, sourceContent, acceptanceCriteria, priority, files, targetAgents, dependsOn, dependsOnIndex } = request.body;
-
-    let commitSha: string | undefined;
+    const { title, description, sourcePath, acceptanceCriteria, priority, files, targetAgents, dependsOn, dependsOnIndex } = request.body;
 
     // Validate sourcePath for path traversal before any git operations
     if (sourcePath !== undefined && sourcePath !== null) {
@@ -72,16 +69,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       );
     }
 
-    // B1: targetAgents requires sourceContent (merge needs a commit to propagate)
-    if (targetAgents && !sourceContent) {
-      return reply.code(400).send({
-        statusCode: 400,
-        error: 'Bad Request',
-        message: 'targetAgents requires sourceContent',
-      });
-    }
-
-    // N1: Validate targetAgents shape before any git writes
+    // Validate targetAgents shape
     if (targetAgents && targetAgents !== '*' && !Array.isArray(targetAgents)) {
       return reply.code(400).send({
         statusCode: 400,
@@ -90,29 +78,8 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       });
     }
 
-    if (sourceContent) {
-      if (!sourcePath) {
-        return reply.badRequest('sourceContent requires sourcePath');
-      }
-      const bareRepo = config.server.bareRepoPath;
-      if (!bareRepo) {
-        return reply.code(422).send({
-          statusCode: 422,
-          error: 'Unprocessable Entity',
-          message: 'sourceContent requires server.bareRepoPath to be configured',
-        });
-      }
-      const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
-      try {
-        commitSha = writeContentToBareRepo(bareRepo, planBranch, sourcePath, sourceContent);
-      } catch (err: any) {
-        return reply.code(422).send({
-          statusCode: 422,
-          error: 'Unprocessable Entity',
-          message: `Failed to write plan to bare repo: ${err.message}`,
-        });
-      }
-    } else if (sourcePath) {
+    // Validate sourcePath exists in bare repo (plans must be synced via POST /sync/plans first)
+    if (sourcePath) {
       const bareRepo = config.server.bareRepoPath;
       if (bareRepo) {
         const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
@@ -120,7 +87,8 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
           return reply.code(422).send({
             statusCode: 422,
             error: 'Unprocessable Entity',
-            message: `sourcePath '${sourcePath}' not found on branch '${planBranch}' in bare repo`,
+            message: `sourcePath '${sourcePath}' not found on branch '${planBranch}' in bare repo. ` +
+              `Commit the plan in the exterior repo, then call POST /sync/plans to sync.`,
           });
         }
       } else {
@@ -158,11 +126,11 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    // Merge into agent branches if requested
-    let mergedAgents: string[] = [];
-    let failedMerges: Array<{ agent: string; reason: string }> = [];
+    // Merge plan branch into agent branches if requested
+    const mergedAgents: string[] = [];
+    const failedMerges: Array<{ agent: string; reason: string }> = [];
 
-    if (targetAgents && commitSha) {
+    if (targetAgents) {
       let agentNames: string[];
       if (targetAgents === '*') {
         const activeAgents = db.prepare(
@@ -213,7 +181,6 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     return {
       id,
       ok: true,
-      ...(commitSha ? { commitSha } : {}),
       ...(mergedAgents.length ? { mergedAgents } : {}),
       ...(failedMerges.length ? { failedMerges } : {}),
     };
@@ -281,19 +248,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
           }
         }
       }
-      if (t.sourceContent && !t.sourcePath) {
-        return reply.badRequest(`Task ${i}: sourceContent requires sourcePath`);
-      }
-      if (t.sourceContent) {
-        const bareRepo = config.server.bareRepoPath;
-        if (!bareRepo) {
-          return reply.code(422).send({
-            statusCode: 422,
-            error: 'Unprocessable Entity',
-            message: `Task ${i}: sourceContent requires server.bareRepoPath to be configured`,
-          });
-        }
-      } else if (t.sourcePath) {
+      if (t.sourcePath) {
         const bareRepo = config.server.bareRepoPath;
         if (bareRepo) {
           const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
@@ -301,7 +256,8 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
             return reply.code(422).send({
               statusCode: 422,
               error: 'Unprocessable Entity',
-              message: `Task ${i}: sourcePath '${t.sourcePath}' not found on branch '${planBranch}' in bare repo`,
+              message: `Task ${i}: sourcePath '${t.sourcePath}' not found on branch '${planBranch}' in bare repo. ` +
+                `Commit the plan in the exterior repo, then call POST /sync/plans to sync.`,
             });
           }
         } else {
@@ -327,69 +283,27 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    // Write sourceContent for tasks that have it
-    const commitShas: Record<number, string> = {};
-    const bareRepo = config.server.bareRepoPath;
-    const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
-    const tasksWithContent = tasks.filter((t, _i) => t.sourceContent && t.sourcePath && bareRepo);
-
-    // Capture pre-batch ref for rollback if DB transaction fails
-    let preBatchRef: string | undefined;
-    if (bareRepo && tasksWithContent.length > 0) {
-      try {
-        preBatchRef = execFileSync('git', ['-C', bareRepo, 'rev-parse', `refs/heads/${planBranch}`], {
-          encoding: 'utf-8', timeout: 5000,
-        }).trim();
-      } catch { /* branch doesn't exist yet */ }
-    }
-
-    for (let i = 0; i < tasks.length; i++) {
-      const t = tasks[i];
-      if (t.sourceContent && t.sourcePath && bareRepo) {
-        try {
-          commitShas[i] = writeContentToBareRepo(bareRepo, planBranch, t.sourcePath, t.sourceContent);
-        } catch (err: any) {
-          return reply.code(422).send({
-            statusCode: 422,
-            error: 'Unprocessable Entity',
-            message: `Task ${i}: Failed to write plan to bare repo: ${err.message}`,
-          });
+    const ids = db.transaction(() => {
+      const result: number[] = [];
+      for (const t of tasks) {
+        const r = insertTask.run({
+          title: t.title,
+          description: t.description ?? '',
+          sourcePath: t.sourcePath ?? null,
+          acceptanceCriteria: t.acceptanceCriteria ?? null,
+          priority: t.priority ?? 0,
+        });
+        const taskId = Number(r.lastInsertRowid);
+        if (t.files?.length) {
+          linkFilesToTask(taskId, t.files);
         }
-      }
-    }
-
-    let ids: number[];
-    try {
-      ids = db.transaction(() => {
-        const result: number[] = [];
-        for (const t of tasks) {
-          const r = insertTask.run({
-            title: t.title,
-            description: t.description ?? '',
-            sourcePath: t.sourcePath ?? null,
-            acceptanceCriteria: t.acceptanceCriteria ?? null,
-            priority: t.priority ?? 0,
-          });
-          const taskId = Number(r.lastInsertRowid);
-          if (t.files?.length) {
-            linkFilesToTask(taskId, t.files);
-          }
-          if (t.dependsOn?.length) {
-            linkDepsToTask(taskId, t.dependsOn);
-          }
-          result.push(taskId);
+        if (t.dependsOn?.length) {
+          linkDepsToTask(taskId, t.dependsOn);
         }
-        return result;
-      })();
-    } catch (err) {
-      // Roll back git writes
-      if (preBatchRef && bareRepo) {
-        try {
-          execFileSync('git', ['-C', bareRepo, 'update-ref', `refs/heads/${planBranch}`, preBatchRef], { timeout: 5000 });
-        } catch { /* best effort */ }
+        result.push(taskId);
       }
-      throw err;
-    }
+      return result;
+    })();
 
     // Resolve dependsOnIndex cross-references
     // Mixed dependsOn + dependsOnIndex is permitted on the same task.
@@ -407,10 +321,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       })();
     }
 
-    // Build positionally aligned commitShas array
-    const hasAnyShas = Object.keys(commitShas).length > 0;
-    const commitShasArray = hasAnyShas ? ids.map((_id, i) => commitShas[i] ?? null) : undefined;
-    const base = { ok: true as const, ids, ...(commitShasArray ? { commitShas: commitShasArray } : {}) };
+    const base = { ok: true as const, ids };
     if (request.query.replan === 'true') {
       return { ...base, replan: runReplan() };
     }
