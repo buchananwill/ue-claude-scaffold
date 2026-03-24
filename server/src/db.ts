@@ -9,7 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (9);
+INSERT OR IGNORE INTO schema_version(version) VALUES (10);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS agents (
   plan_doc    TEXT,
   status      TEXT NOT NULL DEFAULT 'idle',
   mode        TEXT NOT NULL DEFAULT 'single',
-  registered_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  container_host TEXT
 );
 
 -- UBT lock — singleton mutex
@@ -112,6 +113,32 @@ CREATE TABLE IF NOT EXISTS task_dependencies (
 );
 CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_deps_dep  ON task_dependencies(depends_on);
+
+CREATE TABLE IF NOT EXISTS rooms (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('group','direct')),
+  created_by TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS room_members (
+  room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  member TEXT NOT NULL,
+  joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (room_id, member)
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  sender TEXT NOT NULL,
+  content TEXT NOT NULL,
+  reply_to INTEGER REFERENCES chat_messages(id),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_room_id ON chat_messages(room_id, id);
 `;
 
 export let db: Database.Database;
@@ -175,6 +202,14 @@ export function openDb(dbPath: string): Database.Database {
       instance.pragma('journal_mode = WAL');
       instance.pragma('foreign_keys = ON');
     }
+  }
+
+  // Migration: add container_host column to agents (v9 -> v10)
+  if (!schemaRow || schemaRow.version < 10) {
+    try { instance.exec("ALTER TABLE agents ADD COLUMN container_host TEXT"); } catch { /* already exists */ }
+    instance.exec('DELETE FROM schema_version WHERE version < 10');
+    instance.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (10)");
+    console.log('[db] Migrated to v10');
   }
 
   db = instance;

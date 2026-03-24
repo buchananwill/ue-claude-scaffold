@@ -16,6 +16,7 @@ import {
   buildsPlugin,
   coalescePlugin,
   syncPlugin,
+  roomsPlugin,
 } from './routes/index.js';
 import { sweepStaleLock } from './routes/ubt.js';
 
@@ -42,6 +43,7 @@ await server.register(searchPlugin);
 await server.register(buildsPlugin);
 await server.register(coalescePlugin);
 await server.register(syncPlugin, { config });
+await server.register(roomsPlugin);
 
 try {
   const address = await server.listen({

@@ -12,6 +12,7 @@ export interface AgentRow {
   status: string;
   mode: string;
   registered_at: string;
+  container_host: string | null;
 }
 
 export function formatAgent(row: AgentRow) {
@@ -22,14 +23,22 @@ export function formatAgent(row: AgentRow) {
     status: row.status,
     mode: row.mode,
     registeredAt: row.registered_at,
+    containerHost: row.container_host,
   };
 }
 
 const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   const { config } = opts;
   const insertAgent = db.prepare(
-    `INSERT OR REPLACE INTO agents (name, worktree, plan_doc, status, mode, registered_at)
-     VALUES (@name, @worktree, @planDoc, 'idle', @mode, CURRENT_TIMESTAMP)`
+    `INSERT INTO agents (name, worktree, plan_doc, status, mode, registered_at, container_host)
+     VALUES (@name, @worktree, @planDoc, 'idle', @mode, CURRENT_TIMESTAMP, @containerHost)
+     ON CONFLICT(name) DO UPDATE SET
+       worktree = excluded.worktree,
+       plan_doc = excluded.plan_doc,
+       status = 'idle',
+       mode = excluded.mode,
+       registered_at = CURRENT_TIMESTAMP,
+       container_host = COALESCE(excluded.container_host, agents.container_host)`
   );
 
   const allAgents = db.prepare('SELECT * FROM agents');
@@ -54,10 +63,21 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   );
 
   fastify.post<{
-    Body: { name: string; worktree: string; planDoc?: string; mode?: 'single' | 'pump' };
+    Body: { name: string; worktree: string; planDoc?: string; mode?: 'single' | 'pump'; containerHost?: string };
   }>('/agents/register', async (request) => {
-    const { name, worktree, planDoc, mode } = request.body;
-    insertAgent.run({ name, worktree, planDoc: planDoc ?? null, mode: mode ?? 'single' });
+    const { name, worktree, planDoc, mode, containerHost } = request.body;
+    insertAgent.run({ name, worktree, planDoc: planDoc ?? null, mode: mode ?? 'single', containerHost: containerHost ?? null });
+
+    const roomId = `${name}-direct`;
+    const existingRoom = db.prepare('SELECT 1 FROM rooms WHERE id = ?').get(roomId);
+    if (!existingRoom) {
+      db.transaction(() => {
+        db.prepare('INSERT INTO rooms (id, name, type, created_by) VALUES (?, ?, ?, ?)').run(roomId, `Direct: ${name}`, 'direct', name);
+        db.prepare('INSERT OR IGNORE INTO room_members (room_id, member) VALUES (?, ?)').run(roomId, name);
+        db.prepare('INSERT OR IGNORE INTO room_members (room_id, member) VALUES (?, ?)').run(roomId, 'user');
+      })();
+    }
+
     return { ok: true };
   });
 
