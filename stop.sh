@@ -12,6 +12,7 @@ Stop running Claude Code agent containers.
 
 Options:
   --agent NAME        Stop a specific agent (project name = claude-NAME)
+  --team TEAM_ID      Stop all members of a design team and dissolve it
   --drain             Graceful shutdown — pause pumps, wait for in-flight
                       tasks, stop containers
   --timeout SECONDS   Max wait time for drain mode (default: 600)
@@ -20,12 +21,15 @@ Options:
 Modes:
   Default:  Stop all claude-* Docker Compose projects immediately.
   --agent:  Stop only the named agent's container.
+  --team:   Stop all members of a design team, then dissolve the team.
+            Room and message history are preserved.
   --drain:  Graceful shutdown — pause pumps, wait for in-flight tasks,
             stop containers. You must merge branches and release manually.
 
 Examples:
   ./stop.sh                          # Stop all agents
   ./stop.sh --agent agent-1          # Stop just agent-1
+  ./stop.sh --team design-team-1     # Stop a design team
   ./stop.sh --drain                  # Graceful drain then stop
   ./stop.sh --drain --timeout 300    # Drain with 5-minute timeout
 USAGE
@@ -34,6 +38,7 @@ USAGE
 # ── Parse flags ──────────────────────────────────────────────────────────────
 MODE="default"
 AGENT_NAME=""
+TEAM_ID=""
 TIMEOUT=600
 
 while [[ $# -gt 0 ]]; do
@@ -41,6 +46,9 @@ while [[ $# -gt 0 ]]; do
     --agent)
       MODE="agent"
       AGENT_NAME="$2"; shift 2 ;;
+    --team)
+      MODE="team"
+      TEAM_ID="$2"; shift 2 ;;
     --drain)
       MODE="drain"; shift ;;
     --timeout)
@@ -115,6 +123,42 @@ if [[ "$MODE" == "agent" ]]; then
   (cd "$SCRIPT_DIR/container" && \
     $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" down 2>/dev/null) || true
   echo "Stopped claude-${AGENT_NAME}."
+  exit 0
+fi
+
+# ── Mode: team — stop all members and dissolve ──────────────────────────────
+if [[ "$MODE" == "team" ]]; then
+  echo "Stopping team: $TEAM_ID ..."
+
+  # Get team member list from coordination server
+  TEAM_RESPONSE=$(curl -sf "$BASE_URL/teams/${TEAM_ID}" 2>/dev/null) || {
+    echo "Error: Could not fetch team $TEAM_ID from coordination server at $BASE_URL" >&2
+    exit 1
+  }
+
+  MEMBERS=$(echo "$TEAM_RESPONSE" | jq -r '.members[].agentName' 2>/dev/null) || {
+    echo "Error: Could not parse member list from team response" >&2
+    exit 1
+  }
+
+  stopped=0
+  for member in $MEMBERS; do
+    echo "  Stopping claude-${member} ..."
+    (cd "$SCRIPT_DIR/container" && \
+      $COMPOSE_CMD --project-name "claude-${member}" down 2>/dev/null) || true
+    stopped=$((stopped + 1))
+  done
+
+  # Dissolve team
+  curl -sf -X DELETE "$BASE_URL/teams/${TEAM_ID}" >/dev/null 2>&1 || {
+    echo "Warning: Could not dissolve team on server (may already be dissolved)" >&2
+  }
+
+  echo ""
+  echo "=== Team Stopped ==="
+  echo "  Team:     $TEAM_ID"
+  echo "  Stopped:  $stopped member(s)"
+  echo "  Room and message history are preserved."
   exit 0
 fi
 

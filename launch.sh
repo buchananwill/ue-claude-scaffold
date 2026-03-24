@@ -25,6 +25,8 @@ Options:
   --pump              Run in pump mode (multi-task worker with claim-next)
   --parallel N        Launch N parallel pump agents (implies --pump)
   --fresh             Reset agent branch to docker/current-root HEAD (clean start)
+  --team TEAM_ID      Launch a design team (reads teams/<TEAM_ID>.json)
+  --brief PATH        Path to a brief file (required with --team)
   --dry-run           Print resolved configuration and exit without launching
   --help              Show this help message and exit
 
@@ -37,6 +39,7 @@ Examples:
   ./launch.sh --pump --agent-name pump-1
   ./launch.sh --verbosity verbose --plan plans/tricky-refactor.md
   ./launch.sh --parallel 3
+  ./launch.sh --team design-team-1 --brief briefs/inventory.md
   ./launch.sh --dry-run
 USAGE
 }
@@ -51,6 +54,8 @@ _CLI_WORKER=false
 _CLI_PUMP=false
 _CLI_FRESH=false
 _CLI_PARALLEL=0
+_CLI_TEAM=""
+_CLI_BRIEF=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -70,6 +75,10 @@ while [[ $# -gt 0 ]]; do
       _CLI_PARALLEL="$2"; shift 2 ;;
     --fresh)
       _CLI_FRESH=true; shift ;;
+    --team)
+      _CLI_TEAM="$2"; shift 2 ;;
+    --brief)
+      _CLI_BRIEF="$2"; shift 2 ;;
     --dry-run)
       _CLI_DRY_RUN=true; shift ;;
     --help)
@@ -215,6 +224,133 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
     done
   fi
   echo ""
+  exit 0
+fi
+
+# ── Team mode ───────────────────────────────────────────────────────────────
+if [[ -n "$_CLI_TEAM" ]]; then
+  # Validate brief
+  if [[ -z "$_CLI_BRIEF" ]]; then
+    echo "Error: --brief is required when using --team" >&2
+    exit 1
+  fi
+  if [[ ! -f "$_CLI_BRIEF" ]]; then
+    echo "Error: Brief file not found: $_CLI_BRIEF" >&2
+    exit 1
+  fi
+
+  # Read team definition
+  TEAM_DEF="$SCRIPT_DIR/teams/${_CLI_TEAM}.json"
+  if [[ ! -f "$TEAM_DEF" ]]; then
+    echo "Error: Team definition not found: $TEAM_DEF" >&2
+    exit 1
+  fi
+
+  TEAM_ID=$(jq -r '.id' "$TEAM_DEF")
+  TEAM_NAME=$(jq -r '.name' "$TEAM_DEF")
+  echo "=== Launching Team: $TEAM_NAME ==="
+  echo "  Team ID: $TEAM_ID"
+  echo "  Brief:   $_CLI_BRIEF"
+  echo ""
+
+  # Register team and create room
+  TEAM_REG_RESPONSE=$(curl -sf -X POST "http://localhost:${SERVER_PORT}/teams" \
+    -H "Content-Type: application/json" \
+    -d @"$TEAM_DEF" 2>/dev/null) || {
+    echo "Error: Could not register team with coordination server" >&2
+    exit 1
+  }
+  ROOM_ID=$(echo "$TEAM_REG_RESPONSE" | jq -r '.roomId // .room // empty')
+  if [[ -z "$ROOM_ID" ]]; then
+    echo "Error: No room ID returned from team registration" >&2
+    exit 1
+  fi
+  echo "  Room:    $ROOM_ID"
+
+  # Post brief as first room message
+  BRIEF_CONTENT=$(cat "$_CLI_BRIEF")
+  curl -sf -X POST "http://localhost:${SERVER_PORT}/rooms/${ROOM_ID}/messages" \
+    -H "Content-Type: application/json" \
+    -H "X-Agent-Name: user" \
+    -d "$(jq -n --arg content "$BRIEF_CONTENT" '{content: $content}')" \
+    >/dev/null 2>&1 || {
+    echo "Error: Failed to post brief to room." >&2
+    exit 1
+  }
+  echo "  Brief posted to room."
+  echo ""
+
+  # Launch members — chairman first, then others
+  launch_team_member() {
+    local _MEMBER_NAME _MEMBER_ROLE _MEMBER_TYPE _MEMBER_BRANCH _IS_CHAIRMAN
+    _MEMBER_NAME=$(echo "$1" | jq -r '.agentName')
+    _MEMBER_ROLE=$(echo "$1" | jq -r '.role')
+    _MEMBER_TYPE=$(echo "$1" | jq -r '.agentType')
+    _IS_CHAIRMAN=$(echo "$1" | jq -r '.isChairman // false')
+    _MEMBER_BRANCH="docker/${_MEMBER_NAME}"
+
+    # Non-chairman members get a read-only workspace
+    local _WORKSPACE_READONLY="false"
+    if [ "$_IS_CHAIRMAN" != "true" ]; then
+      _WORKSPACE_READONLY="true"
+    fi
+
+    # Set up branch
+    if ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${_MEMBER_BRANCH}" &>/dev/null; then
+      _ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
+      git -C "$BARE_REPO_PATH" update-ref "refs/heads/${_MEMBER_BRANCH}" "$_ROOT_SHA"
+      echo "  Created branch ${_MEMBER_BRANCH} from ${ROOT_BRANCH}"
+    else
+      echo "  Resuming existing branch ${_MEMBER_BRANCH}"
+    fi
+
+    # Stop existing container if running
+    (cd "$SCRIPT_DIR/container" && \
+      $COMPOSE_CMD --project-name "claude-${_MEMBER_NAME}" down 2>/dev/null) || true
+
+    # Launch container — design agents get no build hooks and non-chairman
+    # members get a read-only workspace
+    (cd "$SCRIPT_DIR/container" && \
+      AGENT_NAME="$_MEMBER_NAME" \
+      WORK_BRANCH="$_MEMBER_BRANCH" \
+      AGENT_TYPE="$_MEMBER_TYPE" \
+      CHAT_ROOM="$ROOM_ID" \
+      TEAM_ROLE="$_MEMBER_ROLE" \
+      BARE_REPO_PATH="$BARE_REPO_PATH" \
+      MAX_TURNS="$MAX_TURNS" \
+      LOG_VERBOSITY="$LOG_VERBOSITY" \
+      WORKER_MODE=false \
+      DISABLE_BUILD_HOOKS=true \
+      WORKSPACE_READONLY="$_WORKSPACE_READONLY" \
+      $COMPOSE_CMD --project-name "claude-${_MEMBER_NAME}" up --build --detach)
+
+    echo "  Launched $_MEMBER_NAME (role: $_MEMBER_ROLE, type: $_MEMBER_TYPE, readonly: $_WORKSPACE_READONLY)"
+  }
+
+  # Launch chairman first
+  jq -c '.members[] | select(.isChairman == true)' "$TEAM_DEF" | while IFS= read -r member; do
+    launch_team_member "$member"
+  done
+
+  echo "  Waiting 10s before launching other members..."
+  sleep 10
+
+  # Launch non-chairman members
+  jq -c '.members[] | select(.isChairman == false)' "$TEAM_DEF" | while IFS= read -r member; do
+    launch_team_member "$member"
+  done
+
+  echo ""
+  echo "=== Team Launched ==="
+  echo "  Team:    $TEAM_NAME ($TEAM_ID)"
+  echo "  Room:    $ROOM_ID"
+  echo "  Members: $(jq -r '[.members[].agentName] | join(", ")' "$TEAM_DEF")"
+  echo ""
+  echo "Monitor progress:"
+  echo "  ./status.sh --follow"
+  echo ""
+  echo "Stop team:"
+  echo "  ./stop.sh --team $TEAM_ID"
   exit 0
 fi
 

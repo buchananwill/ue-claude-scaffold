@@ -1,0 +1,10 @@
+{
+  "id": "design-team-1",
+  "name": "Inventory System Design Team",
+  "members": [
+    { "agentName": "chairman-1", "role": "chairman", "agentType": "design-chairman", "isChairman": true },
+    { "agentName": "architect-1", "role": "architect", "agentType": "design-architect", "isChairman": false },
+    { "agentName": "critic-1", "role": "critic", "agentType": "design-critic", "isChairman": false },
+    { "agentName": "domain-1", "role": "domain", "agentType": "design-domain", "isChairman": false }
+  ]
+}

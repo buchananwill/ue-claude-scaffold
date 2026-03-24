@@ -20,6 +20,8 @@ services:
       - WORKER_MODE=${WORKER_MODE:-false}
       - WORKER_POLL_INTERVAL=${WORKER_POLL_INTERVAL:-30}
       - WORKER_SINGLE_TASK=${WORKER_SINGLE_TASK:-true}
+      - DISABLE_BUILD_HOOKS=${DISABLE_BUILD_HOOKS:-false}
+      - WORKSPACE_READONLY=${WORKSPACE_READONLY:-false}
     volumes:
       # Required: bare repo for git operations
       - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git

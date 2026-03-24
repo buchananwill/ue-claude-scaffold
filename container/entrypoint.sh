@@ -54,7 +54,12 @@ EXCL
 # git working tree entirely.  Claude Code merges user + project settings, so
 # hooks defined here still apply to /workspace.
 
-cp /container-settings.json /home/claude/.claude/settings.json
+if [ "${DISABLE_BUILD_HOOKS:-false}" = "true" ]; then
+    echo "Build hooks disabled (design agent mode)"
+    echo '{}' > /home/claude/.claude/settings.json
+else
+    cp /container-settings.json /home/claude/.claude/settings.json
+fi
 
 # Write MCP config for chat channel
 cat > /home/claude/.claude/mcp.json <<MCPEOF
@@ -126,10 +131,11 @@ _watch_for_stop() {
     done
 }
 
+CONTAINER_IP=$(hostname -i 2>/dev/null | awk '{print $1}') || CONTAINER_IP=""
 REG_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SERVER_URL}/agents/register" \
     -H "Content-Type: application/json" \
     -H "X-Agent-Name: ${AGENT_NAME}" \
-    -d "{\"name\": \"${AGENT_NAME}\", \"worktree\": \"${WORK_BRANCH}\", \"mode\": \"${AGENT_MODE}\"}" \
+    -d "{\"name\": \"${AGENT_NAME}\", \"worktree\": \"${WORK_BRANCH}\", \"mode\": \"${AGENT_MODE}\", \"containerHost\": \"${CONTAINER_IP}\"}" \
     --max-time 10 2>/dev/null) || REG_STATUS="000"
 
 if [ "$REG_STATUS" != "200" ]; then
@@ -231,7 +237,19 @@ fi
 
 # Inject verbosity directive
 TASK_PROMPT="${TASK_PROMPT}LOG_VERBOSITY: ${LOG_VERBOSITY}
+"
 
+# Inject chat room and team role if set
+if [ -n "${CHAT_ROOM:-}" ]; then
+    TASK_PROMPT="${TASK_PROMPT}CHAT_ROOM: ${CHAT_ROOM}
+"
+fi
+if [ -n "${TEAM_ROLE:-}" ]; then
+    TASK_PROMPT="${TASK_PROMPT}TEAM_ROLE: ${TEAM_ROLE}
+"
+fi
+
+TASK_PROMPT="${TASK_PROMPT}
 ---
 
 "
@@ -296,7 +314,7 @@ ${FULL_PROMPT}"
         --max-turns "$MAX_TURNS" \
         --mcp-config /home/claude/.claude/mcp.json \
         --channels server:chat \
-        --dangerously-load-development-channels \
+        --dangerously-load-development-channels server:chat \
         2>&1 &
     CLAUDE_PID=$!
     _watch_for_stop "$CLAUDE_PID" &
@@ -350,6 +368,16 @@ ${FULL_PROMPT}"
 
     return $EXIT_CODE
 }
+
+# ── Read-only Source/ for non-chairman design agents ─────────────────────────
+# Runs after all workspace setup (clone, checkout, symlinks, plugin patching)
+# so it doesn't break symlinks, .claude/, plans/, or temp files.
+if [ "${WORKSPACE_READONLY:-false}" = "true" ]; then
+    if [ -d /workspace/Source ]; then
+        echo "Locking down /workspace/Source/ (read-only design agent)"
+        chmod -R a-w /workspace/Source 2>/dev/null || true
+    fi
+fi
 
 # ── Main execution loop ─────────────────────────────────────────────────────
 
