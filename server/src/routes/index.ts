@@ -10,3 +10,4 @@ export { default as buildsPlugin } from './builds.js';
 export { default as coalescePlugin } from './coalesce.js';
 export { default as syncPlugin } from './sync.js';
 export { default as roomsPlugin } from './rooms.js';
+export { default as teamsPlugin } from './teams.js';

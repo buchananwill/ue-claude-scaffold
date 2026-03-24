@@ -9,7 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (10);
+INSERT OR IGNORE INTO schema_version(version) VALUES (11);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
@@ -139,6 +139,27 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_room_id ON chat_messages(room_id, id);
+
+CREATE TABLE IF NOT EXISTS teams (
+  id           TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  brief_path   TEXT,
+  status       TEXT NOT NULL DEFAULT 'active'
+               CHECK (status IN ('active','converging','dissolved')),
+  deliverable  TEXT,
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  dissolved_at DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS team_members (
+  team_id    TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  agent_name TEXT NOT NULL,
+  role       TEXT NOT NULL,
+  is_chairman INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (team_id, agent_name)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_team_chairman ON team_members(team_id) WHERE is_chairman = 1;
 `;
 
 export let db: Database.Database;
@@ -210,6 +231,13 @@ export function openDb(dbPath: string): Database.Database {
     instance.exec('DELETE FROM schema_version WHERE version < 10');
     instance.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (10)");
     console.log('[db] Migrated to v10');
+  }
+
+  // Migration: add teams and team_members tables (v10 -> v11)
+  if (!schemaRow || schemaRow.version < 11) {
+    instance.exec('DELETE FROM schema_version WHERE version < 11');
+    instance.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (11)");
+    console.log('[db] Migrated to v11');
   }
 
   db = instance;

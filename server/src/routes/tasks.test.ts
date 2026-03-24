@@ -1708,9 +1708,9 @@ describe('tasks with bare repo and agents', () => {
       }
     });
 
-    it('schema_version is 10 on fresh database', () => {
+    it('schema_version is 11 on fresh database', () => {
       const row = db.prepare('SELECT version FROM schema_version').get() as { version: number };
-      assert.equal(row.version, 10);
+      assert.equal(row.version, 11);
     });
   });
 
@@ -1839,9 +1839,9 @@ describe('tasks with bare repo and agents', () => {
         throw e;
       }
 
-      // 1. schema_version bumped to 10 (old version rows deleted)
+      // 1. schema_version bumped to 11 (old version rows deleted)
       const row = migratedDb.prepare('SELECT version FROM schema_version').get() as any;
-      assert.strictEqual(row.version, 10, 'Schema version should be 10 after migration');
+      assert.strictEqual(row.version, 11, 'Schema version should be 11 after migration');
 
       // 2. Existing data survived
       const task = migratedDb.prepare("SELECT title, status FROM tasks WHERE title = 'Existing task'").get() as any;
