@@ -30,6 +30,23 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     'SELECT 1 FROM room_members WHERE room_id = @roomId AND member = @member'
   );
 
+  const membersWithHost = db.prepare(`
+    SELECT rm.member, a.container_host
+    FROM room_members rm
+    LEFT JOIN agents a ON a.name = rm.member
+    WHERE rm.room_id = @roomId AND rm.member != @sender
+  `);
+
+  const unreadForMember = db.prepare(`
+    SELECT COUNT(*) as unread
+    FROM chat_messages
+    WHERE room_id = @roomId
+      AND id > COALESCE(
+        (SELECT MAX(id) FROM chat_messages WHERE room_id = @roomId AND sender = @member),
+        0
+      )
+  `);
+
   // POST /rooms — create a room
   fastify.post<{
     Body: { id: string; name: string; type: 'group' | 'direct'; members?: string[] };
@@ -167,8 +184,38 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     const result = insertChatMessage.run({ roomId: id, sender, content, replyTo: replyTo ?? null });
-    // TODO(phase-5b): broadcast message to member containers
-    return { ok: true, id: Number(result.lastInsertRowid) };
+
+    // Phase 5b: broadcast message to member containers (fire-and-forget)
+    const msgId = Number(result.lastInsertRowid);
+    const recipients = membersWithHost.all({ roomId: id, sender }) as Array<{ member: string; container_host: string | null }>;
+    for (const recipient of recipients) {
+      if (!recipient.container_host) continue;
+      const unreadRow = unreadForMember.get({ roomId: id, member: recipient.member }) as { unread: number };
+      fetch(`http://${recipient.container_host}:8788`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: id,
+          message: {
+            id: msgId,
+            sender,
+            content,
+            replyTo: replyTo ?? null,
+            createdAt: new Date().toISOString()
+          },
+          roomMeta: {
+            unread: unreadRow.unread,
+            lastMessageId: msgId,
+            lastSender: sender
+          }
+        }),
+        signal: AbortSignal.timeout(3000)
+      }).catch(err => {
+        fastify.log.warn({ err, recipient: recipient.member }, 'chat push failed');
+      });
+    }
+
+    return { ok: true, id: msgId };
   });
 
   // GET /rooms/:id/messages — get chat messages

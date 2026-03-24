@@ -459,3 +459,104 @@ describe('auto-direct-room on agent registration', () => {
     assert.equal(res.json().containerHost, '172.17.0.2');
   });
 });
+
+/* ------------------------------------------------------------------ */
+/*  Chat message broadcast (Phase 5b)                                  */
+/* ------------------------------------------------------------------ */
+describe('chat message broadcast', () => {
+  let ctx: TestContext;
+
+  beforeEach(async () => {
+    ctx = await createTestApp();
+    await ctx.app.register(agentsPlugin, { config: createTestConfig() });
+    await ctx.app.register(roomsPlugin);
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    ctx.cleanup();
+  });
+
+  it('message POST succeeds when member has no container_host', async () => {
+    // Register agent without containerHost
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    // Create room with user and agent-1
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/rooms',
+      payload: { id: 'r-bc1', name: 'Broadcast Test 1', type: 'group', members: ['agent-1'] },
+      headers: { 'x-agent-name': 'user' },
+    });
+
+    // Post message as user — broadcast should skip agent-1 (no container_host)
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/rooms/r-bc1/messages',
+      payload: { content: 'hello agent' },
+      headers: { 'x-agent-name': 'user' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.equal(typeof body.id, 'number');
+  });
+
+  it('message POST succeeds when member has unreachable container_host', async () => {
+    // Register agent WITH containerHost pointing to nothing listening on 8788
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-2', worktree: '/tmp/wt2', containerHost: '127.0.0.1' },
+    });
+
+    // Create room with user and agent-2
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/rooms',
+      payload: { id: 'r-bc2', name: 'Broadcast Test 2', type: 'group', members: ['agent-2'] },
+      headers: { 'x-agent-name': 'user' },
+    });
+
+    // Post message as user — broadcast fires fetch to 127.0.0.1:8788 which should fail silently
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/rooms/r-bc2/messages',
+      payload: { content: 'hello unreachable' },
+      headers: { 'x-agent-name': 'user' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.equal(typeof body.id, 'number');
+  });
+
+  it('message POST succeeds when member is unregistered (pending)', async () => {
+    // Create room with a member that has no agent registration at all
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/rooms',
+      payload: { id: 'r-bc3', name: 'Broadcast Test 3', type: 'group', members: ['ghost-agent'] },
+      headers: { 'x-agent-name': 'user' },
+    });
+
+    // Post message as user — broadcast should see ghost-agent with NULL container_host and skip
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/rooms/r-bc3/messages',
+      payload: { content: 'hello ghost' },
+      headers: { 'x-agent-name': 'user' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.equal(typeof body.id, 'number');
+  });
+});

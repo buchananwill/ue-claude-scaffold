@@ -56,6 +56,22 @@ EXCL
 
 cp /container-settings.json /home/claude/.claude/settings.json
 
+# Write MCP config for chat channel
+cat > /home/claude/.claude/mcp.json <<MCPEOF
+{
+  "mcpServers": {
+    "chat": {
+      "command": "npx",
+      "args": ["tsx", "/workspace/container/mcp-servers/chat-channel.ts"],
+      "env": {
+        "SERVER_URL": "${SERVER_URL}",
+        "AGENT_NAME": "${AGENT_NAME}"
+      }
+    }
+  }
+}
+MCPEOF
+
 # ── Symlink read-only plugin mounts ──────────────────────────────────────────
 if [ -f /patch_workspace.py ] && [ -d /plugins-ro ]; then
     python3 /patch_workspace.py
@@ -278,6 +294,9 @@ ${FULL_PROMPT}"
         --dangerously-skip-permissions \
         --output-format text \
         --max-turns "$MAX_TURNS" \
+        --mcp-config /home/claude/.claude/mcp.json \
+        --channels server:chat \
+        --dangerously-load-development-channels \
         2>&1 &
     CLAUDE_PID=$!
     _watch_for_stop "$CLAUDE_PID" &
