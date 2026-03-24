@@ -6,7 +6,8 @@ message board provides live inspectability.
 ## What Problems Does This Setup Solve?
 
 **1. UBT is a singleton — and agents don't handle that gracefully.**
-Unreal Build Tool cannot run concurrently. When an autonomous agent hits a build failure because another build is already
+Unreal Build Tool cannot run concurrently. When an autonomous agent hits a build failure because another build is
+already
 running, it doesn't queue up and wait — it spirals, retries blindly, or gives up. This scaffold wraps UBT access in a
 coordination server with a proper mutex and message board. Agents submit build requests, the server serializes them, and
 structured results come back. No agent ever sees a "UBT is already running" error — they just wait their turn.
@@ -190,25 +191,25 @@ build scripts) lives in `scaffold.config.json`.
 
 Structural configuration. Created from `scaffold.config.example.json` by `setup.sh`.
 
-| Field                                | Description                                   |
-|--------------------------------------|-----------------------------------------------|
-| `project.name`                       | Your UE project name                          |
-| `project.path`                       | Absolute path to the project                  |
-| `project.uprojectFile`               | The `.uproject` filename                      |
-| `engine.path`                        | Absolute path to the UE engine                |
-| `engine.version`                     | UE version string (e.g. `"5.7"`)              |
-| `tasks.path`                         | Absolute path to the tasks directory          |
-| `build.scriptPath`                   | Build script path relative to project root    |
-| `build.testScriptPath`               | Test script path relative to project root     |
-| `build.defaultTestFilters`           | Array of default test filter strings          |
-| `plugins.readOnlyMounts`             | Plugin paths to mount read-only in containers |
-| `container.agentType`                | Default agent type for containers             |
-| `container.maxTurns`                 | Max turns for the agent                       |
-| `container.defaultBranch`            | Default branch for new agents                 |
-| `server.port`                        | Coordination server port                      |
-| `server.ubtLockTimeoutMs`            | Timeout for UBT lock acquisition              |
-| `server.stagingWorktreePath`         | Path to the host-side staging worktree        |
-| `server.bareRepoPath`                | Path to the bare repo                         |
+| Field                        | Description                                   |
+|------------------------------|-----------------------------------------------|
+| `project.name`               | Your UE project name                          |
+| `project.path`               | Absolute path to the project                  |
+| `project.uprojectFile`       | The `.uproject` filename                      |
+| `engine.path`                | Absolute path to the UE engine                |
+| `engine.version`             | UE version string (e.g. `"5.7"`)              |
+| `tasks.path`                 | Absolute path to the tasks directory          |
+| `build.scriptPath`           | Build script path relative to project root    |
+| `build.testScriptPath`       | Test script path relative to project root     |
+| `build.defaultTestFilters`   | Array of default test filter strings          |
+| `plugins.readOnlyMounts`     | Plugin paths to mount read-only in containers |
+| `container.agentType`        | Default agent type for containers             |
+| `container.maxTurns`         | Max turns for the agent                       |
+| `container.defaultBranch`    | Default branch for new agents                 |
+| `server.port`                | Coordination server port                      |
+| `server.ubtLockTimeoutMs`    | Timeout for UBT lock acquisition              |
+| `server.stagingWorktreePath` | Path to the host-side staging worktree        |
+| `server.bareRepoPath`        | Path to the bare repo                         |
 
 ## Scripts
 
@@ -293,12 +294,12 @@ cp agents/*.md ~/.claude/agents/
 
 ### Available Agent Types
 
-| Type | Description |
-|------|-------------|
-| `container-orchestrator` | Default. Executes a pre-authored plan E2E — delegates to sub-agents, no human approval gates. |
-| `container-implementer` | Writes code according to a plan or fix instructions. Builds after each change and iterates until clean. |
-| `container-reviewer` | Reviews implementation against the original spec and project style. Uses confidence scoring to minimize false positives. |
-| `container-tester` | Writes tests for an implementation, runs them, and iterates until passing. |
+| Type                     | Description                                                                                                              |
+|--------------------------|--------------------------------------------------------------------------------------------------------------------------|
+| `container-orchestrator` | Default. Executes a pre-authored plan E2E — delegates to sub-agents, no human approval gates.                            |
+| `container-implementer`  | Writes code according to a plan or fix instructions. Builds after each change and iterates until clean.                  |
+| `container-reviewer`     | Reviews implementation against the original spec and project style. Uses confidence scoring to minimize false positives. |
+| `container-tester`       | Writes tests for an implementation, runs them, and iterates until passing.                                               |
 
 ### Customising for your project
 
@@ -357,7 +358,8 @@ Change `server.port` in `scaffold.config.json` and restart the server.
 1. Fork the repository
 2. Create a feature branch
 3. Ensure the server builds and tests pass: `cd server && npm run typecheck && npm run build && npm test`
-4. Ensure shell scripts pass syntax checks: `bash -n launch.sh && bash -n setup.sh && bash -n status.sh && bash -n stop.sh`
+4. Ensure shell scripts pass syntax checks:
+   `bash -n launch.sh && bash -n setup.sh && bash -n status.sh && bash -n stop.sh`
 5. Submit a pull request
 
 ## License
