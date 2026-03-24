@@ -88,7 +88,6 @@ ue-claude-scaffold/
 │   ├── docker-compose.example.yml  # Template — copy to docker-compose.yml
 │   ├── entrypoint.sh
 │   ├── container-settings.json
-│   ├── patch_workspace.py     # CLAUDE.md path remapping for containers
 │   ├── hooks/                 # Claude Code PreToolUse hooks
 │   │   ├── intercept_build_test.sh   # Routes build/test to host
 │   │   └── block-push-passthrough.sh # Blocks manual git push
@@ -210,8 +209,6 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 | `server.ubtLockTimeoutMs`            | Timeout for UBT lock acquisition              |
 | `server.stagingWorktreePath`         | Path to the host-side staging worktree        |
 | `server.bareRepoPath`                | Path to the bare repo                         |
-| `claudeMdPatches.pathRemaps`         | Host-to-container path substitutions          |
-| `claudeMdPatches.agentSubstitutions` | Agent definition replacements for containers  |
 
 ## Scripts
 

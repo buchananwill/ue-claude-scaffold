@@ -42,6 +42,13 @@ git config user.email "claude-docker@localhost"
 git config user.name "Claude Code (Docker)"
 git config core.autocrlf false
 
+# ── Exclude Claude Code runtime metadata from git ────────────────────────────
+# .claude/ stores conversation state, settings, etc. during operation.
+# Exclude it so `git add -A` in the build hook only commits source code.
+cat > .git/info/exclude <<'EXCL'
+.claude/
+EXCL
+
 # ── Set up Claude Code project settings ──────────────────────────────────────
 # Install to user-level settings (not project-level) to keep them out of the
 # git working tree entirely.  Claude Code merges user + project settings, so
@@ -49,16 +56,9 @@ git config core.autocrlf false
 
 cp /container-settings.json /home/claude/.claude/settings.json
 
-# ── Patch workspace for container environment ────────────────────────────────
-# Remaps paths, substitutes agents, symlinks plugins.
-# Skipped if the patch script doesn't exist or there's no CLAUDE.md.
-
-if [ -f /patch_workspace.py ] && [ -f /workspace/CLAUDE.md ]; then
+# ── Symlink read-only plugin mounts ──────────────────────────────────────────
+if [ -f /patch_workspace.py ] && [ -d /plugins-ro ]; then
     python3 /patch_workspace.py
-    # Mark patched files as unchanged so git add -A never commits the
-    # container-specific patches (path remaps, stripped sections, etc.)
-    git update-index --assume-unchanged CLAUDE.md 2>/dev/null || true
-    git update-index --assume-unchanged .claude/CLAUDE.md 2>/dev/null || true
 fi
 
 # ── Register with coordination server ────────────────────────────────────────

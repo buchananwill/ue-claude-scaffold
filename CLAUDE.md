@@ -72,7 +72,7 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `GET /files` — file ownership registry (tracks which agent owns which files)
    - `/coalesce/*` — system-wide coordination: pause pump agents, wait for in-flight tasks, release file ownership
 
-3. **Docker container** (`container/`) — runs a single Claude Code instance in non-interactive mode (`claude -p`). The entrypoint (`entrypoint.sh`) clones from a bare repo, runs `patch_workspace.py` to remap host paths to container mount points and strip interactive-only sections, registers with the coordination server, and delegates to the specified agent type.
+3. **Docker container** (`container/`) — runs a single Claude Code instance in non-interactive mode (`claude -p`). The entrypoint (`entrypoint.sh`) clones from a bare repo, excludes `.claude/` from git tracking via `.git/info/exclude`, registers with the coordination server, and delegates to the specified agent type. The repo's `CLAUDE.md` is environment-agnostic — no patching needed. User-level Claude settings (hooks, agents, credentials) are mounted from outside the repo.
 
 4. **Dashboard** (`dashboard/`) — React + Vite SPA for real-time monitoring of agents, builds, tasks, and messages. Polls the coordination server. See Commands section above.
 

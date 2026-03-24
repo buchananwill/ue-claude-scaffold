@@ -39,6 +39,7 @@ export interface ScaffoldConfig {
     path: string;
     planBranch?: string;
   };
+  /** @deprecated No longer used — CLAUDE.md is now environment-agnostic. */
   claudeMdPatches?: {
     pathRemaps: Record<string, string>;
     agentSubstitutions: Record<string, string>;

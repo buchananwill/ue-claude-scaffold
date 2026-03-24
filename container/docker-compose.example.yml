@@ -32,11 +32,6 @@ services:
       # Option B — API key: set ANTHROPIC_API_KEY in environment above instead
       # Agent definitions (container-orchestrator, etc.)
       - ${AGENTS_PATH:-../agents}:/home/claude/.claude/agents:ro
-      # Optional: workspace patching config (path remaps, agent substitutions).
-      # Create from scaffold.config.example.json before running compose.
-      # If this file does not exist, Docker will create an empty directory at the
-      # mount path — remove it and create the file, or remove this mount line.
-      - ../scaffold.config.json:/config/scaffold.config.json:ro
       # UE engine (read-only)
       - ${UE_ENGINE_PATH:?Set UE_ENGINE_PATH}:/engine:ro
       # Optional: read-only plugin mounts (symlinked into Plugins/ at startup)

@@ -48,14 +48,5 @@
     "ubtLockTimeoutMs": 600000,
     "stagingWorktreeRoot": "",
     "bareRepoPath": ""
-  },
-
-  "claudeMdPatches": {
-    "pathRemaps": {
-      "D:\\\\Path\\\\On\\\\Host": "/container/path"
-    },
-    "agentSubstitutions": {
-      "host-only-agent": "- **`container-agent` agent** — replacement for container use"
-    }
   }
 }
