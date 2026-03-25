@@ -26,6 +26,10 @@ const colorMap: Record<string, string> = {
   test_complete: 'green',
   test_failed: 'red',
   progress: 'cyan',
+  // team statuses
+  active: 'green',
+  converging: 'yellow',
+  dissolved: 'gray',
 };
 
 interface StatusBadgeProps {

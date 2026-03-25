@@ -1,5 +1,5 @@
 import { AppShell, Group, NavLink } from '@mantine/core';
-import { IconLayoutDashboard, IconMessage, IconList } from '@tabler/icons-react';
+import { IconLayoutDashboard, IconMessage, IconList, IconMessageCircle, IconUsersGroup } from '@tabler/icons-react';
 import { Outlet, useRouter, useMatches } from '@tanstack/react-router';
 import { HealthBar } from '../components/HealthBar.tsx';
 import { useHealth } from '../hooks/useHealth.ts';
@@ -15,6 +15,8 @@ export function DashboardLayout() {
   const currentPath = matches[matches.length - 1]?.pathname ?? '/';
   const isMessages = currentPath.startsWith('/messages');
   const isLogs = currentPath === '/logs';
+  const isChat = currentPath.startsWith('/chat');
+  const isTeams = currentPath.startsWith('/teams');
 
   return (
     <AppShell header={{ height: 50 }} padding="md">
@@ -51,6 +53,22 @@ export function DashboardLayout() {
             leftSection={<IconList size={16} />}
             active={isLogs}
             onClick={() => router.navigate({ to: '/logs' })}
+            style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
+            px="md"
+          />
+          <NavLink
+            label="Chat"
+            leftSection={<IconMessageCircle size={16} />}
+            active={isChat}
+            onClick={() => router.navigate({ to: '/chat', search: { room: undefined } })}
+            style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
+            px="md"
+          />
+          <NavLink
+            label="Teams"
+            leftSection={<IconUsersGroup size={16} />}
+            active={isTeams}
+            onClick={() => router.navigate({ to: '/teams' })}
             style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
             px="md"
           />

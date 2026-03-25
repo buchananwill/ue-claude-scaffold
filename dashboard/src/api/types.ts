@@ -80,3 +80,62 @@ export interface UbtQueueEntry {
   priority: number;
   requested_at: string;
 }
+
+export interface Room {
+  id: string;
+  name: string;
+  type: 'group' | 'direct';
+  createdBy: string;
+  createdAt: string;
+  memberCount: number;
+}
+
+export interface RoomMember {
+  member: string;
+  joinedAt: string;
+}
+
+export interface RoomDetail {
+  id: string;
+  name: string;
+  type: 'group' | 'direct';
+  createdBy: string;
+  createdAt: string;
+  members: RoomMember[];
+}
+
+export interface ChatMessage {
+  id: number;
+  roomId: string;
+  sender: string;
+  content: string;
+  replyTo: number | null;
+  createdAt: string;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  briefPath: string | null;
+  status: string;
+  deliverable: string | null;
+  createdAt: string;
+  dissolvedAt: string | null;
+}
+
+export interface TeamMember {
+  agentName: string;
+  role: string;
+  isChairman: boolean;
+}
+
+export interface TeamDetail {
+  id: string;
+  name: string;
+  briefPath: string | null;
+  status: string;
+  deliverable: string | null;
+  createdAt: string;
+  dissolvedAt: string | null;
+  members: TeamMember[];
+}

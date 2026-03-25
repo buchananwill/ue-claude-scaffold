@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Grid, Card, Title, Stack, Button, Group, Text } from '@mantine/core';
+import { Grid, Card, Title, Stack, Button, Group } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { TasksPanel } from '../components/TasksPanel.tsx';
 import { AgentsPanel } from '../components/AgentsPanel.tsx';

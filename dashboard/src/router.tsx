@@ -9,6 +9,8 @@ import { MessagesPage } from './pages/MessagesPage.tsx';
 import { TaskDetailPage } from './pages/TaskDetailPage.tsx';
 import { AgentDetailPage } from './pages/AgentDetailPage.tsx';
 import { BuildLogPage } from './pages/BuildLogPage.tsx';
+import { ChatPage } from './pages/ChatPage.tsx';
+import { TeamsPage } from './pages/TeamsPage.tsx';
 
 const rootRoute = createRootRoute({
   component: DashboardLayout,
@@ -54,6 +56,21 @@ const logsRoute = createRoute({
   component: BuildLogPage,
 });
 
+const chatRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/chat',
+  component: ChatPage,
+  validateSearch: (search: Record<string, unknown>) => ({
+    room: typeof search.room === 'string' ? search.room : undefined,
+  }),
+});
+
+const teamsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/teams',
+  component: TeamsPage,
+});
+
 const routeTree = rootRoute.addChildren([
   overviewRoute,
   messagesIndexRoute,
@@ -61,6 +78,8 @@ const routeTree = rootRoute.addChildren([
   taskDetailRoute,
   agentDetailRoute,
   logsRoute,
+  chatRoute,
+  teamsRoute,
 ]);
 
 export const router = createRouter({ routeTree });
