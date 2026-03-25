@@ -26,7 +26,7 @@ Options:
   --parallel N        Launch N parallel pump agents (implies --pump)
   --fresh             Reset agent branch to docker/current-root HEAD (clean start)
   --team TEAM_ID      Launch a design team (reads teams/<TEAM_ID>.json)
-  --brief PATH        Path to a brief file (required with --team)
+  --brief PATH        Repo-relative path to a brief file (required with --team)
   --dry-run           Print resolved configuration and exit without launching
   --help              Show this help message and exit
 
@@ -39,7 +39,7 @@ Examples:
   ./launch.sh --pump --agent-name pump-1
   ./launch.sh --verbosity verbose --plan plans/tricky-refactor.md
   ./launch.sh --parallel 3
-  ./launch.sh --team design-team-1 --brief briefs/inventory.md
+  ./launch.sh --team design-team-1 --brief Notes/docker-claude/briefs/inventory.md
   ./launch.sh --dry-run
 USAGE
 }
@@ -231,13 +231,14 @@ fi
 
 # ── Team mode ───────────────────────────────────────────────────────────────
 if [[ -n "$_CLI_TEAM" ]]; then
-  # Validate brief
+  # Validate brief — must be a repo-relative path that exists on docker/current-root
   if [[ -z "$_CLI_BRIEF" ]]; then
     echo "Error: --brief is required when using --team" >&2
     exit 1
   fi
-  if [[ ! -f "$_CLI_BRIEF" ]]; then
-    echo "Error: Brief file not found: $_CLI_BRIEF" >&2
+  if ! git -C "$BARE_REPO_PATH" cat-file -e "${ROOT_BRANCH}:${_CLI_BRIEF}" 2>/dev/null; then
+    echo "Error: Brief not found on ${ROOT_BRANCH}: $_CLI_BRIEF" >&2
+    echo "Commit the brief in the exterior repo and sync with POST /sync/plans first." >&2
     exit 1
   fi
 
@@ -269,20 +270,16 @@ if [[ -n "$_CLI_TEAM" ]]; then
   fi
   echo "  Room:    $ROOM_ID"
 
-  # Post brief as first room message
-  _BRIEF_JSON=$(mktemp)
-  jq -n --rawfile content "$_CLI_BRIEF" '{content: $content}' > "$_BRIEF_JSON"
+  # Post brief path as first room message so agents know where to find it
   curl -sf -X POST "http://localhost:${SERVER_PORT}/rooms/${ROOM_ID}/messages" \
     -H "Content-Type: application/json" \
     -H "X-Agent-Name: user" \
-    -d @"$_BRIEF_JSON" \
+    -d "{\"content\": \"Brief: \`${_CLI_BRIEF}\` — read this file from your workspace to begin.\"}" \
     >/dev/null 2>&1 || {
-    rm -f "$_BRIEF_JSON"
-    echo "Error: Failed to post brief to room." >&2
+    echo "Error: Failed to post brief path to room." >&2
     exit 1
   }
-  rm -f "$_BRIEF_JSON"
-  echo "  Brief posted to room."
+  echo "  Brief path posted to room: $_CLI_BRIEF"
   echo ""
 
   # Launch members — chairman first, then others
@@ -321,6 +318,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
       AGENT_TYPE="$_MEMBER_TYPE" \
       CHAT_ROOM="$ROOM_ID" \
       TEAM_ROLE="$_MEMBER_ROLE" \
+      BRIEF_PATH="$_CLI_BRIEF" \
       BARE_REPO_PATH="$BARE_REPO_PATH" \
       TASKS_PATH="$TASKS_PATH" \
       UE_ENGINE_PATH="$UE_ENGINE_PATH" \

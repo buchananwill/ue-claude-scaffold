@@ -2,7 +2,7 @@
 
 You MUST write a debrief/work audit as part of your build-verify cycle — **before** requesting a build, not after.
 
-Write debriefs to `notes/docker-claude/` in the workspace (create the directory if needed). Use the filename format:
+Write debriefs to `Notes/docker-claude/debriefs/` in the workspace (create the directory if needed). Use the filename format:
 
     debrief-NNNN-keyword-keyword-keyword.md
 

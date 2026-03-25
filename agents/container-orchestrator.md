@@ -127,7 +127,7 @@ Delegate to **implementer** with:
 - **Only this phase's requirements** — never include work from subsequent phases
 - The phase's requirements from the plan (verbatim)
 - Any supplementary notes from the CLAUDE.md role mapping
-- Instruction to write a debrief to `notes/docker-claude/` before building (see standing instruction `01-debrief.md`)
+- Instruction to write a debrief to `Notes/docker-claude/debriefs/` before building (see standing instruction `01-debrief.md`)
 
 The implementer builds after making changes and iterates internally until the build is clean.
 

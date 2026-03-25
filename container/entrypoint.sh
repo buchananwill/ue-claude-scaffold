@@ -400,11 +400,11 @@ run_chat_agent() {
     FULL_PROMPT="${FULL_PROMPT}You are joining chat room: ${CHAT_ROOM}
 Your role: ${TEAM_ROLE:-participant}
 
-The brief has been posted as the first message in the room. Messages from other participants arrive as channel events in your context.
+Read the brief at \`${BRIEF_PATH:-BRIEF_PATH_NOT_SET}\` in your workspace. This file is the team's specification — it lives in the repo alongside the code it describes. Messages from other participants arrive as channel events in your context.
 
 IMPORTANT: To send messages to the chat room, use the \`reply\` MCP tool (provided by the chat MCP server). The reply tool takes room, content, and optional replyTo parameters. Do NOT use curl or Bash to post messages — the reply tool handles authentication and sender identity automatically.
 
-Read the brief from the channel and begin your work according to your agent definition."
+Read the brief and begin your work according to your agent definition."
 
     echo "Chat-only mode: room=${CHAT_ROOM}, role=${TEAM_ROLE:-participant}"
     echo "Prompt assembled ($(echo -n "$FULL_PROMPT" | wc -c) bytes)"
