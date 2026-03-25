@@ -13,7 +13,7 @@ async function createTeam(
     id: string;
     name: string;
     briefPath?: string;
-    members: Array<{ agentName: string; role: string; isChairman?: boolean }>;
+    members: Array<{ agentName: string; role: string; isLeader?: boolean }>;
     agent?: string;
   },
 ) {
@@ -54,7 +54,7 @@ describe('POST /teams', () => {
       id: 'team-1',
       name: 'Alpha Team',
       members: [
-        { agentName: 'alice', role: 'implementer', isChairman: true },
+        { agentName: 'alice', role: 'implementer', isLeader: true },
         { agentName: 'bob', role: 'reviewer' },
       ],
     });
@@ -69,7 +69,7 @@ describe('POST /teams', () => {
     await createTeam(ctx, {
       id: 'team-2',
       name: 'Beta Team',
-      members: [{ agentName: 'alice', role: 'lead', isChairman: true }],
+      members: [{ agentName: 'alice', role: 'lead', isLeader: true }],
     });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/rooms/team-2' });
@@ -84,7 +84,7 @@ describe('POST /teams', () => {
       id: 'team-3',
       name: 'Gamma Team',
       members: [
-        { agentName: 'alice', role: 'implementer', isChairman: true },
+        { agentName: 'alice', role: 'implementer', isLeader: true },
         { agentName: 'bob', role: 'reviewer' },
       ],
       agent: 'orchestrator',
@@ -95,7 +95,7 @@ describe('POST /teams', () => {
     assert.deepEqual(members, ['alice', 'bob', 'user']);
   });
 
-  it('returns 400 when zero chairmen provided', async () => {
+  it('returns 400 when zero leaders provided', async () => {
     const res = await createTeam(ctx, {
       id: 'team-bad',
       name: 'No Chair',
@@ -107,13 +107,13 @@ describe('POST /teams', () => {
     assert.equal(res.statusCode, 400);
   });
 
-  it('returns 400 when two chairmen provided', async () => {
+  it('returns 400 when two leaders provided', async () => {
     const res = await createTeam(ctx, {
       id: 'team-bad2',
       name: 'Two Chairs',
       members: [
-        { agentName: 'alice', role: 'implementer', isChairman: true },
-        { agentName: 'bob', role: 'reviewer', isChairman: true },
+        { agentName: 'alice', role: 'implementer', isLeader: true },
+        { agentName: 'bob', role: 'reviewer', isLeader: true },
       ],
     });
     assert.equal(res.statusCode, 400);
@@ -140,11 +140,11 @@ describe('GET /teams', () => {
   it('returns all teams', async () => {
     await createTeam(ctx, {
       id: 't1', name: 'Team 1',
-      members: [{ agentName: 'a', role: 'r', isChairman: true }],
+      members: [{ agentName: 'a', role: 'r', isLeader: true }],
     });
     await createTeam(ctx, {
       id: 't2', name: 'Team 2',
-      members: [{ agentName: 'b', role: 'r', isChairman: true }],
+      members: [{ agentName: 'b', role: 'r', isLeader: true }],
     });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/teams' });
@@ -156,11 +156,11 @@ describe('GET /teams', () => {
   it('filters by ?status=active', async () => {
     await createTeam(ctx, {
       id: 't1', name: 'Active',
-      members: [{ agentName: 'a', role: 'r', isChairman: true }],
+      members: [{ agentName: 'a', role: 'r', isLeader: true }],
     });
     await createTeam(ctx, {
       id: 't2', name: 'Will Dissolve',
-      members: [{ agentName: 'b', role: 'r', isChairman: true }],
+      members: [{ agentName: 'b', role: 'r', isLeader: true }],
     });
     // Dissolve t2
     await ctx.app.inject({ method: 'DELETE', url: '/teams/t2' });
@@ -196,7 +196,7 @@ describe('GET /teams/:id', () => {
       name: 'Detail Team',
       briefPath: '/plans/brief.md',
       members: [
-        { agentName: 'alice', role: 'implementer', isChairman: true },
+        { agentName: 'alice', role: 'implementer', isLeader: true },
         { agentName: 'bob', role: 'reviewer' },
       ],
     });
@@ -212,13 +212,13 @@ describe('GET /teams/:id', () => {
     assert.ok(Array.isArray(body.members));
     assert.equal(body.members.length, 2);
 
-    const chairman = body.members.find((m: { agentName: string }) => m.agentName === 'alice');
-    assert.equal(chairman.role, 'implementer');
-    assert.equal(chairman.isChairman, true);
+    const leader = body.members.find((m: { agentName: string }) => m.agentName === 'alice');
+    assert.equal(leader.role, 'implementer');
+    assert.equal(leader.isLeader, true);
 
     const member = body.members.find((m: { agentName: string }) => m.agentName === 'bob');
     assert.equal(member.role, 'reviewer');
-    assert.equal(member.isChairman, false);
+    assert.equal(member.isLeader, false);
   });
 
   it('returns 404 for unknown team', async () => {
@@ -247,7 +247,7 @@ describe('DELETE /teams/:id', () => {
   it('sets status to dissolved and dissolved_at', async () => {
     await createTeam(ctx, {
       id: 'del1', name: 'To Dissolve',
-      members: [{ agentName: 'a', role: 'r', isChairman: true }],
+      members: [{ agentName: 'a', role: 'r', isLeader: true }],
     });
 
     const del = await ctx.app.inject({ method: 'DELETE', url: '/teams/del1' });
@@ -268,7 +268,7 @@ describe('DELETE /teams/:id', () => {
   it('room still exists after dissolve', async () => {
     await createTeam(ctx, {
       id: 'del2', name: 'Dissolve With Room',
-      members: [{ agentName: 'a', role: 'r', isChairman: true }],
+      members: [{ agentName: 'a', role: 'r', isLeader: true }],
     });
 
     await ctx.app.inject({ method: 'DELETE', url: '/teams/del2' });
@@ -299,7 +299,7 @@ describe('PATCH /teams/:id', () => {
   it('updates status to converging', async () => {
     await createTeam(ctx, {
       id: 'p1', name: 'Patch Team',
-      members: [{ agentName: 'a', role: 'r', isChairman: true }],
+      members: [{ agentName: 'a', role: 'r', isLeader: true }],
     });
 
     const res = await ctx.app.inject({
@@ -317,7 +317,7 @@ describe('PATCH /teams/:id', () => {
   it('sets deliverable text', async () => {
     await createTeam(ctx, {
       id: 'p2', name: 'Deliverable Team',
-      members: [{ agentName: 'a', role: 'r', isChairman: true }],
+      members: [{ agentName: 'a', role: 'r', isLeader: true }],
     });
 
     const res = await ctx.app.inject({
@@ -334,7 +334,7 @@ describe('PATCH /teams/:id', () => {
   it('returns 400 for invalid status value', async () => {
     await createTeam(ctx, {
       id: 'p3', name: 'Bad Status',
-      members: [{ agentName: 'a', role: 'r', isChairman: true }],
+      members: [{ agentName: 'a', role: 'r', isLeader: true }],
     });
 
     const res = await ctx.app.inject({

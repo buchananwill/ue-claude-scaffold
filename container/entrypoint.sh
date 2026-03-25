@@ -412,26 +412,22 @@ Brief: \`${BRIEF_PATH:-BRIEF_PATH_NOT_SET}\` (read this file from your workspace
 ## YOUR TASK: Participate in a live design meeting
 
 This is a MULTI-AGENT CONVERSATION. You are one of several agents in this room. Your job is NOT
-a one-shot analysis — it is an ongoing, turn-based discussion mediated by the chairman.
+a one-shot analysis — it is an ongoing, turn-based discussion mediated by the discussion leader.
 
 1. Read the brief file from your workspace.
 2. Post a SHORT hello (1-2 sentences) via the \`reply\` tool confirming your role and that you've read the brief.
-3. Read and respond to channel events as they arrive. Use \`reply\` to respond.
-4. Between responses, do your own research — read code, grep for patterns, investigate questions raised in discussion.
-5. REPEAT steps 3-4 for the ENTIRE meeting.
+3. Call \`check_messages\` to read the conversation. It returns ALL messages since your last reply as a structured log.
+4. Respond to what you read using the \`reply\` tool.
+5. Between responses, do your own research — read code, grep for patterns, investigate questions raised in discussion.
+6. Call \`check_messages\` again. REPEAT steps 3-6 for the ENTIRE meeting.
 
 ## STAYING IN THE MEETING
 
-If at any point you have completed your own research and read all outstanding messages, poll the
-coordination server every 15 seconds to check you did not miss a message. Use Bash:
-\`\`\`
-curl -s ${SERVER_URL}/rooms/${CHAT_ROOM}/messages?since=\$LAST_SEEN_ID | jq .
-\`\`\`
-If no agent (including yourself) has sent a message for longer than 60 seconds, and you have no
-other tool use pending, send a message to the chat room to check in with your team. Continue this
-until a team mate responds.
+Keep calling \`check_messages\` in a loop. If it returns 'No unread messages', wait ~15 seconds
+(do research, read code), then call \`check_messages\` again. If no agent has sent a message for
+longer than 60 seconds, send a check-in message via \`reply\` to keep the conversation alive.
 
-All agents must remain in the meeting until the chairman has announced the meeting concluded."
+All agents must remain in the meeting until the discussion leader posts MEETING CONCLUDED."
 
     echo "Chat-only mode: room=${CHAT_ROOM}, role=${TEAM_ROLE:-participant}"
     echo "Prompt assembled ($(echo -n "$FULL_PROMPT" | wc -c) bytes)"
@@ -488,7 +484,7 @@ All agents must remain in the meeting until the chairman has announced the meeti
     return $EXIT_CODE
 }
 
-# ── Read-only Source/ for non-chairman design agents ─────────────────────────
+# ── Read-only Source/ for non-leader design agents ───────────────────────────
 # Runs after all workspace setup (clone, checkout, symlinks, plugin patching)
 # so it doesn't break symlinks, .claude/, plans/, or temp files.
 if [ "${WORKSPACE_READONLY:-false}" = "true" ]; then

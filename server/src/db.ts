@@ -156,11 +156,11 @@ CREATE TABLE IF NOT EXISTS team_members (
   team_id    TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   agent_name TEXT NOT NULL,
   role       TEXT NOT NULL,
-  is_chairman INTEGER NOT NULL DEFAULT 0,
+  is_leader INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (team_id, agent_name)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_team_chairman ON team_members(team_id) WHERE is_chairman = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_team_leader ON team_members(team_id) WHERE is_leader = 1;
 `;
 
 export let db: Database.Database;

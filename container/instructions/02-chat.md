@@ -1,10 +1,15 @@
 # Chat Protocol
 
-## Message Delivery
+## Reading Messages
 
-You are a member of a chat room. Messages from other participants arrive as
-`<channel source="chat" room="..." sender="..." message_id="...">` events in your context.
-The chat channel polls the coordination server automatically — you do not need to poll or fetch messages yourself.
+Call the `check_messages` tool with your room ID to read the conversation. It returns ALL messages
+since your last `reply` as a structured chat log — you see the full thread, not isolated messages.
+If there are no new messages, it returns "No unread messages."
+
+You will also receive channel notifications when new messages arrive, but these are just alerts —
+always call `check_messages` to read the actual conversation in context.
+
+## Sending Messages
 
 **EVERY message you want the team to see MUST go through the `reply` tool.** Text you write outside
 of tool calls is invisible to other agents — it goes to your local log, not to the chat room. If you
@@ -12,21 +17,42 @@ want to say something to the team, call `reply`. There is no other way to commun
 
 ## Handshake
 
-When you first join the room, **do not** launch into analysis. Post a short hello (1-2 sentences) confirming
-your role and that you have read the brief. Example: "Architect here. I've read the brief — ready when the
-chairman kicks us off." Then wait for the chairman to open the floor.
+When you first join the room, **do not** launch into analysis. Post a short hello (1-2 sentences) via
+`reply` confirming your role and that you have read the brief. Example: "Architect here. I've read
+the brief — ready when the discussion leader kicks us off." Then call `check_messages` and wait for
+the discussion leader to open the floor.
+
+## Chatroom Etiquette
+
+1. If you are addressed directly in a message (via `@your-agent-name`), reply as soon as you are able
+   — even if only to say you are not yet ready to reply in full. Use `@agent-name` to address the
+   agent you're replying to.
+2. If you have not been directly addressed since your last message, but would like to contribute again,
+   send a short (one sentence) message, optionally `@agent-name` to a specific agent, as a ping to
+   request the floor.
+3. If you wish to address the whole chatroom, use `@everyone` to signal this.
+4. You may address multiple agents simultaneously, e.g. `@agent-name-1 @agent-name-2`, to request
+   similar input from them all, or if you have the same reply for all listed agents.
+5. If there is an active `@`-addressing dialogue between other agents, that does not prohibit you from
+   engaging with concise support or dissent to the debate.
 
 ## Message Discipline
 
-- **Keep messages to 1-3 sentences** unless the chairman explicitly invites you to elaborate.
-- Make one point per message. If you have three points, send three short messages or ask the chairman which to address first.
+- **Keep messages to 1-3 sentences** unless the discussion leader explicitly invites you to elaborate.
+- Make one point per message. If you have three points, send three short messages or ask the discussion
+  leader which to address first.
 - Respond to what was said — do not ignore other members' messages to push your own agenda.
 - If a message from `user` asks you to change approach, prioritize it. User messages are directives.
 - This is a working conversation, not a status report. No preamble, no summaries of what you already said.
 
 ## Staying Active
 
-Between channel events, do your own research — read code, grep for patterns, investigate questions
-raised in discussion. Use your tools (Read, Grep, Glob, Bash) to ground your contributions in evidence.
+Between `check_messages` calls, do your own research — read code, grep for patterns, investigate
+questions raised in discussion. Use your tools (Read, Grep, Glob, Bash) to ground your contributions
+in evidence.
 
-All agents must remain in the meeting until the chairman has announced the meeting concluded.
+## Exit Condition
+
+The ONLY exit signal is the discussion leader posting a message containing the exact phrase
+**"MEETING CONCLUDED"**. Do not exit for any other reason. If you believe the discussion has
+converged, say so in the room — but do not leave until the discussion leader confirms it.

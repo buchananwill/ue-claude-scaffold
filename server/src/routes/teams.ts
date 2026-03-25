@@ -9,7 +9,7 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
   );
 
   const insertTeamMember = db.prepare(
-    'INSERT INTO team_members (team_id, agent_name, role, is_chairman) VALUES (@teamId, @agentName, @role, @isChairman)'
+    'INSERT INTO team_members (team_id, agent_name, role, is_leader) VALUES (@teamId, @agentName, @role, @isLeader)'
   );
 
   const insertRoom = db.prepare(
@@ -28,7 +28,7 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
   const teamById = db.prepare('SELECT * FROM teams WHERE id = @id');
 
   const teamMembersByTeamId = db.prepare(
-    'SELECT agent_name, role, is_chairman FROM team_members WHERE team_id = @teamId'
+    'SELECT agent_name, role, is_leader FROM team_members WHERE team_id = @teamId'
   );
 
   const dissolveTeam = db.prepare(
@@ -49,15 +49,15 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
       id: string;
       name: string;
       briefPath?: string;
-      members: Array<{ agentName: string; role: string; isChairman?: boolean }>;
+      members: Array<{ agentName: string; role: string; isLeader?: boolean }>;
     };
   }>('/teams', async (request, reply) => {
     const caller = (request.headers['x-agent-name'] as string | undefined) ?? 'user';
     const { id, name, briefPath, members } = request.body;
 
-    const chairmanCount = members.filter(m => m.isChairman).length;
-    if (chairmanCount !== 1) {
-      return reply.badRequest('Exactly one chairman is required');
+    const leaderCount = members.filter(m => m.isLeader).length;
+    if (leaderCount !== 1) {
+      return reply.badRequest('Exactly one discussion leader is required');
     }
 
     try {
@@ -79,7 +79,7 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
             teamId: id,
             agentName: m.agentName,
             role: m.role,
-            isChairman: m.isChairman ? 1 : 0,
+            isLeader: m.isLeader ? 1 : 0,
           });
         }
         insertRoom.run({ id, name, type: 'group', createdBy: caller });
@@ -142,7 +142,7 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     const members = teamMembersByTeamId.all({ teamId: team.id }) as Array<{
-      agent_name: string; role: string; is_chairman: number;
+      agent_name: string; role: string; is_leader: number;
     }>;
 
     return {
@@ -157,7 +157,7 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
       members: members.map(m => ({
         agentName: m.agent_name,
         role: m.role,
-        isChairman: m.is_chairman === 1,
+        isLeader: m.is_leader === 1,
       })),
     };
   });

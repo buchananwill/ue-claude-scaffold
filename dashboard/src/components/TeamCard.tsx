@@ -29,7 +29,7 @@ export function TeamCard({ team }: TeamCardProps) {
           <Table.Tr>
             <Table.Th>Agent</Table.Th>
             <Table.Th>Role</Table.Th>
-            <Table.Th>Chairman</Table.Th>
+            <Table.Th>Leader</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -38,7 +38,7 @@ export function TeamCard({ team }: TeamCardProps) {
               <Table.Td>{m.agentName}</Table.Td>
               <Table.Td>{m.role}</Table.Td>
               <Table.Td>
-                {m.isChairman && <Badge size="xs" color="yellow">Chairman</Badge>}
+                {m.isLeader && <Badge size="xs" color="yellow">Discussion Leader</Badge>}
               </Table.Td>
             </Table.Tr>
           ))}

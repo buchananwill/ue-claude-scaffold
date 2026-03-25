@@ -126,7 +126,7 @@ export interface Team {
 export interface TeamMember {
   agentName: string;
   role: string;
-  isChairman: boolean;
+  isLeader: boolean;
 }
 
 export interface TeamDetail {

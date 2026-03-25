@@ -287,18 +287,18 @@ if [[ -n "$_CLI_TEAM" ]]; then
   echo "  Brief path posted to room: $_CLI_BRIEF"
   echo ""
 
-  # Launch members — chairman first, then others
+  # Launch members — discussion leader first, then others
   launch_team_member() {
-    local _MEMBER_NAME _MEMBER_ROLE _MEMBER_TYPE _MEMBER_BRANCH _IS_CHAIRMAN
+    local _MEMBER_NAME _MEMBER_ROLE _MEMBER_TYPE _MEMBER_BRANCH _IS_LEADER
     _MEMBER_NAME=$(echo "$1" | jq -r '.agentName')
     _MEMBER_ROLE=$(echo "$1" | jq -r '.role')
     _MEMBER_TYPE=$(echo "$1" | jq -r '.agentType')
-    _IS_CHAIRMAN=$(echo "$1" | jq -r '.isChairman // false')
+    _IS_LEADER=$(echo "$1" | jq -r '.isLeader // false')
     _MEMBER_BRANCH="docker/${_MEMBER_NAME}"
 
-    # Non-chairman members get a read-only workspace
+    # Non-leader members get a read-only workspace
     local _WORKSPACE_READONLY="false"
-    if [ "$_IS_CHAIRMAN" != "true" ]; then
+    if [ "$_IS_LEADER" != "true" ]; then
       _WORKSPACE_READONLY="true"
     fi
 
@@ -311,7 +311,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
     (cd "$SCRIPT_DIR/container" && \
       $COMPOSE_CMD --project-name "claude-${_MEMBER_NAME}" down 2>/dev/null) || true
 
-    # Launch container — design agents get no build hooks and non-chairman
+    # Launch container — design agents get no build hooks and non-leader
     # members get a read-only workspace
     (cd "$SCRIPT_DIR/container" && \
       AGENT_NAME="$_MEMBER_NAME" \
@@ -335,16 +335,16 @@ if [[ -n "$_CLI_TEAM" ]]; then
     echo "  Launched $_MEMBER_NAME (role: $_MEMBER_ROLE, type: $_MEMBER_TYPE, readonly: $_WORKSPACE_READONLY)"
   }
 
-  # Launch chairman first
-  jq -c '.members[] | select(.isChairman == true)' "$TEAM_DEF" | while IFS= read -r member; do
+  # Launch discussion leader first
+  jq -c '.members[] | select(.isLeader == true)' "$TEAM_DEF" | while IFS= read -r member; do
     launch_team_member "$member"
   done
 
   echo "  Waiting 10s before launching other members..."
   sleep 10
 
-  # Launch non-chairman members
-  jq -c '.members[] | select(.isChairman == false)' "$TEAM_DEF" | while IFS= read -r member; do
+  # Launch non-leader members
+  jq -c '.members[] | select(.isLeader == false)' "$TEAM_DEF" | while IFS= read -r member; do
     launch_team_member "$member"
   done
 

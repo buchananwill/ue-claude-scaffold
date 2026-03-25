@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 // Chat channel MCP server — polls the coordination server for new messages
-// and pushes them into the Claude Code session as <channel> events.
+// and notifies the Claude session that unread messages are available.
 //
-// Replaces the old HTTP-listener approach which required host→container
-// networking (broken on Windows Docker Desktop).
+// Instead of forwarding individual messages as channel events, this server:
+// 1. Polls for new messages and sends a "you have N unread" notification
+// 2. Provides a `check_messages` tool that returns the full conversation
+//    since the agent's last reply, formatted as a structured chat log
+// 3. Provides a `reply` tool to post messages back to the room
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -13,7 +16,7 @@ const SERVER_URL = process.env.SERVER_URL ?? 'http://host.docker.internal:9100';
 const AGENT_NAME = process.env.AGENT_NAME ?? 'unknown';
 const SESSION_TOKEN = process.env.SESSION_TOKEN ?? '';
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL) || 3000;
-const DISCOVERY_EVERY_N = 10; // re-discover rooms every N poll cycles
+const DISCOVERY_EVERY_N = 10;
 
 const log = (...args) => console.error(`[chat-channel][${AGENT_NAME}]`, ...args);
 
@@ -29,53 +32,149 @@ const authHeaders = {
   ...(SESSION_TOKEN ? { Authorization: `Bearer ${SESSION_TOKEN}` } : {}),
 };
 
+// ── State ───────────────────────────────────────────────────────────────────
+
+/** @type {Map<string, number>} high-water mark per room (latest message ID seen by poll) */
+const highWater = new Map();
+
+/** @type {Map<string, number>} ID of this agent's last reply per room (for check_messages) */
+const lastRepliedAt = new Map();
+
+/** @type {Map<string, number>} count of unread messages per room (messages since last check) */
+const unreadCount = new Map();
+
+/** @type {string[]} */
+let knownRooms = [];
+let pollCycle = 0;
+
 // ── MCP server setup ────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: 'chat-channel', version: '2.0.0' },
+  { name: 'chat-channel', version: '3.0.0' },
   {
     capabilities: {
       experimental: { 'claude/channel': {} },
       tools: {},
     },
     instructions: [
-      'Chat room messages arrive as <channel> events.',
-      'The "sender" attribute identifies who sent the message (an agent name or "user").',
-      'The "room" attribute is the room ID. "message_id" is the message sequence number.',
-      `Your agent name is "${AGENT_NAME}". Reply with the reply tool, passing the room ID from the event.`,
+      `Your agent name is "${AGENT_NAME}".`,
+      'You will receive <channel> notifications when new messages arrive in your chat room.',
+      'Use the `check_messages` tool to read the full conversation since your last reply.',
+      'Use the `reply` tool to send messages to the room.',
+      'EVERY response to the team MUST go through the `reply` tool — text outside tool calls is invisible to other agents.',
     ].join(' '),
   }
 );
 
-// ── Reply tool ──────────────────────────────────────────────────────────────
+// ── Tools ───────────────────────────────────────────────────────────────────
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  log('ListTools called — returning reply tool');
+  log('ListTools called');
   return {
-    tools: [{
-      name: 'reply',
-      description: 'Send a message to a chat room',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          room: { type: 'string', description: 'Room ID to post to' },
-          content: { type: 'string', description: 'Message content (markdown)' },
-          replyTo: { type: 'number', description: 'Optional message ID to reply to' },
+    tools: [
+      {
+        name: 'check_messages',
+        description: 'Read the chat room conversation since your last reply. Returns a structured log of all messages, or "No unread messages" if caught up.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            room: { type: 'string', description: 'Room ID to check' },
+          },
+          required: ['room'],
         },
-        required: ['room', 'content'],
       },
-    }],
+      {
+        name: 'reply',
+        description: 'Send a message to a chat room. EVERY message you want the team to see MUST use this tool.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            room: { type: 'string', description: 'Room ID to post to' },
+            content: { type: 'string', description: 'Message content (markdown)' },
+            replyTo: { type: 'number', description: 'Optional message ID to reply to' },
+          },
+          required: ['room', 'content'],
+        },
+      },
+    ],
   };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  log(`CallTool: ${request.params.name}`, JSON.stringify(request.params.arguments));
-  if (request.params.name !== 'reply') {
-    return { content: [{ type: 'text', text: `Unknown tool: ${request.params.name}` }], isError: true };
+  const { name } = request.params;
+  const args = request.params.arguments;
+  log(`CallTool: ${name}`, JSON.stringify(args));
+
+  if (name === 'check_messages') {
+    return handleCheckMessages(args.room);
   }
-  const { room, content, replyTo } = request.params.arguments;
+  if (name === 'reply') {
+    return handleReply(args.room, args.content, args.replyTo);
+  }
+  return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
+});
+
+// ── check_messages handler ──────────────────────────────────────────────────
+
+async function handleCheckMessages(roomId) {
+  const since = lastRepliedAt.get(roomId) ?? 0;
   try {
-    const res = await fetch(`${SERVER_URL}/rooms/${encodeURIComponent(room)}/messages`, {
+    const res = await fetch(
+      `${SERVER_URL}/rooms/${encodeURIComponent(roomId)}/messages?since=${since}&limit=200`,
+      { headers: authHeaders, signal: AbortSignal.timeout(5000) }
+    );
+    if (!res.ok) {
+      log(`check_messages FAILED: HTTP ${res.status}`);
+      return { content: [{ type: 'text', text: `Failed to fetch messages: HTTP ${res.status}` }], isError: true };
+    }
+    const messages = await res.json();
+    log(`check_messages room=${roomId} since=${since}: ${messages.length} message(s)`);
+
+    // Update high water mark
+    for (const msg of messages) {
+      highWater.set(roomId, Math.max(highWater.get(roomId) ?? 0, msg.id));
+    }
+
+    // Reset unread count — agent has now seen everything
+    unreadCount.set(roomId, 0);
+
+    // Filter out own messages for the display, but track their position
+    const otherMessages = [];
+    for (const msg of messages) {
+      if (msg.sender === AGENT_NAME) {
+        // Track own messages in the log so agent sees conversation flow
+        otherMessages.push(msg);
+      } else {
+        otherMessages.push(msg);
+      }
+    }
+
+    if (otherMessages.length === 0) {
+      return { content: [{ type: 'text', text: 'No unread messages.' }] };
+    }
+
+    // Format as structured conversation log
+    const lines = otherMessages.map((msg) => {
+      const tag = msg.sender === AGENT_NAME ? `[${msg.sender} (you)]` : `[${msg.sender}]`;
+      return `${tag} (msg #${msg.id})\n${msg.content}`;
+    });
+
+    const header = `--- CHAT ROOM: ${roomId} — ${otherMessages.length} message(s) since your last reply ---`;
+    const footer = `--- END — Use \`reply\` tool to respond (room: "${roomId}") ---`;
+    const text = [header, '', ...lines.join('\n\n').split('\n'), '', footer].join('\n');
+
+    return { content: [{ type: 'text', text }] };
+  } catch (err) {
+    log(`check_messages ERROR: ${err.message}`);
+    return { content: [{ type: 'text', text: `Error checking messages: ${err.message}` }], isError: true };
+  }
+}
+
+// ── reply handler ───────────────────────────────────────────────────────────
+
+async function handleReply(roomId, content, replyTo) {
+  try {
+    const res = await fetch(`${SERVER_URL}/rooms/${encodeURIComponent(roomId)}/messages`, {
       method: 'POST',
       headers: authHeaders,
       body: JSON.stringify({ content, replyTo: replyTo ?? null }),
@@ -85,13 +184,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       log(`Reply FAILED: HTTP ${res.status}`, JSON.stringify(body));
       return { content: [{ type: 'text', text: `Failed to send: ${JSON.stringify(body)}` }], isError: true };
     }
-    log(`Reply OK: room=${room}, id=${body.id}, content="${content.slice(0, 80)}..."`);
-    return { content: [{ type: 'text', text: `Message sent to ${room} (id: ${body.id})` }] };
+    log(`Reply OK: room=${roomId}, id=${body.id}, content="${content.slice(0, 80)}..."`);
+
+    // Update lastRepliedAt so check_messages starts from here next time
+    lastRepliedAt.set(roomId, body.id);
+    // Also update high water
+    highWater.set(roomId, Math.max(highWater.get(roomId) ?? 0, body.id));
+
+    return { content: [{ type: 'text', text: `Message sent to ${roomId} (id: ${body.id})` }] };
   } catch (err) {
     log(`Reply ERROR: ${err.message}`);
     return { content: [{ type: 'text', text: `Reply error: ${err.message}` }], isError: true };
   }
-});
+}
 
 // ── Connect stdio transport FIRST (before any I/O) ─────────────────────────
 
@@ -100,14 +205,7 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 log('Stdio transport connected');
 
-// ── Polling loop ────────────────────────────────────────────────────────────
-
-/** @type {Map<string, number>} */
-const lastSeen = new Map();
-
-/** @type {string[]} */
-let knownRooms = [];
-let pollCycle = 0;
+// ── Polling loop — notification only ────────────────────────────────────────
 
 async function discoverRooms() {
   const url = `${SERVER_URL}/rooms?member=${encodeURIComponent(AGENT_NAME)}`;
@@ -131,7 +229,7 @@ async function discoverRooms() {
 }
 
 async function pollRoom(roomId) {
-  const since = lastSeen.get(roomId) ?? 0;
+  const since = highWater.get(roomId) ?? 0;
   try {
     const res = await fetch(
       `${SERVER_URL}/rooms/${encodeURIComponent(roomId)}/messages?since=${since}&limit=50`,
@@ -142,33 +240,43 @@ async function pollRoom(roomId) {
       return;
     }
     const messages = await res.json();
-    log(`Poll ${roomId} (since=${since}): ${messages.length} message(s)`);
 
+    // Count new messages from others
+    let newFromOthers = 0;
     for (const msg of messages) {
-      // Track position even for own messages, but don't emit them
-      lastSeen.set(roomId, Math.max(lastSeen.get(roomId) ?? 0, msg.id));
-      if (msg.sender === AGENT_NAME) {
-        log(`  skip own msg id=${msg.id}`);
-        continue;
+      highWater.set(roomId, Math.max(highWater.get(roomId) ?? 0, msg.id));
+      if (msg.sender !== AGENT_NAME) {
+        newFromOthers++;
       }
+    }
 
-      log(`  DELIVERING msg id=${msg.id} from=${msg.sender} content="${msg.content.slice(0, 100)}..."`);
-      const meta = {
-        room: roomId,
-        sender: msg.sender,
-        message_id: String(msg.id),
-      };
-      if (msg.replyTo) meta.reply_to = String(msg.replyTo);
+    if (newFromOthers === 0) {
+      log(`Poll ${roomId} (since=${since}): no new messages from others`);
+      return;
+    }
 
-      try {
-        await server.notification({
-          method: 'notifications/claude/channel',
-          params: { content: msg.content, meta },
-        });
-        log(`  notification sent OK for msg id=${msg.id}`);
-      } catch (err) {
-        log(`  notification FAILED for msg id=${msg.id}: ${err.message}`);
-      }
+    // Accumulate unread count
+    const prev = unreadCount.get(roomId) ?? 0;
+    unreadCount.set(roomId, prev + newFromOthers);
+    const total = unreadCount.get(roomId);
+
+    log(`Poll ${roomId}: ${newFromOthers} new, ${total} total unread — sending notification`);
+
+    // Send a single notification: "you have unread messages"
+    try {
+      await server.notification({
+        method: 'notifications/claude/channel',
+        params: {
+          content: `You have ${total} unread message(s) in room "${roomId}". Use the \`check_messages\` tool to read them.`,
+          meta: {
+            room: roomId,
+            unread_count: String(total),
+          },
+        },
+      });
+      log(`Notification sent OK: ${total} unread in ${roomId}`);
+    } catch (err) {
+      log(`Notification FAILED: ${err.message}`);
     }
   } catch (err) {
     log(`Poll ${roomId} ERROR: ${err.message}`);
@@ -190,7 +298,6 @@ async function poll() {
   }
 }
 
-// Initial poll, then repeat on interval
 log('Starting initial poll...');
 poll();
 setInterval(poll, POLL_INTERVAL_MS);

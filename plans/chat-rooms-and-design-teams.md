@@ -1,7 +1,7 @@
 # Chat Rooms and Design Teams
 
 Implements issues 019 (chat rooms) and 020 (design teams). Chat rooms provide the bidirectional messaging
-infrastructure. Design teams consume it to enable collaborative agent groups with a chairman, deliberation protocol,
+infrastructure. Design teams consume it to enable collaborative agent groups with a discussion leader, deliberation protocol,
 and task-queue handoff.
 
 ## Design decisions (2026-03-23)
@@ -206,7 +206,7 @@ tracking, no hook filtering, no conditional injection needed.
 
 This means:
 - An orchestrator delegating to an implementer sub-agent will see chat messages when the implementer returns.
-- A chairman delegating codebase research to a sub-agent will see messages when the research completes.
+- A discussion leader delegating codebase research to a sub-agent will see messages when the research completes.
 - The sub-agents themselves are never distracted by chat traffic.
 
 ### 5e. Authentication — confirmed compatible
@@ -250,11 +250,11 @@ Add two new tables to `server/src/db.ts`:
 
 - `teams` (id TEXT PK, name, brief_path, status CHECK IN ('active','converging','dissolved'), deliverable TEXT,
   created_at, dissolved_at)
-- `team_members` (team_id FK, agent_name FK agents.name, role TEXT, is_chairman INTEGER DEFAULT 0,
+- `team_members` (team_id FK, agent_name FK agents.name, role TEXT, is_leader INTEGER DEFAULT 0,
   PK(team_id, agent_name))
 
-The `is_chairman` column identifies the single team member who owns the deliverable and has write access. Enforced
-at the application level (at most one chairman per team).
+The `is_leader` column identifies the single team member who owns the deliverable and has write access. Enforced
+at the application level (at most one discussion leader per team).
 
 Bump schema version.
 
@@ -264,18 +264,18 @@ New route file `server/src/routes/teams.ts`. Register in the Fastify plugin tree
 
 Endpoints:
 
-- `POST /teams` — create team. Body: `{id, name, briefPath, members: [{agentName, role, isChairman?}]}`.
-  Validates exactly one chairman. Auto-creates a group room with the team ID as room ID, all members + `"user"`.
+- `POST /teams` — create team. Body: `{id, name, briefPath, members: [{agentName, role, isLeader?}]}`.
+  Validates exactly one discussion leader. Auto-creates a group room with the team ID as room ID, all members + `"user"`.
   Returns `{ok, id, roomId}`.
 - `GET /teams` — list teams. Optional `?status=active` filter.
-- `GET /teams/:id` — team detail: members with roles, chairman flag, room link, brief path, status, deliverable.
+- `GET /teams/:id` — team detail: members with roles, leader flag, room link, brief path, status, deliverable.
 - `DELETE /teams/:id` — dissolve team. Sets `status='dissolved'`, `dissolved_at=now()`. Does NOT delete the room
   (history is valuable). Does NOT stop containers (that is `stop.sh`'s job).
 - `PATCH /teams/:id` — update status (e.g., `active` → `converging`) or set deliverable text.
 
-## Phase 10 — Chairman agent definition
+## Phase 10 — Discussion Leader agent definition
 
-Create `agents/core/design-chairman.md`:
+Create `agents/core/design-leader.md`:
 
 Role: Advocate for the user's brief. Mediate the design team's discussion. Own the final deliverable.
 
@@ -328,12 +328,12 @@ Extend `launch.sh` to accept `--team <team-id> --brief <path>`:
    - Agent type from the member's `agent_type` field.
    - `CHAT_ROOM` env var set to the team's room ID.
    - `TEAM_ROLE` env var set to the member's role.
-   - Read-only codebase mount for non-chairman members.
-   - Normal (read-write) mount for the chairman, scoped by instruction to `plans/`.
+   - Read-only codebase mount for non-leader members.
+   - Normal (read-write) mount for the discussion leader, scoped by instruction to `plans/`.
    - No build hooks injected (design agents don't build).
-5. Launch order: chairman first, then other members. The chairman reads the brief and posts a framing
+5. Launch order: discussion leader first, then other members. The discussion leader reads the brief and posts a framing
    summary (what success looks like, constraints, scope) before other members begin their independent
-   analysis. This ensures the team starts from the chairman's agenda, not unmediated reactions to the
+   analysis. This ensures the team starts from the discussion leader's agenda, not unmediated reactions to the
    raw brief.
 
 ## Phase 13 — stop.sh team support
@@ -360,7 +360,7 @@ Add a chat panel to the dashboard:
 Add a teams section to the dashboard:
 
 - Active teams with member status and roles.
-- Chairman badge on the owning member.
+- Discussion Leader badge on the owning member.
 - Team status (active / converging / dissolved).
 - Link to the team's chat room.
 - Brief and deliverable documents (rendered markdown).
@@ -370,7 +370,7 @@ Add a teams section to the dashboard:
 Write tests in `server/src/routes/teams.test.ts`:
 
 - Team CRUD (create, list, get, dissolve).
-- Chairman validation (exactly one required, reject zero or multiple).
+- Discussion leader validation (exactly one required, reject zero or multiple).
 - Auto-room creation on team creation.
 - Status transitions (active → converging → dissolved).
 - Deliverable storage and retrieval.
@@ -380,12 +380,12 @@ Write tests in `server/src/routes/teams.test.ts`:
 
 End-to-end test (can be manual or scripted):
 
-1. Register three agents (architect, critic, domain-expert) + chairman.
+1. Register three agents (architect, critic, domain-expert) + discussion leader.
 2. Create team via `POST /teams`.
 3. Verify room created with all members + user.
 4. Post brief to room.
 5. Simulate agent messages (post as each agent).
-6. Chairman posts deliverable.
-7. Chairman submits tasks via `POST /tasks/batch`.
+6. Discussion leader posts deliverable.
+7. Discussion leader submits tasks via `POST /tasks/batch`.
 8. Verify tasks appear in queue with correct dependencies and source paths.
 9. Dissolve team. Verify room persists, team status is dissolved.
