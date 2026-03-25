@@ -1,0 +1,8 @@
+{
+  "name": "chat-channel-mcp",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  }
+}
