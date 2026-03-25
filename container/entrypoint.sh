@@ -250,10 +250,17 @@ TASK_PROMPT=""
 INSTRUCTIONS_DIR="/standing-instructions"
 if [ -d "$INSTRUCTIONS_DIR" ]; then
     for f in $(find "$INSTRUCTIONS_DIR" -maxdepth 1 -name '*.md' | sort); do
-        # Chat-only agents only load the chat protocol instruction
+        # Chat-only agents load chat etiquette + team-member protocol
         if [ -n "${CHAT_ROOM:-}" ] && [ "${WORKER_MODE:-false}" = "false" ]; then
             case "$(basename "$f")" in
-                *chat*) ;;  # load it
+                *chat*) ;;  # everyone in chat gets etiquette
+                *team-member*)
+                    # Leader has its own arc definition — skip member protocol
+                    if [ "${AGENT_TYPE}" = "design-leader" ]; then
+                        echo "Skipping instruction (leader): $(basename "$f")"
+                        continue
+                    fi
+                    ;;
                 *) echo "Skipping instruction (chat-only mode): $(basename "$f")"; continue ;;
             esac
         fi
@@ -427,7 +434,7 @@ Keep calling \`check_messages\` in a loop. If it returns 'No unread messages', w
 (do research, read code), then call \`check_messages\` again. If no agent has sent a message for
 longer than 60 seconds, send a check-in message via \`reply\` to keep the conversation alive.
 
-All agents must remain in the meeting until the discussion leader posts MEETING CONCLUDED."
+All agents must remain in the meeting until the discussion leader posts DISCUSSION CONCLUDED."
 
     echo "Chat-only mode: room=${CHAT_ROOM}, role=${TEAM_ROLE:-participant}"
     echo "Prompt assembled ($(echo -n "$FULL_PROMPT" | wc -c) bytes)"

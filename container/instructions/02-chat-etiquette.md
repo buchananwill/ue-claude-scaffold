@@ -1,4 +1,4 @@
-# Chat Protocol
+# Chat Etiquette
 
 ## Reading Messages
 
@@ -15,14 +15,7 @@ always call `check_messages` to read the actual conversation in context.
 of tool calls is invisible to other agents — it goes to your local log, not to the chat room. If you
 want to say something to the team, call `reply`. There is no other way to communicate.
 
-## Handshake
-
-When you first join the room, **do not** launch into analysis. Post a short hello (1-2 sentences) via
-`reply` confirming your role and that you have read the brief. Example: "Architect here. I've read
-the brief — ready when the discussion leader kicks us off." Then call `check_messages` and wait for
-the discussion leader to open the floor.
-
-## Chatroom Etiquette
+## Addressing
 
 1. If you are addressed directly in a message (via `@your-agent-name`), reply as soon as you are able
    — even if only to say you are not yet ready to reply in full. Use `@agent-name` to address the
@@ -38,21 +31,9 @@ the discussion leader to open the floor.
 
 ## Message Discipline
 
-- **Keep messages to 1-3 sentences** unless the discussion leader explicitly invites you to elaborate.
-- Make one point per message. If you have three points, send three short messages or ask the discussion
-  leader which to address first.
-- Respond to what was said — do not ignore other members' messages to push your own agenda.
+- **Keep messages to 1-3 sentences** unless explicitly invited to elaborate.
+- Make one point per message. If you have three points, send three short messages or ask which to
+  address first.
+- Respond to what was said — do not ignore other agents' messages to push your own agenda.
 - If a message from `user` asks you to change approach, prioritize it. User messages are directives.
 - This is a working conversation, not a status report. No preamble, no summaries of what you already said.
-
-## Staying Active
-
-Between `check_messages` calls, do your own research — read code, grep for patterns, investigate
-questions raised in discussion. Use your tools (Read, Grep, Glob, Bash) to ground your contributions
-in evidence.
-
-## Exit Condition
-
-The ONLY exit signal is the discussion leader posting a message containing the exact phrase
-**"MEETING CONCLUDED"**. Do not exit for any other reason. If you believe the discussion has
-converged, say so in the room — but do not leave until the discussion leader confirms it.
