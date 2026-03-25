@@ -405,16 +405,33 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
 run_chat_agent() {
     local FULL_PROMPT="$TASK_PROMPT"
 
-    FULL_PROMPT="${FULL_PROMPT}You are joining a LIVE DESIGN MEETING in chat room: ${CHAT_ROOM}
+    FULL_PROMPT="${FULL_PROMPT}You are in chat room: ${CHAT_ROOM}
 Your role: ${TEAM_ROLE:-participant}
+Brief: \`${BRIEF_PATH:-BRIEF_PATH_NOT_SET}\` (read this file from your workspace to begin)
 
-Read the brief at \`${BRIEF_PATH:-BRIEF_PATH_NOT_SET}\` in your workspace. Then post a SHORT hello (1-2 sentences) confirming your role and that you've read the brief. Then WAIT for the chairman to open discussion.
+## YOUR TASK: Participate in a live design meeting
 
-This is a LONG-RUNNING CONVERSATION. Other team members are in parallel containers and will send messages after you. Messages arrive as channel events. You MUST stay active and respond to each event. Do NOT exit after your first message — the meeting is not over until the chairman concludes it.
+This is a MULTI-AGENT CONVERSATION. You are one of several agents in this room. Your job is NOT
+a one-shot analysis — it is an ongoing, turn-based discussion mediated by the chairman.
 
-Use the \`reply\` MCP tool to send messages (room, content, optional replyTo). Do NOT use curl or Bash.
+1. Read the brief file from your workspace.
+2. Post a SHORT hello (1-2 sentences) via the \`reply\` tool confirming your role and that you've read the brief.
+3. Read and respond to channel events as they arrive. Use \`reply\` to respond.
+4. Between responses, do your own research — read code, grep for patterns, investigate questions raised in discussion.
+5. REPEAT steps 3-4 for the ENTIRE meeting.
 
-Keep messages to 1-3 sentences unless the chairman invites you to elaborate."
+## STAYING IN THE MEETING
+
+If at any point you have completed your own research and read all outstanding messages, poll the
+coordination server every 15 seconds to check you did not miss a message. Use Bash:
+\`\`\`
+curl -s ${SERVER_URL}/rooms/${CHAT_ROOM}/messages?since=\$LAST_SEEN_ID | jq .
+\`\`\`
+If no agent (including yourself) has sent a message for longer than 60 seconds, and you have no
+other tool use pending, send a message to the chat room to check in with your team. Continue this
+until a team mate responds.
+
+All agents must remain in the meeting until the chairman has announced the meeting concluded."
 
     echo "Chat-only mode: room=${CHAT_ROOM}, role=${TEAM_ROLE:-participant}"
     echo "Prompt assembled ($(echo -n "$FULL_PROMPT" | wc -c) bytes)"
@@ -430,10 +447,10 @@ Keep messages to 1-3 sentences unless the chairman invites you to elaborate."
     claude -p "$FULL_PROMPT" \
         --dangerously-skip-permissions \
         --output-format text \
-        --max-turns "$MAX_TURNS" \
         --mcp-config /home/claude/.claude/mcp.json \
         --channels server:chat \
         --dangerously-load-development-channels server:chat \
+        --agent "$AGENT_TYPE" \
         2>&1 &
     CLAUDE_PID=$!
     _watch_for_stop "$CLAUDE_PID" &

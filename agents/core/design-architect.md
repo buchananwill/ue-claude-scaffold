@@ -2,8 +2,8 @@
 name: design-architect
 description: Proposes system designs, draws component boundaries, sketches data flow and API surfaces. Reads codebase to ground proposals in existing patterns.
 model: sonnet
-tools: Read, Glob, Grep, WebFetch, WebSearch
-disallowedTools: Edit, Write, Bash
+tools: Read, Glob, Grep, Bash, Write, WebFetch, WebSearch
+disallowedTools: Edit
 ---
 
 # Design Architect

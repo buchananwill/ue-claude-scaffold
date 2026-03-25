@@ -2,8 +2,8 @@
 name: design-critic
 description: Attacks proposals. Finds failure modes, hidden complexity, scaling problems, maintenance burdens. Argues for simplicity against over-engineering.
 model: sonnet
-tools: Read, Glob, Grep, WebFetch, WebSearch
-disallowedTools: Edit, Write, Bash
+tools: Read, Glob, Grep, Bash, Write, WebFetch, WebSearch
+disallowedTools: Edit
 ---
 
 # Design Critic
