@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS agents (
   status      TEXT NOT NULL DEFAULT 'idle',
   mode        TEXT NOT NULL DEFAULT 'single',
   registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  container_host TEXT
+  container_host TEXT,
+  session_token TEXT UNIQUE
 );
 
 -- UBT lock — singleton mutex
@@ -238,6 +239,14 @@ export function openDb(dbPath: string): Database.Database {
     instance.exec('DELETE FROM schema_version WHERE version < 11');
     instance.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (11)");
     console.log('[db] Migrated to v11');
+  }
+
+  // Migration: add session_token column to agents (v11 -> v12)
+  if (!schemaRow || schemaRow.version < 12) {
+    try { instance.exec("ALTER TABLE agents ADD COLUMN session_token TEXT UNIQUE"); } catch { /* already exists */ }
+    instance.exec('DELETE FROM schema_version WHERE version < 12');
+    instance.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (12)");
+    console.log('[db] Migrated to v12');
   }
 
   db = instance;

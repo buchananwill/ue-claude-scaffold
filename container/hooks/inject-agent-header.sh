@@ -34,10 +34,14 @@ if echo "$COMMAND" | grep -qF 'X-Agent-Name'; then
     exit 0
 fi
 
-# Re-execute the curl command with X-Agent-Name header injected.
-# Insert the header flag right after 'curl'.
-MODIFIED=$(echo "$COMMAND" | sed "s|curl |curl -H \"X-Agent-Name: ${AGENT_NAME}\" |")
+# Re-execute the curl command with identity headers injected.
+# Insert the headers right after 'curl'.
+AUTH_HEADERS="-H \"X-Agent-Name: ${AGENT_NAME}\""
+if [ -n "${SESSION_TOKEN:-}" ]; then
+    AUTH_HEADERS="${AUTH_HEADERS} -H \"Authorization: Bearer ${SESSION_TOKEN}\""
+fi
+MODIFIED=$(echo "$COMMAND" | sed "s|curl |curl ${AUTH_HEADERS} |")
 
-echo "Injecting X-Agent-Name header for agent: ${AGENT_NAME}" >&2
+echo "Injecting identity headers for agent: ${AGENT_NAME}" >&2
 eval "$MODIFIED"
 exit 2

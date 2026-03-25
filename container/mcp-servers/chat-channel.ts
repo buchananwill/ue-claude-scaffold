@@ -5,6 +5,13 @@ import { createServer } from 'node:http';
 
 const SERVER_URL = process.env.SERVER_URL ?? 'http://host.docker.internal:9100';
 const AGENT_NAME = process.env.AGENT_NAME ?? 'unknown';
+const SESSION_TOKEN = process.env.SESSION_TOKEN ?? '';
+
+const authHeaders: Record<string, string> = {
+  'Content-Type': 'application/json',
+  'X-Agent-Name': AGENT_NAME,
+  ...(SESSION_TOKEN ? { Authorization: `Bearer ${SESSION_TOKEN}` } : {}),
+};
 
 const server = new Server(
   { name: 'chat-channel', version: '1.0.0' },
@@ -47,7 +54,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { room, content, replyTo } = request.params.arguments as { room: string; content: string; replyTo?: number };
   const res = await fetch(`${SERVER_URL}/rooms/${encodeURIComponent(room)}/messages`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Agent-Name': AGENT_NAME },
+    headers: authHeaders,
     body: JSON.stringify({ content, replyTo: replyTo ?? null })
   });
   const body = await res.json();

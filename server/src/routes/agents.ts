@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { randomBytes } from 'node:crypto';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
 import { mergeIntoBranch } from '../git-utils.js';
@@ -30,15 +31,16 @@ export function formatAgent(row: AgentRow) {
 const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   const { config } = opts;
   const insertAgent = db.prepare(
-    `INSERT INTO agents (name, worktree, plan_doc, status, mode, registered_at, container_host)
-     VALUES (@name, @worktree, @planDoc, 'idle', @mode, CURRENT_TIMESTAMP, @containerHost)
+    `INSERT INTO agents (name, worktree, plan_doc, status, mode, registered_at, container_host, session_token)
+     VALUES (@name, @worktree, @planDoc, 'idle', @mode, CURRENT_TIMESTAMP, @containerHost, @sessionToken)
      ON CONFLICT(name) DO UPDATE SET
        worktree = excluded.worktree,
        plan_doc = excluded.plan_doc,
        status = 'idle',
        mode = excluded.mode,
        registered_at = CURRENT_TIMESTAMP,
-       container_host = COALESCE(excluded.container_host, agents.container_host)`
+       container_host = COALESCE(excluded.container_host, agents.container_host),
+       session_token = excluded.session_token`
   );
 
   const allAgents = db.prepare('SELECT * FROM agents');
@@ -66,7 +68,8 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     Body: { name: string; worktree: string; planDoc?: string; mode?: 'single' | 'pump'; containerHost?: string };
   }>('/agents/register', async (request) => {
     const { name, worktree, planDoc, mode, containerHost } = request.body;
-    insertAgent.run({ name, worktree, planDoc: planDoc ?? null, mode: mode ?? 'single', containerHost: containerHost ?? null });
+    const sessionToken = randomBytes(16).toString('hex');
+    insertAgent.run({ name, worktree, planDoc: planDoc ?? null, mode: mode ?? 'single', containerHost: containerHost ?? null, sessionToken });
 
     const roomId = `${name}-direct`;
     const existingRoom = db.prepare('SELECT 1 FROM rooms WHERE id = ?').get(roomId);
@@ -78,7 +81,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
       })();
     }
 
-    return { ok: true };
+    return { ok: true, sessionToken };
   });
 
   fastify.get('/agents', async () => {

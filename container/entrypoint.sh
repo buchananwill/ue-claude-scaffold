@@ -77,21 +77,7 @@ else
     cp /container-settings.json /home/claude/.claude/settings.json
 fi
 
-# Write MCP config for chat channel
-cat > /home/claude/.claude/mcp.json <<MCPEOF
-{
-  "mcpServers": {
-    "chat": {
-      "command": "npx",
-      "args": ["tsx", "/workspace/container/mcp-servers/chat-channel.ts"],
-      "env": {
-        "SERVER_URL": "${SERVER_URL}",
-        "AGENT_NAME": "${AGENT_NAME}"
-      }
-    }
-  }
-}
-MCPEOF
+# MCP config is written after agent registration (needs SESSION_TOKEN)
 
 # ── Symlink read-only plugin mounts ──────────────────────────────────────────
 if [ -f /patch_workspace.py ] && [ -d /plugins-ro ]; then
@@ -148,18 +134,40 @@ _watch_for_stop() {
 }
 
 CONTAINER_IP=$(hostname -i 2>/dev/null | awk '{print $1}') || CONTAINER_IP=""
-REG_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SERVER_URL}/agents/register" \
+REG_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${SERVER_URL}/agents/register" \
     -H "Content-Type: application/json" \
     -H "X-Agent-Name: ${AGENT_NAME}" \
     -d "{\"name\": \"${AGENT_NAME}\", \"worktree\": \"${WORK_BRANCH}\", \"mode\": \"${AGENT_MODE}\", \"containerHost\": \"${CONTAINER_IP}\"}" \
-    --max-time 10 2>/dev/null) || REG_STATUS="000"
+    --max-time 10 2>/dev/null) || REG_RESPONSE=$'\n000'
+REG_STATUS="${REG_RESPONSE##*$'\n'}"
+REG_BODY="${REG_RESPONSE%$'\n'*}"
 
 if [ "$REG_STATUS" != "200" ]; then
     echo "ERROR: Could not register with coordination server at ${SERVER_URL} (HTTP ${REG_STATUS})" >&2
     echo "Is the server running? Start it with: cd server && npm run dev" >&2
     exit 1
 fi
-echo "Registered with coordination server."
+
+SESSION_TOKEN=$(echo "$REG_BODY" | jq -r '.sessionToken // empty')
+export SESSION_TOKEN
+echo "Registered with coordination server (token: ${SESSION_TOKEN:0:8}...)"
+
+# Write MCP config for chat channel (after registration so SESSION_TOKEN is available)
+cat > /home/claude/.claude/mcp.json <<MCPEOF
+{
+  "mcpServers": {
+    "chat": {
+      "command": "npx",
+      "args": ["tsx", "/workspace/container/mcp-servers/chat-channel.ts"],
+      "env": {
+        "SERVER_URL": "${SERVER_URL}",
+        "AGENT_NAME": "${AGENT_NAME}",
+        "SESSION_TOKEN": "${SESSION_TOKEN}"
+      }
+    }
+  }
+}
+MCPEOF
 
 # ── Worker mode: poll and claim ──────────────────────────────────────────────
 

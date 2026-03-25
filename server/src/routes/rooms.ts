@@ -47,6 +47,10 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       )
   `);
 
+  const agentByToken = db.prepare(
+    'SELECT name FROM agents WHERE session_token = @token LIMIT 1'
+  );
+
   // POST /rooms — create a room
   fastify.post<{
     Body: { id: string; name: string; type: 'group' | 'direct'; members?: string[] };
@@ -169,9 +173,20 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     Params: { id: string };
     Body: { content: string; replyTo?: number };
   }>('/rooms/:id/messages', async (request, reply) => {
-    const sender = (request.headers['x-agent-name'] as string | undefined) ?? 'user';
+    let sender = request.headers['x-agent-name'] as string | undefined;
+    if (!sender) {
+      // Resolve sender from session token (Bearer or query param) when header is missing
+      const auth = request.headers.authorization;
+      const token = auth?.startsWith('Bearer ') ? auth.slice(7) : (request.query as Record<string, string>).token;
+      if (token) {
+        const match = agentByToken.get({ token }) as { name: string } | undefined;
+        sender = match?.name;
+      }
+      sender ??= 'user';
+    }
     const { id } = request.params;
     const { content, replyTo } = request.body;
+    fastify.log.info({ sender, roomId: id }, 'room message POST');
 
     const room = roomById.get({ id });
     if (!room) {
