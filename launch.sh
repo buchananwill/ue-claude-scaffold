@@ -271,14 +271,19 @@ if [[ -n "$_CLI_TEAM" ]]; then
   echo "  Room:    $ROOM_ID"
 
   # Post brief path as first room message so agents know where to find it
-  curl -sf -X POST "http://localhost:${SERVER_PORT}/rooms/${ROOM_ID}/messages" \
+  _BRIEF_JSON=$(mktemp)
+  jq -n --arg path "$_CLI_BRIEF" '{content: ("Brief: `" + $path + "` -- read this file from your workspace to begin.")}' > "$_BRIEF_JSON"
+  _BRIEF_POST_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://localhost:${SERVER_PORT}/rooms/${ROOM_ID}/messages" \
     -H "Content-Type: application/json" \
     -H "X-Agent-Name: user" \
-    -d "{\"content\": \"Brief: \`${_CLI_BRIEF}\` — read this file from your workspace to begin.\"}" \
-    >/dev/null 2>&1 || {
-    echo "Error: Failed to post brief path to room." >&2
+    -d @"$_BRIEF_JSON" 2>&1)
+  rm -f "$_BRIEF_JSON"
+  _BRIEF_POST_STATUS="${_BRIEF_POST_RESPONSE##*$'\n'}"
+  if [[ "$_BRIEF_POST_STATUS" != "200" ]]; then
+    echo "Error: Failed to post brief path to room (HTTP ${_BRIEF_POST_STATUS})." >&2
+    echo "  Response: ${_BRIEF_POST_RESPONSE%$'\n'*}" >&2
     exit 1
-  }
+  fi
   echo "  Brief path posted to room: $_CLI_BRIEF"
   echo ""
 
@@ -297,14 +302,10 @@ if [[ -n "$_CLI_TEAM" ]]; then
       _WORKSPACE_READONLY="true"
     fi
 
-    # Set up branch
-    if ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${_MEMBER_BRANCH}" &>/dev/null; then
-      _ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
-      git -C "$BARE_REPO_PATH" update-ref "refs/heads/${_MEMBER_BRANCH}" "$_ROOT_SHA"
-      echo "  Created branch ${_MEMBER_BRANCH} from ${ROOT_BRANCH}"
-    else
-      echo "  Resuming existing branch ${_MEMBER_BRANCH}"
-    fi
+    # Set up branch — always reset to current-root HEAD for team launches
+    _ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
+    git -C "$BARE_REPO_PATH" update-ref "refs/heads/${_MEMBER_BRANCH}" "$_ROOT_SHA"
+    echo "  Branch ${_MEMBER_BRANCH} set to ${ROOT_BRANCH} HEAD"
 
     # Stop existing container if running
     (cd "$SCRIPT_DIR/container" && \
