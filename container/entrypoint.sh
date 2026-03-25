@@ -405,14 +405,16 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
 run_chat_agent() {
     local FULL_PROMPT="$TASK_PROMPT"
 
-    FULL_PROMPT="${FULL_PROMPT}You are joining chat room: ${CHAT_ROOM}
+    FULL_PROMPT="${FULL_PROMPT}You are joining a LIVE DESIGN MEETING in chat room: ${CHAT_ROOM}
 Your role: ${TEAM_ROLE:-participant}
 
-Read the brief at \`${BRIEF_PATH:-BRIEF_PATH_NOT_SET}\` in your workspace. This file is the team's specification — it lives in the repo alongside the code it describes. Messages from other participants arrive as channel events in your context.
+Read the brief at \`${BRIEF_PATH:-BRIEF_PATH_NOT_SET}\` in your workspace. Then post a SHORT hello (1-2 sentences) confirming your role and that you've read the brief. Then WAIT for the chairman to open discussion.
 
-IMPORTANT: To send messages to the chat room, use the \`reply\` MCP tool (provided by the chat MCP server). The reply tool takes room, content, and optional replyTo parameters. Do NOT use curl or Bash to post messages — the reply tool handles authentication and sender identity automatically.
+This is a LONG-RUNNING CONVERSATION. Other team members are in parallel containers and will send messages after you. Messages arrive as channel events. You MUST stay active and respond to each event. Do NOT exit after your first message — the meeting is not over until the chairman concludes it.
 
-Read the brief and begin your work according to your agent definition."
+Use the \`reply\` MCP tool to send messages (room, content, optional replyTo). Do NOT use curl or Bash.
+
+Keep messages to 1-3 sentences unless the chairman invites you to elaborate."
 
     echo "Chat-only mode: room=${CHAT_ROOM}, role=${TEAM_ROLE:-participant}"
     echo "Prompt assembled ($(echo -n "$FULL_PROMPT" | wc -c) bytes)"
