@@ -157,8 +157,8 @@ cat > /home/claude/.claude/mcp.json <<MCPEOF
 {
   "mcpServers": {
     "chat": {
-      "command": "npx",
-      "args": ["tsx", "/workspace/container/mcp-servers/chat-channel.ts"],
+      "command": "node",
+      "args": ["/mcp-servers/chat-channel.mjs"],
       "env": {
         "SERVER_URL": "${SERVER_URL}",
         "AGENT_NAME": "${AGENT_NAME}",

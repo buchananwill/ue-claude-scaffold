@@ -32,7 +32,9 @@ describe('agents routes', () => {
       payload: { name: 'agent-1', worktree: '/tmp/wt1', planDoc: 'plan.md' },
     });
     assert.equal(reg.statusCode, 200);
-    assert.deepEqual(reg.json(), { ok: true });
+    const regBody = reg.json();
+    assert.equal(regBody.ok, true);
+    assert.ok(typeof regBody.sessionToken === 'string', 'sessionToken is returned');
 
     const list = await ctx.app.inject({ method: 'GET', url: '/agents' });
     const agents = list.json();

@@ -30,6 +30,10 @@ COPY hooks/ /claude-hooks/
 COPY container-settings.json /container-settings.json
 RUN chmod +x /claude-hooks/*.sh
 
+# Copy and install chat channel MCP server
+COPY mcp-servers/ /mcp-servers/
+RUN cd /mcp-servers && npm install --omit=dev
+
 # Copy workspace setup scripts
 COPY patch_workspace.py /patch_workspace.py
 COPY entrypoint.sh /entrypoint.sh

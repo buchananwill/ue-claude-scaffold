@@ -242,8 +242,13 @@ export function openDb(dbPath: string): Database.Database {
   }
 
   // Migration: add session_token column to agents (v11 -> v12)
+  // Always attempt the ALTER — the version check alone is unreliable because
+  // CREATE TABLE IF NOT EXISTS won't add columns to an existing table, so a
+  // DB whose schema_version was bumped to 12 on a fresh table (tests) may
+  // still lack the column when reused against an older agents table.
+  try { instance.exec("ALTER TABLE agents ADD COLUMN session_token TEXT"); } catch { /* already exists */ }
+  try { instance.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_session_token ON agents(session_token)"); } catch { /* already exists */ }
   if (!schemaRow || schemaRow.version < 12) {
-    try { instance.exec("ALTER TABLE agents ADD COLUMN session_token TEXT UNIQUE"); } catch { /* already exists */ }
     instance.exec('DELETE FROM schema_version WHERE version < 12');
     instance.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (12)");
     console.log('[db] Migrated to v12');
