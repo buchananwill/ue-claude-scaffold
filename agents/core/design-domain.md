@@ -1,6 +1,7 @@
 ---
 name: design-domain
 description: Grounds discussion in project reality. Reads existing code to identify patterns, constraints, migration impact. Flags conflicts with existing architecture.
+model: sonnet
 tools: Read, Glob, Grep, WebFetch, WebSearch
 disallowedTools: Edit, Write, Bash
 ---

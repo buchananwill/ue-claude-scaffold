@@ -1,6 +1,7 @@
 ---
 name: design-chairman
 description: Advocate for the user's brief. Mediate the design team's discussion. Own the final deliverable.
+model: sonnet
 tools: Read, Glob, Grep, WebFetch, WebSearch, Edit, Write
 disallowedTools: Bash
 ---
