@@ -46,6 +46,8 @@ When a sub-agent returns work:
 - **One phase at a time.** Never delegate requirements from multiple phases to a single sub-agent invocation. Never
   advance to phase N+1 until phase N is committed and `phase_complete` is posted. Multi-phase bundling is a protocol
   violation.
+- **Every phase is reviewed.** There are no exceptions — single-phase tasks, small changes, "trivial" additions all go
+  through the full Step 2 review cycle. Skipping review because a task has only one phase is a protocol violation.
 - If you encounter ambiguity in the plan, make the conservative choice and document it — do not stop to ask.
 
 ## Agent Resolution

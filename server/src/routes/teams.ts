@@ -20,6 +20,11 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
     'INSERT OR IGNORE INTO room_members (room_id, member) VALUES (@roomId, @member)'
   );
 
+  const deleteRoomMembersByRoom = db.prepare('DELETE FROM room_members WHERE room_id = @roomId');
+  const deleteRoomById = db.prepare('DELETE FROM rooms WHERE id = @id');
+  const deleteTeamMembersByTeam = db.prepare('DELETE FROM team_members WHERE team_id = @teamId');
+  const deleteTeamById = db.prepare('DELETE FROM teams WHERE id = @id');
+
   const teamById = db.prepare('SELECT * FROM teams WHERE id = @id');
 
   const teamMembersByTeamId = db.prepare(
@@ -55,22 +60,40 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.badRequest('Exactly one chairman is required');
     }
 
-    db.transaction(() => {
-      insertTeam.run({ id, name, briefPath: briefPath ?? null });
-      for (const m of members) {
-        insertTeamMember.run({
-          teamId: id,
-          agentName: m.agentName,
-          role: m.role,
-          isChairman: m.isChairman ? 1 : 0,
-        });
+    try {
+      db.transaction(() => {
+        const existing = teamById.get({ id }) as { status: string } | undefined;
+        if (existing) {
+          if (existing.status !== 'dissolved') {
+            throw Object.assign(new Error(`Team '${id}' already exists and is not dissolved`), { statusCode: 409 });
+          }
+          deleteRoomMembersByRoom.run({ roomId: id });
+          deleteRoomById.run({ id });
+          deleteTeamMembersByTeam.run({ teamId: id });
+          deleteTeamById.run({ id });
+        }
+
+        insertTeam.run({ id, name, briefPath: briefPath ?? null });
+        for (const m of members) {
+          insertTeamMember.run({
+            teamId: id,
+            agentName: m.agentName,
+            role: m.role,
+            isChairman: m.isChairman ? 1 : 0,
+          });
+        }
+        insertRoom.run({ id, name, type: 'group', createdBy: caller });
+        for (const m of members) {
+          insertRoomMember.run({ roomId: id, member: m.agentName });
+        }
+        insertRoomMember.run({ roomId: id, member: 'user' });
+      })();
+    } catch (err: unknown) {
+      if (err instanceof Error && (err as Error & { statusCode?: number }).statusCode === 409) {
+        return reply.status(409).send({ error: err.message });
       }
-      insertRoom.run({ id, name, type: 'group', createdBy: caller });
-      for (const m of members) {
-        insertRoomMember.run({ roomId: id, member: m.agentName });
-      }
-      insertRoomMember.run({ roomId: id, member: 'user' });
-    })();
+      throw err;
+    }
 
     return { ok: true, id, roomId: id };
   });

@@ -56,7 +56,23 @@ EXCL
 
 if [ "${DISABLE_BUILD_HOOKS:-false}" = "true" ]; then
     echo "Build hooks disabled (design agent mode)"
-    echo '{}' > /home/claude/.claude/settings.json
+    cat > /home/claude/.claude/settings.json <<'SETTINGSEOF'
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /claude-hooks/inject-agent-header.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+SETTINGSEOF
 else
     cp /container-settings.json /home/claude/.claude/settings.json
 fi
@@ -226,6 +242,13 @@ TASK_PROMPT=""
 INSTRUCTIONS_DIR="/standing-instructions"
 if [ -d "$INSTRUCTIONS_DIR" ]; then
     for f in $(find "$INSTRUCTIONS_DIR" -maxdepth 1 -name '*.md' | sort); do
+        # Chat-only agents only load the chat protocol instruction
+        if [ -n "${CHAT_ROOM:-}" ] && [ "${WORKER_MODE:-false}" = "false" ]; then
+            case "$(basename "$f")" in
+                *chat*) ;;  # load it
+                *) echo "Skipping instruction (chat-only mode): $(basename "$f")"; continue ;;
+            esac
+        fi
         echo "Loading instruction: $(basename "$f")"
         TASK_PROMPT="${TASK_PROMPT}$(cat "$f")
 
@@ -288,34 +311,34 @@ ${CURRENT_TASK_AC}
 File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
     fi
 
-    # If an agent type is specified, wrap the prompt so the top-level Claude
-    # immediately delegates to that agent.
-    if [ -n "$AGENT_TYPE" ]; then
-        FULL_PROMPT="Use the ${AGENT_TYPE} agent to carry out the following task. Launch it immediately — do not do any work yourself, delegate everything to the agent.
-
----
-
-${FULL_PROMPT}"
-    fi
-
     echo "Task prompt assembled ($(echo -n "$FULL_PROMPT" | wc -c) bytes)"
     echo ""
-    echo "Starting Claude Code..."
+    echo "Starting Claude Code (agent: ${AGENT_TYPE:-default})..."
     echo ""
 
     # ── Run Claude Code ──────────────────────────────────────────────────────
 
     _post_status "working"
 
+    # Build the claude command arguments.
+    # --agent launches Claude directly AS the specified agent type, not as a
+    # wrapper that delegates to it. This is critical: the orchestrator and
+    # team roles need Agent tool access, which is unavailable to sub-agents.
+    CLAUDE_ARGS=(
+        -p "$FULL_PROMPT"
+        --dangerously-skip-permissions
+        --output-format text
+        --max-turns "$MAX_TURNS"
+        --mcp-config /home/claude/.claude/mcp.json
+        --channels server:chat
+        --dangerously-load-development-channels server:chat
+    )
+    if [ -n "$AGENT_TYPE" ]; then
+        CLAUDE_ARGS+=(--agent "$AGENT_TYPE")
+    fi
+
     set +e
-    claude -p "$FULL_PROMPT" \
-        --dangerously-skip-permissions \
-        --output-format text \
-        --max-turns "$MAX_TURNS" \
-        --mcp-config /home/claude/.claude/mcp.json \
-        --channels server:chat \
-        --dangerously-load-development-channels server:chat \
-        2>&1 &
+    claude "${CLAUDE_ARGS[@]}" 2>&1 &
     CLAUDE_PID=$!
     _watch_for_stop "$CLAUDE_PID" &
     WATCHDOG_PID=$!
@@ -369,6 +392,75 @@ ${FULL_PROMPT}"
     return $EXIT_CODE
 }
 
+# ── Chat-only mode (design team agents) ──────────────────────────────────────
+
+run_chat_agent() {
+    local FULL_PROMPT="$TASK_PROMPT"
+
+    FULL_PROMPT="${FULL_PROMPT}You are joining chat room: ${CHAT_ROOM}
+Your role: ${TEAM_ROLE:-participant}
+
+The brief has been posted as the first message in the room. Messages from other participants arrive as channel events in your context.
+
+IMPORTANT: To send messages to the chat room, use the \`reply\` MCP tool (provided by the chat MCP server). The reply tool takes room, content, and optional replyTo parameters. Do NOT use curl or Bash to post messages — the reply tool handles authentication and sender identity automatically.
+
+Read the brief from the channel and begin your work according to your agent definition."
+
+    echo "Chat-only mode: room=${CHAT_ROOM}, role=${TEAM_ROLE:-participant}"
+    echo "Prompt assembled ($(echo -n "$FULL_PROMPT" | wc -c) bytes)"
+    echo ""
+    echo "Starting Claude Code..."
+    echo ""
+
+    # ── Run Claude Code ──────────────────────────────────────────────────────
+
+    _post_status "working"
+
+    set +e
+    claude -p "$FULL_PROMPT" \
+        --dangerously-skip-permissions \
+        --output-format text \
+        --max-turns "$MAX_TURNS" \
+        --mcp-config /home/claude/.claude/mcp.json \
+        --channels server:chat \
+        --dangerously-load-development-channels server:chat \
+        2>&1 &
+    CLAUDE_PID=$!
+    _watch_for_stop "$CLAUDE_PID" &
+    WATCHDOG_PID=$!
+    wait "$CLAUDE_PID" || true
+    EXIT_CODE=$?
+    kill "$WATCHDOG_PID" 2>/dev/null || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
+    set -e
+
+    echo ""
+    echo "=== Claude Code exited with code $EXIT_CODE ==="
+
+    # If stopped externally, skip post-run flow and let the EXIT trap handle cleanup
+    if [ -f /tmp/.stop_requested ]; then
+        echo "Stopped by operator — skipping post-run status update"
+        exit 0
+    fi
+
+    # Final push — commit any uncommitted work, then push all commits to bare repo
+    cd /workspace
+    git add -A
+    if ! git diff --cached --quiet; then
+        git commit -m "Container final commit" --no-gpg-sign
+    fi
+    git push origin "HEAD:${WORK_BRANCH}" --force
+    echo "Final state pushed to bare repo"
+
+    if [ $EXIT_CODE -eq 0 ]; then
+        _post_status "done"
+    else
+        _post_status "error"
+    fi
+
+    return $EXIT_CODE
+}
+
 # ── Read-only Source/ for non-chairman design agents ─────────────────────────
 # Runs after all workspace setup (clone, checkout, symlinks, plugin patching)
 # so it doesn't break symlinks, .claude/, plans/, or temp files.
@@ -380,6 +472,12 @@ if [ "${WORKSPACE_READONLY:-false}" = "true" ]; then
 fi
 
 # ── Main execution loop ─────────────────────────────────────────────────────
+
+# ── Chat-only mode (design team agents) ──────────────────────────────────────
+if [ -n "${CHAT_ROOM:-}" ] && [ "${WORKER_MODE:-false}" = "false" ]; then
+    run_chat_agent
+    exit $?
+fi
 
 if [ "$WORKER_SINGLE_TASK" = "false" ]; then
     # Multi-task pump loop

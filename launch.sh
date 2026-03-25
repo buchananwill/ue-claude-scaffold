@@ -117,6 +117,8 @@ BUILD_SCRIPT_NAME="$(jq -r '.build.scriptPath // "build.py"' "$_cfg" | xargs bas
 TEST_SCRIPT_NAME="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)"
 DEFAULT_TEST_FILTERS="$(jq -r '.build.defaultTestFilters // [] | join(" ")' "$_cfg")"
 
+export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH CLAUDE_CREDENTIALS_PATH SERVER_PORT
+
 # ── Apply CLI overrides ─────────────────────────────────────────────────────
 AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
 AGENT_TYPE="${_CLI_AGENT_TYPE:-${AGENT_TYPE:-container-orchestrator}}"
@@ -268,15 +270,18 @@ if [[ -n "$_CLI_TEAM" ]]; then
   echo "  Room:    $ROOM_ID"
 
   # Post brief as first room message
-  BRIEF_CONTENT=$(cat "$_CLI_BRIEF")
+  _BRIEF_JSON=$(mktemp)
+  jq -n --rawfile content "$_CLI_BRIEF" '{content: $content}' > "$_BRIEF_JSON"
   curl -sf -X POST "http://localhost:${SERVER_PORT}/rooms/${ROOM_ID}/messages" \
     -H "Content-Type: application/json" \
     -H "X-Agent-Name: user" \
-    -d "$(jq -n --arg content "$BRIEF_CONTENT" '{content: $content}')" \
+    -d @"$_BRIEF_JSON" \
     >/dev/null 2>&1 || {
+    rm -f "$_BRIEF_JSON"
     echo "Error: Failed to post brief to room." >&2
     exit 1
   }
+  rm -f "$_BRIEF_JSON"
   echo "  Brief posted to room."
   echo ""
 
@@ -317,6 +322,10 @@ if [[ -n "$_CLI_TEAM" ]]; then
       CHAT_ROOM="$ROOM_ID" \
       TEAM_ROLE="$_MEMBER_ROLE" \
       BARE_REPO_PATH="$BARE_REPO_PATH" \
+      TASKS_PATH="$TASKS_PATH" \
+      UE_ENGINE_PATH="$UE_ENGINE_PATH" \
+      CLAUDE_CREDENTIALS_PATH="$CLAUDE_CREDENTIALS_PATH" \
+      SERVER_PORT="$SERVER_PORT" \
       MAX_TURNS="$MAX_TURNS" \
       LOG_VERBOSITY="$LOG_VERBOSITY" \
       WORKER_MODE=false \

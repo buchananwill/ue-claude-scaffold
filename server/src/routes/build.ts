@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
-import { isStale, recordBuildStart, recordBuildEnd, getLastBuildResult } from './ubt.js';
+import { isStale, recordBuildStart, recordBuildEnd } from './ubt.js';
 import { ensureStagingPlugins } from '../staging-plugins.js';
 
 interface BuildOpts {
@@ -139,9 +139,28 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     return config.server.bareRepoPath;
   }
 
+  /** Ref used to track the last-synced commit in each staging worktree.
+   *  We deliberately do NOT advance HEAD during sync — HEAD must lag behind
+   *  so that `git status` shows the checked-out files as staged changes.
+   *  UBT's adaptive non-unity build uses `git status` to determine its
+   *  working set; if HEAD matches the working tree, UBT sees no changes
+   *  and skips compilation entirely (the ~950ms false-success bug). */
+  const SYNC_REF = 'refs/scaffold/last-sync';
+
+  async function updateSyncRef(worktreePath: string): Promise<void> {
+    const result = await runCommand('git', ['update-ref', SYNC_REF, 'FETCH_HEAD'], worktreePath, 5000);
+    if (!result.success) {
+      throw new Error(`syncWorktree: git update-ref failed: ${result.stderr}`);
+    }
+  }
+
   /** Sync the staging worktree from the agent's branch in the bare repo.
    *  Returns 'changed' if files were updated, 'unchanged' if nothing new.
-   *  Throws on infrastructure failure (git errors the agent can't fix). */
+   *  Throws on infrastructure failure (git errors the agent can't fix).
+   *
+   *  IMPORTANT: This function does NOT advance HEAD.  It tracks the last-synced
+   *  commit via refs/scaffold/last-sync instead.  This keeps `git status` dirty
+   *  so that UBT's `git status`-based change detection sees the new files. */
   async function syncWorktree(agentName: string | undefined): Promise<'changed' | 'unchanged'> {
     const worktreePath = getStagingWorktree(agentName);
     const bareRepo = getBareRepoPath();
@@ -156,24 +175,29 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       throw new Error(`syncWorktree: git fetch failed: ${fetchResult.stderr}`);
     }
 
-    // Diff-based sync: only touch files that actually changed between HEAD and
-    // FETCH_HEAD.  This preserves timestamps on unchanged files so UBT's
-    // incremental build cache stays valid (a full `reset --hard` rewrites every
-    // file's mtime, forcing a near-full rebuild every time).
+    // Determine the base commit for the diff.  Use our custom tracking ref
+    // if it exists, otherwise fall back to HEAD (first sync).
+    const refCheck = await runCommand('git', ['rev-parse', '--verify', SYNC_REF], worktreePath, 5000);
+    const baseRef = refCheck.success ? SYNC_REF : 'HEAD';
+
+    // Diff-based sync: only touch files that actually changed.
+    // This preserves timestamps on unchanged files so UBT's incremental
+    // build cache stays valid (a full `reset --hard` rewrites every file's
+    // mtime, forcing a near-full rebuild every time).
     //
     // We split the diff into added/modified vs deleted files because
-    // `git checkout FETCH_HEAD -- <deleted-file>` fails (the file doesn't exist
-    // in FETCH_HEAD), which previously caused a fallback to `reset --hard` and
-    // killed caching entirely.
+    // `git checkout FETCH_HEAD -- <deleted-file>` fails (the file doesn't
+    // exist in FETCH_HEAD), which previously caused a fallback to
+    // `reset --hard` and killed caching entirely.
 
     // Files added or modified in FETCH_HEAD — need to be checked out.
     const addModResult = await runCommand(
-      'git', ['diff', '--name-only', '--diff-filter=AMCR', 'HEAD', 'FETCH_HEAD'], worktreePath, 15000,
+      'git', ['diff', '--name-only', '--diff-filter=AMCR', baseRef, 'FETCH_HEAD'], worktreePath, 15000,
     );
 
     // Files deleted in FETCH_HEAD — need to be removed from the worktree.
     const delResult = await runCommand(
-      'git', ['diff', '--name-only', '--diff-filter=D', 'HEAD', 'FETCH_HEAD'], worktreePath, 15000,
+      'git', ['diff', '--name-only', '--diff-filter=D', baseRef, 'FETCH_HEAD'], worktreePath, 15000,
     );
 
     if (!addModResult.success || !delResult.success) {
@@ -182,6 +206,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       if (!resetResult.success) {
         throw new Error(`syncWorktree: git reset --hard failed: ${resetResult.stderr}`);
       }
+      await updateSyncRef(worktreePath);
       return 'changed';
     }
 
@@ -189,11 +214,8 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const delFiles = delResult.output.trim();
 
     if (addModFiles.length === 0 && delFiles.length === 0) {
-      // No files changed — just move HEAD to FETCH_HEAD without touching the worktree.
-      const resetSoft = await runCommand('git', ['reset', '--soft', 'FETCH_HEAD'], worktreePath, 15000);
-      if (!resetSoft.success) {
-        throw new Error(`syncWorktree: git reset --soft failed: ${resetSoft.stderr}`);
-      }
+      // No files changed — update the tracking ref only.
+      await updateSyncRef(worktreePath);
       return 'unchanged';
     }
 
@@ -208,6 +230,9 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     }
 
     // Checkout added/modified files from FETCH_HEAD.
+    // `git checkout FETCH_HEAD -- <files>` updates both working tree and index.
+    // Since HEAD has NOT been advanced, `git status` will show these files as
+    // staged changes — exactly what UBT needs to detect modified sources.
     if (addModFiles.length > 0) {
       const checkoutResult = await runCommand(
         'git', ['checkout', 'FETCH_HEAD', '--', ...addModFiles.split('\n')], worktreePath, 30000,
@@ -218,15 +243,13 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
         if (!resetResult.success) {
           throw new Error(`syncWorktree: git reset --hard failed: ${resetResult.stderr}`);
         }
+        await updateSyncRef(worktreePath);
         return 'changed';
       }
     }
 
-    // Move HEAD to match FETCH_HEAD without touching the worktree.
-    const resetSoft = await runCommand('git', ['reset', '--soft', 'FETCH_HEAD'], worktreePath, 15000);
-    if (!resetSoft.success) {
-      throw new Error(`syncWorktree: git reset --soft failed: ${resetSoft.stderr}`);
-    }
+    // Record what we synced — but do NOT advance HEAD.
+    await updateSyncRef(worktreePath);
 
     return 'changed';
   }
@@ -245,9 +268,8 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       };
     }
 
-    let syncResult: 'changed' | 'unchanged';
     try {
-      syncResult = await syncWorktree(agentName);
+      await syncWorktree(agentName);
     } catch (err) {
       return {
         success: false,
@@ -260,24 +282,6 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     // Ensure per-worktree plugin copies exist (replaces junctions with hard copies
     // so each agent maintains its own UBT intermediate cache).
     await ensureStagingPlugins(getStagingWorktree(agentName), config);
-
-    if (syncResult === 'unchanged' && !request.body.clean) {
-      const last = agentName ? getLastBuildResult(agentName, 'build') : null;
-      if (last && !last.success) {
-        return {
-          success: false,
-          exit_code: 1,
-          output: `No source changes since last build, but the previous build failed. You must change code before rebuilding.\n\n--- Previous build output ---\n${last.output}`,
-          stderr: last.stderr,
-        };
-      }
-      return {
-        success: true,
-        exit_code: 0,
-        output: 'No source changes since last build. Skipping rebuild.',
-        stderr: '',
-      };
-    }
 
     const args = ['--summary'];
     if (request.body.clean) {
@@ -314,9 +318,8 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       };
     }
 
-    let syncResult: 'changed' | 'unchanged';
     try {
-      syncResult = await syncWorktree(agentName);
+      await syncWorktree(agentName);
     } catch (err) {
       return {
         success: false,
@@ -327,24 +330,6 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     }
 
     await ensureStagingPlugins(getStagingWorktree(agentName), config);
-
-    if (syncResult === 'unchanged') {
-      const last = agentName ? getLastBuildResult(agentName, 'test') : null;
-      if (last && !last.success) {
-        return {
-          success: false,
-          exit_code: 1,
-          output: `No source changes since last test, but the previous test run failed. You must change code before retesting.\n\n--- Previous test output ---\n${last.output}`,
-          stderr: last.stderr,
-        };
-      }
-      return {
-        success: true,
-        exit_code: 0,
-        output: 'No source changes since last test. Skipping.',
-        stderr: '',
-      };
-    }
 
     const filters = request.body.filters?.length
       ? request.body.filters

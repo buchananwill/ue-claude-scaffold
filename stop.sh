@@ -86,6 +86,14 @@ else
   exit 1
 fi
 
+# ── Helper: signal server to set agent status to 'stopping' ──────────────────
+# This must happen BEFORE docker compose down so the container's _shutdown
+# handler sees status='stopping' and can hard-delete on its second DELETE call.
+signal_stop() {
+  local agent_name="$1"
+  curl -sf -X DELETE "$BASE_URL/agents/${agent_name}" --max-time 5 >/dev/null 2>&1 || true
+}
+
 # ── Helper: stop all claude-* projects ───────────────────────────────────────
 stop_all() {
   local compose_file="$SCRIPT_DIR/container/docker-compose.yml"
@@ -100,6 +108,13 @@ stop_all() {
     echo "No running claude-* containers found."
     return
   fi
+
+  # Signal all agents via server BEFORE killing containers, so the
+  # entrypoint's _shutdown handler can complete the two-call DELETE.
+  for project in $projects; do
+    local name="${project#claude-}"
+    signal_stop "$name"
+  done
 
   for project in $projects; do
     echo "Stopping $project ..."
@@ -120,6 +135,7 @@ fi
 # ── Mode: agent — stop specific ──────────────────────────────────────────────
 if [[ "$MODE" == "agent" ]]; then
   echo "Stopping agent: $AGENT_NAME ..."
+  signal_stop "$AGENT_NAME"
   (cd "$SCRIPT_DIR/container" && \
     $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" down 2>/dev/null) || true
   echo "Stopped claude-${AGENT_NAME}."
@@ -140,6 +156,11 @@ if [[ "$MODE" == "team" ]]; then
     echo "Error: Could not parse member list from team response" >&2
     exit 1
   }
+
+  # Signal all members before killing containers
+  for member in $MEMBERS; do
+    signal_stop "$member"
+  done
 
   stopped=0
   for member in $MEMBERS; do
