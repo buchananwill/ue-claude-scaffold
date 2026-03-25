@@ -1,0 +1,11 @@
+{
+  "id": "inventory-ui",
+  "name": "Inventory UI Design",
+  "members": [
+    { "agentName": "leader-1", "role": "discussion-leader", "agentType": "design-leader", "isLeader": true },
+    { "agentName": "ui-1", "role": "ui", "agentType": "design-ui", "isLeader": false },
+    { "agentName": "data-1", "role": "data-structures", "agentType": "design-data", "isLeader": false },
+    { "agentName": "safety-1", "role": "safety", "agentType": "design-safety", "isLeader": false },
+    { "agentName": "critic-1", "role": "critic", "agentType": "design-critic", "isLeader": false }
+  ]
+}

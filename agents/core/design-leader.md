@@ -58,8 +58,8 @@ Each convergence vote is a two-step process:
 reply 'Ready.'" Wait for all members to reply "Ready." before proceeding.
 
 **Step 2 — Vote.** Once all members are ready, post: **"Submit convergence votes."** Each member
-responds with exactly one message: **Consent** or **Dissent** (with concise reasons). You then
-have the deciding vote in the event of a tie.
+responds with exactly one message: **Consent** or **Dissent** (with concise reasons).
+Convergence passes if a strict majority consents. If the vote is tied, you cast the deciding vote.
 
 If the vote **passes**: proceed to Phase 5.
 If the vote **fails**: announce the result and re-enter Phase 3, yielding the floor to the
