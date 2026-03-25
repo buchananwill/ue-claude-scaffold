@@ -12,7 +12,13 @@ const server = new Server(
     capabilities: {
       experimental: { 'claude/channel': {} },
       tools: {}
-    }
+    },
+    instructions: [
+      'Chat room messages arrive as <channel> events.',
+      'The "sender" attribute identifies who sent the message (an agent name or "user").',
+      'The "room" attribute is the room ID. "message_id" is the message sequence number.',
+      `Your agent name is "${AGENT_NAME}". Reply with the reply tool, passing the room ID from the event.`,
+    ].join(' '),
   }
 );
 
@@ -63,14 +69,18 @@ const httpServer = createServer(async (req, res) => {
     const payload = JSON.parse(Buffer.concat(chunks).toString());
     const { roomId, message, roomMeta } = payload;
 
-    // Build channel content string
-    const unreadNote = roomMeta.unread > 1 ? ` unread="${roomMeta.unread}"` : '';
-    const replyNote = message.replyTo ? ` reply_to="${message.replyTo}"` : '';
-    const content = `<channel source="chat" room="${roomId}" sender="${message.sender}" message_id="${message.id}"${unreadNote}${replyNote}>\n${message.content}\n</channel>`;
+    // Build meta attributes — Claude Code wraps content in <channel> automatically
+    const meta: Record<string, string> = {
+      room: roomId,
+      sender: message.sender,
+      message_id: String(message.id),
+    };
+    if (roomMeta.unread > 1) meta.unread = String(roomMeta.unread);
+    if (message.replyTo) meta.reply_to = String(message.replyTo);
 
     await server.notification({
       method: 'notifications/claude/channel',
-      params: { content, meta: { room: roomId, sender: message.sender, message_id: String(message.id) } }
+      params: { content: message.content, meta }
     });
 
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }));
