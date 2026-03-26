@@ -26,6 +26,7 @@ import { SortHeader } from './SortHeader.tsx';
 import { StatusBadge } from './StatusBadge.tsx';
 import { RelativeTime } from './RelativeTime.tsx';
 import { TaskDetailRow } from './TaskDetailRow.tsx';
+import { TaskDuration } from './TaskDuration.tsx';
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
@@ -217,6 +218,7 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: Task
               <Table.Th>
                 <SortHeader label="Created" column="createdAt" activeColumn={sortColumn} dir={sortDir} onSort={cycleSort} />
               </Table.Th>
+              <Table.Th>Duration</Table.Th>
               <Table.Th w={80} />
             </Table.Tr>
           </Table.Thead>
@@ -269,6 +271,7 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: Task
                     )}
                   </Table.Td>
                   <Table.Td><RelativeTime date={t.createdAt} /></Table.Td>
+                  <Table.Td><TaskDuration claimedAt={t.claimedAt} completedAt={t.completedAt} status={t.status} /></Table.Td>
                   <Table.Td>
                     <Group gap={4} wrap="nowrap">
                       {(t.status === 'claimed' || t.status === 'in_progress') && (

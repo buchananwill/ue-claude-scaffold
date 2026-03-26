@@ -4,6 +4,7 @@ import { Stack, Group, Card, Title, Text, Code, Loader, Badge } from '@mantine/c
 import { useTask } from '../hooks/useTask.ts';
 import { StatusBadge } from '../components/StatusBadge.tsx';
 import { RelativeTime } from '../components/RelativeTime.tsx';
+import { TaskDuration } from '../components/TaskDuration.tsx';
 
 export function TaskDetailPage() {
   const params = useParams({ strict: false }) as { taskId?: string };
@@ -115,6 +116,7 @@ export function TaskDetailPage() {
               ? <RelativeTime date={task.completedAt} />
               : <Text span size="xs" c="dimmed" fs="italic">&mdash;</Text>}</Text>
           </Group>
+          <Text size="xs" c="dimmed">Duration: <TaskDuration claimedAt={task.claimedAt} completedAt={task.completedAt} status={task.status} /></Text>
 
           <div>
             <Text size="xs" fw={600} c="dimmed">Claimed By</Text>
