@@ -27,6 +27,8 @@ services:
       - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git
       # Required: task prompt and standing instructions
       - ${TASKS_PATH:?Set TASKS_PATH}:/task:ro
+      # Host-side logs (exit logs persist after container shutdown for forensic review)
+      - ${LOGS_PATH:-./logs}:/logs
       # Required: Claude authentication (pick one)
       # Option A — OAuth credentials file (CLAUDE_CREDENTIALS_PATH must be set in .env
       # — ~ does not expand reliably on Windows):

@@ -10,6 +10,20 @@ WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
 AGENT_MODE="${AGENT_MODE:-single}"
 LOG_VERBOSITY="${LOG_VERBOSITY:-normal}"
+CLAUDE_OUTPUT_LOG="/tmp/claude-output.log"
+HOST_LOG_DIR="/logs"
+ABNORMAL_SHUTDOWN=""
+CONSECUTIVE_ABNORMAL=0
+
+# ── Persistent logging ─────────────────────────────────────────────────────
+# Mirror ALL terminal output to a host-mounted log file (if /logs is mounted).
+# The file survives container shutdown for forensic review.
+CONTAINER_LOG=""
+if [ -d "$HOST_LOG_DIR" ]; then
+    CONTAINER_LOG="${HOST_LOG_DIR}/${AGENT_NAME}-$(date +%Y%m%d-%H%M%S).log"
+    exec > >(tee -a "$CONTAINER_LOG") 2>&1
+    echo "Logging to $CONTAINER_LOG"
+fi
 
 echo "=== Claude Code Docker Worker ==="
 echo "Agent:  $AGENT_NAME"
@@ -94,17 +108,86 @@ _post_status() {
         --max-time 5 >/dev/null 2>&1 || true
 }
 
+_detect_abnormal_exit() {
+    # Scan captured Claude output for known failure signatures.
+    # Returns 0 (true) if an abnormal pattern is found, 1 (false) if clean.
+    # Sets ABNORMAL_REASON to a human-readable description.
+    local log_file="$1"
+    [ -f "$log_file" ] || return 1
+
+    # Auth failure: "Failed to authenticate. API Error: 401 ..."
+    if grep -qi 'authentication_error\|Invalid authentication credentials\|Failed to authenticate' "$log_file"; then
+        ABNORMAL_REASON="authentication failure (API credentials invalid or expired)"
+        return 0
+    fi
+
+    # Token/session exhaustion: Claude CLI reports hitting limits
+    if grep -qi 'token.*limit\|token.*exhaust\|session.*limit\|context.*limit\|max.*token.*reached\|rate.*limit.*exceeded\|quota.*exceeded\|billing.*error\|overloaded_error' "$log_file"; then
+        ABNORMAL_REASON="token or rate limit exhaustion"
+        return 0
+    fi
+
+    # Rapid exit heuristic: if Claude ran for <10 seconds and produced minimal
+    # output, something is wrong even without a pattern match
+    if [ -n "${CLAUDE_START_TS:-}" ]; then
+        local now elapsed output_lines
+        now=$(date +%s)
+        elapsed=$((now - CLAUDE_START_TS))
+        output_lines=$(wc -l < "$log_file")
+        if [ "$elapsed" -lt 10 ] && [ "$output_lines" -lt 5 ]; then
+            ABNORMAL_REASON="rapid exit (${elapsed}s, ${output_lines} lines of output)"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+_post_abnormal_shutdown_message() {
+    local reason="$1"
+    local task_id="${2:-}"
+    local tmpfile
+    tmpfile=$(mktemp)
+    cat > "$tmpfile" <<JSONEOF
+{
+    "channel": "general",
+    "type": "abnormal_shutdown",
+    "payload": {
+        "agent": "${AGENT_NAME}",
+        "reason": "${reason}",
+        "taskId": "${task_id}",
+        "message": "Agent ${AGENT_NAME} shut down abnormally: ${reason}. Claimed task released. Uncommitted work discarded. Manual restart required."
+    }
+}
+JSONEOF
+    curl -s -X POST "${SERVER_URL}/messages" \
+        -H "Content-Type: application/json" \
+        -H "X-Agent-Name: ${AGENT_NAME}" \
+        -d @"$tmpfile" \
+        --max-time 10 >/dev/null 2>&1 || true
+    rm -f "$tmpfile"
+}
+
 _shutdown() {
     echo ""
     echo "=== Shutting down agent ${AGENT_NAME} ==="
-    # Push any remaining work to bare repo
+
     if [ -d /workspace/.git ]; then
         cd /workspace
-        git add -A 2>/dev/null || true
-        git diff --cached --quiet 2>/dev/null || \
-            git commit -m "Container shutdown commit" --no-gpg-sign 2>/dev/null || true
+        if [ -n "$ABNORMAL_SHUTDOWN" ]; then
+            # Abnormal exit: discard uncommitted work (presumed invalid)
+            echo "Abnormal shutdown — discarding uncommitted work"
+            git checkout -- . 2>/dev/null || true
+            git clean -fd 2>/dev/null || true
+        else
+            # Normal exit: commit and push remaining work
+            git add -A 2>/dev/null || true
+            git diff --cached --quiet 2>/dev/null || \
+                git commit -m "Container shutdown commit" --no-gpg-sign 2>/dev/null || true
+        fi
         git push origin "HEAD:${WORK_BRANCH}" --force 2>/dev/null || true
     fi
+
     # Release any claimed task back to pending
     if [ -n "${CURRENT_TASK_ID:-}" ]; then
         echo "Releasing task #${CURRENT_TASK_ID}..."
@@ -352,8 +435,12 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
         CLAUDE_ARGS+=(--agent "$AGENT_TYPE")
     fi
 
+    # Capture output for abnormal exit detection
+    rm -f "$CLAUDE_OUTPUT_LOG"
+    CLAUDE_START_TS=$(date +%s)
+
     set +e
-    claude "${CLAUDE_ARGS[@]}" 2>&1 &
+    claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$CLAUDE_OUTPUT_LOG" &
     CLAUDE_PID=$!
     _watch_for_stop "$CLAUDE_PID" &
     WATCHDOG_PID=$!
@@ -372,6 +459,38 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
         exit 0
     fi
 
+    # ── Abnormal exit detection ─────────────────────────────────────────────
+    # Token exhaustion and auth failures cause Claude to exit (often with code 0)
+    # without completing any work. Detect this and release the task instead of
+    # falsely marking it complete.
+    if _detect_abnormal_exit "$CLAUDE_OUTPUT_LOG"; then
+        echo "*** ABNORMAL EXIT DETECTED: ${ABNORMAL_REASON} ***"
+        ABNORMAL_SHUTDOWN="true"
+
+        # Discard uncommitted work (presumed invalid)
+        cd /workspace
+        git checkout -- . 2>/dev/null || true
+        git clean -fd 2>/dev/null || true
+        git push origin "HEAD:${WORK_BRANCH}" --force 2>/dev/null || true
+        echo "Uncommitted work discarded. Branch preserved at last intentional commit."
+
+        # Record the failure so the operator can see what happened
+        _post_abnormal_shutdown_message "$ABNORMAL_REASON" "${CURRENT_TASK_ID:-}"
+
+        # Release the task back to pending (not complete, not failed)
+        if [ -n "$CURRENT_TASK_ID" ]; then
+            echo "Releasing task #${CURRENT_TASK_ID} back to pending..."
+            curl -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/release" \
+                -H "X-Agent-Name: ${AGENT_NAME}" \
+                --max-time 10 >/dev/null 2>&1 || true
+            CURRENT_TASK_ID=""  # Prevent _shutdown from double-releasing
+        fi
+        _post_status "error"
+
+        return 1
+    fi
+
+    # ── Normal exit path ────────────────────────────────────────────────────
     # Final push — commit any uncommitted work, then push all commits to bare repo
     cd /workspace
     git add -A
@@ -381,7 +500,7 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
     git push origin "HEAD:${WORK_BRANCH}" --force
     echo "Final state pushed to bare repo"
 
-    # ── Report task completion ──────────────────────────────────────────────
+    # Report task completion
     if [ -n "$CURRENT_TASK_ID" ]; then
         if [ $EXIT_CODE -eq 0 ]; then
             curl -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/complete" \
@@ -446,6 +565,10 @@ All agents must remain in the meeting until the discussion leader posts DISCUSSI
 
     _post_status "working"
 
+    # Capture output for abnormal exit detection
+    rm -f "$CLAUDE_OUTPUT_LOG"
+    CLAUDE_START_TS=$(date +%s)
+
     set +e
     claude -p "$FULL_PROMPT" \
         --dangerously-skip-permissions \
@@ -454,7 +577,7 @@ All agents must remain in the meeting until the discussion leader posts DISCUSSI
         --channels server:chat \
         --dangerously-load-development-channels server:chat \
         --agent "$AGENT_TYPE" \
-        2>&1 &
+        2>&1 | tee "$CLAUDE_OUTPUT_LOG" &
     CLAUDE_PID=$!
     _watch_for_stop "$CLAUDE_PID" &
     WATCHDOG_PID=$!
@@ -471,6 +594,15 @@ All agents must remain in the meeting until the discussion leader posts DISCUSSI
     if [ -f /tmp/.stop_requested ]; then
         echo "Stopped by operator — skipping post-run status update"
         exit 0
+    fi
+
+    # ── Abnormal exit detection ─────────────────────────────────────────────
+    if _detect_abnormal_exit "$CLAUDE_OUTPUT_LOG"; then
+        echo "*** ABNORMAL EXIT DETECTED: ${ABNORMAL_REASON} ***"
+        ABNORMAL_SHUTDOWN="true"
+        _post_abnormal_shutdown_message "$ABNORMAL_REASON" ""
+        _post_status "error"
+        exit 1
     fi
 
     # Final push — commit any uncommitted work, then push all commits to bare repo
@@ -510,12 +642,29 @@ if [ -n "${CHAT_ROOM:-}" ] && [ "${WORKER_MODE:-false}" = "false" ]; then
 fi
 
 if [ "$WORKER_SINGLE_TASK" = "false" ]; then
-    # Multi-task pump loop
+    # Multi-task pump loop with circuit breaker
     while true; do
+        ABNORMAL_SHUTDOWN=""  # Reset per-task
+
         set +e
         run_claude_task
         TASK_EXIT=$?
         set -e
+
+        # ── Circuit breaker: stop the pump after consecutive abnormal exits ──
+        if [ -n "$ABNORMAL_SHUTDOWN" ]; then
+            CONSECUTIVE_ABNORMAL=$((CONSECUTIVE_ABNORMAL + 1))
+            echo "*** Abnormal exit #${CONSECUTIVE_ABNORMAL}: ${ABNORMAL_REASON:-unknown} ***"
+            if [ "$CONSECUTIVE_ABNORMAL" -ge 2 ]; then
+                echo "*** CIRCUIT BREAKER: ${CONSECUTIVE_ABNORMAL} consecutive abnormal exits. ***"
+                echo "*** Stopping pump. Manual intervention required. ***"
+                _post_status "error"
+                exit 1
+            fi
+            echo "Will retry once more before triggering circuit breaker."
+        else
+            CONSECUTIVE_ABNORMAL=0
+        fi
 
         # Clean workspace for next task
         cd /workspace

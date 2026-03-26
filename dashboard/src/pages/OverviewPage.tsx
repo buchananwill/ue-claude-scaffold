@@ -6,14 +6,14 @@ import { AgentsPanel } from '../components/AgentsPanel.tsx';
 import { UbtLockCard } from '../components/UbtLockCard.tsx';
 import { useAgents } from '../hooks/useAgents.ts';
 import { useTasks } from '../hooks/useTasks.ts';
-import { useTaskFilters } from '../hooks/useTaskFilters.ts';
+import { useTaskFiltersUrlBacked } from '../hooks/useTaskFilters.ts';
 import { useUbtStatus } from '../hooks/useUbtStatus.ts';
 import { apiPost } from '../api/client.ts';
 
 export function OverviewPage() {
   const agents = useAgents();
   const tasks = useTasks();
-  const taskFilters = useTaskFilters(tasks.data ?? []);
+  const taskFilters = useTaskFiltersUrlBacked(tasks.data ?? []);
   const ubt = useUbtStatus();
   const [syncing, setSyncing] = useState(false);
 

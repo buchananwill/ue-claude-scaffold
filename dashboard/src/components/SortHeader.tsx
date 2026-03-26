@@ -1,12 +1,12 @@
 import { Group, Text } from '@mantine/core';
 import { IconChevronUp, IconChevronDown, IconSelector } from '@tabler/icons-react';
-import type { SortColumn } from '../hooks/useTaskFilters.ts';
+import type { SortColumn, SortDir } from '../hooks/useTaskFilters.ts';
 
 interface SortHeaderProps {
   label: string;
   column: NonNullable<SortColumn>;
   activeColumn: SortColumn;
-  dir: 'asc' | 'desc';
+  dir: SortDir;
   onSort: (col: NonNullable<SortColumn>) => void;
 }
 

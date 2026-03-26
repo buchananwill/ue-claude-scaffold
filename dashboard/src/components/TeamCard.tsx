@@ -1,5 +1,5 @@
 import { Card, Group, Title, Text, Table, Badge, Button, Box } from '@mantine/core';
-import { useRouter } from '@tanstack/react-router';
+import { Link } from '@tanstack/react-router';
 import { StatusBadge } from './StatusBadge.tsx';
 import { RelativeTime } from './RelativeTime.tsx';
 import type { TeamDetail } from '../api/types.ts';
@@ -9,8 +9,6 @@ interface TeamCardProps {
 }
 
 export function TeamCard({ team }: TeamCardProps) {
-  const router = useRouter();
-
   return (
     <Card withBorder p="sm">
       <Group justify="space-between" mb="xs">
@@ -45,10 +43,12 @@ export function TeamCard({ team }: TeamCardProps) {
         </Table.Tbody>
       </Table>
       <Button
+        component={Link}
+        to="/chat"
+        {...{ search: { room: team.id } } as any}
         variant="light"
         size="xs"
         mt="sm"
-        onClick={() => router.navigate({ to: '/chat', search: { room: team.id } })}
       >
         Open Chat Room
       </Button>

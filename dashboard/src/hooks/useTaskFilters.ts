@@ -1,19 +1,11 @@
-import { useState, useMemo, useCallback, useReducer } from 'react';
+import { useMemo, useState, useCallback } from 'react';
+import { useSearch, useNavigate } from '@tanstack/react-router';
 import type { Task } from '../api/types.ts';
 
-export type SortDir = 'asc' | 'desc';
+export type SortDir = 'asc' | 'desc' | null;
 export type SortColumn = 'id' | 'priority' | 'status' | 'title' | 'claimedBy' | 'createdAt' | null;
 
-type SortState = { column: SortColumn; dir: SortDir };
-type SortAction = { type: 'cycle'; col: NonNullable<SortColumn> } | { type: 'reset' };
-
-function sortReducer(state: SortState, action: SortAction): SortState {
-  if (action.type === 'reset') return { column: null, dir: 'asc' };
-  const col = action.col;
-  if (state.column !== col) return { column: col, dir: 'asc' };
-  if (state.dir === 'asc') return { column: col, dir: 'desc' };
-  return { column: null, dir: 'asc' };
-}
+const VALID_SORT_COLUMNS = new Set<string>(['id', 'priority', 'status', 'title', 'claimedBy', 'createdAt']);
 
 const UNASSIGNED = '__unassigned__';
 
@@ -21,15 +13,24 @@ export { UNASSIGNED };
 
 export const TASK_STATUSES = ['pending', 'claimed', 'in_progress', 'completed', 'failed'] as const;
 
-export function useTaskFilters(tasks: Task[]) {
-  const [{ column: sortColumn, dir: sortDir }, dispatchSort] = useReducer(sortReducer, { column: null, dir: 'asc' });
-  const [agentFilter, setAgentFilter] = useState<Set<string>>(new Set());
-  const [priorityFilter, setPriorityFilter] = useState<Set<number>>(new Set());
-  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
+interface FilterState {
+  statusFilter: Set<string>;
+  agentFilter: Set<string>;
+  priorityFilter: Set<number>;
+  sortColumn: SortColumn;
+  sortDir: SortDir;
+  setStatusFilter: (val: Set<string>) => void;
+  setAgentFilter: (val: Set<string>) => void;
+  setPriorityFilter: (val: Set<number>) => void;
+  cycleSort: (col: NonNullable<SortColumn>) => void;
+  clearAllFilters: () => void;
+}
 
-  const cycleSort = useCallback((col: NonNullable<SortColumn>) => {
-    dispatchSort({ type: 'cycle', col });
-  }, []);
+function useFilteredTasks(tasks: Task[], filters: FilterState) {
+  const {
+    statusFilter, agentFilter, priorityFilter,
+    sortColumn, sortDir,
+  } = filters;
 
   const uniqueAgents = useMemo(() => {
     const agents: string[] = [];
@@ -93,28 +94,119 @@ export function useTaskFilters(tasks: Task[]) {
 
   const hasActiveFilters = agentFilter.size > 0 || priorityFilter.size > 0 || statusFilter.size > 0 || sortColumn !== null;
 
-  const clearAllFilters = useCallback(() => {
-    setAgentFilter(new Set());
-    setPriorityFilter(new Set());
-    setStatusFilter(new Set());
-    dispatchSort({ type: 'reset' });
-  }, []);
-
   return {
     displayedTasks,
-    sortColumn,
-    sortDir,
-    agentFilter,
-    priorityFilter,
-    statusFilter,
-    setStatusFilter,
-    cycleSort,
-    setAgentFilter,
-    setPriorityFilter,
-    clearAllFilters,
     hasActiveFilters,
     uniqueAgents,
     uniquePriorities,
+  };
+}
+
+export function useTaskFilters(tasks: Task[]) {
+  const [statusFilter, setStatusFilterRaw] = useState<Set<string>>(() => new Set());
+  const [agentFilter, setAgentFilterRaw] = useState<Set<string>>(() => new Set());
+  const [priorityFilter, setPriorityFilterRaw] = useState<Set<number>>(() => new Set());
+  const [sortColumn, setSortColumn] = useState<SortColumn>(null);
+  const [sortDir, setSortDir] = useState<SortDir>(null);
+
+  const setStatusFilter = useCallback((val: Set<string>) => setStatusFilterRaw(val), []);
+  const setAgentFilter = useCallback((val: Set<string>) => setAgentFilterRaw(val), []);
+  const setPriorityFilter = useCallback((val: Set<number>) => setPriorityFilterRaw(val), []);
+
+  const cycleSort = useCallback((col: NonNullable<SortColumn>) => {
+    setSortColumn((prevCol) => {
+      if (prevCol !== col) {
+        setSortDir('asc');
+        return col;
+      }
+      setSortDir((prevDir) => {
+        if (prevDir === 'asc') {
+          return 'desc';
+        }
+        setSortColumn(null);
+        return null;
+      });
+      return prevCol;
+    });
+  }, []);
+
+  const clearAllFilters = useCallback(() => {
+    setStatusFilterRaw(new Set());
+    setAgentFilterRaw(new Set());
+    setPriorityFilterRaw(new Set());
+    setSortColumn(null);
+    setSortDir(null);
+  }, []);
+
+  const filters: FilterState = { statusFilter, agentFilter, priorityFilter, sortColumn, sortDir, setStatusFilter, setAgentFilter, setPriorityFilter, cycleSort, clearAllFilters };
+  const derived = useFilteredTasks(tasks, filters);
+
+  return {
+    ...filters,
+    ...derived,
+  };
+}
+
+export function useTaskFiltersUrlBacked(tasks: Task[]) {
+  const search = useSearch({ from: '/' });
+  const navigate = useNavigate({ from: '/' });
+
+  const statusFilter = useMemo(() => {
+    if (!search.status) return new Set<string>();
+    return new Set(search.status.split(',').filter(Boolean));
+  }, [search.status]);
+
+  const agentFilter = useMemo(() => {
+    if (!search.agent) return new Set<string>();
+    return new Set(search.agent.split(',').filter(Boolean));
+  }, [search.agent]);
+
+  const priorityFilter = useMemo(() => {
+    if (!search.priority) return new Set<number>();
+    return new Set(
+      search.priority.split(',').map(Number).filter((n) => !Number.isNaN(n))
+    );
+  }, [search.priority]);
+
+  const sortColumn: SortColumn = useMemo(() => {
+    if (search.sort && VALID_SORT_COLUMNS.has(search.sort)) return search.sort as NonNullable<SortColumn>;
+    return null;
+  }, [search.sort]);
+
+  const sortDir: SortDir = sortColumn === null ? null : (search.dir === 'desc' ? 'desc' : 'asc');
+
+  const setStatusFilter = (val: Set<string>) => {
+    navigate({ search: (prev) => ({ ...prev, status: val.size ? [...val].join(',') : undefined }) });
+  };
+
+  const setAgentFilter = (val: Set<string>) => {
+    navigate({ search: (prev) => ({ ...prev, agent: val.size ? [...val].join(',') : undefined }) });
+  };
+
+  const setPriorityFilter = (val: Set<number>) => {
+    navigate({ search: (prev) => ({ ...prev, priority: val.size ? [...val].join(',') : undefined }) });
+  };
+
+  const cycleSort = (col: NonNullable<SortColumn>) => {
+    if (sortColumn !== col) {
+      navigate({ search: (prev) => ({ ...prev, sort: col, dir: 'asc' }) });
+    } else if (sortDir === 'asc') {
+      navigate({ search: (prev) => ({ ...prev, sort: col, dir: 'desc' }) });
+    } else {
+      navigate({ search: (prev) => ({ ...prev, sort: undefined, dir: undefined }) });
+    }
+  };
+
+  const clearAllFilters = () => {
+    navigate({ search: (prev) => ({ ...prev, status: undefined, agent: undefined, priority: undefined, sort: undefined, dir: undefined }) });
+  };
+
+  const filters: FilterState = { statusFilter, agentFilter, priorityFilter, sortColumn, sortDir, setStatusFilter, setAgentFilter, setPriorityFilter, cycleSort, clearAllFilters };
+  const derived = useFilteredTasks(tasks, filters);
+
+  return {
+    ...filters,
+    ...derived,
   };
 }
 

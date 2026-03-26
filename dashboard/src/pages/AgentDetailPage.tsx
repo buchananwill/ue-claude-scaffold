@@ -20,7 +20,7 @@ export function AgentDetailPage() {
   const tasks = useTasks();
   const agents = useAgents();
   const [typeFilter, setTypeFilter] = useState('');
-  const messages = useMessages(agentName, typeFilter);
+  const messages = useMessages('_all', typeFilter, agentName);
 
   const is404 = isError && error instanceof ApiError && error.status === 404;
   const isDeregistered = is404;
@@ -39,7 +39,7 @@ export function AgentDetailPage() {
 
   return (
     <Stack gap="md">
-      <Link to="/" style={{ textDecoration: 'none', fontSize: '0.875rem' }}>&larr; Back to overview</Link>
+      <Link to="/" search={(prev: any) => prev} style={{ textDecoration: 'none', fontSize: '0.875rem' }}>&larr; Back to overview</Link>
 
       {agent ? (
         <>
@@ -81,12 +81,14 @@ export function AgentDetailPage() {
               messages={messages.messages}
               loading={messages.loading}
               error={messages.error}
-              channel={agentName}
+              channel="_all"
               onChannelChange={() => {}}
               agents={agents.data ?? null}
               hideSelector
               typeFilter={typeFilter}
               onTypeFilterChange={setTypeFilter}
+              agentFilter=""
+              onAgentFilterChange={() => {}}
               totalCount={messages.totalCount}
               hasOlder={messages.hasOlder}
               loadingOlder={messages.loadingOlder}

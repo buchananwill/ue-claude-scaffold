@@ -20,6 +20,13 @@ const overviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   component: OverviewPage,
+  validateSearch: (search: Record<string, unknown>) => ({
+    status: typeof search.status === 'string' && search.status ? search.status : undefined,
+    agent: typeof search.agent === 'string' && search.agent ? search.agent : undefined,
+    priority: typeof search.priority === 'string' && search.priority ? search.priority : undefined,
+    sort: typeof search.sort === 'string' && search.sort ? search.sort : undefined,
+    dir: typeof search.dir === 'string' && search.dir ? search.dir : undefined,
+  }),
 });
 
 const messagesIndexRoute = createRoute({
@@ -35,6 +42,7 @@ const messagesChannelRoute = createRoute({
   validateSearch: (search: Record<string, unknown>) => ({
     type: typeof search.type === 'string' && search.type ? search.type : undefined,
     highlight: typeof search.highlight === 'string' && search.highlight ? search.highlight : undefined,
+    agent: typeof search.agent === 'string' && search.agent ? search.agent : undefined,
   }),
 });
 

@@ -1,6 +1,6 @@
 import { AppShell, Group, NavLink } from '@mantine/core';
 import { IconLayoutDashboard, IconMessage, IconList, IconMessageCircle, IconUsersGroup } from '@tabler/icons-react';
-import { Outlet, useRouter, useMatches } from '@tanstack/react-router';
+import { Outlet, Link, useMatches } from '@tanstack/react-router';
 import { HealthBar } from '../components/HealthBar.tsx';
 import { useHealth } from '../hooks/useHealth.ts';
 import { usePollInterval } from '../hooks/usePollInterval.tsx';
@@ -9,7 +9,6 @@ import { SearchBar } from '../components/SearchBar.tsx';
 export function DashboardLayout() {
   const { intervalMs, setIntervalMs } = usePollInterval();
   const health = useHealth();
-  const router = useRouter();
   const matches = useMatches();
 
   const currentPath = matches[matches.length - 1]?.pathname ?? '/';
@@ -33,42 +32,48 @@ export function DashboardLayout() {
       <AppShell.Main>
         <Group gap="xs" mb="md">
           <NavLink
+            component={Link}
+            to="/"
             label="Overview"
             leftSection={<IconLayoutDashboard size={16} />}
             active={currentPath === '/'}
-            onClick={() => router.navigate({ to: '/' })}
             style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
             px="md"
           />
           <NavLink
+            component={Link}
+            to="/messages/$channel"
+            {...{ params: { channel: 'general' } } as any}
             label="Messages"
             leftSection={<IconMessage size={16} />}
             active={isMessages}
-            onClick={() => router.navigate({ to: '/messages/$channel', params: { channel: 'general' }, search: { type: undefined, highlight: undefined } })}
             style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
             px="md"
           />
           <NavLink
+            component={Link}
+            to="/logs"
             label="Logs"
             leftSection={<IconList size={16} />}
             active={isLogs}
-            onClick={() => router.navigate({ to: '/logs' })}
             style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
             px="md"
           />
           <NavLink
+            component={Link}
+            to="/chat"
             label="Chat"
             leftSection={<IconMessageCircle size={16} />}
             active={isChat}
-            onClick={() => router.navigate({ to: '/chat', search: { room: undefined } })}
             style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
             px="md"
           />
           <NavLink
+            component={Link}
+            to="/teams"
             label="Teams"
             leftSection={<IconUsersGroup size={16} />}
             active={isTeams}
-            onClick={() => router.navigate({ to: '/teams' })}
             style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
             px="md"
           />

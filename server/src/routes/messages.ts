@@ -81,17 +81,25 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
 
   fastify.get<{
     Params: { channel: string };
-    Querystring: { type?: string };
+    Querystring: { type?: string; from_agent?: string };
   }>('/messages/:channel/count', async (request) => {
     const { channel } = request.params;
-    const { type } = request.query;
+    const { type, from_agent } = request.query;
 
-    let sql = 'SELECT COUNT(*) as count FROM messages WHERE channel = ?';
-    const params: unknown[] = [channel];
+    const isAll = channel === '_all';
+    let sql = isAll
+      ? 'SELECT COUNT(*) as count FROM messages WHERE 1=1'
+      : 'SELECT COUNT(*) as count FROM messages WHERE channel = ?';
+    const params: unknown[] = isAll ? [] : [channel];
 
     if (type) {
       sql += ' AND type = ?';
       params.push(type);
+    }
+
+    if (from_agent) {
+      sql += ' AND from_agent = ?';
+      params.push(from_agent);
     }
 
     const row = db.prepare(sql).get(...params) as { count: number };
@@ -100,14 +108,17 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
 
   fastify.get<{
     Params: { channel: string };
-    Querystring: { since?: string; before?: string; type?: string; limit?: string };
+    Querystring: { since?: string; before?: string; type?: string; limit?: string; from_agent?: string };
   }>('/messages/:channel', async (request) => {
     const { channel } = request.params;
-    const { since, before, type, limit } = request.query;
+    const { since, before, type, limit, from_agent } = request.query;
     const pageSize = Math.min(Math.max(Number(limit) || 100, 1), 500);
 
-    let sql = 'SELECT * FROM messages WHERE channel = ?';
-    const params: unknown[] = [channel];
+    const isAll = channel === '_all';
+    let sql = isAll
+      ? 'SELECT * FROM messages WHERE 1=1'
+      : 'SELECT * FROM messages WHERE channel = ?';
+    const params: unknown[] = isAll ? [] : [channel];
 
     if (since) {
       // Polling path: return all messages after cursor, no limit
@@ -116,6 +127,10 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
       if (type) {
         sql += ' AND type = ?';
         params.push(type);
+      }
+      if (from_agent) {
+        sql += ' AND from_agent = ?';
+        params.push(from_agent);
       }
       sql += ' ORDER BY id ASC';
       const rows = db.prepare(sql).all(...params) as MessageRow[];
@@ -130,6 +145,11 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
     if (type) {
       sql += ' AND type = ?';
       params.push(type);
+    }
+
+    if (from_agent) {
+      sql += ' AND from_agent = ?';
+      params.push(from_agent);
     }
 
     sql += ' ORDER BY id DESC LIMIT ?';

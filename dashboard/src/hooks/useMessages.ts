@@ -5,7 +5,7 @@ import { usePollInterval } from './usePollInterval.tsx';
 
 const LIMIT = 20;
 
-export function useMessages(channel: string, typeFilter = '') {
+export function useMessages(channel: string, typeFilter = '', agentFilter = '') {
   const { intervalMs } = usePollInterval();
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -32,14 +32,14 @@ export function useMessages(channel: string, typeFilter = '') {
 
       if (since > 0) {
         // Polling path: no limit
-        url = `/messages/${encodeURIComponent(channel)}?since=${since}${typeFilter ? `&type=${encodeURIComponent(typeFilter)}` : ''}`;
+        url = `/messages/${encodeURIComponent(channel)}?since=${since}${typeFilter ? `&type=${encodeURIComponent(typeFilter)}` : ''}${agentFilter ? `&from_agent=${encodeURIComponent(agentFilter)}` : ''}`;
       } else {
         // Initial load: get most recent LIMIT
-        url = `/messages/${encodeURIComponent(channel)}?limit=${LIMIT}${typeFilter ? `&type=${encodeURIComponent(typeFilter)}` : ''}`;
+        url = `/messages/${encodeURIComponent(channel)}?limit=${LIMIT}${typeFilter ? `&type=${encodeURIComponent(typeFilter)}` : ''}${agentFilter ? `&from_agent=${encodeURIComponent(agentFilter)}` : ''}`;
       }
 
       const fetchCount = () => {
-        const countUrl = `/messages/${encodeURIComponent(channel)}/count${typeFilter ? `?type=${encodeURIComponent(typeFilter)}` : ''}`;
+        const countUrl = `/messages/${encodeURIComponent(channel)}/count${typeFilter || agentFilter ? '?' : ''}${typeFilter ? `type=${encodeURIComponent(typeFilter)}` : ''}${typeFilter && agentFilter ? '&' : ''}${agentFilter ? `from_agent=${encodeURIComponent(agentFilter)}` : ''}`;
         apiFetch<{ count: number }>(countUrl, ac.signal)
           .then((data) => {
             if (!ac.signal.aborted) setTotalCount(data.count);
@@ -81,7 +81,7 @@ export function useMessages(channel: string, typeFilter = '') {
       ac.abort();
       clearInterval(id);
     };
-  }, [channel, intervalMs, typeFilter]);
+  }, [channel, intervalMs, typeFilter, agentFilter]);
 
   const loadOlder = useCallback(() => {
     const oldest = oldestIdRef.current;
@@ -91,6 +91,9 @@ export function useMessages(channel: string, typeFilter = '') {
     let url = `/messages/${encodeURIComponent(channel)}?before=${oldest}&limit=${LIMIT}`;
     if (typeFilter) {
       url += `&type=${encodeURIComponent(typeFilter)}`;
+    }
+    if (agentFilter) {
+      url += `&from_agent=${encodeURIComponent(agentFilter)}`;
     }
 
     apiFetch<Message[]>(url)
@@ -107,7 +110,7 @@ export function useMessages(channel: string, typeFilter = '') {
       .catch(() => {
         setLoadingOlder(false);
       });
-  }, [channel, typeFilter, loadingOlder]);
+  }, [channel, typeFilter, agentFilter, loadingOlder]);
 
   return { messages, error, loading, hasOlder, loadingOlder, loadOlder, totalCount };
 }

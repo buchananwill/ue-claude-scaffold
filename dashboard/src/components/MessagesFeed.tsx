@@ -14,6 +14,8 @@ interface MessagesFeedProps {
   hideSelector?: boolean;
   typeFilter: string;
   onTypeFilterChange: (t: string) => void;
+  agentFilter: string;
+  onAgentFilterChange: (a: string) => void;
   totalCount?: number | null;
   hasOlder?: boolean;
   loadingOlder?: boolean;
@@ -45,6 +47,8 @@ export function MessagesFeed({
   hideSelector,
   typeFilter,
   onTypeFilterChange,
+  agentFilter,
+  onAgentFilterChange,
   totalCount,
   hasOlder,
   loadingOlder,
@@ -79,9 +83,13 @@ export function MessagesFeed({
   }, [flashId]);
 
   const channels = useMemo(() => {
-    const set = new Set<string>(['general']);
-    agents?.forEach((a) => set.add(a.name));
-    return Array.from(set).map((c) => ({ value: c, label: c }));
+    return [{ value: 'general', label: 'general' }];
+  }, []);
+
+  const agentOptions = useMemo(() => {
+    const options = [{ value: '', label: 'All agents' }];
+    agents?.forEach((a) => options.push({ value: a.name, label: a.name }));
+    return options;
   }, [agents]);
   const dynamicTypes = useMemo(() => {
     const seen = new Set(messages.map(m => m.type));
@@ -127,14 +135,25 @@ export function MessagesFeed({
   return (
     <Stack gap="sm" h="100%">
       {!hideSelector && (
-        <Select
-          size="xs"
-          label="Channel"
-          data={channels}
-          value={channel}
-          onChange={(v) => v && onChannelChange(v)}
-          w={200}
-        />
+        <Group gap="sm">
+          <Select
+            size="xs"
+            label="Channel"
+            data={channels}
+            value={channel}
+            onChange={(v) => v && onChannelChange(v)}
+            w={200}
+          />
+          <Select
+            size="xs"
+            label="Agent"
+            data={agentOptions}
+            value={agentFilter}
+            onChange={(v) => onAgentFilterChange(v ?? '')}
+            w={200}
+            clearable
+          />
+        </Group>
       )}
 
       <Group gap="xs" wrap="wrap">

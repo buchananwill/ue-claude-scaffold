@@ -117,7 +117,13 @@ BUILD_SCRIPT_NAME="$(jq -r '.build.scriptPath // "build.py"' "$_cfg" | xargs bas
 TEST_SCRIPT_NAME="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)"
 DEFAULT_TEST_FILTERS="$(jq -r '.build.defaultTestFilters // [] | join(" ")' "$_cfg")"
 
-export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH CLAUDE_CREDENTIALS_PATH SERVER_PORT
+LOGS_PATH="$(jq -r '.logs.path // empty' "$_cfg")"
+if [ -z "$LOGS_PATH" ]; then
+    LOGS_PATH="$SCRIPT_DIR/logs"
+fi
+mkdir -p "$LOGS_PATH"
+
+export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH CLAUDE_CREDENTIALS_PATH SERVER_PORT LOGS_PATH
 
 # ── Apply CLI overrides ─────────────────────────────────────────────────────
 AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
@@ -420,7 +426,7 @@ fi
 
 # ── Export vars for docker-compose ───────────────────────────────────────────
 export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS LOG_VERBOSITY
-export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH
+export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH LOGS_PATH
 export WORKER_MODE WORKER_POLL_INTERVAL WORKER_SINGLE_TASK
 export AGENT_MODE="${AGENT_MODE:-single}"
 export SERVER_PORT="${SERVER_PORT:-9100}"

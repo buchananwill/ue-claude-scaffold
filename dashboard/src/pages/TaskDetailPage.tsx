@@ -17,7 +17,7 @@ export function TaskDetailPage() {
 
   return (
     <Stack gap="md">
-      <Link to="/" style={{ textDecoration: 'none', fontSize: '0.875rem' }}>&larr; Back to overview</Link>
+      <Link to="/" search={(prev: any) => prev} style={{ textDecoration: 'none', fontSize: '0.875rem' }}>&larr; Back to overview</Link>
 
       <Card withBorder p="md">
         <Group gap="sm" mb="md">
