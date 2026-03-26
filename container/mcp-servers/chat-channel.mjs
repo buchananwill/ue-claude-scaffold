@@ -60,6 +60,7 @@ const server = new Server(
       `Your agent name is "${AGENT_NAME}".`,
       'You will receive <channel> notifications when new messages arrive in your chat room.',
       'Use the `check_messages` tool to read the full conversation since your last reply.',
+      'Use the `check_presence` tool to see who is in the room and whether they are online.',
       'Use the `reply` tool to send messages to the room.',
       'EVERY response to the team MUST go through the `reply` tool — text outside tool calls is invisible to other agents.',
     ].join(' '),
@@ -75,6 +76,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'check_messages',
         description: 'Read the chat room conversation since your last reply. Returns a structured log of all messages, or "No unread messages" if caught up.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            room: { type: 'string', description: 'Room ID to check' },
+          },
+          required: ['room'],
+        },
+      },
+      {
+        name: 'check_presence',
+        description: 'Check who is in the chat room and whether they are online. Returns each member with their registration status.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -107,6 +119,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   if (name === 'check_messages') {
     return handleCheckMessages(args.room);
+  }
+  if (name === 'check_presence') {
+    return handleCheckPresence(args.room);
   }
   if (name === 'reply') {
     return handleReply(args.room, args.content, args.replyTo);
@@ -167,6 +182,34 @@ async function handleCheckMessages(roomId) {
   } catch (err) {
     log(`check_messages ERROR: ${err.message}`);
     return { content: [{ type: 'text', text: `Error checking messages: ${err.message}` }], isError: true };
+  }
+}
+
+// ── check_presence handler ───────────────────────────────────────────────────
+
+async function handleCheckPresence(roomId) {
+  try {
+    const res = await fetch(
+      `${SERVER_URL}/rooms/${encodeURIComponent(roomId)}/presence`,
+      { headers: authHeaders, signal: AbortSignal.timeout(5000) }
+    );
+    if (!res.ok) {
+      log(`check_presence FAILED: HTTP ${res.status}`);
+      return { content: [{ type: 'text', text: `Failed to check presence: HTTP ${res.status}` }], isError: true };
+    }
+    const data = await res.json();
+    log(`check_presence room=${roomId}: ${data.members.length} member(s)`);
+
+    const lines = data.members.map((m) => {
+      const icon = m.online ? '●' : '○';
+      return `${icon} ${m.name} — ${m.status}`;
+    });
+
+    const text = `--- ROOM PRESENCE: ${roomId} ---\n${lines.join('\n')}\n--- ● = online, ○ = not registered ---`;
+    return { content: [{ type: 'text', text }] };
+  } catch (err) {
+    log(`check_presence ERROR: ${err.message}`);
+    return { content: [{ type: 'text', text: `Error checking presence: ${err.message}` }], isError: true };
   }
 }
 

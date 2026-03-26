@@ -59,7 +59,15 @@ reply 'Ready.'" Wait for all members to reply "Ready." before proceeding.
 
 **Step 2 — Vote.** Once all members are ready, post: **"Submit convergence votes."** Each member
 responds with exactly one message: **Consent** or **Dissent** (with concise reasons).
-Convergence passes if a strict majority consents. If the vote is tied, you cast the deciding vote.
+
+**DO NOT announce the result until EVERY team member has voted.** You have the power to move the
+discussion forward unilaterally — use it with extreme patience. Your role is to listen and
+coordinate first, arbitrate last. Wait for every single vote before tallying. If a member is slow
+to respond, use `check_presence` to verify they are still online, then ping them — do not proceed
+without them.
+
+Convergence passes if a strict majority of members consent. If the vote is tied, only then do you
+cast the deciding vote.
 
 If the vote **passes**: proceed to Phase 5.
 If the vote **fails**: announce the result and re-enter Phase 3, yielding the floor to the

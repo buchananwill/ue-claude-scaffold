@@ -109,6 +109,43 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     };
   });
 
+  // GET /rooms/:id/presence — who is in the room and are they online?
+  const presenceQuery = db.prepare(`
+    SELECT
+      rm.member,
+      rm.joined_at,
+      a.status AS agent_status,
+      a.registered_at AS agent_registered_at
+    FROM room_members rm
+    LEFT JOIN agents a ON a.name = rm.member
+    WHERE rm.room_id = @roomId
+    ORDER BY rm.member
+  `);
+
+  fastify.get<{
+    Params: { id: string };
+  }>('/rooms/:id/presence', async (request, reply) => {
+    const { id } = request.params;
+    const room = roomById.get({ id });
+    if (!room) {
+      return reply.notFound(`Room '${id}' not found`);
+    }
+
+    const rows = presenceQuery.all({ roomId: id }) as Array<{
+      member: string; joined_at: string; agent_status: string | null; agent_registered_at: string | null;
+    }>;
+
+    return {
+      room: id,
+      members: rows.map(r => ({
+        name: r.member,
+        joinedAt: r.joined_at,
+        online: r.agent_status !== null,
+        status: r.agent_status ?? 'not-registered',
+      })),
+    };
+  });
+
   // DELETE /rooms/:id — delete a room
   fastify.delete<{
     Params: { id: string };
