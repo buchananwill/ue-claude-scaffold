@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
-import { Popover, TextInput, Text, Loader, Stack, Group, UnstyledButton } from '@mantine/core';
+import { Popover, TextInput, Text, Loader, Stack, Group, UnstyledButton, Divider } from '@mantine/core';
 import { IconSearch, IconSubtask, IconMessage, IconRobot } from '@tabler/icons-react';
 import { useNavigate } from '@tanstack/react-router';
 import { useSearch } from '../hooks/useSearch.ts';
 
 export function SearchBar() {
   const [term, setTerm] = useState('');
+  const [popoverOpen, setPopoverOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const { data, isFetching } = useSearch(term);
@@ -22,12 +23,11 @@ export function SearchBar() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const opened = term.length >= 2;
   const hasResults =
     data && (data.tasks.length > 0 || data.messages.length > 0 || data.agents.length > 0);
 
   return (
-    <Popover opened={opened} position="bottom" width={400} shadow="md">
+    <Popover opened={popoverOpen} position="bottom" width={400} shadow="md">
       <Popover.Target>
         <TextInput
           ref={inputRef}
@@ -35,10 +35,17 @@ export function SearchBar() {
           size="sm"
           w={220}
           value={term}
-          onChange={(e) => setTerm(e.currentTarget.value)}
+          onChange={(e) => {
+            const v = e.currentTarget.value;
+            setTerm(v);
+            setPopoverOpen(v.length >= 2);
+          }}
+          onFocus={() => { if (term.length >= 2) setPopoverOpen(true); }}
+          onBlur={() => setPopoverOpen(false)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
               setTerm('');
+              setPopoverOpen(false);
               inputRef.current?.blur();
             }
           }}
@@ -66,8 +73,10 @@ export function SearchBar() {
                     w="100%"
                     p={4}
                     style={{ borderRadius: 'var(--mantine-radius-sm)' }}
-                    onClick={() => {
+                    onMouseDown={(e: React.MouseEvent) => {
+                      e.preventDefault();
                       setTerm('');
+                      setPopoverOpen(false);
                       navigate({ to: '/tasks/$taskId', params: { taskId: String(task.id) } });
                     }}
                   >
@@ -97,8 +106,10 @@ export function SearchBar() {
                     w="100%"
                     p={4}
                     style={{ borderRadius: 'var(--mantine-radius-sm)' }}
-                    onClick={() => {
+                    onMouseDown={(e: React.MouseEvent) => {
+                      e.preventDefault();
                       setTerm('');
+                      setPopoverOpen(false);
                       navigate({
                         to: '/messages/$channel',
                         params: { channel: msg.channel },
@@ -132,8 +143,10 @@ export function SearchBar() {
                     w="100%"
                     p={4}
                     style={{ borderRadius: 'var(--mantine-radius-sm)' }}
-                    onClick={() => {
+                    onMouseDown={(e: React.MouseEvent) => {
+                      e.preventDefault();
                       setTerm('');
+                      setPopoverOpen(false);
                       navigate({ to: '/agents/$agentName', params: { agentName: agent.name } });
                     }}
                   >
@@ -151,6 +164,25 @@ export function SearchBar() {
                   </UnstyledButton>
                 ))}
               </div>
+            )}
+            {hasResults && (
+              <>
+                <Divider />
+                <UnstyledButton
+                  w="100%"
+                  p={4}
+                  onMouseDown={(e: React.MouseEvent) => {
+                    e.preventDefault();
+                    setPopoverOpen(false);
+                    navigate({ to: '/search', search: { q: term } });
+                    setTerm('');
+                  }}
+                >
+                  <Text size="sm" c="blue" ta="center">
+                    Show all {data.tasks.length + data.messages.length + data.agents.length} results
+                  </Text>
+                </UnstyledButton>
+              </>
             )}
           </Stack>
         )}

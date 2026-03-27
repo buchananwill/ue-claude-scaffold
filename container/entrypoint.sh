@@ -344,6 +344,13 @@ if [ -d "$INSTRUCTIONS_DIR" ]; then
                         continue
                     fi
                     ;;
+                *changeling*)
+                    # Jester prompt: only for changeling agent in chat mode
+                    if [ "${AGENT_TYPE}" != "changeling" ]; then
+                        echo "Skipping instruction (not changeling): $(basename "$f")"
+                        continue
+                    fi
+                    ;;
                 *) echo "Skipping instruction (chat-only mode): $(basename "$f")"; continue ;;
             esac
         fi

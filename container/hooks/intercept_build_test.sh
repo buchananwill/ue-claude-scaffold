@@ -135,9 +135,13 @@ while true; do
     sleep "$BACKOFF_S"
 done
 
-# ── Post build_started message ───────────────────────────────────────────────
+# ── Post start message ───────────────────────────────────────────────────────
 
-post_message "build_started" "{\"operation\": \"${OPERATION}\"}"
+if [ "$OPERATION" = "build" ]; then
+    post_message "build_start" "{\"operation\": \"${OPERATION}\"}"
+else
+    post_message "test_start" "{\"operation\": \"${OPERATION}\"}"
+fi
 
 # ── Call the coordination server ─────────────────────────────────────────────
 
@@ -160,6 +164,15 @@ curl -s -X POST "${SERVER_URL}/ubt/release" \
     -d "{\"agent\": \"${AGENT_NAME}\"}" \
     --max-time 5 >/dev/null 2>&1 || true
 LOCK_HELD=false
+
+# ── Post completion message ──────────────────────────────────────────────────
+
+SUCCESS=$(echo "$RESPONSE" | jq -r '.success // false')
+if [ "$OPERATION" = "build" ]; then
+    post_message "build_end" "{\"operation\": \"${OPERATION}\", \"success\": ${SUCCESS}}"
+else
+    post_message "test_end" "{\"operation\": \"${OPERATION}\", \"success\": ${SUCCESS}}"
+fi
 
 # ── Extract and print the output ─────────────────────────────────────────────
 

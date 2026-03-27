@@ -128,6 +128,9 @@ Delegate to **implementer** with:
 - The phase's requirements from the plan (verbatim)
 - Any supplementary notes from the CLAUDE.md role mapping
 - Instruction to write a debrief to `Notes/docker-claude/debriefs/` before building (see standing instruction `01-debrief.md`)
+- **Note:** When touching a file, fix any unambiguous style or best practice violations in that file (whether new or
+  pre-existing). This includes naming, indentation, IWYU, const-correctness, and similar straightforward issues. Do not
+  leave code worse than you found it.
 
 The implementer builds after making changes and iterates internally until the build is clean.
 
@@ -157,6 +160,11 @@ Each reviewer produces an independent verdict. **All three must APPROVE for the 
 
 Collect all findings from all three reviewers. **All BLOCKING and WARNING issues must be fixed.** There is no "accept
 and proceed" for warnings — if any reviewer flags it, it must be addressed.
+
+**For unambiguous style or best practice violations in files the implementer already touched:** the implementer must fix
+these even if they are pre-existing. "Unambiguous" means violations that are straightforward style, naming, or convention
+fixes — not architectural redesigns that would require significant refactoring outside this phase's scope. The implementer
+should note in commit messages or comments when fixing pre-existing violations, but must not leave them as-is.
 
 Pass the **combined findings from all reviewers** to the **implementer** as a single batch, with instruction to address
 everything and rebuild. Do not send three separate fix rounds — consolidation avoids churn.
