@@ -67,9 +67,9 @@ export function SearchBar() {
                 <Text size="xs" fw={700} c="dimmed" mb={4}>
                   Tasks ({data.tasks.length})
                 </Text>
+                {/* onMouseDown + preventDefault instead of onClick: prevents the
+                    input's onBlur from closing the popover before the click registers. */}
                 {data.tasks.map((task) => (
-                  {/* onMouseDown + preventDefault instead of onClick: prevents the
-                      input's onBlur from closing the popover before the click registers. */}
                   <UnstyledButton
                     key={`task-${task.id}`}
                     w="100%"
