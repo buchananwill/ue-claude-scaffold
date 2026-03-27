@@ -4,9 +4,9 @@ import { useSearch, useNavigate } from '@tanstack/react-router';
 import { useSearch as useSearchQuery } from '../hooks/useSearch.ts';
 
 export function SearchPage() {
-  const { q } = useSearch({ strict: false }) as { q?: string };
+  const { q } = useSearch({ from: '/search' });
   const navigate = useNavigate();
-  const { data, isFetching } = useSearchQuery(q ?? '');
+  const { data, isFetching } = useSearchQuery(q);
 
   const hasResults =
     data && (data.tasks.length > 0 || data.messages.length > 0 || data.agents.length > 0);

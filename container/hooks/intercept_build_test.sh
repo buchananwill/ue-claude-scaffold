@@ -27,10 +27,14 @@ QUEUED_MSG_POSTED=false
 
 cleanup() {
     if [ "$LOCK_HELD" = "true" ]; then
+        local tmp
+        tmp=$(mktemp)
+        jq -n --arg agent "$AGENT_NAME" '{"agent": $agent}' > "$tmp"
         curl -s -X POST "${SERVER_URL}/ubt/release" \
             -H "Content-Type: application/json" \
-            -d "{\"agent\": \"${AGENT_NAME}\"}" \
+            -d "@$tmp" \
             --max-time 5 >/dev/null 2>&1 || true
+        rm -f "$tmp"
     fi
 }
 trap cleanup EXIT
@@ -38,11 +42,16 @@ trap cleanup EXIT
 post_message() {
     local msg_type="$1"
     local payload="$2"
+    local tmp
+    tmp=$(mktemp)
+    jq -n --arg channel "$AGENT_NAME" --arg type "$msg_type" --argjson payload "$payload" \
+        '{"channel": $channel, "type": $type, "payload": $payload}' > "$tmp"
     curl -s -X POST "${SERVER_URL}/messages" \
         -H "Content-Type: application/json" \
         -H "X-Agent-Name: ${AGENT_NAME}" \
-        -d "{\"channel\": \"${AGENT_NAME}\", \"type\": \"${msg_type}\", \"payload\": ${payload}}" \
+        -d "@$tmp" \
         --max-time 5 >/dev/null 2>&1 || true
+    rm -f "$tmp"
 }
 
 INPUT=$(cat)
@@ -89,17 +98,20 @@ else
     if echo "$COMMAND" | grep -q '\-\-clean'; then
         CLEAN_FLAG="true"
     fi
-    REQUEST_BODY="{\"clean\": ${CLEAN_FLAG}}"
+    REQUEST_BODY=$(jq -n --argjson clean "$CLEAN_FLAG" '{"clean": $clean}')
 fi
 
 # ── Acquire UBT lock ────────────────────────────────────────────────────────
 
 echo "Acquiring UBT lock..."
 while true; do
+    ACQ_TMP=$(mktemp)
+    jq -n --arg agent "$AGENT_NAME" '{"agent": $agent}' > "$ACQ_TMP"
     ACQ_RESPONSE=$(curl -s -X POST "${SERVER_URL}/ubt/acquire" \
         -H "Content-Type: application/json" \
-        -d "{\"agent\": \"${AGENT_NAME}\"}" \
+        -d "@$ACQ_TMP" \
         --max-time 10) || ACQ_RESPONSE=""
+    rm -f "$ACQ_TMP"
 
     GRANTED=$(echo "$ACQ_RESPONSE" | jq -r '.granted // empty' 2>/dev/null || echo "")
 
@@ -124,7 +136,9 @@ while true; do
     EST_WAIT_MIN=$(( EST_WAIT_MS / 60000 ))
 
     if [ "$QUEUED_MSG_POSTED" = "false" ]; then
-        post_message "build_queued" "{\"holder\": \"${HOLDER}\", \"position\": ${POSITION}, \"estimatedWaitMs\": ${EST_WAIT_MS}}"
+        QUEUED_PAYLOAD=$(jq -n --arg holder "$HOLDER" --argjson position "$POSITION" --argjson wait "$EST_WAIT_MS" \
+            '{"holder": $holder, "position": $position, "estimatedWaitMs": $wait}')
+        post_message "build_queued" "$QUEUED_PAYLOAD"
         QUEUED_MSG_POSTED=true
     fi
 
@@ -137,10 +151,11 @@ done
 
 # ── Post start message ───────────────────────────────────────────────────────
 
+START_PAYLOAD=$(jq -n --arg op "$OPERATION" '{"operation": $op}')
 if [ "$OPERATION" = "build" ]; then
-    post_message "build_start" "{\"operation\": \"${OPERATION}\"}"
+    post_message "build_start" "$START_PAYLOAD"
 else
-    post_message "test_start" "{\"operation\": \"${OPERATION}\"}"
+    post_message "test_start" "$START_PAYLOAD"
 fi
 
 # ── Call the coordination server ─────────────────────────────────────────────
@@ -159,19 +174,23 @@ RESPONSE=$(curl -s -X POST "${SERVER_URL}/${OPERATION}" \
 
 # ── Release lock immediately ─────────────────────────────────────────────────
 
+REL_TMP=$(mktemp)
+jq -n --arg agent "$AGENT_NAME" '{"agent": $agent}' > "$REL_TMP"
 curl -s -X POST "${SERVER_URL}/ubt/release" \
     -H "Content-Type: application/json" \
-    -d "{\"agent\": \"${AGENT_NAME}\"}" \
+    -d "@$REL_TMP" \
     --max-time 5 >/dev/null 2>&1 || true
+rm -f "$REL_TMP"
 LOCK_HELD=false
 
 # ── Post completion message ──────────────────────────────────────────────────
 
 SUCCESS=$(echo "$RESPONSE" | jq -r '.success // false')
+END_PAYLOAD=$(jq -n --arg op "$OPERATION" --argjson success "$SUCCESS" '{"operation": $op, "success": $success}')
 if [ "$OPERATION" = "build" ]; then
-    post_message "build_end" "{\"operation\": \"${OPERATION}\", \"success\": ${SUCCESS}}"
+    post_message "build_end" "$END_PAYLOAD"
 else
-    post_message "test_end" "{\"operation\": \"${OPERATION}\", \"success\": ${SUCCESS}}"
+    post_message "test_end" "$END_PAYLOAD"
 fi
 
 # ── Extract and print the output ─────────────────────────────────────────────
