@@ -217,7 +217,7 @@ Container C Requests Registration:
   → Container launch FAILS: "No available worktrees"
   → Container C must wait for Container A or B to shut down
 ```
-```
+
 
 **Example: Future Federated Setup**
 
