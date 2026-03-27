@@ -1,0 +1,10 @@
+{
+  "id": "mission-assignment-team-2",
+  "name": "Programmatic Mission Assignment — Team 2",
+  "members": [
+    { "agentName": "leader-2", "role": "discussion-leader", "agentType": "design-leader", "isLeader": true },
+    { "agentName": "gameplay-2", "role": "gameplay-progression", "agentType": "design-domain", "isLeader": false },
+    { "agentName": "systems-2", "role": "architecture-state", "agentType": "design-architect", "isLeader": false },
+    { "agentName": "changeling-2", "role": "changeling", "agentType": "changeling", "isLeader": false }
+  ]
+}
