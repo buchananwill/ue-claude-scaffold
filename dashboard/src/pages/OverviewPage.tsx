@@ -83,15 +83,15 @@ export function OverviewPage() {
             isFetching={tasks.isFetching}
             filters={taskFilters}
           />
-          <Group justify="center" mt="xs">
-            <Pagination
-              total={Math.ceil((tasks.data?.total ?? 0) / PAGE_SIZE)}
-              value={taskFilters.page ?? 1}
-              onChange={taskFilters.setPage}
-              size="sm"
-            />
-          </Group>
         </Card>
+        <Group justify="center" style={{ position: 'sticky', bottom: 0, paddingBlock: 8, marginTop: 8, backgroundColor: 'var(--mantine-color-body)', zIndex: 1, boxShadow: '0 -6px 9px 3px var(--mantine-color-body)' }}>
+          <Pagination
+            total={Math.ceil((tasks.data?.total ?? 0) / PAGE_SIZE)}
+            value={taskFilters.page ?? 1}
+            onChange={taskFilters.setPage}
+            size="sm"
+          />
+        </Group>
       </Grid.Col>
       <Grid.Col span={4}>
         <Stack gap="md">
