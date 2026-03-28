@@ -1,0 +1,11 @@
+{
+  "id": "content-catalogue-dashboard",
+  "name": "Content Catalogue Web Dashboard Design Team",
+  "members": [
+    { "agentName": "leader-1", "role": "discussion-leader", "agentType": "design-leader", "isLeader": true },
+    { "agentName": "frontend-1", "role": "frontend-architecture", "agentType": "design-architect", "isLeader": false },
+    { "agentName": "data-1", "role": "data-model-persistence", "agentType": "design-data", "isLeader": false },
+    { "agentName": "ux-1", "role": "ux-product", "agentType": "design-ui-mantine", "isLeader": false },
+    { "agentName": "changeling-1", "role": "changeling", "agentType": "changeling", "isLeader": false }
+  ]
+}
