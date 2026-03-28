@@ -50,7 +50,9 @@ describe('tasks routes', () => {
 
     const res = await ctx.app.inject({ method: 'GET', url: '/tasks' });
     assert.equal(res.statusCode, 200);
-    const tasks = res.json();
+    const body = res.json() as any;
+    const tasks = body.tasks;
+    assert.equal(body.total, 2);
     assert.equal(tasks.length, 2);
     assert.equal(tasks[0].title, 'Task A');
     assert.equal(tasks[1].title, 'Task B');
@@ -78,10 +80,28 @@ describe('tasks routes', () => {
 
     const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending' });
     assert.equal(res.statusCode, 200);
-    const tasks = res.json();
+    const body = res.json() as any;
+    const tasks = body.tasks;
+    assert.equal(body.total, 1);
     assert.equal(tasks.length, 1);
     assert.equal(tasks[0].title, 'Pending task');
     assert.equal(tasks[0].status, 'pending');
+  });
+
+  it('GET /tasks supports limit and offset pagination', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T1' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T2' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T3' } });
+
+    const page1 = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=2&offset=0' });
+    const body1 = page1.json() as any;
+    assert.equal(body1.tasks.length, 2);
+    assert.equal(body1.total, 3);
+
+    const page2 = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=2&offset=2' });
+    const body2 = page2.json() as any;
+    assert.equal(body2.tasks.length, 1);
+    assert.equal(body2.total, 3);
   });
 
   it('GET /tasks/:id returns a single task', async () => {
@@ -390,7 +410,7 @@ describe('tasks routes', () => {
 
     // No tasks should have been created
     const list = await ctx.app.inject({ method: 'GET', url: '/tasks' });
-    assert.equal(list.json().length, 0);
+    assert.equal((list.json() as any).tasks.length, 0);
   });
 
   it('batch with ?replan=true returns replan summary', async () => {
@@ -930,7 +950,8 @@ describe('tasks with bare repo and agents', () => {
 
       const list = await ctx.app.inject({ method: 'GET', url: '/tasks' });
       assert.equal(list.statusCode, 200);
-      const tasks = list.json();
+      const listBody = list.json() as any;
+      const tasks = listBody.tasks;
       assert.equal(tasks.length, 2);
 
       // Independent task should have empty arrays
@@ -1279,7 +1300,8 @@ describe('tasks with bare repo and agents', () => {
         const depId = r2.json().id;
 
         const list = await ctx.app.inject({ method: 'GET', url: '/tasks' });
-        const tasks = list.json();
+        const listBody = list.json() as any;
+        const tasks = listBody.tasks;
         assert.equal(tasks.length, 2);
 
         // Every task in the list should have a blockReasons array
@@ -2118,6 +2140,116 @@ describe('tasks with bare repo and agents', () => {
       // Verify T2 is now also integrated
       const t2Final = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idT2}` })).json();
       assert.equal(t2Final.status, 'integrated');
+    });
+  });
+
+  // ── Pagination edge cases ────────────────────────────────────────────
+
+  describe('pagination', () => {
+    it('default limit is 20', async () => {
+      // Create 25 tasks
+      for (let i = 0; i < 25; i++) {
+        await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: `Task ${i + 1}` },
+        });
+      }
+
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json() as any;
+      assert.equal(body.tasks.length, 20);
+      assert.equal(body.total, 25);
+    });
+
+    it('offset beyond total returns empty tasks array', async () => {
+      for (let i = 0; i < 3; i++) {
+        await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: `Task ${i + 1}` },
+        });
+      }
+
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?offset=100' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json() as any;
+      assert.equal(body.tasks.length, 0);
+      assert.equal(body.total, 3);
+    });
+
+    it('negative offset is clamped to 0', async () => {
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'A' } });
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'B' } });
+
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?offset=-5' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json() as any;
+      assert.equal(body.tasks.length, 2);
+      assert.equal(body.total, 2);
+    });
+
+    it('limit=0 is clamped to 1', async () => {
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'A' } });
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'B' } });
+
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=0' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json() as any;
+      assert.equal(body.tasks.length, 1);
+      assert.equal(body.total, 2);
+    });
+
+    it('status filter with pagination', async () => {
+      // Create 3 pending tasks
+      for (let i = 0; i < 3; i++) {
+        await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: `Pending ${i + 1}` },
+        });
+      }
+
+      // Create 2 tasks and complete them
+      for (let i = 0; i < 2; i++) {
+        const r = await ctx.app.inject({
+          method: 'POST',
+          url: '/tasks',
+          payload: { title: `Completed ${i + 1}` },
+        });
+        const id = r.json().id;
+        await ctx.app.inject({
+          method: 'POST',
+          url: `/tasks/${id}/claim`,
+          headers: { 'x-agent-name': 'agent-1' },
+        });
+        await ctx.app.inject({
+          method: 'POST',
+          url: `/tasks/${id}/complete`,
+          payload: { result: { done: true } },
+        });
+      }
+
+      // First page of pending: limit=2, offset=0
+      const page1 = await ctx.app.inject({
+        method: 'GET',
+        url: '/tasks?status=pending&limit=2&offset=0',
+      });
+      assert.equal(page1.statusCode, 200);
+      const body1 = page1.json() as any;
+      assert.equal(body1.tasks.length, 2);
+      assert.equal(body1.total, 3);
+
+      // Second page of pending: limit=2, offset=2
+      const page2 = await ctx.app.inject({
+        method: 'GET',
+        url: '/tasks?status=pending&limit=2&offset=2',
+      });
+      assert.equal(page2.statusCode, 200);
+      const body2 = page2.json() as any;
+      assert.equal(body2.tasks.length, 1);
+      assert.equal(body2.total, 3);
     });
   });
 });

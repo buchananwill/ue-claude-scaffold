@@ -175,30 +175,36 @@ export function useTaskFiltersUrlBacked(tasks: Task[]) {
 
   const sortDir: SortDir = sortColumn === null ? null : (search.dir === 'desc' ? 'desc' : 'asc');
 
+  const page = search.page ?? 1;
+
+  const setPage = (n: number) => {
+    navigate({ search: (prev: any) => ({ ...prev, page: n > 1 ? String(n) : undefined }) });
+  };
+
   const setStatusFilter = (val: Set<string>) => {
-    navigate({ search: (prev) => ({ ...prev, status: val.size ? [...val].join(',') : undefined }) });
+    navigate({ search: (prev) => ({ ...prev, status: val.size ? [...val].join(',') : undefined, page: undefined }) });
   };
 
   const setAgentFilter = (val: Set<string>) => {
-    navigate({ search: (prev) => ({ ...prev, agent: val.size ? [...val].join(',') : undefined }) });
+    navigate({ search: (prev) => ({ ...prev, agent: val.size ? [...val].join(',') : undefined, page: undefined }) });
   };
 
   const setPriorityFilter = (val: Set<number>) => {
-    navigate({ search: (prev) => ({ ...prev, priority: val.size ? [...val].join(',') : undefined }) });
+    navigate({ search: (prev) => ({ ...prev, priority: val.size ? [...val].join(',') : undefined, page: undefined }) });
   };
 
   const cycleSort = (col: NonNullable<SortColumn>) => {
     if (sortColumn !== col) {
-      navigate({ search: (prev) => ({ ...prev, sort: col, dir: 'asc' }) });
+      navigate({ search: (prev) => ({ ...prev, sort: col, dir: 'asc', page: undefined }) });
     } else if (sortDir === 'asc') {
-      navigate({ search: (prev) => ({ ...prev, sort: col, dir: 'desc' }) });
+      navigate({ search: (prev) => ({ ...prev, sort: col, dir: 'desc', page: undefined }) });
     } else {
-      navigate({ search: (prev) => ({ ...prev, sort: undefined, dir: undefined }) });
+      navigate({ search: (prev) => ({ ...prev, sort: undefined, dir: undefined, page: undefined }) });
     }
   };
 
   const clearAllFilters = () => {
-    navigate({ search: (prev) => ({ ...prev, status: undefined, agent: undefined, priority: undefined, sort: undefined, dir: undefined }) });
+    navigate({ search: (prev) => ({ ...prev, status: undefined, agent: undefined, priority: undefined, sort: undefined, dir: undefined, page: undefined }) });
   };
 
   const filters: FilterState = { statusFilter, agentFilter, priorityFilter, sortColumn, sortDir, setStatusFilter, setAgentFilter, setPriorityFilter, cycleSort, clearAllFilters };
@@ -207,6 +213,8 @@ export function useTaskFiltersUrlBacked(tasks: Task[]) {
   return {
     ...filters,
     ...derived,
+    page,
+    setPage,
   };
 }
 

@@ -17,7 +17,7 @@ export function AgentDetailPage() {
   const params = useParams({ strict: false }) as { agentName?: string };
   const agentName = params.agentName ?? '';
   const { data: agent, isLoading, error, isError } = useAgent(agentName);
-  const tasks = useTasks();
+  const tasks = useTasks({ limit: 500 });
   const agents = useAgents();
   const [typeFilter, setTypeFilter] = useState('');
   const messages = useMessages('_all', typeFilter, agentName);
@@ -27,8 +27,8 @@ export function AgentDetailPage() {
   const isRealError = isError && !is404;
 
   const agentTasks = useMemo(() => {
-    if (!tasks.data) return [];
-    return tasks.data.filter((t) => t.claimedBy === agentName);
+    if (!tasks.data?.tasks) return [];
+    return tasks.data.tasks.filter((t) => t.claimedBy === agentName);
   }, [tasks.data, agentName]);
 
   const excludeStatuses = new Set(['pending']);

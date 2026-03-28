@@ -352,10 +352,11 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
   // GET /tasks
   fastify.get<{
-    Querystring: { status?: string; limit?: string };
+    Querystring: { status?: string; limit?: string; offset?: string };
   }>('/tasks', async (request) => {
-    const { status, limit } = request.query;
-    const limitNum = limit ? Number(limit) : 50;
+    const { status, limit, offset } = request.query;
+    const limitNum = Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 20);
+    const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
 
     let sql = 'SELECT * FROM tasks';
     const params: unknown[] = [];
@@ -365,12 +366,20 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       params.push(status);
     }
 
-    sql += ' ORDER BY priority DESC, id ASC LIMIT ?';
-    params.push(limitNum);
+    let countSql = 'SELECT COUNT(*) as total FROM tasks';
+    const countParams: unknown[] = [];
+    if (status) {
+      countSql += ' WHERE status = ?';
+      countParams.push(status);
+    }
+
+    sql += ' ORDER BY priority DESC, id ASC LIMIT ? OFFSET ?';
+    params.push(limitNum, offsetNum);
 
     const rows = db.prepare(sql).all(...params) as TaskRow[];
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
-    return rows.map(r => formatTaskWithFiles(r, agent));
+    const total = (db.prepare(countSql).get(...countParams) as { total: number }).total;
+    return { tasks: rows.map(r => formatTaskWithFiles(r, agent)), total };
   });
 
   // GET /tasks/:id

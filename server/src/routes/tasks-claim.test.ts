@@ -224,7 +224,7 @@ describe('tasks-claim routes', () => {
       url: '/tasks',
       payload: { title: 'Blocker', files: ['Shared.cpp'] },
     });
-    const blocker = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json()[0];
+    const blocker = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json().tasks[0];
     await ctx.app.inject({
       method: 'POST',
       url: `/tasks/${blocker.id}/claim`,
@@ -261,7 +261,7 @@ describe('tasks-claim routes', () => {
       url: '/tasks',
       payload: { title: 'First task', files: ['Mine.cpp'] },
     });
-    const first = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json()[0];
+    const first = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json().tasks[0];
     await ctx.app.inject({
       method: 'POST',
       url: `/tasks/${first.id}/claim`,
@@ -296,7 +296,7 @@ describe('tasks-claim routes', () => {
       url: '/tasks',
       payload: { title: 'Blocker', files: ['Locked.cpp'] },
     });
-    const blocker = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json()[0];
+    const blocker = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json().tasks[0];
     await ctx.app.inject({
       method: 'POST',
       url: `/tasks/${blocker.id}/claim`,
@@ -489,7 +489,7 @@ describe('tasks-claim routes', () => {
       url: '/tasks',
       payload: { title: 'Locker', files: ['Locked.cpp'] },
     });
-    const locker = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json()[0];
+    const locker = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json().tasks[0];
     await ctx.app.inject({
       method: 'POST',
       url: `/tasks/${locker.id}/claim`,
@@ -545,7 +545,7 @@ describe('tasks-claim routes', () => {
       url: '/tasks',
       payload: { title: 'Already claimed' },
     });
-    const first = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json()[0];
+    const first = (await ctx.app.inject({ method: 'GET', url: '/tasks' })).json().tasks[0];
     await ctx.app.inject({
       method: 'POST',
       url: `/tasks/${first.id}/claim`,

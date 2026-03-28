@@ -27,6 +27,7 @@ const overviewRoute = createRoute({
     priority: typeof search.priority === 'string' && search.priority ? search.priority : undefined,
     sort: typeof search.sort === 'string' && search.sort ? search.sort : undefined,
     dir: typeof search.dir === 'string' && search.dir ? search.dir : undefined,
+    page: typeof search.page === 'string' && search.page ? Number(search.page) : undefined,
   }),
 });
 

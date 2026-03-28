@@ -36,6 +36,11 @@ export interface Task {
   createdAt: string;
 }
 
+export interface TasksPage {
+  tasks: Task[];
+  total: number;
+}
+
 export interface Message {
   id: number;
   fromAgent: string;
