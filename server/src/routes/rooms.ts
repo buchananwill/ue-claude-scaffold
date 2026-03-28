@@ -278,6 +278,54 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     rows.reverse();
     return rows.map(format);
   });
+
+  // GET /transcript — readable chat transcript across all rooms (or one room)
+  const transcriptQuery = db.prepare(`
+    SELECT
+      r.name AS room_name,
+      cm.room_id,
+      cm.sender,
+      cm.content,
+      strftime('%m-%d %H:%M', cm.created_at) AS time
+    FROM chat_messages cm
+    JOIN rooms r ON r.id = cm.room_id
+    ORDER BY cm.room_id, cm.created_at
+  `);
+
+  const transcriptByRoom = db.prepare(`
+    SELECT
+      r.name AS room_name,
+      cm.room_id,
+      cm.sender,
+      cm.content,
+      strftime('%m-%d %H:%M', cm.created_at) AS time
+    FROM chat_messages cm
+    JOIN rooms r ON r.id = cm.room_id
+    WHERE cm.room_id = ?
+    ORDER BY cm.created_at
+  `);
+
+  fastify.get<{
+    Querystring: { room?: string };
+  }>('/transcript', async (request, reply) => {
+    type Row = { room_name: string; room_id: string; sender: string; content: string; time: string };
+
+    const rows = request.query.room
+      ? transcriptByRoom.all(request.query.room) as Row[]
+      : transcriptQuery.all() as Row[];
+
+    let text = '';
+    let currentRoom = '';
+    for (const r of rows) {
+      if (r.room_id !== currentRoom) {
+        text += `\n══════ ${r.room_name} ══════\n\n`;
+        currentRoom = r.room_id;
+      }
+      text += `[${r.time}] ${r.sender}:\n${r.content}\n\n`;
+    }
+
+    reply.type('text/plain; charset=utf-8').send(text);
+  });
 };
 
 export default roomsPlugin;
