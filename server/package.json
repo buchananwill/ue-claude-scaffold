@@ -8,7 +8,13 @@
     "url": "https://github.com/buchananwill/ue-claude-scaffold.git",
     "directory": "server"
   },
-  "keywords": ["claude", "unreal-engine", "docker", "agent", "coordination"],
+  "keywords": [
+    "claude",
+    "unreal-engine",
+    "docker",
+    "agent",
+    "coordination"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -23,6 +29,7 @@
   },
   "dependencies": {
     "@fastify/sensible": "^6",
+    "@supabase/supabase-js": "^2.100.1",
     "better-sqlite3": "^11",
     "fastify": "^5"
   },
