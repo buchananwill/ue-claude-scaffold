@@ -308,6 +308,15 @@ if [[ -n "$_CLI_TEAM" ]]; then
       _WORKSPACE_READONLY="true"
     fi
 
+    # Agent types that get build hooks (commit → push → host build).
+    # All other types run with hooks disabled.
+    local _DISABLE_HOOKS="true"
+    case "$_MEMBER_TYPE" in
+      container-orchestrator|container-implementer|container-tester|cleanup-leader)
+        _DISABLE_HOOKS="false"
+        ;;
+    esac
+
     # Set up branch — always reset to current-root HEAD for team launches
     _ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
     git -C "$BARE_REPO_PATH" update-ref "refs/heads/${_MEMBER_BRANCH}" "$_ROOT_SHA"
@@ -317,8 +326,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
     (cd "$SCRIPT_DIR/container" && \
       $COMPOSE_CMD --project-name "claude-${_MEMBER_NAME}" down 2>/dev/null) || true
 
-    # Launch container — design agents get no build hooks and non-leader
-    # members get a read-only workspace
+    # Launch container
     (cd "$SCRIPT_DIR/container" && \
       AGENT_NAME="$_MEMBER_NAME" \
       WORK_BRANCH="$_MEMBER_BRANCH" \
@@ -334,7 +342,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
       MAX_TURNS="$MAX_TURNS" \
       LOG_VERBOSITY="$LOG_VERBOSITY" \
       WORKER_MODE=false \
-      DISABLE_BUILD_HOOKS=true \
+      DISABLE_BUILD_HOOKS="$_DISABLE_HOOKS" \
       WORKSPACE_READONLY="$_WORKSPACE_READONLY" \
       $COMPOSE_CMD --project-name "claude-${_MEMBER_NAME}" up --build --detach)
 
