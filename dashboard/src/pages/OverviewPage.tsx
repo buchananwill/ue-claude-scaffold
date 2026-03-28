@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useSearch } from '@tanstack/react-router';
 import { Grid, Card, Title, Stack, Button, Group, Pagination } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { TasksPanel } from '../components/TasksPanel.tsx';
@@ -10,17 +11,26 @@ import { useTaskFiltersUrlBacked } from '../hooks/useTaskFilters.ts';
 import { useUbtStatus } from '../hooks/useUbtStatus.ts';
 import { apiPost } from '../api/client.ts';
 
+const PAGE_SIZE = 20;
+
 export function OverviewPage() {
   const agents = useAgents();
-  const taskFilters = useTaskFiltersUrlBacked([]);
-  const { page, setPage, statusFilter } = taskFilters;
+  // Read URL search params directly to derive server-side query params.
+  // This avoids a circular dependency: useTaskFiltersUrlBacked needs the
+  // fetched tasks, but useTasks needs page/status from URL params.
+  const search = useSearch({ from: '/' });
+  const page = search.page ?? 1;
+  const statusFilter = useMemo(() => {
+    if (!search.status) return new Set<string>();
+    return new Set(search.status.split(',').filter(Boolean));
+  }, [search.status]);
   // Server accepts a single status filter. When the user selects exactly one status chip,
   // push it to the server for a tighter result set. When zero or multiple are selected,
   // omit the server-side filter and let client-side filtering handle it.
   const statusParam = statusFilter.size === 1 ? [...statusFilter][0] : undefined;
-  const PAGE_SIZE = 20;
-  const offset = ((page ?? 1) - 1) * PAGE_SIZE;
+  const offset = (page - 1) * PAGE_SIZE;
   const tasks = useTasks({ limit: PAGE_SIZE, offset, status: statusParam });
+  const taskFilters = useTaskFiltersUrlBacked(tasks.data?.tasks ?? []);
   const ubt = useUbtStatus();
   const [syncing, setSyncing] = useState(false);
 
@@ -76,8 +86,8 @@ export function OverviewPage() {
           <Group justify="center" mt="xs">
             <Pagination
               total={Math.ceil((tasks.data?.total ?? 0) / PAGE_SIZE)}
-              value={page ?? 1}
-              onChange={setPage}
+              value={taskFilters.page ?? 1}
+              onChange={taskFilters.setPage}
               size="sm"
             />
           </Group>

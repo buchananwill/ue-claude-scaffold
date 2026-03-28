@@ -178,7 +178,7 @@ export function useTaskFiltersUrlBacked(tasks: Task[]) {
   const page = search.page ?? 1;
 
   const setPage = (n: number) => {
-    navigate({ search: (prev: any) => ({ ...prev, page: n > 1 ? String(n) : undefined }) });
+    navigate({ search: (prev: any) => ({ ...prev, page: n > 1 ? n : undefined }) });
   };
 
   const setStatusFilter = (val: Set<string>) => {
