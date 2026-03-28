@@ -1,0 +1,36 @@
+{
+  "id": "audit-behaviour-stacks",
+  "name": "Behaviour Stacks Domain Audit",
+  "members": [
+    {
+      "agentName": "design-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "changeling",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-architect",
+      "role": "Stack Architecture",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-domain",
+      "role": "Gameplay Context",
+      "agentType": "design-domain",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-performance",
+      "role": "Evaluation Performance",
+      "agentType": "design-performance",
+      "isLeader": false
+    }
+  ]
+}

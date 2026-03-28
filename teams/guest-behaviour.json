@@ -1,0 +1,36 @@
+{
+  "id": "audit-guest-behaviour",
+  "name": "Guest Behaviour Domain Audit",
+  "members": [
+    {
+      "agentName": "design-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "changeling",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-architect",
+      "role": "Behavior Architecture",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-domain",
+      "role": "Guest Systems",
+      "agentType": "design-domain",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-ui",
+      "role": "Guest Interactions",
+      "agentType": "design-ui",
+      "isLeader": false
+    }
+  ]
+}

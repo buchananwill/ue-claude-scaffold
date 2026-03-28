@@ -1,0 +1,36 @@
+{
+  "id": "audit-vehicles",
+  "name": "Vehicles Domain Audit",
+  "members": [
+    {
+      "agentName": "design-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "changeling",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-architect",
+      "role": "Vehicle Systems",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-domain",
+      "role": "Vehicle Gameplay",
+      "agentType": "design-domain",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-performance",
+      "role": "Movement Performance",
+      "agentType": "design-performance",
+      "isLeader": false
+    }
+  ]
+}

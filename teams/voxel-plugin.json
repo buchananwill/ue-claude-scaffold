@@ -1,0 +1,36 @@
+{
+  "id": "audit-voxel-plugin",
+  "name": "Voxel Plugin Domain Audit",
+  "members": [
+    {
+      "agentName": "design-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "changeling",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-architect",
+      "role": "Integration Design",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-domain",
+      "role": "Voxel Usage",
+      "agentType": "design-domain",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-safety",
+      "role": "Terrain Integrity",
+      "agentType": "design-safety",
+      "isLeader": false
+    }
+  ]
+}

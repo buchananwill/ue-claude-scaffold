@@ -1,0 +1,36 @@
+{
+  "id": "audit-sqlite",
+  "name": "SQLite Domain Audit",
+  "members": [
+    {
+      "agentName": "design-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "changeling",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-architect",
+      "role": "DB Architecture",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-data",
+      "role": "Schema & Queries",
+      "agentType": "design-data",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-safety",
+      "role": "Data Correctness",
+      "agentType": "design-safety",
+      "isLeader": false
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "id": "audit-core-loop",
+  "name": "Core Loop Domain Audit",
+  "members": [
+    {
+      "agentName": "design-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "changeling",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-architect",
+      "role": "Loop Structure",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-domain",
+      "role": "Game Flow",
+      "agentType": "design-domain",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-performance",
+      "role": "Loop Efficiency",
+      "agentType": "design-performance",
+      "isLeader": false
+    }
+  ]
+}

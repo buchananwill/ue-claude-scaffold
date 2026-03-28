@@ -1,0 +1,36 @@
+{
+  "id": "audit-buildables",
+  "name": "Buildables Domain Audit",
+  "members": [
+    {
+      "agentName": "design-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "changeling",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-architect",
+      "role": "System Design",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-domain",
+      "role": "Code Grounding",
+      "agentType": "design-domain",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-ui",
+      "role": "UI/UX Integration",
+      "agentType": "design-ui",
+      "isLeader": false
+    }
+  ]
+}

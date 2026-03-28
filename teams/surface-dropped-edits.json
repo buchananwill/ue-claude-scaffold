@@ -1,0 +1,11 @@
+{
+  "id": "surface-dropped-edits",
+  "name": "Surface Dropped Edits and Build",
+  "members": [
+    { "agentName": "cleanup-leader", "role": "Cleanup Leader", "agentType": "cleanup-leader", "isLeader": true },
+    { "agentName": "critic-1", "role": "Merge Conflict Critic", "agentType": "design-critic", "isLeader": false },
+    { "agentName": "domain-1", "role": "UE Subsystem Domain", "agentType": "design-domain", "isLeader": false },
+    { "agentName": "safety-1", "role": "Guard & Null-Check Safety", "agentType": "design-safety", "isLeader": false },
+    { "agentName": "changeling", "role": "Adaptive Critic", "agentType": "changeling", "isLeader": false }
+  ]
+}

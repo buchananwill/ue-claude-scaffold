@@ -1,0 +1,36 @@
+{
+  "id": "audit-topology",
+  "name": "Topology Domain Audit",
+  "members": [
+    {
+      "agentName": "design-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "changeling",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-architect",
+      "role": "Graph Design",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-domain",
+      "role": "Pathfinding",
+      "agentType": "design-domain",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-performance",
+      "role": "Graph Performance",
+      "agentType": "design-performance",
+      "isLeader": false
+    }
+  ]
+}

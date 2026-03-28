@@ -1,0 +1,36 @@
+{
+  "id": "audit-ui",
+  "name": "UI Domain Audit",
+  "members": [
+    {
+      "agentName": "design-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "changeling",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-architect",
+      "role": "UI Architecture",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-ui",
+      "role": "UI/UX Design",
+      "agentType": "design-ui",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-domain",
+      "role": "Game UI Patterns",
+      "agentType": "design-domain",
+      "isLeader": false
+    }
+  ]
+}

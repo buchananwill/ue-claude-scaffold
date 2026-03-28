@@ -1,0 +1,36 @@
+{
+  "id": "audit-core-systems",
+  "name": "Core Systems Domain Audit",
+  "members": [
+    {
+      "agentName": "design-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "changeling",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-architect",
+      "role": "Subsystem Design",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-domain",
+      "role": "System Interactions",
+      "agentType": "design-domain",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-safety",
+      "role": "Correctness & Invariants",
+      "agentType": "design-safety",
+      "isLeader": false
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "id": "audit-sound",
+  "name": "Sound Domain Audit",
+  "members": [
+    {
+      "agentName": "design-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "changeling",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-architect",
+      "role": "Audio Architecture",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-domain",
+      "role": "Sound Integration",
+      "agentType": "design-domain",
+      "isLeader": false
+    },
+    {
+      "agentName": "design-ui",
+      "role": "Audio UI",
+      "agentType": "design-ui",
+      "isLeader": false
+    }
+  ]
+}
