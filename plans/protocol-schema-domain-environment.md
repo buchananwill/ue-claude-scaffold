@@ -68,69 +68,70 @@ from most generalized, to most specific:
 
 ### container-safety-reviewer.md
 
-| Line(s) | Concern                                                                                                                               | Axis               | Notes                                                              |
-|---------|---------------------------------------------------------------------------------------------------------------------------------------|--------------------|--------------------------------------------------------------------|
-| 10-11   | Read-only                                                                                                                             | S                  | Role boundary (SAME as style)                                      |
-| 14-16   | Does NOT review: style, spec compliance                                                                                               | S                  | Mandate exclusion (SAME pattern)                                   |
-| 20      | "Find code that compiles but will crash/race/leak"                                                                                    | D (universal)      | What safety review IS                                              |
-| 24-33   | Dangling TObjectPtr, raw pointers across GC, MoveTemp, cycles, stack escaping, container invalidation, std::function in UE containers | D (UE language)    | UE-specific safety truths                                          |
-| 36-40   | Missing UPROPERTY, NewObject rooting, ConditionalBeginDestroy, AddReferencedObjects                                                   | D (UE language)    | UE GC truths                                                       |
-| 42-47   | Shared state mutations, game thread assumptions, async captures, FSynced access                                                       | D (UE + universal) | Thread safety truths (mixed)                                       |
-| 49-54   | MoveTemp on const, use after move, unnecessary MoveTemp, MoveTemp on UPROPERTY                                                        | D (UE language)    | UE move semantics truths                                           |
-| 58-76   | Steps 1-4: identify → read + dependencies → analyse → score                                                                           | P                  | Review process (SAME as style, with "read dependencies" variation) |
-| 80-86   | Scoring rubric                                                                                                                        | S                  | SAME as style reviewer                                             |
-| 90-117  | Output template                                                                                                                       | S                  | SAME structure, different category labels                          |
-| 119-125 | Key Patterns (FBuildableActorModel, CrowdField, behaviour scheduler)                                                                  | D (project)        | Project-specific truths                                            |
-| 127-129 | Defensive Macros (UE_RETURN_IF_INVALID)                                                                                               | D (project)        | Project-specific truths                                            |
-| 130-137 | Critical rules                                                                                                                        | S + D              | SAME pattern as style reviewer                                     |
+| Line(s) | Concern                                                                             | Axis               | Notes                                                                   |
+|---------|-------------------------------------------------------------------------------------|--------------------|-------------------------------------------------------------------------|
+| 10-11   | Read-only                                                                           | P                  | Action validation                                                       |
+| 14-16   | Does NOT review: style, spec compliance                                             | P                  | Reviewing these features are invalid actions while this skill is active |
+| 20      | "Find code that compiles but will crash/race/leak"                                  | D (universal)      | What safety review IS                                                   |
+| 24-33   | Dangling TObjectPtr, raw pointers across GC, MoveTemp, cycles,                      | D (UE)             | UE-specific safety truths                                               |
+| 24-33   | stack escaping, container invalidation, std::function in UE containers              | D (UE)             | UE-specific safety truths                                               |
+| 36-40   | Missing UPROPERTY, NewObject rooting, ConditionalBeginDestroy, AddReferencedObjects | D (UE)             | UE GC truths                                                            |
+| 42-47   | Shared state mutations, game thread assumptions, async captures, FSynced access     | D (universal + UE) | Thread safety truths (but game thread is a UE specific example)         |
+| 49-54   | MoveTemp on const, use after move, unnecessary MoveTemp, MoveTemp on UPROPERTY      | D (UE language)    | UE move semantics truths                                                |
+| 58-76   | Steps 1-4: identify → read + dependencies → analyse → score                         | P                  | Review process (SAME as style, with "read dependencies" variation)      |
+| 80-86   | Scoring rubric                                                                      | S                  | SAME as style reviewer                                                  |
+| 90-117  | Output template                                                                     | S                  | SAME structure, different category labels                               |
+| 119-125 | Key Patterns (FBuildableActorModel, CrowdField, behaviour scheduler)                | D (project)        | Project-specific truths                                                 |
+| 127-129 | Defensive Macros (UE_RETURN_IF_INVALID)                                             | D (project)        | Project-specific truths                                                 |
+| 130-137 | Critical rules                                                                      | S + D              | SAME pattern as style reviewer                                          |
 
 ### container-reviewer.md (correctness)
 
-| Line(s) | Concern                                                                                 | Axis               | Notes                                                     |
-|---------|-----------------------------------------------------------------------------------------|--------------------|-----------------------------------------------------------|
-| 10-11   | Read-only                                                                               | S                  | SAME                                                      |
-| 14-16   | Does NOT review: style, memory safety                                                   | S                  | SAME pattern                                              |
-| 19      | Receives spec + changes, verifies compliance                                            | D (universal)      | What correctness review IS                                |
-| 24-30   | Spec compliance checks                                                                  | P + D              | How to check (P) + what matters (D)                       |
-| 32-42   | Off-by-one, boundaries, logic errors, null checks, operators                            | D (universal)      | Universal programming truths                              |
-| 44-48   | Implicit vs explicit semantics (FName example)                                          | D (universal + UE) | Universal truth with UE example                           |
-| 50-56   | Invariant preservation (ComponentModels/Transforms alignment, tree symmetry, GUID)      | D (project)        | Project-specific invariant truths                         |
-| 57-63   | Mass ECS correctness (FMassEntityQuery, processors, entity handles)                     | D (UE framework)   | UE framework truths                                       |
-| 65-70   | Test coverage gaps                                                                      | D (universal)      | Universal testing truth                                   |
-| 73-98   | Steps 1-5: identify → read full context → validate spec → check dimensions → score      | P                  | Review process (SAME base, with "validate spec" addition) |
-| 100-107 | Scoring rubric                                                                          | S                  | SAME                                                      |
-| 110-147 | Output template (adds Specification Compliance section)                                 | S                  | SAME base + spec compliance section                       |
-| 149-157 | Key Patterns (FBuildableActorModel, CrowdField, ForEachCell, TileArenaIndex, scheduler) | D (project)        | Project-specific truths                                   |
-| 159-162 | Defensive Macros                                                                        | D (project)        | Project-specific truths                                   |
-| 164-170 | Critical rules (adds: cross-reference spec, cross-reference tests)                      | S + D              | SAME pattern + correctness-specific                       |
+| Line(s) | Concern                                                                                 | Axis               | Notes                                                                        |
+|---------|-----------------------------------------------------------------------------------------|--------------------|------------------------------------------------------------------------------|
+| 10-11   | Read-only                                                                               | P                  | Action validation                                                            |
+| 14-16   | Does NOT review: style, spec compliance                                                 | P                  | Reviewing these features are invalid actions while this skill is active      |
+| 19      | Receives spec + changes, verifies compliance                                            | S + P              | Explains what inputs the agent will receive, and what actions it should take |
+| 24-30   | Spec compliance checks                                                                  | P + D              | How to check (P) + what matters (D)                                          |
+| 32-42   | Off-by-one, boundaries, logic errors, null checks, operators                            | D (universal)      | Universal programming truths                                                 |
+| 44-48   | Implicit vs explicit semantics (FName example)                                          | D (universal + UE) | Universal truth with UE example                                              |
+| 50-56   | Invariant preservation (ComponentModels/Transforms alignment, tree symmetry, GUID)      | D (project)        | Project-specific invariant truths                                            |
+| 57-63   | Mass ECS correctness (FMassEntityQuery, processors, entity handles)                     | D (UE framework)   | UE framework truths                                                          |
+| 65-70   | Test coverage gaps                                                                      | D (universal)      | Universal testing truth                                                      |
+| 73-98   | Steps 1-5: identify → read full context → validate spec → check dimensions → score      | P                  | Review process (SAME base, with "validate spec" addition)                    |
+| 100-107 | Scoring rubric                                                                          | S                  | SAME                                                                         |
+| 110-147 | Output template (adds Specification Compliance section)                                 | S                  | SAME base + spec compliance section                                          |
+| 149-157 | Key Patterns (FBuildableActorModel, CrowdField, ForEachCell, TileArenaIndex, scheduler) | D (project)        | Project-specific truths                                                      |
+| 159-162 | Defensive Macros                                                                        | D (project)        | Project-specific truths                                                      |
+| 164-170 | Critical rules (adds: cross-reference spec, cross-reference tests)                      | S + D              | SAME pattern + correctness-specific                                          |
 
 ### container-decomposition-reviewer.md
 
-| Line(s) | Concern                                                                                                                           | Axis               | Notes                                                    |
-|---------|-----------------------------------------------------------------------------------------------------------------------------------|--------------------|----------------------------------------------------------|
-| 10-11   | Read-only                                                                                                                         | S                  | SAME                                                     |
-| 12-13   | Does NOT review: spec compliance, style                                                                                           | S                  | SAME pattern                                             |
-| 15-22   | DO consider: lifetime boundaries, thread safety, GC rooting visibility                                                            | D (C++ + UE)       | Decomposition-relevant truths                            |
-| 24-29   | Thresholds: 300/500 lines + multiple responsibilities                                                                             | D (universal)      | Heuristic truths about file size                         |
-| 31-37   | What Counts as Responsibility Group (UCLASS, USTRUCT, free functions, algorithms, BlueprintCallable, Mass processor, type blocks) | D (UE + universal) | Mixed                                                    |
-| 39-45   | DRY violations, semantic inversions                                                                                               | D (universal)      | Universal code quality truths                            |
-| 47-56   | Hand-rolled algorithms (Algo::LowerBoundBy, RemoveAll, etc.)                                                                      | D (UE + universal) | Library awareness (UE examples)                          |
-| 59-65   | Extraction Is Free (Unity builds, modern compilers, FORCEINLINE)                                                                  | D (C++ + UE)       | Performance truths                                       |
-| 67-77   | Comments as decomposition signals                                                                                                 | D (universal)      | Universal structural truth                               |
-| 79-96   | Nesting depth (2/3/4+ levels, causes, remediation)                                                                                | D (universal)      | Universal structural truth                               |
-| 98-115  | Lifetime-informed decomposition (for/against, UPROPERTY chains, GC, thread safety)                                                | D (C++ + UE)       | Ownership truths with UE specifics                       |
-| 117-125 | Decomposition rules: mechanical, follow patterns, no rename, no logic change                                                      | S                  | Constraints on decomposition output                      |
-| 127-167 | Review Protocol Steps 1-5                                                                                                         | P                  | Review process (SAME base + measure + coupling analysis) |
-| 159-167 | Scoring rubric                                                                                                                    | S                  | SAME pattern                                             |
-| 169-214 | Output template (responsibility groups, lifetime analysis, proposed split table)                                                  | S                  | Unique, more detailed                                    |
-| 216-224 | Critical rules                                                                                                                    | S + D              | SAME pattern                                             |
+| Line(s) | Concern                                                                                                        | Axis               | Notes                                                                   |
+|---------|----------------------------------------------------------------------------------------------------------------|--------------------|-------------------------------------------------------------------------|
+| 10-11   | Read-only                                                                                                      | P                  | Action validation                                                       |
+| 12-13   | Does NOT review: style, spec compliance                                                                        | P                  | Reviewing these features are invalid actions while this skill is active |
+| 15-22   | DO consider: lifetime boundaries, thread safety, GC rooting visibility                                         | D (C++ + UE)       | Decomposition-relevant truths                                           |
+| 24-29   | Thresholds: 300/500 lines + multiple responsibilities                                                          | D (universal)      | Heuristic truths about file size                                        |
+| 31-37   | What Counts as Responsibility Group (UCLASS, USTRUCT, free functions, algorithms, Mass processor, type blocks) | D (UE + universal) | Mixed                                                                   |
+| 39-45   | DRY violations, semantic inversions                                                                            | D (universal)      | Universal code quality truths                                           |
+| 47-56   | Hand-rolled algorithms (Algo::LowerBoundBy, RemoveAll, etc.)                                                   | D (UE + universal) | Library awareness (UE examples)                                         |
+| 59-65   | Extraction Is Free (Unity builds, modern compilers, FORCEINLINE)                                               | D (C++ + UE)       | Performance truths                                                      |
+| 67-77   | Comments as decomposition signals                                                                              | D (universal)      | Universal structural truth                                              |
+| 79-96   | Nesting depth (2/3/4+ levels, causes, remediation)                                                             | D (universal)      | Universal structural truth                                              |
+| 98-115  | Lifetime-informed decomposition (for/against, UPROPERTY chains, GC, thread safety)                             | D (C++ + UE)       | Ownership truths with UE specifics                                      |
+| 117-125 | Decomposition rules: mechanical, follow patterns, no rename, no logic change                                   | S                  | Constraints on decomposition output                                     |
+| 127-167 | Review Protocol Steps 1-5                                                                                      | P                  | Review process (SAME base + measure + coupling analysis)                |
+| 159-167 | Scoring rubric                                                                                                 | S                  | SAME pattern                                                            |
+| 169-214 | Output template (responsibility groups, lifetime analysis, proposed split table)                               | S                  | Unique, more detailed                                                   |
+| 216-224 | Critical rules                                                                                                 | S + D              | SAME pattern                                                            |
 
 ### container-tester.md
 
 | Line(s) | Concern                                                                                          | Axis            | Notes                                              |
 |---------|--------------------------------------------------------------------------------------------------|-----------------|----------------------------------------------------|
-| 10-11   | May ONLY write to test directories                                                               | S               | Role boundary (different from reviewers)           |
-| 13-19   | Container build/test environment, hook routing, queue                                            | ~~D~~ ***E***   | SAME as implementer                                |
+| 10-11   | May ONLY write to test directories                                                               | P               | Defines: what actions are valid?                   |
+| 13-19   | Container build/test environment, hook routing, queue                                            | E               | SAME as implementer                                |
 | 22-28   | ue-cpp-style, East-const, explicit captures, braces, BOM                                         | D (UE language) | SAME as implementer                                |
 | 30-74   | Test naming (Resort.*), flags (EAutomationTestFlags), file structure, test pattern template      | S + D (project) | Project-specific test format + truths              |
 | 77-99   | Existing helper catalog (MakeTestModel, PoisonFloat, MakeSquareTileGrid, etc.)                   | D (project)     | Project-specific helper truths                     |
@@ -141,29 +142,29 @@ from most generalized, to most specific:
 
 ### container-orchestrator.md
 
-| Line(s) | Concern                                                                                 | Axis          | Notes                               |
-|---------|-----------------------------------------------------------------------------------------|---------------|-------------------------------------|
-| 9-10    | Never write code, edit files, run builds                                                | S             | Role boundary                       |
-| 12-16   | Responsibilities: parse plan, delegate, evaluate, post progress, summarise              | S             | Role definition                     |
-| 20-35   | Senior Tech Lead: criticize, don't rubber-stamp, push standards, no unearned praise     | D (universal) | Quality philosophy                  |
-| 37-51   | Autonomous rules: never wait, never stop, must build before review, one phase at a time | P + D         | Process constraints + system truths |
-| 44-45   | "PreToolUse hook intercepts build/test commands"                                        | ~~D~~ ***E*** | Container environment truth         |
-| 53-67   | Agent Resolution table (role → agent name mapping)                                      | S             | Delegation structure                |
-| 66-67   | "CLAUDE.md may override these"                                                          | D (system)    | System configuration truth          |
-| 68-71   | "Review agents have narrow mandates"                                                    | D (system)    | System design truth                 |
-| 79-81   | Message board = only communication channel                                              | D (system)    | System architecture truth           |
-| 83-91   | Mandatory posts: phase_start/complete, reviewer outputs, decomp, summary                | S             | Required message schema             |
-| 93-115  | Verbosity levels: quiet/normal/verbose                                                  | S             | Post density schema                 |
-| 119-209 | Phase Execution Protocol (4 steps + sub-steps)                                          | P             | Core orchestration sequence         |
-| 131-133 | "When touching a file, fix style violations"                                            | D (universal) | Quality truth (boy scout rule)      |
-| 143-145 | Parallel review (3 reviewers simultaneously)                                            | P             | Concurrency protocol                |
-| 158-170 | Consolidate findings → single fix batch → re-review                                     | P             | Fix/re-review cycle                 |
-| 172-179 | Cycle budget: max 5 review cycles                                                       | P             | Termination condition               |
-| 188-206 | Commit verification (clean working tree, verify scope)                                  | P             | Verification sequence               |
-| 211-258 | Final Stage: decomposition review                                                       | P             | Post-phases protocol                |
-| 264-278 | Context Discipline: maintain plan + phase ID only                                       | S             | What orchestrator holds/doesn't     |
-| 280-287 | Error Escalation: what to include on failure                                            | S             | Failure output schema               |
-| 289-315 | Final Output template                                                                   | S             | Summary output structure            |
+| Line(s) | Concern                                                                                 | Axis          | Notes                                                                                                                           |
+|---------|-----------------------------------------------------------------------------------------|---------------|---------------------------------------------------------------------------------------------------------------------------------|
+| 9-10    | Never write code, edit files, run builds                                                | P             | Defines what actions are valid                                                                                                  |
+| 12-16   | Responsibilities: parse plan, delegate, evaluate, post progress, summarise              | P             | Actions to take, in what order                                                                                                  |
+| 20-35   | Senior Tech Lead: criticize, don't rubber-stamp, push standards, no unearned praise     | D (universal) | Quality philosophy                                                                                                              |
+| 37-51   | Autonomous rules: never wait, never stop, must build before review, one phase at a time | P             | Actions to take, in what order                                                                                                  |
+| 44-45   | "PreToolUse hook intercepts build/test commands"                                        | E             | Container environment truth                                                                                                     |
+| 53-67   | Agent Resolution table (role → agent name mapping)                                      | D             | Specific agents are a form of specialized Domain knowledge                                                                      |
+| 66-67   | "CLAUDE.md may override these"                                                          | E (system)    | System configuration truth                                                                                                      |
+| 68-71   | "Review agents have narrow mandates"                                                    | E (system)    | System design truth                                                                                                             |
+| 79-81   | Message board = only communication channel                                              | E (system)    | System architecture truth                                                                                                       |
+| 83-91   | Mandatory posts: phase_start/complete, reviewer outputs, decomp, summary                | P + S         | When certain actions are required, and what form they must produce as outputs                                                   |
+| 93-115  | Verbosity levels: quiet/normal/verbose                                                  | P             | Frequency/trigger threshold for _when_ to take certain actions                                                                  |
+| 119-209 | Phase Execution Protocol (4 steps + sub-steps)                                          | P             | Core orchestration sequence                                                                                                     |
+| 131-133 | "When touching a file, fix style violations"                                            | P (universal) | _When_ to take a certain type of action. (boy scout rule: ***After* you work on a file ***it must better than you found it***.) |
+| 143-145 | Parallel review (3 reviewers simultaneously)                                            | P             | Concurrency protocol                                                                                                            |
+| 158-170 | Consolidate findings → single fix batch → re-review                                     | P             | Fix/re-review cycle                                                                                                             |
+| 172-179 | Cycle budget: max 5 review cycles                                                       | P             | Termination condition                                                                                                           |
+| 188-206 | Commit verification (clean working tree, verify scope)                                  | P             | Verification sequence                                                                                                           |
+| 211-258 | Final Stage: decomposition review                                                       | P             | Post-phases protocol                                                                                                            |
+| 264-278 | Context Discipline: maintain plan + phase ID only                                       | P             | Still protocol: it defines *what*/*when* actions are valid                                                                      |
+| 280-287 | Error Escalation: what to include on failure                                            | S             | Failure output schema                                                                                                           |
+| 289-315 | Final Output template                                                                   | S             | Summary output structure                                                                                                        |
 
 ---
 
