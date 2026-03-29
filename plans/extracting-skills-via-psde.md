@@ -65,8 +65,12 @@
 
 ### Environment (E)
 
-| ID | Skill                           | Used by                                   | Description                                                                                                                                                            |
-|----|---------------------------------|-------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ID | Skill                          | Used by                           | Description                                                                                                                                                                                                             |
+|----|--------------------------------|-----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| E1 | **container-build-routing**    | implementer, tester, orchestrator | Builds/tests route to the Windows host via coordination server hooks. UBT queue serializes access. `python Scripts/build.py --summary`. Already partially captured in `00-build-loop.md` — the three agents restate it. |
+| E2 | **container-git-environment**  | implementer, tester, orchestrator | Container clones from bare repo, pushes to `docker/{agent-name}`. Pushes are intercepted by hook — manual `git push` is blocked. Entrypoint handles clone + registration.                                               |
+| E3 | **orchestrator-system-wiring** | orchestrator                      | Agent resolution table (role → agent name), message board as sole communication channel, "CLAUDE.md may override these", review agents have narrow mandates. How the orchestrator discovers and talks to the system.    |
+| E4 | **lint-hook-awareness**        | style-reviewer                    | Which style rules are already enforced by the lint PreToolUse hook (East-const, etc.) — so the reviewer knows what's caught automatically vs what it must flag manually.                                                |
 
 ---
 
@@ -93,7 +97,8 @@
    single shared skill.
 
 6. **The orchestrator is mostly unique.** Its protocol (P4) and schema (S3) are not shared with any other agent. It
-   shares P3 (action-boundary-discipline) conceptually but with very different content. The orchestrator is the ***currently*** the least
+   shares P3 (action-boundary-discipline) conceptually but with very different content. The orchestrator is the
+   ***currently*** the least
    amenable to decomposition into shared skills. It is a composition layer that can't yet be composed or decomposed.
 
 7. **Skill count is manageable.** 4 P-skills + 7 D-skills + 4 S-skills = 15 candidates. Several of these (P4, S3, D6,
