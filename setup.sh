@@ -89,39 +89,95 @@ fi
 echo ""
 
 # ── Bare repo initialization ────────────────────────────────────────────────
-# Read paths from scaffold.config.json
-_bare=""
-if [[ -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
-    _bare="$(jq -r '.server.bareRepoPath // empty' "$SCRIPT_DIR/scaffold.config.json")"
-    _proj="$(jq -r '.project.path // empty' "$SCRIPT_DIR/scaffold.config.json")"
-fi
 
-if [[ -n "$_bare" && -n "$_proj" && ! -d "$_bare" && -d "$_proj" ]]; then
-  if [[ "$NON_INTERACTIVE" == true ]]; then
-    echo "Creating bare repo at $_bare ..."
-    git clone --bare "$_proj" "$_bare"
-    _head=$(git -C "$_bare" rev-parse HEAD)
-    git -C "$_bare" update-ref refs/heads/docker/current-root "$_head"
-    echo "Created docker/current-root branch in bare repo."
-    echo "Bare repo created."
-  else
-    read -rp "Create bare repo at $_bare from $_proj? [y/N] " _answer
-    if [[ "${_answer,,}" == "y" ]]; then
-      git clone --bare "$_proj" "$_bare"
-      _head=$(git -C "$_bare" rev-parse HEAD)
-      git -C "$_bare" update-ref refs/heads/docker/current-root "$_head"
-      echo "Created docker/current-root branch in bare repo."
-      echo "Bare repo created."
+# Helper: create or verify a bare repo for a given project path and bare repo path.
+# Usage: _init_bare_repo <bare_repo_path> <project_path> [<label>]
+_init_bare_repo() {
+  local bare="$1"
+  local proj="$2"
+  local label="${3:-}"
+
+  if [[ -z "$bare" || -z "$proj" ]]; then
+    return
+  fi
+
+  if [[ ! -d "$proj" ]]; then
+    echo "  Warning: project path does not exist: $proj — skipping${label:+ ($label)}."
+    return
+  fi
+
+  if [[ ! -d "$bare" ]]; then
+    if [[ "$NON_INTERACTIVE" == true ]]; then
+      echo "Creating bare repo at $bare${label:+ ($label)} ..."
+      if ! git clone --bare "$proj" "$bare"; then
+        echo "  Error: Failed to create bare repo at $bare${label:+ ($label)}" >&2
+        return 0  # return 0 to continue processing remaining projects under set -e
+      fi
+      local head
+      if ! head=$(git -C "$bare" rev-parse HEAD 2>/dev/null); then
+        if ! head=$(git -C "$proj" rev-parse HEAD 2>/dev/null); then
+          echo "  Warning: could not resolve HEAD in bare or project repo — skipping update-ref${label:+ ($label)}."
+          return 0
+        fi
+      fi
+      if ! git -C "$bare" update-ref refs/heads/docker/current-root "$head"; then
+        echo "  Error: Failed to create docker/current-root in $bare${label:+ ($label)}" >&2
+        return 0
+      fi
+      echo "  Created docker/current-root branch in bare repo."
     else
-      echo "Skipped bare repo creation. You can create it later or launch.sh will create it."
+      read -rp "Create bare repo at $bare${label:+ ($label)} from $proj? [y/N] " _answer
+      if [[ "${_answer,,}" == "y" ]]; then
+        if ! git clone --bare "$proj" "$bare"; then
+          echo "  Error: Failed to create bare repo at $bare${label:+ ($label)}" >&2
+          return 0
+        fi
+        local head
+        if ! head=$(git -C "$bare" rev-parse HEAD 2>/dev/null); then
+          if ! head=$(git -C "$proj" rev-parse HEAD 2>/dev/null); then
+            echo "  Warning: could not resolve HEAD in bare or project repo — skipping update-ref${label:+ ($label)}."
+            return 0
+          fi
+        fi
+        if ! git -C "$bare" update-ref refs/heads/docker/current-root "$head"; then
+          echo "  Error: Failed to create docker/current-root in $bare${label:+ ($label)}" >&2
+          return 0
+        fi
+        echo "  Created docker/current-root branch in bare repo."
+      else
+        echo "  Skipped bare repo creation. You can create it later or launch.sh will create it."
+      fi
+    fi
+  else
+    echo "Bare repo already exists at $bare${label:+ ($label)}."
+    if ! git -C "$bare" rev-parse --verify refs/heads/docker/current-root &>/dev/null; then
+      echo "  Warning: docker/current-root branch missing. Create it:"
+      echo "    git -C $bare branch docker/current-root HEAD"
     fi
   fi
-elif [[ -n "$_bare" && -d "$_bare" ]]; then
-  echo "Bare repo already exists at $_bare."
-  if ! git -C "$_bare" rev-parse --verify refs/heads/docker/current-root &>/dev/null; then
-    echo "  Warning: docker/current-root branch missing. Create it:"
-    echo "    git -C $_bare branch docker/current-root HEAD"
+}
+
+_config="$SCRIPT_DIR/scaffold.config.json"
+
+if [[ -f "$_config" ]] && jq -e '.projects' "$_config" &>/dev/null; then
+  # Multi-project mode: iterate each project key, reading fields individually
+  # to avoid TSV serialization issues with newlines in JSON values.
+  echo "Multi-project config detected. Checking bare repos..."
+  while IFS= read -r _key; do
+    _bare="$(jq -r --arg k "$_key" '.projects[$k].bareRepoPath // empty' "$_config")"
+    _proj="$(jq -r --arg k "$_key" '.projects[$k].path // empty' "$_config")"
+    _init_bare_repo "$_bare" "$_proj" "$_key"
+    echo ""
+  done < <(jq -r '.projects | keys[]' "$_config")
+else
+  # Single-project mode (legacy): read from top-level fields
+  _bare=""
+  _proj=""
+  if [[ -f "$_config" ]]; then
+    _bare="$(jq -r '.server.bareRepoPath // empty' "$_config")"
+    _proj="$(jq -r '.project.path // empty' "$_config")"
   fi
+  _init_bare_repo "${_bare:-}" "${_proj:-}"
 fi
 
 echo ""
