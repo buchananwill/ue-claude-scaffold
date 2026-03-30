@@ -193,7 +193,7 @@ describe('tasks-replan routes', () => {
           (await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` })).json()
         )
       );
-      const byId = new Map(tasks.map((t: { id: number }) => [t.id, t]));
+      const byId = new Map(tasks.map((t: { id: number; title: string; priority: number }) => [t.id, t]));
 
       // Check invariant: for every dependency edge, the parent's priority is strictly
       // greater than the child's. Strict inequality guarantees unambiguous ordering --

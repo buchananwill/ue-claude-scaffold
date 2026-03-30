@@ -1,13 +1,13 @@
+import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import sensible from '@fastify/sensible';
-import { openDb } from './db.js';
 import type { ScaffoldConfig } from './config.js';
-import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
-import path from 'node:path';
-import { tmpdir } from 'node:os';
+import { openDb } from './db.js';
 
 export function createTestConfig(overrides?: Partial<ScaffoldConfig>): ScaffoldConfig {
-  return {
+  const base: ScaffoldConfig = {
     project: {
       name: 'TestProject',
       path: '/tmp/test-project',
@@ -31,8 +31,19 @@ export function createTestConfig(overrides?: Partial<ScaffoldConfig>): ScaffoldC
       ubtLockTimeoutMs: 600000,
       bareRepoPath: '/tmp/test-repo.git',
     },
+    resolvedProjects: {
+      default: {
+        name: 'TestProject',
+        path: '/tmp/test-project',
+        uprojectFile: '/tmp/test-project/Test.uproject',
+        bareRepoPath: '/tmp/test-repo.git',
+        engine: { path: '/tmp/engine', version: '5.4' },
+        build: { scriptPath: '/tmp/build.sh', testScriptPath: '/tmp/test.sh', buildTimeoutMs: 660_000, testTimeoutMs: 700_000 },
+      },
+    },
     ...overrides,
   };
+  return base;
 }
 
 export interface TestContext {
