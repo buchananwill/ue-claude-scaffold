@@ -22,6 +22,7 @@ services:
       - WORKER_SINGLE_TASK=${WORKER_SINGLE_TASK:-true}
       - DISABLE_BUILD_HOOKS=${DISABLE_BUILD_HOOKS:-false}
       - WORKSPACE_READONLY=${WORKSPACE_READONLY:-false}
+      - PROJECT_ID=${PROJECT_ID:-default}
     volumes:
       # Required: bare repo for git operations
       - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git

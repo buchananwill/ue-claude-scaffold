@@ -20,6 +20,7 @@ Options:
   --agent-name NAME   Agent identifier (default: from .env or "agent-1")
   --plan PATH         Path to a plan markdown file (copied to TASKS_PATH/prompt.md)
   --agent-type TYPE   Agent type (default: from .env or "container-orchestrator")
+  --project ID        Project identifier for multi-project configs (default: "default")
   --verbosity LEVEL   Message board verbosity: quiet, normal, verbose (default: normal)
   --worker            Run in task-queue worker mode (no plan file needed)
   --pump              Run in pump mode (multi-task worker with claim-next)
@@ -54,6 +55,7 @@ _CLI_WORKER=false
 _CLI_PUMP=false
 _CLI_FRESH=false
 _CLI_PARALLEL=0
+_CLI_PROJECT=""
 _CLI_TEAM=""
 _CLI_BRIEF=""
 
@@ -75,6 +77,8 @@ while [[ $# -gt 0 ]]; do
       _CLI_PARALLEL="$2"; shift 2 ;;
     --fresh)
       _CLI_FRESH=true; shift ;;
+    --project)
+      _CLI_PROJECT="$2"; shift 2 ;;
     --team)
       _CLI_TEAM="$2"; shift 2 ;;
     --brief)
@@ -108,22 +112,58 @@ if [[ ! -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
 fi
 
 _cfg="$SCRIPT_DIR/scaffold.config.json"
-UE_ENGINE_PATH="$(jq -r '.engine.path // empty' "$_cfg")"
-PROJECT_PATH="$(jq -r '.project.path // empty' "$_cfg")"
-BARE_REPO_PATH="$(jq -r '.server.bareRepoPath // empty' "$_cfg")"
-TASKS_PATH="$(jq -r '.tasks.path // empty' "$_cfg")"
-SERVER_PORT="$(jq -r '.server.port // 9100' "$_cfg")"
-BUILD_SCRIPT_NAME="$(jq -r '.build.scriptPath // "build.py"' "$_cfg" | xargs basename)"
-TEST_SCRIPT_NAME="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)"
-DEFAULT_TEST_FILTERS="$(jq -r '.build.defaultTestFilters // [] | join(" ")' "$_cfg")"
 
-LOGS_PATH="$(jq -r '.logs.path // empty' "$_cfg")"
+# ── Resolve PROJECT_ID ─────────────────────────────────────────────────────
+PROJECT_ID="${_CLI_PROJECT:-default}"
+
+# Validate PROJECT_ID format
+if [[ ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "Error: PROJECT_ID contains invalid characters: $PROJECT_ID" >&2
+  echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
+  exit 1
+fi
+
+# ── Resolve project config from scaffold.config.json ───────────────────────
+if jq -e --arg id "$PROJECT_ID" '.projects[$id]' "$_cfg" >/dev/null 2>&1; then
+  # Multi-project mode: read from projects map
+  BARE_REPO_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].bareRepoPath // empty' "$_cfg")
+  PROJECT_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].path // empty' "$_cfg")
+  UE_ENGINE_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].engine.path // empty' "$_cfg")
+  TASKS_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].tasksPath // empty' "$_cfg")
+  SERVER_PORT=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].serverPort // .server.port // 9100' "$_cfg")
+  BUILD_SCRIPT_NAME=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.scriptPath // .build.scriptPath // "build.py"' "$_cfg" | xargs basename)
+  TEST_SCRIPT_NAME=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.testScriptPath // .build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)
+  DEFAULT_TEST_FILTERS=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.defaultTestFilters // .build.defaultTestFilters // [] | if type == "array" then join(" ") else . end' "$_cfg")
+  LOGS_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].logsPath // empty' "$_cfg")
+elif [[ "$PROJECT_ID" == "default" ]]; then
+  # Legacy mode: read from top-level fields (existing code)
+  UE_ENGINE_PATH="$(jq -r '.engine.path // empty' "$_cfg")"
+  PROJECT_PATH="$(jq -r '.project.path // empty' "$_cfg")"
+  BARE_REPO_PATH="$(jq -r '.server.bareRepoPath // empty' "$_cfg")"
+  TASKS_PATH="$(jq -r '.tasks.path // empty' "$_cfg")"
+  SERVER_PORT="$(jq -r '.server.port // 9100' "$_cfg")"
+  BUILD_SCRIPT_NAME="$(jq -r '.build.scriptPath // "build.py"' "$_cfg" | xargs basename)"
+  TEST_SCRIPT_NAME="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)"
+  DEFAULT_TEST_FILTERS="$(jq -r '.build.defaultTestFilters // [] | join(" ")' "$_cfg")"
+  LOGS_PATH="$(jq -r '.logs.path // empty' "$_cfg")"
+else
+  # --project was specified but ID not found in projects map
+  _available=$(jq -r '.projects // {} | keys | join(", ")' "$_cfg")
+  echo "Error: Project '$PROJECT_ID' not found in scaffold.config.json." >&2
+  if [[ -n "$_available" ]]; then
+    echo "Available projects: $_available" >&2
+  else
+    echo "No projects defined. Add a 'projects' map to scaffold.config.json or omit --project." >&2
+  fi
+  exit 1
+fi
+
 if [ -z "$LOGS_PATH" ]; then
     LOGS_PATH="$SCRIPT_DIR/logs"
 fi
 mkdir -p "$LOGS_PATH"
 
-export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH CLAUDE_CREDENTIALS_PATH SERVER_PORT LOGS_PATH
+export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH CLAUDE_CREDENTIALS_PATH SERVER_PORT LOGS_PATH PROJECT_ID
 
 # ── Apply CLI overrides ─────────────────────────────────────────────────────
 AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
@@ -223,6 +263,7 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo "  ROOT_BRANCH:      $ROOT_BRANCH"
   echo "  WORK_BRANCH:      $WORK_BRANCH"
   echo "  AGENT_TYPE:       $AGENT_TYPE"
+  echo "  PROJECT_ID:       $PROJECT_ID"
   if [[ -d "$SCRIPT_DIR/dynamic-agents" && -f "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" ]]; then
     echo "  AGENT_COMPILED:   yes (dynamic-agents/${AGENT_TYPE}.md)"
     # List other dynamic agents as potential sub-agents
@@ -400,6 +441,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
       AGENT_NAME="$_MEMBER_NAME" \
       WORK_BRANCH="$_MEMBER_BRANCH" \
       AGENT_TYPE="$_MEMBER_TYPE" \
+      PROJECT_ID="$PROJECT_ID" \
       CHAT_ROOM="$ROOM_ID" \
       TEAM_ROLE="$_MEMBER_ROLE" \
       BRIEF_PATH="$_CLI_BRIEF" \
@@ -503,7 +545,7 @@ if ! [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
 fi
 
 # ── Export vars for docker-compose ───────────────────────────────────────────
-export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS LOG_VERBOSITY
+export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS LOG_VERBOSITY PROJECT_ID
 export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH LOGS_PATH
 export WORKER_MODE WORKER_POLL_INTERVAL WORKER_SINGLE_TASK
 export AGENT_MODE="${AGENT_MODE:-single}"
@@ -532,6 +574,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
     (cd "$SCRIPT_DIR/container" && \
       AGENT_NAME="$_AGENT" \
       WORK_BRANCH="$_BRANCH" \
+      PROJECT_ID="$PROJECT_ID" \
       BARE_REPO_PATH="$BARE_REPO_PATH" \
       AGENTS_PATH="$AGENTS_PATH" \
       WORKER_MODE=true \
