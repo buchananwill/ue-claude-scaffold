@@ -112,7 +112,7 @@ function resolveScript(scriptPath: string, extraArgs: string[]): { command: stri
 const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   const config = opts.config;
 
-  const getLock = db.prepare('SELECT * FROM ubt_lock WHERE id = 1');
+  const getLock = db.prepare("SELECT * FROM ubt_lock WHERE project_id = 'default'");
 
   function checkLock(agentName: string | undefined): string | null {
     const lock = getLock.get() as { holder: string | null; acquired_at: string | null } | undefined;

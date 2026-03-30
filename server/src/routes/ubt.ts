@@ -35,12 +35,12 @@ function initBuildHistoryStatements(): void {
 }
 
 export function initUbtStatements(): void {
-  getLock = db.prepare('SELECT * FROM ubt_lock WHERE id = 1');
+  getLock = db.prepare("SELECT * FROM ubt_lock WHERE project_id = 'default'");
   insertLock = db.prepare(
-    `INSERT OR REPLACE INTO ubt_lock (id, holder, acquired_at, priority)
-     VALUES (1, @holder, CURRENT_TIMESTAMP, @priority)`
+    `INSERT OR REPLACE INTO ubt_lock (project_id, holder, acquired_at, priority)
+     VALUES ('default', @holder, CURRENT_TIMESTAMP, @priority)`
   );
-  clearLock = db.prepare('DELETE FROM ubt_lock WHERE id = 1');
+  clearLock = db.prepare("DELETE FROM ubt_lock WHERE project_id = 'default'");
   popNext = db.prepare(
     `DELETE FROM ubt_queue WHERE id = (
        SELECT id FROM ubt_queue ORDER BY priority DESC, id ASC LIMIT 1

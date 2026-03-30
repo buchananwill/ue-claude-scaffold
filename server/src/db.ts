@@ -9,11 +9,12 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (12);
+INSERT OR IGNORE INTO schema_version(version) VALUES (13);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
   name        TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL DEFAULT 'default',
   worktree    TEXT NOT NULL,
   plan_doc    TEXT,
   status      TEXT NOT NULL DEFAULT 'idle',
@@ -25,7 +26,7 @@ CREATE TABLE IF NOT EXISTS agents (
 
 -- UBT lock — singleton mutex
 CREATE TABLE IF NOT EXISTS ubt_lock (
-  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  project_id  TEXT PRIMARY KEY DEFAULT 'default',
   holder      TEXT,
   acquired_at DATETIME,
   priority    INTEGER DEFAULT 0
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS ubt_lock (
 -- UBT queue — FIFO with priority
 CREATE TABLE IF NOT EXISTS ubt_queue (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id  TEXT NOT NULL DEFAULT 'default',
   agent       TEXT NOT NULL,
   priority    INTEGER DEFAULT 0,
   requested_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -42,6 +44,7 @@ CREATE TABLE IF NOT EXISTS ubt_queue (
 -- Build/test invocation history for wait-time estimation
 CREATE TABLE IF NOT EXISTS build_history (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id   TEXT NOT NULL DEFAULT 'default',
   agent        TEXT NOT NULL,
   type         TEXT NOT NULL CHECK (type IN ('build', 'test')),
   started_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -70,6 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_claimed ON messages(claimed_by);
 -- Task queue for worker mode
 CREATE TABLE IF NOT EXISTS tasks (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id          TEXT NOT NULL DEFAULT 'default',
   title               TEXT NOT NULL,
   description         TEXT DEFAULT '',
   source_path         TEXT,
@@ -92,15 +96,17 @@ CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority DESC, id ASC);
 -- claimant is the agent that currently owns writes (NULL = unowned).
 -- Claims are sticky: they persist until explicit reconciliation, NOT until task completion.
 CREATE TABLE IF NOT EXISTS files (
-  path       TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL DEFAULT 'default',
+  path       TEXT NOT NULL,
   claimant   TEXT,
-  claimed_at DATETIME
+  claimed_at DATETIME,
+  PRIMARY KEY (project_id, path)
 );
 
 -- Join table: which tasks will write to which files.
 CREATE TABLE IF NOT EXISTS task_files (
   task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  file_path  TEXT NOT NULL REFERENCES files(path),
+  file_path  TEXT NOT NULL,
   PRIMARY KEY (task_id, file_path)
 );
 CREATE INDEX IF NOT EXISTS idx_task_files_path ON task_files(file_path);
@@ -168,7 +174,8 @@ export let db: Database.Database;
 export function openDb(dbPath: string): Database.Database {
   let instance = new Database(dbPath);
   instance.pragma('journal_mode = WAL');
-  instance.pragma('foreign_keys = ON');
+  // foreign_keys deferred until after migrations to avoid FK errors during table rebuilds
+  instance.pragma('foreign_keys = OFF');
 
   instance.exec(SCHEMA_SQL);
 
@@ -222,7 +229,7 @@ export function openDb(dbPath: string): Database.Database {
       instance.close();
       instance = new Database(dbPath);
       instance.pragma('journal_mode = WAL');
-      instance.pragma('foreign_keys = ON');
+      instance.pragma('foreign_keys = OFF');
     }
   }
 
@@ -253,6 +260,63 @@ export function openDb(dbPath: string): Database.Database {
     instance.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (12)");
     console.log('[db] Migrated to v12');
   }
+
+  // Migration: add project_id column to agents, tasks, build_history, ubt_queue (v12 -> v13)
+  // Defensive try/catch pattern — handles fresh DBs that already have the column.
+  try { instance.exec("ALTER TABLE agents ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already exists */ }
+  try { instance.exec("ALTER TABLE tasks ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already exists */ }
+  try { instance.exec("ALTER TABLE build_history ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already exists */ }
+  try { instance.exec("ALTER TABLE ubt_queue ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already exists */ }
+
+  // Migration: ubt_lock — replace singleton (id=1) with per-project lock (project_id PK)
+  const ubtLockSchema = instance.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ubt_lock'"
+  ).get() as { sql: string } | undefined;
+  if (ubtLockSchema && ubtLockSchema.sql.includes('id') && !ubtLockSchema.sql.includes('project_id')) {
+    instance.exec(`
+      CREATE TABLE ubt_lock_v2 (
+        project_id  TEXT PRIMARY KEY DEFAULT 'default',
+        holder      TEXT,
+        acquired_at DATETIME,
+        priority    INTEGER DEFAULT 0
+      );
+      INSERT INTO ubt_lock_v2 (project_id, holder, acquired_at, priority)
+        SELECT 'default', holder, acquired_at, priority FROM ubt_lock WHERE id = 1;
+      DROP TABLE ubt_lock;
+      ALTER TABLE ubt_lock_v2 RENAME TO ubt_lock;
+    `);
+    console.log('[db] Migrated ubt_lock to per-project schema');
+  }
+
+  // Migration: files — change PK from (path) to composite (project_id, path)
+  const filesSchema = instance.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'files'"
+  ).get() as { sql: string } | undefined;
+  if (filesSchema && !filesSchema.sql.includes('project_id')) {
+    instance.exec(`
+      CREATE TABLE files_v2 (
+        project_id TEXT NOT NULL DEFAULT 'default',
+        path       TEXT NOT NULL,
+        claimant   TEXT,
+        claimed_at DATETIME,
+        PRIMARY KEY (project_id, path)
+      );
+      INSERT INTO files_v2 (project_id, path, claimant, claimed_at)
+        SELECT 'default', path, claimant, claimed_at FROM files;
+      DROP TABLE files;
+      ALTER TABLE files_v2 RENAME TO files;
+    `);
+    console.log('[db] Migrated files to per-project schema');
+  }
+
+  if (!schemaRow || schemaRow.version < 13) {
+    instance.exec('DELETE FROM schema_version WHERE version < 13');
+    instance.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (13)");
+    console.log('[db] Migrated to v13');
+  }
+
+  // Enable FK enforcement now that all migrations are complete
+  instance.pragma('foreign_keys = ON');
 
   db = instance;
   return instance;

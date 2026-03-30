@@ -1730,9 +1730,9 @@ describe('tasks with bare repo and agents', () => {
       }
     });
 
-    it('schema_version is 12 on fresh database', () => {
+    it('schema_version is 13 on fresh database', () => {
       const row = db.prepare('SELECT version FROM schema_version').get() as { version: number };
-      assert.equal(row.version, 12);
+      assert.equal(row.version, 13);
     });
   });
 
@@ -1861,9 +1861,9 @@ describe('tasks with bare repo and agents', () => {
         throw e;
       }
 
-      // 1. schema_version bumped to 12 (old version rows deleted)
+      // 1. schema_version bumped to 13 (old version rows deleted)
       const row = migratedDb.prepare('SELECT version FROM schema_version').get() as any;
-      assert.strictEqual(row.version, 12, 'Schema version should be 12 after migration');
+      assert.strictEqual(row.version, 13, 'Schema version should be 13 after migration');
 
       // 2. Existing data survived
       const task = migratedDb.prepare("SELECT title, status FROM tasks WHERE title = 'Existing task'").get() as any;
@@ -1895,6 +1895,35 @@ describe('tasks with bare repo and agents', () => {
       migratedDb.prepare("INSERT INTO tasks (title, priority, base_priority) VALUES ('bp test', 5, 5)").run();
       const bpTask = migratedDb.prepare("SELECT base_priority FROM tasks WHERE title = 'bp test'").get() as any;
       assert.strictEqual(bpTask.base_priority, 5, 'base_priority column should exist after migration');
+
+      // 7. Verify v13 migration structural changes: ubt_lock table
+      const ubtLockSchema = migratedDb.prepare(
+        "SELECT sql FROM sqlite_master WHERE name='ubt_lock'"
+      ).get() as any;
+      assert.ok(ubtLockSchema, 'ubt_lock table should exist');
+      assert.ok(ubtLockSchema.sql.includes('project_id'), 'ubt_lock should include project_id column');
+      assert.ok(!ubtLockSchema.sql.includes('id INTEGER PRIMARY KEY'), 'ubt_lock should not have id INTEGER PRIMARY KEY');
+
+      // 8. Verify v13 migration structural changes: files table
+      const filesSchema = migratedDb.prepare(
+        "SELECT sql FROM sqlite_master WHERE name='files'"
+      ).get() as any;
+      assert.ok(filesSchema, 'files table should exist');
+      assert.ok(filesSchema.sql.includes('project_id'), 'files table should include project_id column');
+
+      // 9. Verify project_id column exists on agents, tasks, build_history, ubt_queue
+      assert.doesNotThrow(() => {
+        migratedDb.prepare('SELECT project_id FROM agents LIMIT 0').all();
+      }, 'agents table should have project_id column');
+      assert.doesNotThrow(() => {
+        migratedDb.prepare('SELECT project_id FROM tasks LIMIT 0').all();
+      }, 'tasks table should have project_id column');
+      assert.doesNotThrow(() => {
+        migratedDb.prepare('SELECT project_id FROM build_history LIMIT 0').all();
+      }, 'build_history table should have project_id column');
+      assert.doesNotThrow(() => {
+        migratedDb.prepare('SELECT project_id FROM ubt_queue LIMIT 0').all();
+      }, 'ubt_queue table should have project_id column');
 
       migratedDb.close();
 
