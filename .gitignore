@@ -32,6 +32,9 @@ container/docker-compose.yml
 .ingest-state.json
 /.claude/
 
+# Compiled agents (ephemeral output of scripts/compile-agent.py)
+.compiled-agents/
+
 # Python cache
 __pycache__/
 

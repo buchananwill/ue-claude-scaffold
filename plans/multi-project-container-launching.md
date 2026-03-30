@@ -19,8 +19,14 @@ one `scaffold.config.json` with one `project` object, one `server.bareRepoPath`,
 adds a `projects` map to config and a `--project` flag to `launch.sh`, so each container launch can target a different
 project — all sharing one coordination server.
 
-**Key insight:** Each project has its own bare repo, so branch naming (`docker/{agent-name}`, `docker/current-root`)
-doesn't change. Project isolation comes from bare-repo isolation, not branch namespacing.
+**Key insight:** Most projects have their own bare repo, so branch naming (`docker/{agent-name}`,
+`docker/current-root`) doesn't change. Project isolation comes from bare-repo isolation, not branch namespacing.
+
+**Sub-project model:** The Content Catalogue Dashboard lives inside the piste-perfect-ue-alpha repo and shares its bare
+repo. It gets its own `project_id` so that (a) its tasks are scoped independently, (b) its agents declare a non-UE tech
+stack (React/Vite/Mantine), (c) it gets its own agent branches (`docker/{agent-name}`) within the shared bare repo, and
+(d) it does not contend for the UBT lock. Two projects sharing one bare repo is fine — agent branches are already
+namespaced by agent name, and `docker/current-root` is shared intentionally.
 
 **Out of scope:** Build strategy generalisation (issue 021), agent definition overlays (issue 018 §3, separate agent
 working on this), dashboard project selector (future), container instruction layering (issue 018 §4).
@@ -62,7 +68,61 @@ unified `projects` map internally. No behavioural change yet.
 
 **`scaffold.config.example.json`**
 
-- Add a commented `"projects"` block showing multi-project structure alongside the existing single-project fields.
+- Add a `"projects"` block showing multi-project structure alongside the existing single-project fields. Concrete
+  example for the five target projects:
+
+  ```jsonc
+  "projects": {
+    "my-ue-game": {
+      "name": "MyUEGame",
+      "path": "/home/dev/projects/my-ue-game",
+      "uprojectFile": "MyUEGame.uproject",
+      "bareRepoPath": "/srv/bare-repos/my-ue-game.git",
+      "stagingWorktreeRoot": "/srv/staging/my-ue-game",
+      "engine": { "path": "/opt/UnrealEngine/5.5", "version": "5.5" },
+      "build": {
+        "scriptPath": "Scripts/build.py",
+        "testScriptPath": "Scripts/run_tests.py",
+        "buildTimeoutMs": 660000,
+        "testTimeoutMs": 700000
+      }
+    },
+    "my-ue-game-dashboard": {
+      // Sub-project: shares the parent's bare repo and source path.
+      // Gets its own project_id for independent task scoping and no UBT lock.
+      "name": "MyUEGameDashboard",
+      "path": "/home/dev/projects/my-ue-game",
+      "bareRepoPath": "/srv/bare-repos/my-ue-game.git",
+      "tasksPath": "Dashboard/tasks"
+    },
+    "this-scaffold": {
+      // Self-hosting: the scaffold targets itself for development.
+      "name": "UEClaudeScaffold",
+      "path": "/home/dev/projects/my-ue-game/ue-claude-scaffold",
+      "bareRepoPath": "/srv/bare-repos/ue-claude-scaffold.git",
+      "stagingWorktreeRoot": "/srv/staging/ue-claude-scaffold"
+    },
+    "side-project": {
+      "name": "SideProject",
+      "path": "/home/dev/projects/side-project",
+      "bareRepoPath": "/srv/bare-repos/side-project.git",
+      "stagingWorktreeRoot": "/srv/staging/side-project"
+    },
+    "web-dashboard": {
+      "name": "WebDashboard",
+      "path": "/home/dev/projects/web-dashboard",
+      "bareRepoPath": "/srv/bare-repos/web-dashboard.git",
+      "stagingWorktreeRoot": "/srv/staging/web-dashboard"
+    }
+  }
+  ```
+
+  Key patterns demonstrated:
+  - **UE project** (`my-ue-game`): full `engine` + `build` config, gets UBT lock contention.
+  - **Sub-project** (`my-ue-game-dashboard`): shares `path` and `bareRepoPath` with parent; no `engine`/`build`, so no
+    UBT lock. Own `project_id` scopes its tasks and agents independently.
+  - **Self-hosting** (`this-scaffold`): the scaffold targets itself for container-based development.
+  - **Non-UE projects** (`side-project`, `web-dashboard`): no `engine`/`build` fields.
 
 ### Backwards compat
 
@@ -98,6 +158,12 @@ Tables left unchanged (already project-agnostic by design):
 - `teams`, `team_members` — teams can span projects
 - `messages` — message board is cross-cutting
 - `task_dependencies`, `task_files` — keyed by task_id which is already project-scoped
+
+**Migration robustness note:** The current v11→v12 migration uses a try/catch `ALTER TABLE` pattern as a safety net
+against version-stamp/schema skew (e.g., test DBs stamped as v12 but lacking the column). For v12→v13, tables that use
+create-copy-drop-rename (`files`, `ubt_lock`) are inherently safe. But simple `ALTER TABLE ADD COLUMN` changes
+(`agents`, `tasks`, `build_history`, `ubt_queue`) must use the same defensive try/catch pattern, or a DB that was
+stamped v13 during fresh `CREATE TABLE` but later reused against an older table will silently lack `project_id`.
 
 **UBT lock migration:** The current singleton constraint (`id = 1`) prevents multiple project locks. Migration:
 
@@ -152,7 +218,11 @@ Phase 4.
 
 5. Dry-run output: add `PROJECT_ID` line.
 
-6. Team mode: `launch_team_member` passes `PROJECT_ID` to each member.
+6. Worker/pump mode: `--project` applies equally to `--worker` and `--pump` launches. The exported `PROJECT_ID` env var
+   flows into the container, which sends `X-Project-Id` on `claim-next` calls. This is how a worker container only
+   claims tasks belonging to its project. No separate flag needed — `--project` + `--worker` compose naturally.
+
+7. Team mode: `launch_team_member` passes `PROJECT_ID` to each member.
 
 7. Usage text: add `--project ID` to help.
 
@@ -297,6 +367,48 @@ No `projects` key = existing behaviour.
 
 ---
 
+## Phase 7: `stop.sh` and `status.sh` — Project-Aware Operations
+
+**Goal:** Stop and status commands can target a specific project.
+
+### File: `stop.sh`
+
+1. Add `--project ID` flag to CLI parsing. Store in `PROJECT_ID` (default: all projects).
+
+2. `stop_all()`: when `--project` is set, filter running containers to those whose agent is registered under that
+   project (query `GET /agents?project=$PROJECT_ID` to get the name list). Without `--project`, behaviour is unchanged
+   (stop all `claude-*` containers).
+
+3. `--drain` mode: when `--project` is set, `POST /coalesce/pause` and `GET /coalesce/status` should send
+   `X-Project-Id` header so only that project's pumps are paused and only its in-flight tasks are awaited.
+
+4. Usage text: add `--project ID` to help and examples.
+
+### File: `status.sh`
+
+1. Add `--project ID` flag to CLI parsing.
+
+2. Agent table: when `--project` is set, `GET /agents?project=$PROJECT_ID`. Without it, show all agents but add a
+   `PROJECT` column to the table output.
+
+3. Tasks section: when `--project` is set, `GET /tasks?project=$PROJECT_ID&limit=20`. Without it, show all tasks but
+   add a `PROJECT` column.
+
+4. Usage text: add `--project ID` to help and examples.
+
+### Backwards compat
+
+No `--project` flag = existing behaviour (all projects shown/stopped).
+
+### Verification
+
+- `./stop.sh --project my-ue-game --agent agent-1` stops only that agent.
+- `./stop.sh --drain --project my-ue-game` pauses only that project's pumps.
+- `./status.sh` shows all agents with project column.
+- `./status.sh --project my-ue-game` filters to that project's agents and tasks.
+
+---
+
 ## Phase Ordering
 
 ```
@@ -309,12 +421,13 @@ Phase 3 (launch.sh) ── depends on Phase 1
 Phase 4 (server routes) ── depends on Phase 1 + 2
          │
 Phase 5 (container) ── depends on Phase 3 + 4
+Phase 7 (stop/status) ── depends on Phase 4
 ```
 
-Recommended merge order: **1 → 2 → 6 → 3 → 4 → 5**
+Recommended merge order: **1 → 2 → 6 → 3 → 4 → 5 → 7**
 
 Phases 1, 2, and 6 are purely additive and can ship independently with zero behavioural change. Phase 3 needs Phase 1.
-Phase 4 needs 1+2. Phase 5 needs 3+4.
+Phase 4 needs 1+2. Phase 5 needs 3+4. Phase 7 needs 4 (server routes with `?project` query support).
 
 ---
 
@@ -341,7 +454,9 @@ Phase 4 needs 1+2. Phase 5 needs 3+4.
 | `server/src/routes/tasks-files.ts`        | 4     |
 | `server/src/routes/files.ts`              | 4     |
 | `server/src/routes/builds.ts`             | 4     |
-| `server/src/routes/coalesce.ts`           | 4     |
+| `server/src/routes/coalesce.ts`           | 4, 7  |
+| `stop.sh`                                 | 7     |
+| `status.sh`                               | 7     |
 
 ## End-to-End Verification
 

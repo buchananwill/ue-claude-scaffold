@@ -56,7 +56,7 @@ describe('my-route', () => {
 - **HTTP testing**: Use `ctx.app.inject()` — no real server, no network. Returns a response object with `.statusCode`, `.json()`, `.body`, `.headers`.
 - **Cleanup**: Always `ctx.app.close()` + `ctx.cleanup()` in `afterEach`. Cleanup removes the temp DB files and directory.
 - **File placement**: Test files live next to their source: `src/routes/agents.test.ts` tests `src/routes/agents.ts`.
-- **Running**: Single file: `npx tsx --test src/routes/<file>.test.ts`. All tests: `npm test`.
+- **No Jest, no Vitest, no supertest.**
 
 ## Assertion Patterns
 
