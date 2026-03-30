@@ -28,8 +28,11 @@ stack (React/Vite/Mantine), (c) it gets its own agent branches (`docker/{agent-n
 (d) it does not contend for the UBT lock. Two projects sharing one bare repo is fine — agent branches are already
 namespaced by agent name, and `docker/current-root` is shared intentionally.
 
-**Out of scope:** Build strategy generalisation (issue 021), agent definition overlays (issue 018 §3, separate agent
-working on this), dashboard project selector (future), container instruction layering (issue 018 §4).
+**Out of scope:** Build strategy generalisation (issue 021), dashboard project selector (future), container instruction
+layering (issue 018 §4).
+
+**Now in scope (Phase 3a):** Agent definition overlays (issue 018 §3) — resolved via the dynamic agent compiler, which
+composes agents from modular skills at launch time.
 
 ---
 
@@ -409,14 +412,177 @@ No `--project` flag = existing behaviour (all projects shown/stopped).
 
 ---
 
+## Phase 3a: Dynamic Agent Compilation
+
+**Goal:** Container launches receive compiled, self-contained agent files assembled from modular skill definitions.
+Agents and skills follow a DRY single-source model — each skill is authored once in `skills/`, each dynamic agent is a
+thin identity paragraph plus a `skills` list in frontmatter. A compiler splices skill content into a standard Claude Code
+agent file at launch time.
+
+### Background
+
+Agent definitions for container teams contain significant duplicated content: build routing instructions, action boundary
+discipline, output schemas, debrief protocols, and message board usage are copy-pasted across every agent. The dynamic
+agent system eliminates this by factoring shared knowledge into orthogonal skills (already extracted into `skills/`) and
+composing agents from them at compile time.
+
+### Directory Layout
+
+```
+dynamic-agents/              ← source definitions (committed, git-tracked)
+  container-orchestrator.md
+  container-implementer.md
+  container-reviewer.md
+  ...
+skills/                      ← skill library (committed, already exists)
+  action-boundary/SKILL.md
+  container-build-routing/SKILL.md
+  ...
+.compiled-agents/            ← compiler output (gitignored, ephemeral)
+```
+
+### Dynamic Agent Format
+
+A dynamic agent file uses standard Claude Code agent frontmatter plus a `skills` field:
+
+```markdown
+---
+name: container-implementer
+description: "..."
+model: inherit
+color: green
+tools: [Read, Edit, Write, Glob, Grep, Bash]
+skills:
+  - action-boundary
+  - container-build-routing
+  - implementation-loop
+  - ue-correctness
+---
+
+Single paragraph explaining this agent's identity and purpose.
+```
+
+The `skills` field is consumed by the compiler and removed from output. The compiled file is a standard Claude Code
+agent — valid frontmatter, no `skills` field, skill content spliced into the system prompt body.
+
+### Compiler: `scripts/compile-agent.py`
+
+**Already implemented.** Takes a dynamic agent file (or `--all`), resolves each skill by reading
+`skills/{name}/SKILL.md`, strips skill frontmatter, and appends skill body content after the agent's identity paragraph.
+Output goes to `.compiled-agents/` (or a custom `-o` path).
+
+**Phase 3a adds:** One-level sub-agent recursion. When compiling a lead agent (e.g. `container-orchestrator`), the
+compiler must also compile the sub-agents that the lead's skills reference. This keeps the container's agent discovery
+path lean — it contains only the lead agent and the sub-agents it actually delegates to.
+
+### Sub-Agent Resolution (One-Level Recursion)
+
+Sub-agent names are declared inside **skills**, not in the dynamic agent definition. For example,
+`orchestrator-system-wiring` contains an agent resolution table listing `container-implementer`,
+`container-style-reviewer`, etc. This is correct — the mapping from roles to agents is a Protocol concern that belongs
+in the skill, not the agent.
+
+The compiler resolves sub-agents as follows:
+
+1. **Compile the lead dynamic agent** — resolve its `skills` list, splice skill content into the body.
+2. **Scan the spliced skill content** for references to other dynamic agents. Match against filenames in
+   `dynamic-agents/` (e.g. if skill text mentions `container-implementer` and
+   `dynamic-agents/container-implementer.md` exists, it's a match).
+3. **Compile each matched sub-agent** — resolve *their* skills, splice content. No further recursion.
+4. **If a sub-agent's skills reference other agents**, that's a configuration error (sub-agents can't launch
+   sub-agents). The compiler logs a warning but does not recurse further.
+
+This ensures:
+- The lead agent's container sees exactly the agents it needs — no noise.
+- Sub-agent references live in skills (single source of truth), not duplicated in agent definitions.
+- The system is deterministic: same inputs → same compiled output.
+
+### Wiring into `launch.sh`
+
+After config resolution and before `docker compose up`, `launch.sh` calls the compiler:
+
+```bash
+# ── Compile dynamic agents ─────────────────────────────────────────────────
+COMPILED_AGENTS_DIR="$(mktemp -d)"
+trap 'rm -rf "$COMPILED_AGENTS_DIR"' EXIT
+
+if [ -d "$SCRIPT_DIR/dynamic-agents" ] && [ -f "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" ]; then
+  echo "Compiling dynamic agent: ${AGENT_TYPE}..."
+  python "$SCRIPT_DIR/scripts/compile-agent.py" \
+    "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" \
+    -o "$COMPILED_AGENTS_DIR" \
+    --recursive
+else
+  # Fallback: copy static agents directory (legacy behaviour)
+  cp "$SCRIPT_DIR/agents/"*.md "$COMPILED_AGENTS_DIR/" 2>/dev/null || true
+fi
+
+export AGENTS_PATH="$COMPILED_AGENTS_DIR"
+```
+
+Key points:
+- Compiled output goes to a temp directory, not a persistent path — truly ephemeral.
+- `--recursive` flag triggers the one-level sub-agent scan and compilation.
+- If the requested `AGENT_TYPE` doesn't have a dynamic agent definition, falls back to copying static agents.
+- The temp directory is cleaned up on script exit.
+
+### Compiler `--recursive` Flag
+
+Add to `scripts/compile-agent.py`:
+
+1. After compiling the lead agent, read back the compiled output.
+2. Collect all `dynamic-agents/*.md` filenames (sans extension) as the candidate set.
+3. Scan the compiled body for occurrences of any candidate name.
+4. For each match, compile that dynamic agent into the same output directory.
+5. Log which sub-agents were resolved.
+6. Do NOT recurse into sub-agents' compiled output.
+
+### `docker-compose.example.yml` Change
+
+The `AGENTS_PATH` default changes from `../agents` to a path provided by `launch.sh`:
+
+```yaml
+- ${AGENTS_PATH}:/home/claude/.claude/agents:ro
+```
+
+No default fallback needed — `launch.sh` always sets `AGENTS_PATH` (either compiled or static copy).
+
+### Dry-Run Output
+
+`launch.sh --dry-run` shows the compilation step:
+
+```
+  AGENT_TYPE:       container-orchestrator
+  AGENT_COMPILED:   yes (dynamic-agents/container-orchestrator.md)
+  SUB_AGENTS:       container-implementer, container-style-reviewer, container-safety-reviewer,
+                    container-reviewer, container-tester, container-decomposition-reviewer
+```
+
+### Backwards Compat
+
+- No `dynamic-agents/` directory or no matching file → static `agents/` directory is copied as-is.
+- Existing containers that mount `agents/` directly continue to work until migrated.
+- The compiler has zero external dependencies (no PyYAML).
+
+### Verification
+
+- `python scripts/compile-agent.py dynamic-agents/container-orchestrator.md --recursive` compiles lead + all sub-agents.
+- Compiled files are valid Claude Code agents (frontmatter present, no `skills` field, body includes skill content).
+- `launch.sh --dry-run` shows compilation summary.
+- Container launched with compiled agents can resolve `--agent container-orchestrator` and delegate to sub-agents.
+- `launch.sh --dry-run` without `dynamic-agents/` directory works identically to current behaviour.
+
+---
+
 ## Phase Ordering
 
 ```
-Phase 1 (config)  ─┐
-Phase 2 (schema)  ─┼─ independent, can be done in parallel
-Phase 6 (setup)   ─┘
+Phase 1 (config)   ─┐
+Phase 2 (schema)   ─┼─ independent, can be done in parallel
+Phase 3a (compile) ─┤
+Phase 6 (setup)    ─┘
          │
-Phase 3 (launch.sh) ── depends on Phase 1
+Phase 3 (launch.sh) ── depends on Phase 1 + 3a
          │
 Phase 4 (server routes) ── depends on Phase 1 + 2
          │
@@ -424,10 +590,11 @@ Phase 5 (container) ── depends on Phase 3 + 4
 Phase 7 (stop/status) ── depends on Phase 4
 ```
 
-Recommended merge order: **1 → 2 → 6 → 3 → 4 → 5 → 7**
+Recommended merge order: **1 → 2 → 3a → 6 → 3 → 4 → 5 → 7**
 
-Phases 1, 2, and 6 are purely additive and can ship independently with zero behavioural change. Phase 3 needs Phase 1.
-Phase 4 needs 1+2. Phase 5 needs 3+4. Phase 7 needs 4 (server routes with `?project` query support).
+Phases 1, 2, 3a, and 6 are purely additive and can ship independently with zero behavioural change. Phase 3a (compiler)
+can be validated standalone before wiring into launch.sh. Phase 3 needs Phase 1 + 3a. Phase 4 needs 1+2. Phase 5 needs
+3+4. Phase 7 needs 4 (server routes with `?project` query support).
 
 ---
 
@@ -438,7 +605,9 @@ Phase 4 needs 1+2. Phase 5 needs 3+4. Phase 7 needs 4 (server routes with `?proj
 | `server/src/config.ts`                    | 1, 4  |
 | `server/src/db.ts`                        | 2     |
 | `scaffold.config.example.json`            | 1     |
-| `launch.sh`                               | 3     |
+| `scripts/compile-agent.py`                | 3a    |
+| `dynamic-agents/*.md`                     | 3a    |
+| `launch.sh`                               | 3, 3a |
 | `setup.sh`                                | 6     |
 | `container/entrypoint.sh`                 | 5     |
 | `container/docker-compose.example.yml`    | 3     |
@@ -466,3 +635,6 @@ Phase 4 needs 1+2. Phase 5 needs 3+4. Phase 7 needs 4 (server routes with `?proj
 4. Server isolation: agent registered on proj-a cannot claim proj-b tasks; separate UBT locks per project.
 5. Full round-trip: launch two containers targeting different projects, verify they use separate bare repos, separate
    task queues, separate file ownership.
+6. Dynamic agent compilation: `launch.sh --dry-run` with a dynamic agent type shows compilation summary, lists resolved
+   sub-agents. Compiled output contains only the lead agent and its skill-referenced sub-agents — nothing else.
+7. Fallback: `launch.sh --dry-run` with an agent type that has no dynamic definition falls back to static agents.
