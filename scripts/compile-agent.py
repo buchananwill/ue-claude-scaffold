@@ -8,11 +8,16 @@ system prompt body, and writes a standard Claude Code agent file (no `skills` fi
 to the output directory.
 
 Usage:
-    python scripts/compile-agent.py dynamic-agents/container-implementer.md
+    python scripts/compile-agent.py dynamic-agents/container-orchestrator.md
+    python scripts/compile-agent.py dynamic-agents/container-orchestrator.md --recursive
     python scripts/compile-agent.py dynamic-agents/container-implementer.md -o /tmp/agents
     python scripts/compile-agent.py --all
     python scripts/compile-agent.py --all -o .compiled-agents
     python scripts/compile-agent.py --clean          # remove output dir
+
+With --recursive, the compiler scans the lead agent's compiled skill content for
+references to other dynamic agents and compiles those too (one level only).
+Sub-agents that reference further agents trigger a warning, not recursion.
 
 The compiled output is ephemeral — not committed, consumed by containers or
 local sessions, then discarded.
@@ -113,8 +118,12 @@ def compile_agent(
     source: Path,
     output_dir: Path,
     skills_dir: Path,
-) -> Path:
-    """Compile a dynamic agent definition into a standalone agent file."""
+) -> tuple[Path, str]:
+    """Compile a dynamic agent definition into a standalone agent file.
+
+    Returns (output_path, compiled_body) — the body is needed for recursive
+    sub-agent scanning.
+    """
     text = source.read_text(encoding="utf-8")
     meta, body = parse_frontmatter(text)
 
@@ -140,7 +149,30 @@ def compile_agent(
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / source.name
     out_path.write_text(compiled_frontmatter + "\n" + compiled_body, encoding="utf-8")
-    return out_path
+    return out_path, compiled_body
+
+
+def find_sub_agents(compiled_body: str, dynamic_dir: Path, exclude: set[str]) -> list[Path]:
+    """Scan compiled body for references to other dynamic agents.
+
+    Matches any occurrence of a dynamic agent name (filename sans .md extension)
+    in the compiled text. Returns paths to matched dynamic agent source files,
+    excluding any names in the exclude set (already compiled).
+    """
+    candidates = {}
+    for f in dynamic_dir.glob("*.md"):
+        name = f.stem  # e.g. "container-implementer"
+        candidates[name] = f
+
+    matched = []
+    for name, path in sorted(candidates.items()):
+        if name in exclude:
+            continue
+        # Match the agent name as a whole word (not a substring of something else)
+        if re.search(r'\b' + re.escape(name) + r'\b', compiled_body):
+            matched.append(path)
+
+    return matched
 
 
 def main():
@@ -170,6 +202,11 @@ def main():
         help=f"Skills directory (default: {DEFAULT_SKILLS_DIR.relative_to(REPO_ROOT)})",
     )
     parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Scan compiled lead agent for sub-agent references and compile those too (one level)",
+    )
+    parser.add_argument(
         "--clean",
         action="store_true",
         help="Remove the output directory and exit",
@@ -196,11 +233,38 @@ def main():
         parser.print_help()
         sys.exit(1)
 
+    compiled_names = set()
+    sub_agent_paths = []
+
+    # Phase 1: compile requested agents
     for src in sources:
-        out = compile_agent(src, args.output, args.skills_dir)
+        out, body = compile_agent(src, args.output, args.skills_dir)
+        compiled_names.add(src.stem)
         print(f"  {src.name} -> {out}")
 
-    print(f"\nCompiled {len(sources)} agent(s) to {args.output}")
+        if args.recursive:
+            subs = find_sub_agents(body, DEFAULT_DYNAMIC_DIR, compiled_names)
+            sub_agent_paths.extend(subs)
+            compiled_names.update(s.stem for s in subs)
+
+    # Phase 2: compile discovered sub-agents (one level, no further recursion)
+    if sub_agent_paths:
+        print(f"\n  Sub-agents referenced in skills:")
+        for sub_src in sub_agent_paths:
+            out, sub_body = compile_agent(sub_src, args.output, args.skills_dir)
+            print(f"    {sub_src.name} -> {out}")
+
+            # Warn if sub-agent's skills reference further agents (config bug)
+            further = find_sub_agents(sub_body, DEFAULT_DYNAMIC_DIR, compiled_names)
+            for f in further:
+                print(
+                    f"  WARNING: sub-agent {sub_src.stem} references {f.stem} "
+                    f"— sub-agents cannot launch sub-agents. Skipping.",
+                    file=sys.stderr,
+                )
+
+    total = len(sources) + len(sub_agent_paths)
+    print(f"\nCompiled {total} agent(s) to {args.output}")
 
 
 if __name__ == "__main__":
