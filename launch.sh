@@ -128,6 +128,18 @@ export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH CLAUDE_CREDENTIALS_
 # ── Apply CLI overrides ─────────────────────────────────────────────────────
 AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
 AGENT_TYPE="${_CLI_AGENT_TYPE:-${AGENT_TYPE:-container-orchestrator}}"
+
+# ── Validate AGENT_NAME and AGENT_TYPE (prevent path traversal) ────────────
+if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "Error: AGENT_NAME contains invalid characters: $AGENT_NAME" >&2
+  echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
+  exit 1
+fi
+if [[ ! "$AGENT_TYPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "Error: AGENT_TYPE contains invalid characters: $AGENT_TYPE" >&2
+  echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
+  exit 1
+fi
 MAX_TURNS="${MAX_TURNS:-200}"
 PLAN_PATH="${_CLI_PLAN}"
 # --parallel implies pump mode
@@ -211,6 +223,23 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo "  ROOT_BRANCH:      $ROOT_BRANCH"
   echo "  WORK_BRANCH:      $WORK_BRANCH"
   echo "  AGENT_TYPE:       $AGENT_TYPE"
+  if [[ -d "$SCRIPT_DIR/dynamic-agents" && -f "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" ]]; then
+    echo "  AGENT_COMPILED:   yes (dynamic-agents/${AGENT_TYPE}.md)"
+    # List other dynamic agents as potential sub-agents
+    _sub_agents=()
+    for _candidate in "$SCRIPT_DIR"/dynamic-agents/*.md; do
+      _cname="$(basename "${_candidate%.md}")"
+      if [[ "$_cname" != "$AGENT_TYPE" ]]; then
+        _sub_agents+=("$_cname")
+      fi
+    done
+    if [[ ${#_sub_agents[@]} -gt 0 ]]; then
+      _sub_list=$(IFS=', '; echo "${_sub_agents[*]}")
+      echo "  SUB_AGENT_CANDIDATES: $_sub_list"
+    fi
+  else
+    echo "  AGENT_COMPILED:   no (static agents fallback)"
+  fi
   echo "  MAX_TURNS:        $MAX_TURNS"
   echo "  BARE_REPO_PATH:   $BARE_REPO_PATH"
   echo "  UE_ENGINE_PATH:   $UE_ENGINE_PATH"
@@ -234,6 +263,43 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo ""
   exit 0
 fi
+
+# ── Compile dynamic agents ─────────────────────────────────────────────────
+# Compile agents before team-mode/launch checks because team mode exits early
+# and needs AGENTS_PATH. The rm -rf of .compiled-agents/ may affect bind-mounts
+# of already-running containers; this is an accepted tradeoff (same as any build
+# artifact rebuild).
+COMPILED_AGENTS_DIR="$SCRIPT_DIR/.compiled-agents"
+rm -rf "$COMPILED_AGENTS_DIR"
+mkdir -p "$COMPILED_AGENTS_DIR"
+
+if [[ ! -f "$SCRIPT_DIR/scripts/compile-agent.py" ]]; then
+  echo "Error: compile-agent.py not found at $SCRIPT_DIR/scripts/" >&2
+  exit 1
+fi
+
+if [[ -d "$SCRIPT_DIR/dynamic-agents" && -f "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" ]]; then
+  echo "Compiling dynamic agent: ${AGENT_TYPE}..."
+  if ! python "$SCRIPT_DIR/scripts/compile-agent.py" \
+    "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" \
+    -o "$COMPILED_AGENTS_DIR" \
+    --recursive; then
+    echo "Error: Agent compilation failed for '${AGENT_TYPE}'. See above for details." >&2
+    exit 1
+  fi
+else
+  # Fallback: copy static agents directory (legacy behaviour)
+  if [[ -d "$SCRIPT_DIR/agents" ]]; then
+    cp "$SCRIPT_DIR/agents/"*.md "$COMPILED_AGENTS_DIR/" 2>/dev/null || true
+  fi
+  # Warn if no agent files ended up in the output directory
+  if ! ls "$COMPILED_AGENTS_DIR"/*.md &>/dev/null; then
+    echo "Warning: No .md agent files found in compiled agents directory." >&2
+    echo "  The container may still work if agents are provided from another source." >&2
+  fi
+fi
+
+export AGENTS_PATH="$COMPILED_AGENTS_DIR"
 
 # ── Team mode ───────────────────────────────────────────────────────────────
 if [[ -n "$_CLI_TEAM" ]]; then
@@ -299,6 +365,9 @@ if [[ -n "$_CLI_TEAM" ]]; then
     _MEMBER_NAME=$(echo "$1" | jq -r '.agentName')
     _MEMBER_ROLE=$(echo "$1" | jq -r '.role')
     _MEMBER_TYPE=$(echo "$1" | jq -r '.agentType')
+    if [[ "$_MEMBER_TYPE" != "$AGENT_TYPE" ]] && [[ ! -f "$COMPILED_AGENTS_DIR/${_MEMBER_TYPE}.md" ]]; then
+      echo "Warning: Team member '$_MEMBER_NAME' uses agent type '$_MEMBER_TYPE' which was not compiled. Container may fall back to static agent definitions." >&2
+    fi
     _IS_LEADER=$(echo "$1" | jq -r '.isLeader // false')
     _MEMBER_BRANCH="docker/${_MEMBER_NAME}"
 
@@ -338,6 +407,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
       TASKS_PATH="$TASKS_PATH" \
       UE_ENGINE_PATH="$UE_ENGINE_PATH" \
       CLAUDE_CREDENTIALS_PATH="$CLAUDE_CREDENTIALS_PATH" \
+      AGENTS_PATH="$AGENTS_PATH" \
       SERVER_PORT="$SERVER_PORT" \
       MAX_TURNS="$MAX_TURNS" \
       LOG_VERBOSITY="$LOG_VERBOSITY" \
@@ -463,6 +533,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
       AGENT_NAME="$_AGENT" \
       WORK_BRANCH="$_BRANCH" \
       BARE_REPO_PATH="$BARE_REPO_PATH" \
+      AGENTS_PATH="$AGENTS_PATH" \
       WORKER_MODE=true \
       WORKER_SINGLE_TASK=false \
       AGENT_MODE=pump \
