@@ -15,6 +15,18 @@ Beyond general responsibility groups (see general-decomposition), these are UE-s
 - A group of `UFUNCTION(BlueprintCallable)` or `UFUNCTION(Server)` handlers forming a distinct API surface
 - Processor/observer logic (`FMassEntityQuery` execution, delegate bindings) serving a different subsystem than the file's primary concern
 
+## Hand-Rolled Algorithm Replacements
+
+Flag manual loops that replicate well-known UE library functions. Common examples:
+
+- Manual sorted-insertion loops → `Algo::LowerBoundBy` + `Insert`
+- Manual find-and-remove loops → `RemoveAll`, `RemoveAllSwap`, `FindByPredicate`
+- Manual min/max scans → `Algo::MinElementBy`, `Algo::MaxElementBy`
+- Manual copy-if → `FilterByPredicate`
+- `std::sort` / `std::find` / `std::lower_bound` when `Algo::*` or `TArray::*` equivalents exist
+
+Name the specific replacement and cite the header.
+
 ## Extraction Is Free
 
 Do not withhold extraction suggestions due to perceived function-call overhead:

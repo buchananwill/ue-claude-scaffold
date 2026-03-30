@@ -43,3 +43,4 @@ Standard output format for all code reviewers. Domain-specific sections can be a
 - Use sequential IDs: B1, B2... for BLOCKING; W1, W2... for WARNING.
 - Verdict is REQUEST CHANGES if any BLOCKING or WARNING exists.
 - Some domains add a NOTE tier (confidence 50-74, informational only). If present, NOTEs do not affect the verdict.
+- **All WARNINGs are treated as blocking by the orchestrator.** Only report issues you are confident about and can substantiate with specific code evidence. Do not pad with borderline nitpicks.

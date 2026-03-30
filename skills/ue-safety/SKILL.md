@@ -37,6 +37,14 @@ What to look for when reviewing UE C++ for runtime safety. These bugs compile bu
 - **Unnecessary `MoveTemp`** — on trivially-copyable types (`int32`, `float`, `FVector`), or on prvalues already being moved.
 - **`MoveTemp` on `UPROPERTY`** — moving out of a property that GC may still reference.
 
+## Ownership Analysis
+
+Analyse ownership models across every boundary in the design — who creates, who holds, who destroys. Identify ambiguous or shared ownership that lacks explicit policy.
+
+## Destruction Ordering
+
+Consider destruction ordering — subsystem teardown, world cleanup, editor hot-reload. Will the design survive these lifecycle events without crashes or leaks?
+
 ## Review Discipline
 
 For each changed function, constructor, or callback:

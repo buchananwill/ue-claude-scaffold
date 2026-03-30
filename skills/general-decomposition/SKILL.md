@@ -7,6 +7,17 @@ description: Use when reviewing any codebase for file bloat, excessive nesting, 
 
 Universal structural concerns applicable to any codebase. These are truths about code organisation, not about any specific language or framework.
 
+## Responsibility Groups
+
+A responsibility group is a cohesive unit of functionality that could live in its own file. Recognise these types:
+
+- A class or struct definition with its own API surface
+- A cluster of free functions that operate on the same data type or concept
+- A self-contained algorithm (sort, search, transform) embedded in a larger file
+- A block of type definitions (enums, type aliases, constants) serving a specific subsystem
+
+Language- or framework-specific group types (e.g. UE UCLASS, USTRUCT, processor logic) are defined in companion domain skills.
+
 ## DRY Violations
 
 Flag logic blocks that appear more than once in the same file with only minor variation:
@@ -41,3 +52,14 @@ Flag manual loops that replicate well-known library functions. Name the specific
 If you cannot decompose a deeply nested block — if every helper produces an incoherent signature requiring 6+ parameters — that signals **the design is missing an axis of abstraction**. A struct, a policy object, a visitor, or a different data representation would eliminate the nesting at the source. Report this as BLOCKING with your analysis of what abstraction is missing.
 
 Decomposition is a **pressure cooker for auditing the design**. If it resists decomposition, the problem is upstream.
+
+## Decomposition Execution Rules
+
+When proposing or executing a decomposition:
+
+1. **Purely mechanical.** Extract, move, adjust includes. Do not redesign, optimise, or "improve" logic during extraction.
+2. **Follow existing patterns.** If the codebase already has a convention for file splitting (e.g., one class per file, helpers in a `*Utils.h`), follow it.
+3. **No renaming during extraction.** Rename in a separate, dedicated pass — not interleaved with structural moves.
+4. **No logic changes.** The extracted code must behave identically. If you spot a bug, flag it separately.
+5. **Preserve include hygiene.** After extraction, each file must include only what it directly uses.
+6. **Preserve test structure.** If tests reference moved symbols, update the includes — do not reorganise test files as part of a decomposition.

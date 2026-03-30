@@ -14,3 +14,4 @@ Each team member runs in a **separate Docker container** on a **separate git bra
 - Do not create files expecting other team members to read them.
 - Do not rely on file-based handoffs or shared directories.
 - All communication happens through the `reply` tool and the chat room channel.
+- **Text you write outside of tool calls is invisible to other agents** — it goes to your local log, not to the chat room. If you want to say something to the team, call `reply`. There is no other way to communicate.
