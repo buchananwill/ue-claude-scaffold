@@ -9,7 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (11);
+INSERT OR IGNORE INTO schema_version(version) VALUES (12);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
