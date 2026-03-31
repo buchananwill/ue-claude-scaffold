@@ -37,6 +37,11 @@
     ]
   },
 
+  "hooks": {
+    "buildIntercept": true,
+    "cppLint": true
+  },
+
   "container": {
     "agentType": "container-orchestrator",
     "maxTurns": 200,
@@ -72,7 +77,11 @@
           { "source": "D:\\Path\\To\\Voxel\\Plugin", "relativeDest": "Plugins/Voxel" }
         ]
       },
-      "stagingWorktreeRoot": "D:\\Staging\\my-ue-game"
+      "stagingWorktreeRoot": "D:\\Staging\\my-ue-game",
+      "hooks": {
+        "buildIntercept": true,
+        "cppLint": true
+      }
     },
     "my-ue-game-dashboard": {
       "name": "MyUEGameDashboard",
@@ -94,7 +103,10 @@
     "web-dashboard": {
       "name": "WebDashboard",
       "path": "D:\\Projects\\web-dashboard",
-      "bareRepoPath": "D:\\Repos\\web-dashboard.git"
+      "bareRepoPath": "D:\\Repos\\web-dashboard.git",
+      "hooks": {
+        "buildIntercept": false
+      }
     }
   }
 }

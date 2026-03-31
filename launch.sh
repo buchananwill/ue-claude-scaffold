@@ -124,6 +124,9 @@ if [[ ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
 fi
 
 # ── Resolve project config from scaffold.config.json ───────────────────────
+PROJECT_HOOK_BUILD=""
+PROJECT_HOOK_LINT=""
+
 if jq -e --arg id "$PROJECT_ID" '.projects[$id]' "$_cfg" >/dev/null 2>&1; then
   # Multi-project mode: read from projects map
   BARE_REPO_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].bareRepoPath // empty' "$_cfg")
@@ -135,6 +138,8 @@ if jq -e --arg id "$PROJECT_ID" '.projects[$id]' "$_cfg" >/dev/null 2>&1; then
   TEST_SCRIPT_NAME=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.testScriptPath // .build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)
   DEFAULT_TEST_FILTERS=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.defaultTestFilters // .build.defaultTestFilters // [] | if type == "array" then join(" ") else . end' "$_cfg")
   LOGS_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].logsPath // empty' "$_cfg")
+  PROJECT_HOOK_BUILD=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].hooks.buildIntercept // empty' "$_cfg")
+  PROJECT_HOOK_LINT=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].hooks.cppLint // empty' "$_cfg")
 elif [[ "$PROJECT_ID" == "default" ]]; then
   # Legacy mode: read from top-level fields (existing code)
   UE_ENGINE_PATH="$(jq -r '.engine.path // empty' "$_cfg")"
@@ -146,6 +151,8 @@ elif [[ "$PROJECT_ID" == "default" ]]; then
   TEST_SCRIPT_NAME="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)"
   DEFAULT_TEST_FILTERS="$(jq -r '.build.defaultTestFilters // [] | join(" ")' "$_cfg")"
   LOGS_PATH="$(jq -r '.logs.path // empty' "$_cfg")"
+  PROJECT_HOOK_BUILD=$(jq -r '.hooks.buildIntercept // empty' "$_cfg")
+  PROJECT_HOOK_LINT=$(jq -r '.hooks.cppLint // empty' "$_cfg")
 else
   # --project was specified but ID not found in projects map
   _available=$(jq -r '.projects // {} | keys | join(", ")' "$_cfg")
@@ -253,6 +260,65 @@ else
   echo "Error: Neither 'docker compose' nor 'docker-compose' found." >&2
   exit 1
 fi
+
+# ── Hook resolution ─────────────────────────────────────────────────────────
+_resolve_hook_value() {
+    local result="$1"   # system default
+    [ -n "$2" ] && result="$2"   # project override
+    [ -n "$3" ] && result="$3"   # team override
+    [ -n "$4" ] && result="$4"   # member override
+    [ -n "$5" ] && result="$5"   # CLI override
+    echo "$result"
+}
+
+resolve_hooks() {
+    local member_json="${1:-}"
+
+    # System default: buildIntercept is true if project has a build script
+    local sys_build="false"
+    local _has_build_script=""
+    if jq -e --arg id "$PROJECT_ID" \
+        '(.projects[$id].build.scriptPath // .build.scriptPath // empty) | select(. != "")' \
+        "$_cfg" >/dev/null 2>&1; then
+        _has_build_script="true"
+    fi
+    [ "$_has_build_script" = "true" ] && sys_build="true"
+    local sys_lint="false"
+
+    # Team-level overrides (only in team launch mode)
+    local team_build="" team_lint=""
+    if [ -n "${TEAM_DEF:-}" ] && [ -f "${TEAM_DEF:-}" ]; then
+        team_build=$(jq -r '.hooks.buildIntercept // empty' "$TEAM_DEF")
+        team_lint=$(jq -r '.hooks.cppLint // empty' "$TEAM_DEF")
+    fi
+
+    # Validate team hook values
+    for _hv in "$team_build" "$team_lint"; do
+        case "$_hv" in
+            true|false|"") ;;
+            *) echo "Error: hooks values in team definition must be true or false, got '$_hv'" >&2; exit 1 ;;
+        esac
+    done
+
+    # Per-member overrides
+    local member_build="" member_lint=""
+    if [ -n "$member_json" ]; then
+        member_build=$(echo "$member_json" | jq -r '.hooks.buildIntercept // empty')
+        member_lint=$(echo "$member_json" | jq -r '.hooks.cppLint // empty')
+    fi
+
+    # Validate member hook values
+    for _hv in "$member_build" "$member_lint"; do
+        case "$_hv" in
+            true|false|"") ;;
+            *) echo "Error: hooks values in member definition must be true or false, got '$_hv'" >&2; exit 1 ;;
+        esac
+    done
+
+    # Resolve cascade: system -> project -> team -> member -> CLI
+    HOOK_BUILD_INTERCEPT=$(_resolve_hook_value "$sys_build" "$PROJECT_HOOK_BUILD" "$team_build" "$member_build" "${_CLI_HOOK_BUILD:-}")
+    HOOK_CPP_LINT=$(_resolve_hook_value "$sys_lint" "$PROJECT_HOOK_LINT" "$team_lint" "$member_lint" "${_CLI_HOOK_LINT:-}")
+}
 
 # ── Dry run ──────────────────────────────────────────────────────────────────
 if [[ "$_CLI_DRY_RUN" == true ]]; then
