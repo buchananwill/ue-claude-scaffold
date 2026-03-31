@@ -40,6 +40,3 @@ The decomposition reviewer targets `.ts`, `.tsx`, and `.sh` files (not `.h`/`.cp
 git diff --name-only <base>...HEAD -- '*.ts' '*.tsx' '*.sh'
 ```
 
-## Communication
-
-No message board. The orchestrator reports directly to the user in the conversation. All sub-agent output is visible in the session.

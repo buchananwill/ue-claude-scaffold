@@ -9,6 +9,7 @@ skills:
   - commit-discipline
   - orchestrator-phase-protocol
   - orchestrator-system-wiring
+  - orchestrator-message-discipline
   - debrief-protocol
   - message-board-protocol
 ---
