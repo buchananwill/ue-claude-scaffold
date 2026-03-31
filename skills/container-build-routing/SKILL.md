@@ -3,6 +3,8 @@ name: container-build-routing
 description: Use for any agent running inside a Docker container that needs to trigger Unreal Engine builds or tests. Explains how the PreToolUse hook intercepts build commands and routes them to the Windows host, and how the UBT queue serializes access.
 ---
 
+***ACCESS SCOPE: ubt-build-hook-interceptor***
+
 # Container Build Routing
 
 You are running inside a Linux Docker container, but Unreal Engine is installed on the Windows host. A PreToolUse hook bridges this gap transparently.

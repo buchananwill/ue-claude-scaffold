@@ -20,9 +20,7 @@ services:
       - WORKER_MODE=${WORKER_MODE:-false}
       - WORKER_POLL_INTERVAL=${WORKER_POLL_INTERVAL:-30}
       - WORKER_SINGLE_TASK=${WORKER_SINGLE_TASK:-true}
-      - HOOK_BUILD_INTERCEPT=${HOOK_BUILD_INTERCEPT:-true}
       - HOOK_CPP_LINT=${HOOK_CPP_LINT:-false}
-      - WORKSPACE_READONLY=${WORKSPACE_READONLY:-false}
       - PROJECT_ID=${PROJECT_ID:-default}
     volumes:
       # Required: bare repo for git operations

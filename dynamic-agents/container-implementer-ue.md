@@ -6,6 +6,7 @@ color: green
 tools: [Read, Edit, Write, Glob, Grep, Bash]
 skills:
   - action-boundary
+  - commit-discipline
   - container-build-routing
   - container-git-environment
   - implementation-loop

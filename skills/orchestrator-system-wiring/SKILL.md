@@ -20,8 +20,6 @@ You delegate to these container-tuned agents:
 | `tester`          | `container-tester`                 | Writes and runs tests                        |
 | `decomp-reviewer` | `container-decomposition-reviewer` | File bloat, nesting depth, decomposition     |
 
-The project's `CLAUDE.md` may have an `### Orchestrator Role Mapping` section that overrides these — check it and use whatever it specifies. Log your resolved mapping before beginning work.
-
 ## Review Agent Mandates
 
 Each reviewer only assesses its own dimension. Do not ask the style reviewer about correctness, or the safety reviewer about naming. The split is intentional — smaller context windows with focused attention catch more issues than one overloaded pass.

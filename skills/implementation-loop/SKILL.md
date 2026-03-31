@@ -3,6 +3,8 @@ name: implementation-loop
 description: Use when an agent must write code and verify it compiles. Defines the read-modify-build-iterate cycle and the completion rule that the last action before finishing must be a successful build.
 ---
 
+***ACCESS SCOPE: write-access***
+
 # Implementation Loop
 
 Core protocol for any agent that writes code and must verify compilation.

@@ -256,11 +256,25 @@ _errors=()
 if [[ -z "${BARE_REPO_PATH:-}" ]]; then
   _errors+=("BARE_REPO_PATH is not set. Set it in scaffold.config.json.")
 fi
+# UE_ENGINE_PATH is only required when the project declares an engine config
 if [[ -z "${UE_ENGINE_PATH:-}" ]]; then
-  _errors+=("UE_ENGINE_PATH is not set. Set it in scaffold.config.json.")
+  _has_engine=false
+  if jq -e --arg id "$PROJECT_ID" '.projects[$id].engine' "$_cfg" >/dev/null 2>&1; then
+    _has_engine=true
+  elif [[ "$PROJECT_ID" == "default" ]] && jq -e '.engine.path // empty | select(. != "")' "$_cfg" >/dev/null 2>&1; then
+    _has_engine=true
+  fi
+  if [[ "$_has_engine" == true ]]; then
+    _errors+=("UE_ENGINE_PATH is not set. Set engine.path in scaffold.config.json.")
+  fi
 fi
+# TASKS_PATH is required for plan mode and worker mode
 if [[ -z "${TASKS_PATH:-}" ]]; then
-  _errors+=("TASKS_PATH is not set. Set it in scaffold.config.json.")
+  if [[ "$WORKER_MODE" == "true" ]]; then
+    _errors+=("TASKS_PATH is not set. Set tasksPath in scaffold.config.json (required for worker mode).")
+  elif [[ -n "$PLAN_PATH" ]]; then
+    _errors+=("TASKS_PATH is not set. Set tasksPath in scaffold.config.json (required when using --plan).")
+  fi
 fi
 
 if [[ ${#_errors[@]} -gt 0 ]]; then
@@ -500,12 +514,6 @@ if [[ -n "$_CLI_TEAM" ]]; then
     _IS_LEADER=$(echo "$1" | jq -r '.isLeader // false')
     _MEMBER_BRANCH="docker/${_MEMBER_NAME}"
 
-    # Non-leader members get a read-only workspace
-    local _WORKSPACE_READONLY="false"
-    if [ "$_IS_LEADER" != "true" ]; then
-      _WORKSPACE_READONLY="true"
-    fi
-
     # Resolve hook configuration via cascade
     resolve_hooks "$1"
 
@@ -536,9 +544,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
       MAX_TURNS="$MAX_TURNS" \
       LOG_VERBOSITY="$LOG_VERBOSITY" \
       WORKER_MODE=false \
-      HOOK_BUILD_INTERCEPT="$HOOK_BUILD_INTERCEPT" \
       HOOK_CPP_LINT="$HOOK_CPP_LINT" \
-      WORKSPACE_READONLY="$_WORKSPACE_READONLY" \
       $COMPOSE_CMD --project-name "claude-${_MEMBER_NAME}" up --build --detach)
 
     echo "  Launched $_MEMBER_NAME (role: $_MEMBER_ROLE, type: $_MEMBER_TYPE, hooks: build=$HOOK_BUILD_INTERCEPT lint=$HOOK_CPP_LINT)"
@@ -630,7 +636,7 @@ fi
 resolve_hooks ""
 
 # ── Export vars for docker-compose ───────────────────────────────────────────
-export HOOK_BUILD_INTERCEPT HOOK_CPP_LINT
+export HOOK_CPP_LINT
 export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS LOG_VERBOSITY PROJECT_ID
 export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH LOGS_PATH
 export WORKER_MODE WORKER_POLL_INTERVAL WORKER_SINGLE_TASK
@@ -663,7 +669,6 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
       PROJECT_ID="$PROJECT_ID" \
       BARE_REPO_PATH="$BARE_REPO_PATH" \
       AGENTS_PATH="$AGENTS_PATH" \
-      HOOK_BUILD_INTERCEPT="$HOOK_BUILD_INTERCEPT" \
       HOOK_CPP_LINT="$HOOK_CPP_LINT" \
       WORKER_MODE=true \
       WORKER_SINGLE_TASK=false \

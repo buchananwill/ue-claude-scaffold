@@ -69,53 +69,90 @@ EXCL
 # git working tree entirely.  Claude Code merges user + project settings, so
 # hooks defined here still apply to /workspace.
 
-# ── Deprecation shim: migrate DISABLE_BUILD_HOOKS → HOOK_* env vars ──────────
-if [ -n "${DISABLE_BUILD_HOOKS:-}" ]; then
-    echo "WARNING: DISABLE_BUILD_HOOKS is deprecated. Use HOOK_BUILD_INTERCEPT and HOOK_CPP_LINT instead." >&2
-    if [ "${DISABLE_BUILD_HOOKS}" = "true" ]; then
-        HOOK_BUILD_INTERCEPT="${HOOK_BUILD_INTERCEPT:-false}"
-        HOOK_CPP_LINT="${HOOK_CPP_LINT:-false}"
-    else
-        HOOK_BUILD_INTERCEPT="${HOOK_BUILD_INTERCEPT:-true}"
-        HOOK_CPP_LINT="${HOOK_CPP_LINT:-true}"
-    fi
-    echo "  Migrated to: HOOK_BUILD_INTERCEPT=${HOOK_BUILD_INTERCEPT}, HOOK_CPP_LINT=${HOOK_CPP_LINT}" >&2
+# ── Read access scope from compiler sidecar metadata ─────────────────────────
+ACCESS_SCOPE="read-only"
+META_FILE="${AGENTS_PATH:-/agents}/${AGENT_TYPE}.meta.json"
+if [ -f "$META_FILE" ]; then
+    ACCESS_SCOPE=$(jq -r '.["access-scope"] // "read-only"' "$META_FILE")
 fi
 
-# ── Dynamic settings.json assembly ───────────────────────────────────────────
-HOOK_BUILD_INTERCEPT="${HOOK_BUILD_INTERCEPT:-true}"
-HOOK_CPP_LINT="${HOOK_CPP_LINT:-false}"
-case "${HOOK_BUILD_INTERCEPT}" in
-  true|false) ;;
-  *) echo "ERROR: HOOK_BUILD_INTERCEPT must be 'true' or 'false', got '${HOOK_BUILD_INTERCEPT}'" >&2; exit 1 ;;
+# ── Derive hook flags from access scope ──────────────────────────────────────
+case "$ACCESS_SCOPE" in
+    read-only)
+        HOOK_BUILD_INTERCEPT="false"
+        HOOK_GIT_SYNC="false"
+        WORKSPACE_READONLY="true"
+        ;;
+    write-access)
+        HOOK_BUILD_INTERCEPT="false"
+        HOOK_GIT_SYNC="true"
+        WORKSPACE_READONLY="false"
+        ;;
+    ubt-build-hook-interceptor)
+        HOOK_BUILD_INTERCEPT="true"
+        HOOK_GIT_SYNC="false"
+        WORKSPACE_READONLY="false"
+        ;;
+    *)
+        HOOK_BUILD_INTERCEPT="false"
+        HOOK_GIT_SYNC="true"
+        WORKSPACE_READONLY="false"
+        echo "WARNING: Unknown access-scope '$ACCESS_SCOPE', treating as write-access" >&2
+        ;;
 esac
+
+# CLI override escape hatch (--hooks / --no-hooks via launch.sh)
+if [ "${HOOK_OVERRIDE:-}" = "all-on" ]; then
+    HOOK_BUILD_INTERCEPT="true"
+    HOOK_GIT_SYNC="false"
+elif [ "${HOOK_OVERRIDE:-}" = "all-off" ]; then
+    HOOK_BUILD_INTERCEPT="false"
+    HOOK_GIT_SYNC="false"
+fi
+
+# C++ lint is orthogonal to access scope — driven by launch.sh hook cascade
+HOOK_CPP_LINT="${HOOK_CPP_LINT:-false}"
 case "${HOOK_CPP_LINT}" in
   true|false) ;;
   *) echo "ERROR: HOOK_CPP_LINT must be 'true' or 'false', got '${HOOK_CPP_LINT}'" >&2; exit 1 ;;
 esac
 
-# Build the Bash matcher hooks array: inject-agent-header is always present;
-# build intercept hooks are prepended when enabled.
-BASH_HOOKS=$(jq -n '[{"type":"command","command":"bash /claude-hooks/inject-agent-header.sh"}]')
+echo "Access scope: ${ACCESS_SCOPE} (buildIntercept=${HOOK_BUILD_INTERCEPT}, gitSync=${HOOK_GIT_SYNC}, readonly=${WORKSPACE_READONLY})"
+
+# Build the PreToolUse Bash matcher hooks array: inject-agent-header is always
+# present; other hooks are prepended/appended when enabled.
+PRE_BASH=$(jq -n '[{"type":"command","command":"bash /claude-hooks/inject-agent-header.sh"}]')
 if [ "${HOOK_BUILD_INTERCEPT}" = "true" ]; then
-    BASH_HOOKS=$(jq -n --argjson base "$BASH_HOOKS" \
+    PRE_BASH=$(jq -n --argjson base "$PRE_BASH" \
         '[{"type":"command","command":"bash /claude-hooks/intercept_build_test.sh"},{"type":"command","command":"bash /claude-hooks/block-push-passthrough.sh"}] + $base')
+fi
+# Branch guard for any writable agent (write-access or higher)
+if [ "${WORKSPACE_READONLY}" = "false" ]; then
+    PRE_BASH=$(jq -n --argjson base "$PRE_BASH" \
+        '[{"type":"command","command":"bash /claude-hooks/guard-branch.sh"}] + $base')
 fi
 
 # Start the PreToolUse matchers array with Bash
-MATCHERS=$(jq -n --argjson hooks "$BASH_HOOKS" '[{"matcher":"Bash","hooks":$hooks}]')
+PRE_MATCHERS=$(jq -n --argjson hooks "$PRE_BASH" '[{"matcher":"Bash","hooks":$hooks}]')
 
 # Append Edit and Write matchers for C++ linting when enabled
 if [ "${HOOK_CPP_LINT}" = "true" ]; then
-    MATCHERS=$(jq -n --argjson m "$MATCHERS" \
+    PRE_MATCHERS=$(jq -n --argjson m "$PRE_MATCHERS" \
         '$m + [{"matcher":"Edit","hooks":[{"type":"command","command":"python3 /claude-hooks/lint-cpp-diff.py"}]},{"matcher":"Write","hooks":[{"type":"command","command":"python3 /claude-hooks/lint-cpp-diff.py"}]}]')
 fi
 
+# Build PostToolUse matchers: auto-push after commit for writable workspaces
+POST_MATCHERS="[]"
+if [ "${HOOK_GIT_SYNC}" = "true" ]; then
+    POST_MATCHERS=$(jq -n '[{"matcher":"Bash","hooks":[{"type":"command","command":"bash /claude-hooks/push-after-commit.sh"}]}]')
+fi
+
 # Write the final settings file
-jq -n --argjson matchers "$MATCHERS" '{"hooks":{"PreToolUse":$matchers}}' \
+jq -n --argjson pre "$PRE_MATCHERS" --argjson post "$POST_MATCHERS" \
+    'if ($post | length) > 0 then {"hooks":{"PreToolUse":$pre,"PostToolUse":$post}} else {"hooks":{"PreToolUse":$pre}} end' \
     > /home/claude/.claude/settings.json
 
-echo "Hook settings: buildIntercept=${HOOK_BUILD_INTERCEPT}, cppLint=${HOOK_CPP_LINT}"
+echo "Hook settings: buildIntercept=${HOOK_BUILD_INTERCEPT}, cppLint=${HOOK_CPP_LINT}, gitSync=${HOOK_GIT_SYNC}"
 
 # MCP config is written after agent registration (needs SESSION_TOKEN)
 

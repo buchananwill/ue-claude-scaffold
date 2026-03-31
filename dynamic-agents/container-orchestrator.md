@@ -6,6 +6,7 @@ color: cyan
 tools: [Agent, Read, Glob, Grep, Bash]
 skills:
   - action-boundary
+  - commit-discipline
   - orchestrator-phase-protocol
   - orchestrator-system-wiring
   - debrief-protocol

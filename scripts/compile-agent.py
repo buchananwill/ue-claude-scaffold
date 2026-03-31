@@ -24,6 +24,7 @@ local sessions, then discarded.
 """
 
 import argparse
+import json
 import re
 import shutil
 import sys
@@ -35,6 +36,15 @@ DEFAULT_DYNAMIC_DIR = REPO_ROOT / "dynamic-agents"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / ".compiled-agents"
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?\n)---\s*\n", re.DOTALL)
+ACCESS_SCOPE_RE = re.compile(r"^\*{3}ACCESS SCOPE:\s*(.+?)\*{3}\s*$", re.MULTILINE)
+
+# Privilege ordering for access scopes.  When multiple skills declare scopes,
+# the highest rank wins.  Unknown scopes default to rank 1 (write-access).
+SCOPE_RANK: dict[str, int] = {
+    "read-only": 0,
+    "write-access": 1,
+    "ubt-build-hook-interceptor": 2,
+}
 
 
 def parse_frontmatter(text: str) -> tuple[dict, str]:
@@ -102,8 +112,13 @@ def serialize_frontmatter(meta: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def resolve_skill(name: str, skills_dir: Path) -> str:
-    """Load a skill's content (body only, no frontmatter) by name."""
+def resolve_skill(name: str, skills_dir: Path) -> tuple[str, str | None]:
+    """Load a skill's content (body only, no frontmatter) by name.
+
+    Returns (body, access_scope) where access_scope is the value from an
+    ``***ACCESS SCOPE: {value}***`` marker line, or None if absent.
+    The marker line is stripped from the returned body.
+    """
     skill_path = skills_dir / name / "SKILL.md"
     if not skill_path.exists():
         print(f"ERROR: Skill '{name}' not found at {skill_path}", file=sys.stderr)
@@ -111,7 +126,14 @@ def resolve_skill(name: str, skills_dir: Path) -> str:
 
     text = skill_path.read_text(encoding="utf-8")
     _, body = parse_frontmatter(text)
-    return body.strip()
+
+    scope: str | None = None
+    m = ACCESS_SCOPE_RE.search(body)
+    if m:
+        scope = m.group(1).strip()
+        body = body[: m.start()] + body[m.end() :]
+
+    return body.strip(), scope
 
 
 def compile_agent(
@@ -138,8 +160,12 @@ def compile_agent(
         sections.append("\n---\n")
         sections.append("<!-- Injected skills (compiled from dynamic-agents) -->\n")
 
+    highest_scope = "read-only"
     for skill_name in skills:
-        skill_content = resolve_skill(skill_name, skills_dir)
+        skill_content, scope = resolve_skill(skill_name, skills_dir)
+        if scope is not None:
+            if SCOPE_RANK.get(scope, 1) > SCOPE_RANK.get(highest_scope, 0):
+                highest_scope = scope
         sections.append(skill_content)
         sections.append("")  # blank line between skills
 
@@ -149,6 +175,14 @@ def compile_agent(
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / source.name
     out_path.write_text(compiled_frontmatter + "\n" + compiled_body, encoding="utf-8")
+
+    # Write sidecar metadata (consumed by container entrypoint, not by Claude Code)
+    meta_path = output_dir / (source.stem + ".meta.json")
+    meta_path.write_text(
+        json.dumps({"access-scope": highest_scope}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
     return out_path, compiled_body
 
 
