@@ -39,5 +39,6 @@ export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[],
     })(),
     progressLog: row.progress_log,
     createdAt: row.created_at,
+    projectId: row.project_id,
   };
 }

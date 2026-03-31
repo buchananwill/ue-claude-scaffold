@@ -15,6 +15,7 @@ export interface AgentRow {
   mode: string;
   registered_at: string;
   container_host: string | null;
+  project_id: string;
 }
 
 export function formatAgent(row: AgentRow) {
@@ -26,6 +27,7 @@ export function formatAgent(row: AgentRow) {
     mode: row.mode,
     registeredAt: row.registered_at,
     containerHost: row.container_host,
+    projectId: row.project_id,
   };
 }
 

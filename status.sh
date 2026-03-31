@@ -13,6 +13,7 @@ Show the status of running agents and recent messages from the coordination serv
 Options:
   --follow [SECONDS]  Continuously refresh (default interval: 5s)
   --since ID          Only show messages with id > ID (default: 0)
+  --project ID        Scope output to a specific project
   --help              Show this help message and exit
 
 Examples:
@@ -20,6 +21,7 @@ Examples:
   ./status.sh --follow
   ./status.sh --follow 10
   ./status.sh --since 42
+  ./status.sh --project my-project
 USAGE
 }
 
@@ -27,6 +29,7 @@ USAGE
 FOLLOW=false
 INTERVAL=5
 CURSOR=0
+PROJECT_ID=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,6 +42,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     --since)
       CURSOR="$2"; shift 2 ;;
+    --project)
+      PROJECT_ID="$2"; shift 2 ;;
     --help)
       usage; exit 0 ;;
     *)
@@ -47,6 +52,13 @@ while [[ $# -gt 0 ]]; do
       exit 1 ;;
   esac
 done
+
+# ── Validate PROJECT_ID ─────────────────────────────────────────────────────
+if [[ -n "$PROJECT_ID" && ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "Error: PROJECT_ID contains invalid characters: $PROJECT_ID" >&2
+  echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
+  exit 1
+fi
 
 # ── Read port from scaffold.config.json ──────────────────────────────────────
 _cfg_port=9100
@@ -96,8 +108,12 @@ status_color() {
 # ── Print status ─────────────────────────────────────────────────────────────
 print_status() {
   # Fetch agents
+  local agents_url="$BASE_URL/agents"
+  if [[ -n "$PROJECT_ID" ]]; then
+    agents_url="$BASE_URL/agents?project=$PROJECT_ID"
+  fi
   local agents_json
-  if ! agents_json=$(curl -sf "$BASE_URL/agents" 2>/dev/null); then
+  if ! agents_json=$(curl -sf "$agents_url" 2>/dev/null); then
     echo -e "${C_RED}Server unreachable at $BASE_URL${C_RESET}"
     echo "Start the coordination server: cd server && npm run dev"
     return
@@ -110,13 +126,21 @@ print_status() {
 
   if [[ "$agent_count" -eq 0 ]]; then
     echo "  No agents registered."
-  else
+  elif [[ -n "$PROJECT_ID" ]]; then
     printf "  %-15s %-25s %-10s %s\n" "NAME" "WORKTREE" "STATUS" "REGISTERED"
     printf "  %-15s %-25s %-10s %s\n" "----" "--------" "------" "----------"
-    echo "$agents_json" | jq -r '.[] | "\(.name)\t\(.worktree // "-")\t\(.status // "idle")\t\(.registered_at // "-")"' | while IFS=$'\t' read -r name branch status registered; do
+    echo "$agents_json" | jq -r '.[] | "\(.name)\t\(.worktree // "-")\t\(.status // "idle")\t\(.registeredAt // "-")"' | while IFS=$'\t' read -r name branch status registered; do
       local colored_status
       colored_status=$(status_color "$status")
       printf "  %-15s %-25s %-10b %s\n" "$name" "$branch" "$colored_status" "$registered"
+    done
+  else
+    printf "  %-15s %-20s %-25s %-10s %s\n" "NAME" "PROJECT" "WORKTREE" "STATUS" "REGISTERED"
+    printf "  %-15s %-20s %-25s %-10s %s\n" "----" "-------" "--------" "------" "----------"
+    echo "$agents_json" | jq -r '.[] | "\(.name)\t\(.projectId // "-")\t\(.worktree // "-")\t\(.status // "idle")\t\(.registeredAt // "-")"' | while IFS=$'\t' read -r name project branch status registered; do
+      local colored_status
+      colored_status=$(status_color "$status")
+      printf "  %-15s %-20s %-25s %-10b %s\n" "$name" "$project" "$branch" "$colored_status" "$registered"
     done
   fi
 
@@ -126,16 +150,20 @@ print_status() {
   echo ""
   echo -e "${C_DIM}--- Tasks --------------------------------------------------${C_RESET}"
 
+  local tasks_url="$BASE_URL/tasks?limit=20"
+  if [[ -n "$PROJECT_ID" ]]; then
+    tasks_url="$BASE_URL/tasks?project=$PROJECT_ID&limit=20"
+  fi
   local tasks_json
-  if tasks_json=$(curl -sf "$BASE_URL/tasks?limit=20" --max-time 5 2>/dev/null); then
+  if tasks_json=$(curl -sf "$tasks_url" --max-time 5 2>/dev/null); then
     local task_count
-    task_count=$(echo "$tasks_json" | jq 'length')
+    task_count=$(echo "$tasks_json" | jq '.tasks | length')
 
     if [[ "$task_count" -eq 0 ]]; then
       echo "  No tasks."
-    else
+    elif [[ -n "$PROJECT_ID" ]]; then
       printf "  ${C_DIM}%-4s  %-4s  %-12s  %-12s  %s${C_RESET}\n" "ID" "PRI" "STATUS" "CLAIMED BY" "TITLE"
-      echo "$tasks_json" | jq -r '.[] | [.id, .priority, .status, (.claimedBy // "-"), .title] | @tsv' | \
+      echo "$tasks_json" | jq -r '.tasks[] | [.id, .priority, .status, (.claimedBy // "-"), .title] | @tsv' | \
       while IFS=$'\t' read -r id pri status claimed title; do
         local color=""
         case "$status" in
@@ -146,6 +174,20 @@ print_status() {
           *)           color="" ;;
         esac
         printf "  %-4s  %-4s  ${color}%-12s${C_RESET}  %-12s  %s\n" "$id" "$pri" "$status" "$claimed" "$title"
+      done
+    else
+      printf "  ${C_DIM}%-4s  %-4s  %-12s  %-15s  %-12s  %s${C_RESET}\n" "ID" "PRI" "STATUS" "PROJECT" "CLAIMED BY" "TITLE"
+      echo "$tasks_json" | jq -r '.tasks[] | [.id, .priority, .status, (.projectId // "-"), (.claimedBy // "-"), .title] | @tsv' | \
+      while IFS=$'\t' read -r id pri status project claimed title; do
+        local color=""
+        case "$status" in
+          pending)     color="$C_DIM" ;;
+          claimed|in_progress) color="$C_YELLOW" ;;
+          completed)   color="$C_GREEN" ;;
+          failed)      color="$C_RED" ;;
+          *)           color="" ;;
+        esac
+        printf "  %-4s  %-4s  ${color}%-12s${C_RESET}  %-15s  %-12s  %s\n" "$id" "$pri" "$status" "$project" "$claimed" "$title"
       done
     fi
   else

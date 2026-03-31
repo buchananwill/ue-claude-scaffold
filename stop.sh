@@ -13,6 +13,7 @@ Stop running Claude Code agent containers.
 Options:
   --agent NAME        Stop a specific agent (project name = claude-NAME)
   --team TEAM_ID      Stop all members of a design team and dissolve it
+  --project ID        Scope operation to a specific project
   --drain             Graceful shutdown — pause pumps, wait for in-flight
                       tasks, stop containers
   --timeout SECONDS   Max wait time for drain mode (default: 600)
@@ -30,7 +31,9 @@ Examples:
   ./stop.sh                          # Stop all agents
   ./stop.sh --agent agent-1          # Stop just agent-1
   ./stop.sh --team design-team-1     # Stop a design team
+  ./stop.sh --project my-project     # Stop agents in a project
   ./stop.sh --drain                  # Graceful drain then stop
+  ./stop.sh --drain --project myproj # Drain only a specific project
   ./stop.sh --drain --timeout 300    # Drain with 5-minute timeout
 USAGE
 }
@@ -39,6 +42,7 @@ USAGE
 MODE="default"
 AGENT_NAME=""
 TEAM_ID=""
+PROJECT_ID=""
 TIMEOUT=600
 
 while [[ $# -gt 0 ]]; do
@@ -49,6 +53,8 @@ while [[ $# -gt 0 ]]; do
     --team)
       MODE="team"
       TEAM_ID="$2"; shift 2 ;;
+    --project)
+      PROJECT_ID="$2"; shift 2 ;;
     --drain)
       MODE="drain"; shift ;;
     --timeout)
@@ -61,6 +67,13 @@ while [[ $# -gt 0 ]]; do
       exit 1 ;;
   esac
 done
+
+# ── Validate PROJECT_ID ─────────────────────────────────────────────────────
+if [[ -n "$PROJECT_ID" && ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "Error: PROJECT_ID contains invalid characters: $PROJECT_ID" >&2
+  echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
+  exit 1
+fi
 
 # ── Read port from scaffold.config.json ──────────────────────────────────────
 _cfg_port=9100
@@ -107,6 +120,30 @@ stop_all() {
   if [[ -z "$projects" ]]; then
     echo "No running claude-* containers found."
     return
+  fi
+
+  # When --project is set, filter to only agents registered under that project
+  if [[ -n "$PROJECT_ID" ]]; then
+    local project_agents
+    project_agents=$(curl -sf "$BASE_URL/agents?project=$PROJECT_ID" --max-time 5 2>/dev/null | \
+      jq -r '.[].name' 2>/dev/null) || {
+      echo "Error: Could not fetch agents for project $PROJECT_ID from $BASE_URL" >&2
+      return 1
+    }
+
+    local filtered=""
+    for project in $projects; do
+      local name="${project#claude-}"
+      if echo "$project_agents" | grep -qx "$name"; then
+        filtered="$filtered $project"
+      fi
+    done
+    projects="${filtered# }"
+
+    if [[ -z "$projects" ]]; then
+      echo "No running containers found for project $PROJECT_ID."
+      return
+    fi
   fi
 
   # Signal all agents via server BEFORE killing containers, so the
@@ -189,7 +226,11 @@ if [[ "$MODE" == "drain" ]]; then
 
   # 1. Pause pump agents
   echo "Pausing pump agents..."
-  pause_response=$(curl -sf -X POST "$BASE_URL/coalesce/pause" 2>/dev/null) || {
+  project_header=()
+  if [[ -n "$PROJECT_ID" ]]; then
+    project_header=(-H "X-Project-Id: $PROJECT_ID")
+  fi
+  pause_response=$(curl -sf -X POST "${project_header[@]}" "$BASE_URL/coalesce/pause" 2>/dev/null) || {
     echo "Error: Could not reach coordination server at $BASE_URL" >&2
     exit 1
   }
@@ -205,7 +246,7 @@ if [[ "$MODE" == "drain" ]]; then
   poll_interval=5
 
   while [[ $elapsed -lt $TIMEOUT ]]; do
-    status_response=$(curl -sf "$BASE_URL/coalesce/status" 2>/dev/null) || {
+    status_response=$(curl -sf "${project_header[@]}" "$BASE_URL/coalesce/status" 2>/dev/null) || {
       echo "Warning: Could not reach server, retrying..." >&2
       sleep "$poll_interval"
       elapsed=$((elapsed + poll_interval))
