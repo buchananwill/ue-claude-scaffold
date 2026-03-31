@@ -9,6 +9,7 @@ SERVER_URL="${SERVER_URL:-http://host.docker.internal:9100}"
 WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
 AGENT_MODE="${AGENT_MODE:-single}"
+PROJECT_ID="${PROJECT_ID:-default}"
 LOG_VERBOSITY="${LOG_VERBOSITY:-normal}"
 CLAUDE_OUTPUT_LOG="/tmp/claude-output.log"
 HOST_LOG_DIR="/logs"
@@ -100,10 +101,15 @@ fi
 
 # ── Register with coordination server ────────────────────────────────────────
 
+# PROJECT_ID flows to the server via the X-Project-Id header here;
+# the /agents/register route reads project_id from this header (not the JSON body).
+_curl_server() {
+    curl "$@" -H "X-Agent-Name: ${AGENT_NAME}" -H "X-Project-Id: ${PROJECT_ID}"
+}
+
 _post_status() {
-    curl -s -X POST "${SERVER_URL}/agents/${AGENT_NAME}/status" \
+    _curl_server -s -X POST "${SERVER_URL}/agents/${AGENT_NAME}/status" \
         -H "Content-Type: application/json" \
-        -H "X-Agent-Name: ${AGENT_NAME}" \
         -d "{\"status\": \"$1\"}" \
         --max-time 5 >/dev/null 2>&1 || true
 }
@@ -160,9 +166,8 @@ _post_abnormal_shutdown_message() {
     }
 }
 JSONEOF
-    curl -s -X POST "${SERVER_URL}/messages" \
+    _curl_server -s -X POST "${SERVER_URL}/messages" \
         -H "Content-Type: application/json" \
-        -H "X-Agent-Name: ${AGENT_NAME}" \
         -d @"$tmpfile" \
         --max-time 10 >/dev/null 2>&1 || true
     rm -f "$tmpfile"
@@ -191,11 +196,11 @@ _shutdown() {
     # Release any claimed task back to pending
     if [ -n "${CURRENT_TASK_ID:-}" ]; then
         echo "Releasing task #${CURRENT_TASK_ID}..."
-        curl -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/release" \
+        _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/release" \
             --max-time 5 >/dev/null 2>&1 || true
     fi
     # Deregister the agent
-    curl -s -X DELETE "${SERVER_URL}/agents/${AGENT_NAME}" \
+    _curl_server -s -X DELETE "${SERVER_URL}/agents/${AGENT_NAME}" \
         --max-time 5 >/dev/null 2>&1 || true
 }
 trap _shutdown EXIT
@@ -205,7 +210,7 @@ _watch_for_stop() {
     while kill -0 "$target_pid" 2>/dev/null; do
         sleep 15
         local st
-        st=$(curl -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
+        st=$(_curl_server -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
             --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || st="unknown"
         if [ "$st" = "stopping" ]; then
             echo "Stop signal received — terminating Claude (pid $target_pid)"
@@ -217,9 +222,8 @@ _watch_for_stop() {
 }
 
 CONTAINER_IP=$(hostname -i 2>/dev/null | awk '{print $1}') || CONTAINER_IP=""
-REG_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${SERVER_URL}/agents/register" \
+REG_RESPONSE=$(_curl_server -s -w "\n%{http_code}" -X POST "${SERVER_URL}/agents/register" \
     -H "Content-Type: application/json" \
-    -H "X-Agent-Name: ${AGENT_NAME}" \
     -d "{\"name\": \"${AGENT_NAME}\", \"worktree\": \"${WORK_BRANCH}\", \"mode\": \"${AGENT_MODE}\", \"containerHost\": \"${CONTAINER_IP}\"}" \
     --max-time 10 2>/dev/null) || REG_RESPONSE=$'\n000'
 REG_STATUS="${REG_RESPONSE##*$'\n'}"
@@ -265,7 +269,7 @@ poll_and_claim_task() {
         # between the operator's DELETE and this check firing. The _watch_for_stop
         # watchdog (15s interval) only covers the period while Claude is actively running.
         local agent_st
-        agent_st=$(curl -sf "${SERVER_URL}/agents/${AGENT_NAME}" --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || agent_st="unknown"
+        agent_st=$(_curl_server -sf "${SERVER_URL}/agents/${AGENT_NAME}" --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || agent_st="unknown"
         if [ "$agent_st" = "stopping" ]; then
             echo "Stop signal received during task poll — shutting down."
             exit 0
@@ -273,10 +277,9 @@ poll_and_claim_task() {
 
         # Use claim-next endpoint — server picks the best task atomically
         local response
-        response=$(curl -s -w "\n%{http_code}" \
+        response=$(_curl_server -s -w "\n%{http_code}" \
             -X POST "${SERVER_URL}/tasks/claim-next" \
             -H "Content-Type: application/json" \
-            -H "X-Agent-Name: ${AGENT_NAME}" \
             -d '{}' \
             --max-time 10) || response=$'\n000'
         local http_status="${response##*$'\n'}"
@@ -487,8 +490,7 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
         # Release the task back to pending (not complete, not failed)
         if [ -n "$CURRENT_TASK_ID" ]; then
             echo "Releasing task #${CURRENT_TASK_ID} back to pending..."
-            curl -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/release" \
-                -H "X-Agent-Name: ${AGENT_NAME}" \
+            _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/release" \
                 --max-time 10 >/dev/null 2>&1 || true
             CURRENT_TASK_ID=""  # Prevent _shutdown from double-releasing
         fi
@@ -510,15 +512,13 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
     # Report task completion
     if [ -n "$CURRENT_TASK_ID" ]; then
         if [ $EXIT_CODE -eq 0 ]; then
-            curl -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/complete" \
+            _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/complete" \
                 -H "Content-Type: application/json" \
-                -H "X-Agent-Name: ${AGENT_NAME}" \
                 -d "{\"result\": {\"agent\": \"${AGENT_NAME}\", \"exitCode\": 0}}" \
                 --max-time 10 >/dev/null 2>&1 || true
         else
-            curl -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/fail" \
+            _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/fail" \
                 -H "Content-Type: application/json" \
-                -H "X-Agent-Name: ${AGENT_NAME}" \
                 -d "{\"error\": \"Claude exited with code ${EXIT_CODE}\"}" \
                 --max-time 10 >/dev/null 2>&1 || true
         fi
@@ -688,7 +688,7 @@ if [ "$WORKER_SINGLE_TASK" = "false" ]; then
         CURRENT_TASK_FILES=""
 
         # Check if agent has been paused
-        AGENT_STATUS=$(curl -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
+        AGENT_STATUS=$(_curl_server -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
             --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || AGENT_STATUS="unknown"
         if [ "$AGENT_STATUS" = "stopping" ]; then
             echo "Agent deregistered — shutting down."
@@ -699,7 +699,7 @@ if [ "$WORKER_SINGLE_TASK" = "false" ]; then
             echo "Agent is paused. Waiting for resume..."
             while true; do
                 sleep "$WORKER_POLL_INTERVAL"
-                AGENT_STATUS=$(curl -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
+                AGENT_STATUS=$(_curl_server -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
                     --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || AGENT_STATUS="unknown"
                 if [ "$AGENT_STATUS" = "stopping" ]; then
                     echo "Agent deregistered — shutting down."

@@ -17,6 +17,7 @@ set -euo pipefail
 SERVER_URL="${SERVER_URL:-http://host.docker.internal:9100}"
 WORK_BRANCH="${WORK_BRANCH:-main}"
 AGENT_NAME="${AGENT_NAME:-agent-1}"
+PROJECT_ID="${PROJECT_ID:-default}"
 
 # Build/test script names — configurable via env vars
 BUILD_SCRIPT_NAME="${BUILD_SCRIPT_NAME:-build.py}"
@@ -32,6 +33,8 @@ cleanup() {
         jq -n --arg agent "$AGENT_NAME" '{"agent": $agent}' > "$tmp"
         curl -s -X POST "${SERVER_URL}/ubt/release" \
             -H "Content-Type: application/json" \
+            -H "X-Agent-Name: ${AGENT_NAME}" \
+            -H "X-Project-Id: ${PROJECT_ID}" \
             -d "@$tmp" \
             --max-time 5 >/dev/null 2>&1 || true
         rm -f "$tmp"
@@ -49,6 +52,7 @@ post_message() {
     curl -s -X POST "${SERVER_URL}/messages" \
         -H "Content-Type: application/json" \
         -H "X-Agent-Name: ${AGENT_NAME}" \
+        -H "X-Project-Id: ${PROJECT_ID}" \
         -d "@$tmp" \
         --max-time 5 >/dev/null 2>&1 || true
     rm -f "$tmp"
@@ -109,6 +113,8 @@ while true; do
     jq -n --arg agent "$AGENT_NAME" '{"agent": $agent}' > "$ACQ_TMP"
     ACQ_RESPONSE=$(curl -s -X POST "${SERVER_URL}/ubt/acquire" \
         -H "Content-Type: application/json" \
+        -H "X-Agent-Name: ${AGENT_NAME}" \
+        -H "X-Project-Id: ${PROJECT_ID}" \
         -d "@$ACQ_TMP" \
         --max-time 10) || ACQ_RESPONSE=""
     rm -f "$ACQ_TMP"
@@ -169,6 +175,7 @@ fi
 RESPONSE=$(curl -s -X POST "${SERVER_URL}/${OPERATION}" \
     -H "Content-Type: application/json" \
     -H "X-Agent-Name: ${AGENT_NAME}" \
+    -H "X-Project-Id: ${PROJECT_ID}" \
     -d "$REQUEST_BODY" \
     --max-time $CURL_TIMEOUT)
 
@@ -178,6 +185,8 @@ REL_TMP=$(mktemp)
 jq -n --arg agent "$AGENT_NAME" '{"agent": $agent}' > "$REL_TMP"
 curl -s -X POST "${SERVER_URL}/ubt/release" \
     -H "Content-Type: application/json" \
+    -H "X-Agent-Name: ${AGENT_NAME}" \
+    -H "X-Project-Id: ${PROJECT_ID}" \
     -d "@$REL_TMP" \
     --max-time 5 >/dev/null 2>&1 || true
 rm -f "$REL_TMP"

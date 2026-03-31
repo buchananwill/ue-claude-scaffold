@@ -10,6 +10,7 @@ set -euo pipefail
 
 SERVER_URL="${SERVER_URL:-http://host.docker.internal:9100}"
 AGENT_NAME="${AGENT_NAME:-agent-1}"
+PROJECT_ID="${PROJECT_ID:-default}"
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
@@ -29,14 +30,14 @@ if ! echo "$COMMAND" | grep -qE '(/messages|/rooms/)'; then
     exit 0
 fi
 
-# If the header is already present, pass through
-if echo "$COMMAND" | grep -qF 'X-Agent-Name'; then
+# If both identity headers are already present, pass through
+if echo "$COMMAND" | grep -qF 'X-Agent-Name' && echo "$COMMAND" | grep -qF 'X-Project-Id'; then
     exit 0
 fi
 
 # Re-execute the curl command with identity headers injected.
 # Insert the headers right after 'curl'.
-AUTH_HEADERS="-H \"X-Agent-Name: ${AGENT_NAME}\""
+AUTH_HEADERS="-H \"X-Agent-Name: ${AGENT_NAME}\" -H \"X-Project-Id: ${PROJECT_ID}\""
 if [ -n "${SESSION_TOKEN:-}" ]; then
     AUTH_HEADERS="${AUTH_HEADERS} -H \"Authorization: Bearer ${SESSION_TOKEN}\""
 fi
