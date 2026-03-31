@@ -1,8 +1,15 @@
 {
   "id": "design-team-1",
   "name": "Inventory System Design Team",
+  "hooks": { "buildIntercept": false, "cppLint": false },
   "members": [
-    { "agentName": "leader-1", "role": "discussion-leader", "agentType": "design-leader", "isLeader": true },
+    {
+      "agentName": "leader-1",
+      "role": "discussion-leader",
+      "agentType": "design-leader",
+      "isLeader": true,
+      "hooks": { "buildIntercept": true, "cppLint": true }
+    },
     { "agentName": "architect-1", "role": "architect", "agentType": "design-architect", "isLeader": false },
     { "agentName": "critic-1", "role": "critic", "agentType": "design-critic", "isLeader": false },
     { "agentName": "domain-1", "role": "domain", "agentType": "design-domain", "isLeader": false }
