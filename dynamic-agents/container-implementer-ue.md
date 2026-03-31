@@ -10,6 +10,7 @@ skills:
   - container-build-routing
   - container-git-environment
   - implementation-loop
+  - ue-cpp-style
   - ue-correctness
   - ue-safety
   - lint-hook-awareness

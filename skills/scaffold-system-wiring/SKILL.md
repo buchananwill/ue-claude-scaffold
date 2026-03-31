@@ -1,12 +1,12 @@
 ---
 name: scaffold-system-wiring
-description: Agent resolution table, build verification commands, and file targets for the scaffold development orchestrator. Non-container interactive execution.
+description: Agent resolution table, build verification commands, and file targets for the scaffold development orchestrator running inside a Docker container against the ue-claude-scaffold project.
 axis: environment
 ---
 
 # Scaffold System Wiring
 
-Environment configuration for the scaffold orchestrator running in an interactive Claude Code session.
+Environment configuration for the scaffold orchestrator running inside a Docker container against the ue-claude-scaffold project.
 
 ## Agent Resolution
 
