@@ -20,7 +20,7 @@ let avgBuildDuration: Database.Statement;
 
 function initBuildHistoryStatements(): void {
   insertBuildHistory = db.prepare(
-    'INSERT INTO build_history (agent, type) VALUES (@agent, @type)'
+    'INSERT INTO build_history (agent, type, project_id) VALUES (@agent, @type, @projectId)'
   );
   updateBuildHistory = db.prepare(
     'UPDATE build_history SET duration_ms = @durationMs, success = @success, output = @output, stderr = @stderr WHERE id = @id'
@@ -51,8 +51,8 @@ export function initUbtStatements(): void {
   initLastBuildStatement();
 }
 
-export function recordBuildStart(agent: string, type: 'build' | 'test'): number {
-  return Number(insertBuildHistory.run({ agent, type }).lastInsertRowid);
+export function recordBuildStart(agent: string, type: 'build' | 'test', projectId: string = 'default'): number {
+  return Number(insertBuildHistory.run({ agent, type, projectId }).lastInsertRowid);
 }
 
 export function recordBuildEnd(id: number, durationMs: number, success: boolean, output: string, stderr: string): void {
@@ -120,9 +120,11 @@ export function sweepStaleLock(): void {
     acquired_at: string | null;
   } | undefined;
 
-  if (lock && isStale(lock.acquired_at)) {
+  if (!lock) return;
+
+  if (isStale(lock.acquired_at)) {
     clearLockAndPromote();
-  } else if (lock && lock.holder != null && !isAgentRegistered.get({ holder: lock.holder })) {
+  } else if (lock.holder != null && !isAgentRegistered.get({ holder: lock.holder })) {
     clearLockAndPromote();
   }
 }
@@ -139,7 +141,7 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
   );
   const queuePosition = db.prepare(
     `SELECT COUNT(*) as pos FROM ubt_queue WHERE
-       priority > @priority OR (priority = @priority AND id <= @id)`
+       (priority > @priority OR (priority = @priority AND id <= @id))`
   );
   const findInQueue = db.prepare(
     'SELECT id, priority FROM ubt_queue WHERE agent = @agent'

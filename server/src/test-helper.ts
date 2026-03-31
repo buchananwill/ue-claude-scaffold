@@ -43,6 +43,26 @@ export function createTestConfig(overrides?: Partial<ScaffoldConfig>): ScaffoldC
     },
     ...overrides,
   };
+
+  // Ensure resolvedProjects['default'] reflects any top-level overrides
+  // so that getProject(config, 'default') returns consistent values.
+  if (!overrides?.resolvedProjects && base.resolvedProjects['default']) {
+    const rp = base.resolvedProjects['default'];
+    if (overrides?.server?.bareRepoPath) rp.bareRepoPath = overrides.server.bareRepoPath;
+    if (overrides?.server?.stagingWorktreeRoot) rp.stagingWorktreeRoot = overrides.server.stagingWorktreeRoot;
+    if (overrides?.project?.path) rp.path = overrides.project.path;
+    if (overrides?.project?.name) rp.name = overrides.project.name;
+    if (overrides?.tasks?.planBranch) rp.planBranch = overrides.tasks.planBranch;
+    if (overrides?.build?.scriptPath) {
+      rp.build = rp.build ?? {};
+      rp.build.scriptPath = overrides.build.scriptPath;
+    }
+    if (overrides?.build?.testScriptPath) {
+      rp.build = rp.build ?? {};
+      rp.build.testScriptPath = overrides.build.testScriptPath;
+    }
+  }
+
   return base;
 }
 

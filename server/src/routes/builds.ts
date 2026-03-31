@@ -27,9 +27,9 @@ export function formatBuildRecord(row: BuildRow) {
 
 const buildsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
-    Querystring: { agent?: string; type?: string; limit?: string; since?: string };
+    Querystring: { agent?: string; type?: string; limit?: string; since?: string; project?: string };
   }>('/builds', async (request) => {
-    const { agent, type, limit, since } = request.query;
+    const { agent, type, limit, since, project } = request.query;
 
     const conditions: string[] = [];
     const params: Record<string, string | number> = {};
@@ -45,6 +45,10 @@ const buildsPlugin: FastifyPluginAsync = async (fastify) => {
     if (since) {
       conditions.push('id > @since');
       params.since = Number(since);
+    }
+    if (project) {
+      conditions.push('project_id = @project');
+      params.project = project;
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

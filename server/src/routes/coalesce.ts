@@ -3,38 +3,39 @@ import { db } from '../db.js';
 import type { AgentRow } from './agents.js';
 
 const coalescePlugin: FastifyPluginAsync = async (fastify) => {
-  const countActiveTasks = db.prepare(
-    `SELECT COUNT(*) as count FROM tasks WHERE status IN ('claimed', 'in_progress')`
+  const countActiveTasksByProject = db.prepare(
+    `SELECT COUNT(*) as count FROM tasks WHERE status IN ('claimed', 'in_progress') AND project_id = ?`
   );
-  const getAllAgents = db.prepare('SELECT * FROM agents');
-  const getOwnedFilesForAgent = db.prepare('SELECT path FROM files WHERE claimant = ?');
+  const getAgentsByProject = db.prepare('SELECT * FROM agents WHERE project_id = ?');
+  const getOwnedFilesForAgentByProject = db.prepare('SELECT path FROM files WHERE claimant = ? AND project_id = ?');
   const countActiveTasksForAgent = db.prepare(
     `SELECT COUNT(*) as count FROM tasks WHERE status IN ('claimed', 'in_progress') AND claimed_by = ?`
   );
-  const countPendingTasks = db.prepare(`SELECT COUNT(*) as count FROM tasks WHERE status = 'pending'`);
-  const countClaimedFiles = db.prepare(`SELECT COUNT(*) as count FROM files WHERE claimant IS NOT NULL`);
-  const pausePumpAgents = db.prepare(
-    `UPDATE agents SET status = 'paused' WHERE mode = 'pump' AND status NOT IN ('done', 'paused')`
+  const countPendingTasksByProject = db.prepare(`SELECT COUNT(*) as count FROM tasks WHERE status = 'pending' AND project_id = ?`);
+  const countClaimedFilesByProject = db.prepare(`SELECT COUNT(*) as count FROM files WHERE claimant IS NOT NULL AND project_id = ?`);
+  const pausePumpAgentsByProject = db.prepare(
+    `UPDATE agents SET status = 'paused' WHERE mode = 'pump' AND status NOT IN ('done', 'paused') AND project_id = ?`
   );
-  const getInFlightTasks = db.prepare(
-    `SELECT id, title, claimed_by FROM tasks WHERE status IN ('claimed', 'in_progress')`
+  const getInFlightTasksByProject = db.prepare(
+    `SELECT id, title, claimed_by FROM tasks WHERE status IN ('claimed', 'in_progress') AND project_id = ?`
   );
-  const releaseAllFiles = db.prepare(
-    `UPDATE files SET claimant = NULL, claimed_at = NULL WHERE claimant IS NOT NULL`
+  const releaseAllFilesByProject = db.prepare(
+    `UPDATE files SET claimant = NULL, claimed_at = NULL WHERE claimant IS NOT NULL AND project_id = ?`
   );
-  const resumePausedAgents = db.prepare(
-    `UPDATE agents SET status = 'idle' WHERE status = 'paused'`
+  const resumePausedAgentsByProject = db.prepare(
+    `UPDATE agents SET status = 'idle' WHERE status = 'paused' AND project_id = ?`
   );
-  const getPausedAgentNames = db.prepare(`SELECT name FROM agents WHERE status = 'paused'`);
+  const getPausedAgentNamesByProject = db.prepare(`SELECT name FROM agents WHERE status = 'paused' AND project_id = ?`);
 
-  fastify.get('/coalesce/status', async () => {
-    const { count: activeTaskCount } = countActiveTasks.get() as { count: number };
-    const { count: pendingCount } = countPendingTasks.get() as { count: number };
-    const { count: claimedFileCount } = countClaimedFiles.get() as { count: number };
+  fastify.get('/coalesce/status', async (request) => {
+    const projectId = (request.headers['x-project-id'] as string) || 'default';
+    const { count: activeTaskCount } = countActiveTasksByProject.get(projectId) as { count: number };
+    const { count: pendingCount } = countPendingTasksByProject.get(projectId) as { count: number };
+    const { count: claimedFileCount } = countClaimedFilesByProject.get(projectId) as { count: number };
 
-    const agentRows = getAllAgents.all() as AgentRow[];
+    const agentRows = getAgentsByProject.all(projectId) as AgentRow[];
     const agents = agentRows.map(row => {
-      const ownedFiles = (getOwnedFilesForAgent.all(row.name) as { path: string }[]).map(f => f.path);
+      const ownedFiles = (getOwnedFilesForAgentByProject.all(row.name, projectId) as { path: string }[]).map(f => f.path);
       const { count: activeTasks } = countActiveTasksForAgent.get(row.name) as { count: number };
       return {
         name: row.name,
@@ -69,11 +70,12 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     };
   });
 
-  fastify.post('/coalesce/pause', async () => {
-    pausePumpAgents.run();
+  fastify.post('/coalesce/pause', async (request) => {
+    const projectId = (request.headers['x-project-id'] as string) || 'default';
+    pausePumpAgentsByProject.run(projectId);
 
-    const pausedAgents = (getPausedAgentNames.all() as { name: string }[]).map(r => r.name);
-    const inFlightRows = getInFlightTasks.all() as { id: number; title: string; claimed_by: string }[];
+    const pausedAgents = (getPausedAgentNamesByProject.all(projectId) as { name: string }[]).map(r => r.name);
+    const inFlightRows = getInFlightTasksByProject.all(projectId) as { id: number; title: string; claimed_by: string }[];
     const inFlightTasks = inFlightRows.map(r => ({
       agent: r.claimed_by,
       taskId: r.id,
@@ -83,12 +85,13 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     return { paused: pausedAgents, inFlightTasks };
   });
 
-  fastify.post('/coalesce/release', async () => {
+  fastify.post('/coalesce/release', async (request) => {
+    const projectId = (request.headers['x-project-id'] as string) || 'default';
     const { releasedFiles, resumedAgents } = db.transaction(() => {
-      const { count: fileCount } = countClaimedFiles.get() as { count: number };
-      const agents = (getPausedAgentNames.all() as { name: string }[]).map(r => r.name);
-      releaseAllFiles.run();
-      resumePausedAgents.run();
+      const { count: fileCount } = countClaimedFilesByProject.get(projectId) as { count: number };
+      const agents = (getPausedAgentNamesByProject.all(projectId) as { name: string }[]).map(r => r.name);
+      releaseAllFilesByProject.run(projectId);
+      resumePausedAgentsByProject.run(projectId);
       return { releasedFiles: fileCount, resumedAgents: agents };
     })();
 

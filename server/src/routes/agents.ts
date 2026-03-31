@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
+import { getProject } from '../config.js';
 import { mergeIntoBranch } from '../git-utils.js';
 
 interface AgentsOpts { config: ScaffoldConfig }
@@ -31,8 +32,8 @@ export function formatAgent(row: AgentRow) {
 const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   const { config } = opts;
   const insertAgent = db.prepare(
-    `INSERT INTO agents (name, worktree, plan_doc, status, mode, registered_at, container_host, session_token)
-     VALUES (@name, @worktree, @planDoc, 'idle', @mode, CURRENT_TIMESTAMP, @containerHost, @sessionToken)
+    `INSERT INTO agents (name, worktree, plan_doc, status, mode, registered_at, container_host, session_token, project_id)
+     VALUES (@name, @worktree, @planDoc, 'idle', @mode, CURRENT_TIMESTAMP, @containerHost, @sessionToken, @projectId)
      ON CONFLICT(name) DO UPDATE SET
        worktree = excluded.worktree,
        plan_doc = excluded.plan_doc,
@@ -40,10 +41,12 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
        mode = excluded.mode,
        registered_at = CURRENT_TIMESTAMP,
        container_host = COALESCE(excluded.container_host, agents.container_host),
-       session_token = excluded.session_token`
+       session_token = excluded.session_token,
+       project_id = excluded.project_id`
   );
 
   const allAgents = db.prepare('SELECT * FROM agents');
+  const agentsByProject = db.prepare('SELECT * FROM agents WHERE project_id = ?');
 
   const updateStatus = db.prepare(
     'UPDATE agents SET status = @status WHERE name = @name'
@@ -68,8 +71,9 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     Body: { name: string; worktree: string; planDoc?: string; mode?: 'single' | 'pump'; containerHost?: string };
   }>('/agents/register', async (request) => {
     const { name, worktree, planDoc, mode, containerHost } = request.body;
+    const projectId = (request.headers['x-project-id'] as string) || 'default';
     const sessionToken = randomBytes(16).toString('hex');
-    insertAgent.run({ name, worktree, planDoc: planDoc ?? null, mode: mode ?? 'single', containerHost: containerHost ?? null, sessionToken });
+    insertAgent.run({ name, worktree, planDoc: planDoc ?? null, mode: mode ?? 'single', containerHost: containerHost ?? null, sessionToken, projectId });
 
     const roomId = `${name}-direct`;
     const existingRoom = db.prepare('SELECT 1 FROM rooms WHERE id = ?').get(roomId);
@@ -84,7 +88,13 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     return { ok: true, sessionToken };
   });
 
-  fastify.get('/agents', async () => {
+  fastify.get<{
+    Querystring: { project?: string };
+  }>('/agents', async (request) => {
+    const { project } = request.query;
+    if (project) {
+      return (agentsByProject.all(project) as AgentRow[]).map(formatAgent);
+    }
     return (allAgents.all() as AgentRow[]).map(formatAgent);
   });
 
@@ -162,21 +172,32 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   fastify.post<{ Params: { name: string } }>('/agents/:name/sync', async (request, reply) => {
     const { name } = request.params;
 
-    const agent = db.prepare('SELECT name, worktree FROM agents WHERE name = ?').get(name);
+    const agent = db.prepare('SELECT name, worktree, project_id FROM agents WHERE name = ?').get(name) as
+      { name: string; worktree: string; project_id: string } | undefined;
     if (!agent) {
       return reply.notFound(`Agent '${name}' not found`);
     }
 
-    const bareRepo = config.server.bareRepoPath;
+    let project;
+    try {
+      project = getProject(config, agent.project_id);
+    } catch {
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: `Unknown project: "${agent.project_id}"`,
+      });
+    }
+    const bareRepo = project.bareRepoPath;
     if (!bareRepo) {
       return reply.code(422).send({
         statusCode: 422,
         error: 'Unprocessable Entity',
-        message: 'sync requires server.bareRepoPath to be configured',
+        message: 'sync requires bareRepoPath to be configured',
       });
     }
 
-    const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+    const planBranch = project.planBranch ?? 'docker/current-root';
     const targetBranch = `docker/${name}`;
 
     const result = mergeIntoBranch(bareRepo, planBranch, targetBranch);

@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
+import { getProject } from '../config.js';
 import { mergeIntoBranch, isCommittedInRepo, existsInBareRepo, syncExteriorToBareRepo } from '../git-utils.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
 import { initTasksSharedStatements, type TasksOpts, type TaskBody, type PatchBody, type TasksSharedStatements } from './tasks-files.js';
@@ -42,6 +43,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
   // POST /tasks
   fastify.post<{ Body: TaskBody }>('/tasks', async (request, reply) => {
+    const projectId = (request.headers['x-project-id'] as string) || 'default';
     const unknown = unknownFields<TaskBody>(request.body, taskBodyKeys);
     if (unknown.length > 0) {
       return reply.badRequest(
@@ -80,12 +82,22 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     // Validate sourcePath exists — auto-sync from exterior repo if not found in bare repo
     if (sourcePath) {
-      const bareRepo = config.server.bareRepoPath;
+      let project;
+      try {
+        project = getProject(config, projectId);
+      } catch {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: `Unknown project: "${projectId}"`,
+        });
+      }
+      const bareRepo = project.bareRepoPath;
       if (bareRepo) {
-        const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+        const planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
         if (!existsInBareRepo(bareRepo, planBranch, sourcePath)) {
           // Auto-sync from exterior repo before rejecting
-          const exteriorRepo = config.project.path;
+          const exteriorRepo = project.path;
           if (exteriorRepo) {
             syncExteriorToBareRepo(exteriorRepo, bareRepo, planBranch, fastify.log);
           }
@@ -100,7 +112,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
           }
         }
       } else {
-        const worktree = getValidationWorktree();
+        const worktree = project.path;
         if (!isCommittedInRepo(worktree, sourcePath)) {
           return reply.unprocessableEntity(
             `sourcePath '${sourcePath}' is not committed in the project worktree (${worktree}). ` +
@@ -149,11 +161,21 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         agentNames = targetAgents as string[];
       }
 
-      const bareRepo = getBareRepoPath();
+      let mergeProject;
+      try {
+        mergeProject = getProject(config, projectId);
+      } catch {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: `Unknown project: "${projectId}"`,
+        });
+      }
+      const bareRepo = mergeProject.bareRepoPath;
       if (!bareRepo) {
         fastify.log.warn('targetAgents requested but bareRepoPath is not configured');
       } else {
-        const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+        const planBranch = mergeProject.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
 
         for (const agentName of agentNames) {
           const targetBranch = `docker/${agentName}`;
@@ -175,10 +197,11 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         sourcePath: sourcePath ?? null,
         acceptanceCriteria: acceptanceCriteria ?? null,
         priority: priority ?? 0,
+        projectId,
       });
       const taskId = Number(result.lastInsertRowid);
       if (files?.length) {
-        linkFilesToTask(taskId, files);
+        linkFilesToTask(taskId, files, projectId);
       }
       if (dependsOn?.length) {
         linkDepsToTask(taskId, dependsOn);
@@ -199,6 +222,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     Body: { tasks: TaskBody[] };
     Querystring: { replan?: string };
   }>('/tasks/batch', async (request, reply) => {
+    const projectId = (request.headers['x-project-id'] as string) || 'default';
     const { tasks } = request.body;
     if (!Array.isArray(tasks) || tasks.length === 0) {
       return reply.badRequest('tasks must be a non-empty array');
@@ -260,13 +284,23 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         }
       }
       if (t.sourcePath) {
-        const bareRepo = config.server.bareRepoPath;
+        let project;
+        try {
+          project = getProject(config, projectId);
+        } catch {
+          return reply.code(400).send({
+            statusCode: 400,
+            error: 'Bad Request',
+            message: `Unknown project: "${projectId}"`,
+          });
+        }
+        const bareRepo = project.bareRepoPath;
         if (bareRepo) {
-          const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+          const planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
           if (!existsInBareRepo(bareRepo, planBranch, t.sourcePath)) {
             // Auto-sync from exterior repo on first miss (once per batch)
             if (!batchSynced) {
-              const exteriorRepo = config.project.path;
+              const exteriorRepo = project.path;
               if (exteriorRepo) {
                 syncExteriorToBareRepo(exteriorRepo, bareRepo, planBranch, fastify.log);
               }
@@ -283,7 +317,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
             }
           }
         } else {
-          const worktree = getValidationWorktree();
+          const worktree = project.path;
           if (!isCommittedInRepo(worktree, t.sourcePath)) {
             return reply.unprocessableEntity(
               `Task ${i}: sourcePath '${t.sourcePath}' is not committed in the project worktree (${worktree}).`
@@ -314,10 +348,11 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
           sourcePath: t.sourcePath ?? null,
           acceptanceCriteria: t.acceptanceCriteria ?? null,
           priority: t.priority ?? 0,
+          projectId,
         });
         const taskId = Number(r.lastInsertRowid);
         if (t.files?.length) {
-          linkFilesToTask(taskId, t.files);
+          linkFilesToTask(taskId, t.files, projectId);
         }
         if (t.dependsOn?.length) {
           linkDepsToTask(taskId, t.dependsOn);
@@ -352,25 +387,42 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
   // GET /tasks
   fastify.get<{
-    Querystring: { status?: string; limit?: string; offset?: string };
+    Querystring: { status?: string; limit?: string; offset?: string; project?: string };
   }>('/tasks', async (request) => {
-    const { status, limit, offset } = request.query;
+    const { status, limit, offset, project } = request.query;
+    const projectId = project || ((request.headers['x-project-id'] as string) || undefined);
     const limitNum = Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 20);
     const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
 
     let sql = 'SELECT * FROM tasks';
     const params: unknown[] = [];
+    const conditions: string[] = [];
 
     if (status) {
-      sql += ' WHERE status = ?';
+      conditions.push('status = ?');
       params.push(status);
+    }
+    if (projectId) {
+      conditions.push('project_id = ?');
+      params.push(projectId);
+    }
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
     }
 
     let countSql = 'SELECT COUNT(*) as total FROM tasks';
     const countParams: unknown[] = [];
+    const countConditions: string[] = [];
     if (status) {
-      countSql += ' WHERE status = ?';
+      countConditions.push('status = ?');
       countParams.push(status);
+    }
+    if (projectId) {
+      countConditions.push('project_id = ?');
+      countParams.push(projectId);
+    }
+    if (countConditions.length > 0) {
+      countSql += ' WHERE ' + countConditions.join(' AND ');
     }
 
     sql += ' ORDER BY priority DESC, id ASC LIMIT ? OFFSET ?';
@@ -486,16 +538,26 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     if ('sourcePath' in body && typeof body.sourcePath === 'string') {
-      const bareRepo = getBareRepoPath();
+      let patchProject;
+      try {
+        patchProject = getProject(config, row.project_id);
+      } catch {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: `Unknown project: "${row.project_id}"`,
+        });
+      }
+      const bareRepo = patchProject.bareRepoPath;
       if (bareRepo) {
-        const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+        const planBranch = patchProject.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
         if (!existsInBareRepo(bareRepo, planBranch, body.sourcePath)) {
           return reply.unprocessableEntity(
             `sourcePath '${body.sourcePath}' not found on branch '${planBranch}' in bare repo`
           );
         }
       } else {
-        const worktree = getValidationWorktree();
+        const worktree = patchProject.path;
         if (!isCommittedInRepo(worktree, body.sourcePath)) {
           return reply.unprocessableEntity(
             `sourcePath '${body.sourcePath}' is not committed in the staging worktree (${worktree}). ` +
@@ -513,7 +575,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
       if (hasFiles) {
         deleteTaskFiles.run(id);
-        linkFilesToTask(id, body.files!);
+        linkFilesToTask(id, body.files!, row.project_id);
       }
       if (hasDeps) {
         deleteDepsForTask.run(id);

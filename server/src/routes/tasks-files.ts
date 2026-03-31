@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
+import { getProject } from '../config.js';
 import { existsInBareRepo, isCommittedInRepo } from '../git-utils.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
 
@@ -80,7 +81,7 @@ export interface TasksSharedStatements {
   getBareRepoPath: () => string;
   validateFilePaths: (files: string[]) => string | null;
   unknownFields: <T>(body: unknown, known: { [K in keyof T]: true }) => string[];
-  linkFilesToTask: (taskId: number, files: string[]) => void;
+  linkFilesToTask: (taskId: number, files: string[], projectId?: string) => void;
   linkDepsToTask: (taskId: number, depIds: number[]) => void;
   filesForTask: (taskId: number) => string[];
   depsForTask: (taskId: number) => number[];
@@ -92,8 +93,8 @@ export interface TasksSharedStatements {
 
 export function initTasksSharedStatements(config: ScaffoldConfig): TasksSharedStatements {
   const insertTask = db.prepare(
-    `INSERT INTO tasks (title, description, source_path, acceptance_criteria, priority, base_priority)
-     VALUES (@title, @description, @sourcePath, @acceptanceCriteria, @priority, @priority)`
+    `INSERT INTO tasks (title, description, source_path, acceptance_criteria, priority, base_priority, project_id)
+     VALUES (@title, @description, @sourcePath, @acceptanceCriteria, @priority, @priority, @projectId)`
   );
 
   const getTaskById = db.prepare('SELECT * FROM tasks WHERE id = @id');
@@ -155,7 +156,7 @@ export function initTasksSharedStatements(config: ScaffoldConfig): TasksSharedSt
     `SELECT id FROM tasks WHERE status = 'completed'`
   );
 
-  const insertFile = db.prepare('INSERT OR IGNORE INTO files (path) VALUES (?)');
+  const insertFile = db.prepare('INSERT OR IGNORE INTO files (project_id, path) VALUES (?, ?)');
   const insertTaskFile = db.prepare('INSERT INTO task_files (task_id, file_path) VALUES (?, ?)');
   const getTaskFiles = db.prepare('SELECT file_path FROM task_files WHERE task_id = ?');
   const deleteTaskFiles = db.prepare('DELETE FROM task_files WHERE task_id = ?');
@@ -180,12 +181,13 @@ export function initTasksSharedStatements(config: ScaffoldConfig): TasksSharedSt
 
   const claimFilesForAgent = db.prepare(
     `UPDATE files SET claimant = ?, claimed_at = CURRENT_TIMESTAMP
-     WHERE path = ? AND claimant IS NULL`
+     WHERE project_id = ? AND path = ? AND claimant IS NULL`
   );
 
   const getFileConflicts = db.prepare(
     `SELECT f.path, f.claimant FROM task_files tf
-     JOIN files f ON f.path = tf.file_path
+     JOIN tasks t ON t.id = tf.task_id
+     JOIN files f ON f.project_id = t.project_id AND f.path = tf.file_path
      WHERE tf.task_id = ? AND f.claimant IS NOT NULL AND f.claimant != ?`
   );
 
@@ -195,7 +197,8 @@ export function initTasksSharedStatements(config: ScaffoldConfig): TasksSharedSt
   // the block reason may incorrectly include the original agent's locks.
   const getFileConflictsForTask = db.prepare(
     `SELECT f.path, f.claimant FROM task_files tf
-     JOIN files f ON f.path = tf.file_path
+     JOIN tasks t ON t.id = tf.task_id
+     JOIN files f ON f.project_id = t.project_id AND f.path = tf.file_path
      WHERE tf.task_id = ? AND f.claimant IS NOT NULL`
   );
 
@@ -232,9 +235,9 @@ export function initTasksSharedStatements(config: ScaffoldConfig): TasksSharedSt
   }
 
   /** Register files and link them to a task. Must be called within a transaction. */
-  function linkFilesToTask(taskId: number, files: string[]): void {
+  function linkFilesToTask(taskId: number, files: string[], projectId: string = 'default'): void {
     for (const f of files) {
-      insertFile.run(f);
+      insertFile.run(projectId, f);
       insertTaskFile.run(taskId, f);
     }
   }
@@ -263,16 +266,21 @@ export function initTasksSharedStatements(config: ScaffoldConfig): TasksSharedSt
 
     // Missing sourcePath check
     if (row.source_path) {
-      const bareRepo = config.server.bareRepoPath;
-      if (bareRepo) {
-        const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
-        // NOTE: existsInBareRepo runs git cat-file synchronously per pending task.
-        // For large queues (50+ pending tasks with sourcePaths), this could cause
-        // latency spikes. Consider batch validation or caching if this becomes
-        // a bottleneck in practice.
-        if (!existsInBareRepo(bareRepo, planBranch, row.source_path)) {
-          reasons.push(`sourcePath '${row.source_path}' not found on ${planBranch}`);
+      try {
+        const project = getProject(config, row.project_id);
+        const bareRepo = project.bareRepoPath;
+        if (bareRepo) {
+          const planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
+          // NOTE: existsInBareRepo runs git cat-file synchronously per pending task.
+          // For large queues (50+ pending tasks with sourcePaths), this could cause
+          // latency spikes. Consider batch validation or caching if this becomes
+          // a bottleneck in practice.
+          if (!existsInBareRepo(bareRepo, planBranch, row.source_path)) {
+            reasons.push(`sourcePath '${row.source_path}' not found on ${planBranch}`);
+          }
         }
+      } catch {
+        // Unknown project — skip sourcePath validation rather than crashing
       }
     }
 
@@ -320,8 +328,10 @@ export function initTasksSharedStatements(config: ScaffoldConfig): TasksSharedSt
       return conflictRows.map(r => ({ file: r.path, claimant: r.claimant }));
     }
 
+    const taskRow = getTaskById.get({ id: taskId }) as { project_id: string } | undefined;
+    const projectId = taskRow?.project_id ?? 'default';
     for (const dep of deps) {
-      claimFilesForAgent.run(agent, dep);
+      claimFilesForAgent.run(agent, projectId, dep);
     }
     return [];
   }

@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { ScaffoldConfig } from '../config.js';
+import { getProject } from '../config.js';
 import { syncExteriorToBareRepo, mergeIntoBranch } from '../git-utils.js';
 import { db } from '../db.js';
 
@@ -17,16 +18,28 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
   fastify.post<{
     Body: { targetAgents?: string[] | string };
   }>('/sync/plans', async (request, reply) => {
-    const bareRepo = config.server.bareRepoPath;
+    const projectId = (request.headers['x-project-id'] as string) || 'default';
+    let project;
+    try {
+      project = getProject(config, projectId);
+    } catch {
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: `Unknown project: "${projectId}"`,
+      });
+    }
+
+    const bareRepo = project.bareRepoPath;
     if (!bareRepo) {
       return reply.code(422).send({
         statusCode: 422,
         error: 'Unprocessable Entity',
-        message: 'server.bareRepoPath is not configured',
+        message: 'bareRepoPath is not configured',
       });
     }
 
-    const exteriorRepo = config.project.path;
+    const exteriorRepo = project.path;
     if (!exteriorRepo) {
       return reply.code(422).send({
         statusCode: 422,
@@ -35,7 +48,7 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
       });
     }
 
-    const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+    const planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
 
     const syncResult = syncExteriorToBareRepo(exteriorRepo, bareRepo, planBranch, fastify.log);
 

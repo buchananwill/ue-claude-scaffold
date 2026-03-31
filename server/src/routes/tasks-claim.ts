@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../db.js';
 import { existsInBareRepo } from '../git-utils.js';
+import { getProject } from '../config.js';
 import type { TaskRow } from './tasks-types.js';
 import type { TasksOpts, TasksSharedStatements } from './tasks-files.js';
 
@@ -12,6 +13,8 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksClaimOpts> = async (fastify, opt
   const config = opts.config;
   const shared = opts.shared;
 
+  const getAgentProject = db.prepare('SELECT project_id FROM agents WHERE name = ?');
+
   const claimNextCandidate = db.prepare(`
     SELECT t.id,
       -- Guard against LEFT JOIN null row: without this, tasks with zero file deps
@@ -19,11 +22,12 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksClaimOpts> = async (fastify, opt
       COUNT(CASE WHEN tf.file_path IS NOT NULL AND f.claimant IS NULL THEN 1 END) as new_locks
     FROM tasks t
     LEFT JOIN task_files tf ON tf.task_id = t.id
-    LEFT JOIN files f ON f.path = tf.file_path
+    LEFT JOIN files f ON f.project_id = t.project_id AND f.path = tf.file_path
     WHERE t.status = 'pending'
+      AND t.project_id = ?
       AND NOT EXISTS (
         SELECT 1 FROM task_files tf2
-        JOIN files f2 ON f2.path = tf2.file_path
+        JOIN files f2 ON f2.project_id = t.project_id AND f2.path = tf2.file_path
         WHERE tf2.task_id = t.id
           AND f2.claimant IS NOT NULL
           AND f2.claimant != ?
@@ -53,15 +57,16 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksClaimOpts> = async (fastify, opt
   `);
 
   const countPending = db.prepare(
-    `SELECT COUNT(*) as count FROM tasks WHERE status = 'pending'`
+    `SELECT COUNT(*) as count FROM tasks WHERE status = 'pending' AND project_id = ?`
   );
 
   const countBlocked = db.prepare(`
     SELECT COUNT(DISTINCT t.id) as count
     FROM tasks t
     JOIN task_files tf ON tf.task_id = t.id
-    JOIN files f ON f.path = tf.file_path
+    JOIN files f ON f.project_id = t.project_id AND f.path = tf.file_path
     WHERE t.status = 'pending'
+      AND t.project_id = ?
       AND f.claimant IS NOT NULL
       AND f.claimant != ?
   `);
@@ -70,6 +75,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksClaimOpts> = async (fastify, opt
     SELECT COUNT(DISTINCT t.id) as count
     FROM tasks t
     WHERE t.status = 'pending'
+      AND t.project_id = ?
       AND EXISTS (
         SELECT 1 FROM task_dependencies d
         JOIN tasks dep ON dep.id = d.depends_on
@@ -83,17 +89,29 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksClaimOpts> = async (fastify, opt
 
   /** Validate a task's sourcePath exists in the bare repo on an appropriate branch. */
   function validateSourcePathForClaim(
-    task: { source_path: string | null },
+    task: { source_path: string | null; project_id: string },
     agent: string,
   ): { valid: boolean; branch?: string } {
     if (!task.source_path) return { valid: true };
-    const bareRepo = shared.getBareRepoPath();
+    let bareRepo: string;
+    try {
+      const project = getProject(config, task.project_id);
+      bareRepo = project.bareRepoPath;
+    } catch {
+      bareRepo = shared.getBareRepoPath();
+    }
     if (!bareRepo) return { valid: true };
 
     const agentRow = db.prepare('SELECT worktree FROM agents WHERE name = ?').get(agent) as
       | { worktree: string }
       | undefined;
-    const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+    let planBranch: string;
+    try {
+      const project = getProject(config, task.project_id);
+      planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
+    } catch {
+      planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+    }
     const branch = agentRow?.worktree ?? planBranch;
 
     if (existsInBareRepo(bareRepo, branch, task.source_path)) {
@@ -108,11 +126,13 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksClaimOpts> = async (fastify, opt
 
   fastify.post('/tasks/claim-next', async (request) => {
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
+    const agentProjectRow = getAgentProject.get(agent) as { project_id: string } | undefined;
+    const projectId = agentProjectRow?.project_id ?? 'default';
 
     const result = db.transaction(() => {
       // Query returns up to 10 candidates sorted by priority; we iterate to find
       // the first one whose sourcePath is valid (the DB can't check the bare repo).
-      const candidates = claimNextCandidate.all(agent, agent, agent) as
+      const candidates = claimNextCandidate.all(projectId, agent, agent, agent) as
         Array<{ id: number; new_locks: number }>;
 
       const skippedSourcePath: number[] = [];
@@ -131,8 +151,9 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksClaimOpts> = async (fastify, opt
         // Claim its files
         const fileDeps = (shared.getTaskFiles.all(candidate.id) as { file_path: string }[])
           .map(r => r.file_path);
+        const taskProjectId = taskRow.project_id ?? 'default';
         for (const fp of fileDeps) {
-          shared.claimFilesForAgent.run(agent, fp);
+          shared.claimFilesForAgent.run(agent, taskProjectId, fp);
         }
 
         const row = shared.getTaskById.get({ id: candidate.id }) as TaskRow;
@@ -144,12 +165,12 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksClaimOpts> = async (fastify, opt
       }
 
       // No candidate was claimable
-      const { count: pendingCount } = countPending.get() as { count: number };
+      const { count: pendingCount } = countPending.get(projectId) as { count: number };
       if (pendingCount === 0 && skippedSourcePath.length === 0) {
         return { task: null, pending: 0, blocked: 0 };
       }
-      const { count: blockedCount } = countBlocked.get(agent) as { count: number };
-      const { count: depBlockedCount } = countDepBlocked.get(agent) as { count: number };
+      const { count: blockedCount } = countBlocked.get(projectId, agent) as { count: number };
+      const { count: depBlockedCount } = countDepBlocked.get(projectId, agent) as { count: number };
       const response: Record<string, unknown> = {
         task: null,
         pending: pendingCount,

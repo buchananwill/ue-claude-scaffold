@@ -1,5 +1,6 @@
 export interface TaskRow {
   id: number;
+  project_id: string;
   title: string;
   description: string;
   source_path: string | null;

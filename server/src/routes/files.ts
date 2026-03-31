@@ -10,18 +10,19 @@ interface FileRow {
 const filesPlugin: FastifyPluginAsync = async (fastify) => {
   // GET /files — query the file registry
   fastify.get<{
-    Querystring: { claimant?: string; unclaimed?: string };
+    Querystring: { claimant?: string; unclaimed?: string; project?: string };
   }>('/files', async (request) => {
-    const { claimant, unclaimed } = request.query;
+    const { claimant, unclaimed, project } = request.query;
+    const projectId = project || ((request.headers['x-project-id'] as string) || 'default');
 
-    let sql = 'SELECT * FROM files';
-    const params: unknown[] = [];
+    let sql = 'SELECT * FROM files WHERE project_id = ?';
+    const params: unknown[] = [projectId];
 
     if (claimant) {
-      sql += ' WHERE claimant = ?';
+      sql += ' AND claimant = ?';
       params.push(claimant);
     } else if (unclaimed === 'true') {
-      sql += ' WHERE claimant IS NULL';
+      sql += ' AND claimant IS NULL';
     }
 
     sql += ' ORDER BY path ASC';
