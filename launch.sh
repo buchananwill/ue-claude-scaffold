@@ -29,6 +29,8 @@ Options:
   --team TEAM_ID      Launch a design team (reads teams/<TEAM_ID>.json)
   --brief PATH        Repo-relative path to a brief file (required with --team)
   --dry-run           Print resolved configuration and exit without launching
+  --hooks             Force all hooks enabled (build intercept + C++ lint)
+  --no-hooks          Force all hooks disabled
   --help              Show this help message and exit
 
 Branch is docker/{agent-name}, forked from docker/current-root.
@@ -58,6 +60,8 @@ _CLI_PARALLEL=0
 _CLI_PROJECT=""
 _CLI_TEAM=""
 _CLI_BRIEF=""
+_CLI_HOOK_BUILD=""
+_CLI_HOOK_LINT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -83,6 +87,10 @@ while [[ $# -gt 0 ]]; do
       _CLI_TEAM="$2"; shift 2 ;;
     --brief)
       _CLI_BRIEF="$2"; shift 2 ;;
+    --hooks)
+      _CLI_HOOK_BUILD="true"; _CLI_HOOK_LINT="true"; shift ;;
+    --no-hooks)
+      _CLI_HOOK_BUILD="false"; _CLI_HOOK_LINT="false"; shift ;;
     --dry-run)
       _CLI_DRY_RUN=true; shift ;;
     --help)
@@ -164,6 +172,14 @@ else
   fi
   exit 1
 fi
+
+# Validate project-level hook values from config
+for _hv in "$PROJECT_HOOK_BUILD" "$PROJECT_HOOK_LINT"; do
+    case "$_hv" in
+        true|false|"") ;;
+        *) echo "Error: hooks values in scaffold.config.json must be true or false, got '$_hv'" >&2; exit 1 ;;
+    esac
+done
 
 if [ -z "$LOGS_PATH" ]; then
     LOGS_PATH="$SCRIPT_DIR/logs"
@@ -322,6 +338,14 @@ resolve_hooks() {
 
 # ── Dry run ──────────────────────────────────────────────────────────────────
 if [[ "$_CLI_DRY_RUN" == true ]]; then
+  if [[ -n "$_CLI_TEAM" ]]; then
+    if [[ -f "$SCRIPT_DIR/teams/${_CLI_TEAM}.json" ]]; then
+      TEAM_DEF="$SCRIPT_DIR/teams/${_CLI_TEAM}.json"
+    else
+      echo "Warning: Team file not found: $SCRIPT_DIR/teams/${_CLI_TEAM}.json (team hooks will not be applied)" >&2
+    fi
+  fi
+  resolve_hooks ""
   echo ""
   echo "=== Dry Run — Resolved Configuration ==="
   echo "  AGENT_NAME:       $AGENT_NAME"
@@ -360,6 +384,9 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo "  LOG_VERBOSITY:    $LOG_VERBOSITY"
   echo "  PARALLEL:         $_CLI_PARALLEL"
   echo "  FRESH:            $_CLI_FRESH"
+  echo "  HOOKS:"
+  echo "    buildIntercept: $HOOK_BUILD_INTERCEPT"
+  echo "    cppLint:        $HOOK_CPP_LINT"
   if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
     echo ""
     echo "Parallel agent branches:"
@@ -484,14 +511,8 @@ if [[ -n "$_CLI_TEAM" ]]; then
       _WORKSPACE_READONLY="true"
     fi
 
-    # Agent types that get build hooks (commit → push → host build).
-    # All other types run with hooks disabled.
-    local _DISABLE_HOOKS="true"
-    case "$_MEMBER_TYPE" in
-      container-orchestrator|container-implementer|container-tester|cleanup-leader)
-        _DISABLE_HOOKS="false"
-        ;;
-    esac
+    # Resolve hook configuration via cascade
+    resolve_hooks "$1"
 
     # Set up branch — always reset to current-root HEAD for team launches
     _ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
@@ -520,11 +541,12 @@ if [[ -n "$_CLI_TEAM" ]]; then
       MAX_TURNS="$MAX_TURNS" \
       LOG_VERBOSITY="$LOG_VERBOSITY" \
       WORKER_MODE=false \
-      DISABLE_BUILD_HOOKS="$_DISABLE_HOOKS" \
+      HOOK_BUILD_INTERCEPT="$HOOK_BUILD_INTERCEPT" \
+      HOOK_CPP_LINT="$HOOK_CPP_LINT" \
       WORKSPACE_READONLY="$_WORKSPACE_READONLY" \
       $COMPOSE_CMD --project-name "claude-${_MEMBER_NAME}" up --build --detach)
 
-    echo "  Launched $_MEMBER_NAME (role: $_MEMBER_ROLE, type: $_MEMBER_TYPE, readonly: $_WORKSPACE_READONLY)"
+    echo "  Launched $_MEMBER_NAME (role: $_MEMBER_ROLE, type: $_MEMBER_TYPE, hooks: build=$HOOK_BUILD_INTERCEPT lint=$HOOK_CPP_LINT)"
   }
 
   # Launch discussion leader first
@@ -610,7 +632,10 @@ if ! [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
   fi
 fi
 
+resolve_hooks ""
+
 # ── Export vars for docker-compose ───────────────────────────────────────────
+export HOOK_BUILD_INTERCEPT HOOK_CPP_LINT
 export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS LOG_VERBOSITY PROJECT_ID
 export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH LOGS_PATH
 export WORKER_MODE WORKER_POLL_INTERVAL WORKER_SINGLE_TASK
@@ -643,6 +668,8 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
       PROJECT_ID="$PROJECT_ID" \
       BARE_REPO_PATH="$BARE_REPO_PATH" \
       AGENTS_PATH="$AGENTS_PATH" \
+      HOOK_BUILD_INTERCEPT="$HOOK_BUILD_INTERCEPT" \
+      HOOK_CPP_LINT="$HOOK_CPP_LINT" \
       WORKER_MODE=true \
       WORKER_SINGLE_TASK=false \
       AGENT_MODE=pump \
