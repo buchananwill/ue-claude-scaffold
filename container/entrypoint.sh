@@ -69,28 +69,53 @@ EXCL
 # git working tree entirely.  Claude Code merges user + project settings, so
 # hooks defined here still apply to /workspace.
 
-if [ "${DISABLE_BUILD_HOOKS:-false}" = "true" ]; then
-    echo "Build hooks disabled (design agent mode)"
-    cat > /home/claude/.claude/settings.json <<'SETTINGSEOF'
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash /claude-hooks/inject-agent-header.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
-SETTINGSEOF
-else
-    cp /container-settings.json /home/claude/.claude/settings.json
+# ── Deprecation shim: migrate DISABLE_BUILD_HOOKS → HOOK_* env vars ──────────
+if [ -n "${DISABLE_BUILD_HOOKS:-}" ]; then
+    echo "WARNING: DISABLE_BUILD_HOOKS is deprecated. Use HOOK_BUILD_INTERCEPT and HOOK_CPP_LINT instead." >&2
+    if [ "${DISABLE_BUILD_HOOKS}" = "true" ]; then
+        HOOK_BUILD_INTERCEPT="${HOOK_BUILD_INTERCEPT:-false}"
+        HOOK_CPP_LINT="${HOOK_CPP_LINT:-false}"
+    else
+        HOOK_BUILD_INTERCEPT="${HOOK_BUILD_INTERCEPT:-true}"
+        HOOK_CPP_LINT="${HOOK_CPP_LINT:-true}"
+    fi
+    echo "  Migrated to: HOOK_BUILD_INTERCEPT=${HOOK_BUILD_INTERCEPT}, HOOK_CPP_LINT=${HOOK_CPP_LINT}" >&2
 fi
+
+# ── Dynamic settings.json assembly ───────────────────────────────────────────
+HOOK_BUILD_INTERCEPT="${HOOK_BUILD_INTERCEPT:-true}"
+HOOK_CPP_LINT="${HOOK_CPP_LINT:-false}"
+case "${HOOK_BUILD_INTERCEPT}" in
+  true|false) ;;
+  *) echo "ERROR: HOOK_BUILD_INTERCEPT must be 'true' or 'false', got '${HOOK_BUILD_INTERCEPT}'" >&2; exit 1 ;;
+esac
+case "${HOOK_CPP_LINT}" in
+  true|false) ;;
+  *) echo "ERROR: HOOK_CPP_LINT must be 'true' or 'false', got '${HOOK_CPP_LINT}'" >&2; exit 1 ;;
+esac
+
+# Build the Bash matcher hooks array: inject-agent-header is always present;
+# build intercept hooks are prepended when enabled.
+BASH_HOOKS=$(jq -n '[{"type":"command","command":"bash /claude-hooks/inject-agent-header.sh"}]')
+if [ "${HOOK_BUILD_INTERCEPT}" = "true" ]; then
+    BASH_HOOKS=$(jq -n --argjson base "$BASH_HOOKS" \
+        '[{"type":"command","command":"bash /claude-hooks/intercept_build_test.sh"},{"type":"command","command":"bash /claude-hooks/block-push-passthrough.sh"}] + $base')
+fi
+
+# Start the PreToolUse matchers array with Bash
+MATCHERS=$(jq -n --argjson hooks "$BASH_HOOKS" '[{"matcher":"Bash","hooks":$hooks}]')
+
+# Append Edit and Write matchers for C++ linting when enabled
+if [ "${HOOK_CPP_LINT}" = "true" ]; then
+    MATCHERS=$(jq -n --argjson m "$MATCHERS" \
+        '$m + [{"matcher":"Edit","hooks":[{"type":"command","command":"python3 /claude-hooks/lint-cpp-diff.py"}]},{"matcher":"Write","hooks":[{"type":"command","command":"python3 /claude-hooks/lint-cpp-diff.py"}]}]')
+fi
+
+# Write the final settings file
+jq -n --argjson matchers "$MATCHERS" '{"hooks":{"PreToolUse":$matchers}}' \
+    > /home/claude/.claude/settings.json
+
+echo "Hook settings: buildIntercept=${HOOK_BUILD_INTERCEPT}, cppLint=${HOOK_CPP_LINT}"
 
 # MCP config is written after agent registration (needs SESSION_TOKEN)
 
