@@ -131,6 +131,16 @@ if [[ ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
   exit 1
 fi
 
+_validate_hook_values() {
+    local label="$1"; shift
+    for _hv in "$@"; do
+        case "$_hv" in
+            true|false|"") ;;
+            *) echo "Error: hooks values in $label must be true or false, got '$_hv'" >&2; exit 1 ;;
+        esac
+    done
+}
+
 # ── Resolve project config from scaffold.config.json ───────────────────────
 PROJECT_HOOK_BUILD=""
 PROJECT_HOOK_LINT=""
@@ -174,12 +184,7 @@ else
 fi
 
 # Validate project-level hook values from config
-for _hv in "$PROJECT_HOOK_BUILD" "$PROJECT_HOOK_LINT"; do
-    case "$_hv" in
-        true|false|"") ;;
-        *) echo "Error: hooks values in scaffold.config.json must be true or false, got '$_hv'" >&2; exit 1 ;;
-    esac
-done
+_validate_hook_values "scaffold.config.json" "$PROJECT_HOOK_BUILD" "$PROJECT_HOOK_LINT"
 
 if [ -z "$LOGS_PATH" ]; then
     LOGS_PATH="$SCRIPT_DIR/logs"
@@ -309,12 +314,7 @@ resolve_hooks() {
     fi
 
     # Validate team hook values
-    for _hv in "$team_build" "$team_lint"; do
-        case "$_hv" in
-            true|false|"") ;;
-            *) echo "Error: hooks values in team definition must be true or false, got '$_hv'" >&2; exit 1 ;;
-        esac
-    done
+    _validate_hook_values "team definition" "$team_build" "$team_lint"
 
     # Per-member overrides
     local member_build="" member_lint=""
@@ -324,12 +324,7 @@ resolve_hooks() {
     fi
 
     # Validate member hook values
-    for _hv in "$member_build" "$member_lint"; do
-        case "$_hv" in
-            true|false|"") ;;
-            *) echo "Error: hooks values in member definition must be true or false, got '$_hv'" >&2; exit 1 ;;
-        esac
-    done
+    _validate_hook_values "member definition" "$member_build" "$member_lint"
 
     # Resolve cascade: system -> project -> team -> member -> CLI
     HOOK_BUILD_INTERCEPT=$(_resolve_hook_value "$sys_build" "$PROJECT_HOOK_BUILD" "$team_build" "$member_build" "${_CLI_HOOK_BUILD:-}")
