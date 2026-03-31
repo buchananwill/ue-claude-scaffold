@@ -276,23 +276,17 @@ if the cast feels fragile — verify at this step which approach the Drizzle ver
 inserts a row, reads it back. This validates the schema + driver + migration pipeline end-to-end. Existing tests still
 pass.
 
-### 1.4 Add `project_id` to remaining tables
+### 1.4 Enforce `project_id` on all parent tables
 
-Before migrating queries, complete project isolation. Add `project_id TEXT NOT NULL DEFAULT 'default'` to:
+Every parent table must have `project_id TEXT NOT NULL DEFAULT 'default'`. This is a schema invariant, not optional. The tables that currently lack it:
 
-- `messages` (with index)
-- `rooms`
-- `room_members` (via room's project, or directly)
-- `chat_messages` (via room's project, or directly)
-- `teams`
-- `team_members` (via team's project, or directly)
+- `messages` — add `project_id` with index.
+- `rooms` — add `project_id`.
+- `teams` — add `project_id`.
 
-Design choice: `rooms` and `teams` are the parent entities. Add `project_id` to `rooms` and `teams`. Child tables (
-`room_members`, `team_members`, `chat_messages`) inherit project scope via their FK relationship — no `project_id`column
-needed on children.
+Child tables (`room_members`, `team_members`, `chat_messages`) inherit project scope via their FK to the parent — no `project_id` column needed on children. Queries that need project filtering on children JOIN through the parent.
 
-Include these columns in the Drizzle schema from step 1.2. For the current SQLite DB, add a v14 migration in `db.ts` so
-existing tests continue to work during the transition period (Phases 2-4 where both old and new code coexist).
+The Drizzle schema in step 1.2 must include `project_id` on all parent tables from the start. For the current SQLite DB, add a v14 migration in `db.ts` so existing tests continue to work during the transition period (Phases 2-4 where both old and new code coexist).
 
 **Verification:** Existing tests pass. New columns exist with default values.
 
