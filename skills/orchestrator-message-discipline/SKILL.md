@@ -1,33 +1,100 @@
 ---
 name: orchestrator-message-discipline
-description: Use for any container orchestrator. Defines what to post to the message board and when — mandatory post requirements, reviewer output relaying, and verbosity levels. Compose with message-board-protocol (how to post) and a system-wiring skill (which agents to delegate to).
+description: Complete message board protocol for the container orchestrator. Defines how to post, channels, message types, mandatory posts, and verbosity levels.
 axis: protocol
 ---
 
-# Orchestrator Message Discipline
+<!-- TODO: Investigate content from standing instruction 02-messages.md. See defect #10. -->
 
-What the orchestrator must post to the message board, and at what verbosity. Compose with `message-board-protocol` for the curl mechanics.
+## Message Board
 
-## Mandatory Posts (all verbosity levels)
+The coordination server at `$SERVER_URL` provides a message board -- your **only communication channel with the human operator**. The operator reads `GET /messages/general` to understand what is happening. All posts are fire-and-forget (`|| true`).
 
-- `phase_start` and `phase_complete`/`phase_failed` for each phase
-- **Each reviewer's full output** after every review cycle, as separate `status_update` messages tagged `[STYLE REVIEW]`, `[SAFETY REVIEW]`, `[CORRECTNESS REVIEW]`
-- `decomp_review_start` and the decomposition reviewer's full output tagged `[DECOMPOSITION REVIEW]`
-- `summary` at the end
+### How to Post
 
-## Verbosity Levels
+Use curl via the Bash tool:
+
+```bash
+curl -s -X POST "${SERVER_URL}/messages" \
+  -H "Content-Type: application/json" \
+  -H "X-Agent-Name: ${AGENT_NAME}" \
+  -d '{"channel":"general","type":"phase_start","payload":{"phase":"1","title":"...","status":"starting","notes":"..."}}' \
+  --max-time 5 >/dev/null 2>&1 || true
+```
+
+`SERVER_URL` and `AGENT_NAME` are environment variables already set in the container. The `|| true` makes the call non-fatal.
+
+### Smoke Test -- First Message
+
+Your very first action, before reading the plan or doing any work, is to post a hello message to the `general` channel:
+
+```bash
+curl -sf -X POST "${SERVER_URL}/messages" \
+  -H "Content-Type: application/json" \
+  -H "X-Agent-Name: ${AGENT_NAME}" \
+  -d '{"channel":"general","type":"status_update","payload":{"message":"Agent online. Beginning work."}}' \
+  --max-time 5
+```
+
+This confirms you can reach the message board and that you are visible to the operator. If this post fails, stop immediately and report the error as your final output -- a broken message board means the operator has no visibility into your work.
+
+### Channels
+
+- **`general`** -- Phase transitions, failures, and final summaries. This is what the human reads.
+- **`<role-name>`** (e.g. `implementer`, `reviewer`) -- Sub-agent progress. Post build results, investigation notes, and detailed progress here.
+
+### Message Types
+
+| type             | when to use                                             |
+|------------------|---------------------------------------------------------|
+| `phase_start`    | Beginning a new phase                                   |
+| `phase_complete` | Phase passed build and review                           |
+| `phase_failed`   | Phase could not be completed after retries              |
+| `build_result`   | After each build attempt                                |
+| `status_update`  | Progress narration, decisions, notable observations     |
+| `summary`        | Final post when all work is done or the run has stopped |
+
+### Payload Conventions
+
+Keep payloads concise -- they are stored in SQLite. Include at minimum:
+
+- **Phase events**: `{ "phase": "<id>", "title": "<title>", "status": "...", "notes": "..." }`
+- **Build results**: `{ "phase": "<id>", "outcome": "pass" | "fail", "errors": ["..."] }`
+- **Status updates**: `{ "message": "<your message>" }`
+- **Summary**: `{ "summary": "<markdown block>" }`
+
+### Who Posts
+
+You are the primary message poster. Your sub-agents do not post to the message board -- you read their output and relay the relevant parts. This avoids fragile multi-hop messaging chains.
+
+### Mandatory Posts (all verbosity levels)
+
+- `phase_start` and `phase_complete`/`phase_failed` for each phase.
+- **Each reviewer's full output.** After every review cycle, post all three reviewers' complete reports as separate `status_update` messages tagged `[STYLE REVIEW]`, `[SAFETY REVIEW]`, `[CORRECTNESS REVIEW]`. This is a critical audit trail -- never omit, truncate, or summarize below the reviewer's own level of detail.
+- `decomp_review_start` and the decomposition reviewer's full output tagged `[DECOMPOSITION REVIEW]` during the final stage.
+- `summary` at the end.
+
+### Verbosity Levels
 
 Your prompt may include a `LOG_VERBOSITY` directive (`quiet`, `normal`, `verbose`). If not specified, **default to `verbose`**.
 
-**`quiet`** — Mandatory posts only.
+**`quiet`** -- Mandatory posts only.
 
-**`normal`** — Mandatory posts, plus:
-- After every sub-agent return: structured digest (what it did, build outcome, files touched, decisions)
-- Before every re-delegation: why (which findings triggered it, which cycle this is)
-- Any notable decisions you made
+**`normal`** -- Mandatory posts, plus:
 
-**`verbose`** — Everything from `normal`, plus:
-- Comprehensive sub-agent summaries (5-15 lines per post)
-- File lists and scope summaries before each delegation
-- Timing observations
-- Stall detection (build succeeds but no new code since last build)
+- **After every sub-agent return**, post a structured digest: what it did, whether it built, build outcome (pass/fail + error count + key errors), files touched, decisions it made.
+- **Before every re-delegation**, post why: what reviewer findings triggered it, what the implementer is being asked to fix, and which review cycle this is (e.g., "cycle 2/5").
+- Any notable decisions you made.
+
+**`verbose`** -- Everything from `normal`, plus:
+
+- Comprehensive sub-agent summaries: observations, error messages, files created/modified, non-obvious choices, concerns raised. 5-15 lines per post.
+- File lists and scope summaries before each delegation.
+- Timing observations ("phase 2 took 3 build iterations").
+- When a build succeeds but no new code was written since the last build, flag it -- this is a sign the implementer is not making progress.
+- Post when any tool call fails: web search errors, connection timeouts, permission denials, unexpected exit codes.
+- Post when retrying something, and what you changed on the retry.
+
+These message posts are your observability trail. If you log what you are doing, _especially_ anything that fails, it gives the operator the opportunity to diagnose and fix these issues so you can complete your work. Silence during failures is the worst outcome: you struggle alone with no help, and the operator cannot tell whether you are stuck or making progress.
+
+When in doubt about whether to post in verbose mode, post. The cost of a message is negligible; the cost of a silent 25-minute gap is far higher.

@@ -166,7 +166,6 @@ def compile_agent(
         if scope is not None:
             if SCOPE_RANK.get(scope, 1) > SCOPE_RANK.get(highest_scope, 0):
                 highest_scope = scope
-        sections.append("---")
         sections.append(skill_content)
 
     compiled_body = "\n\n".join(sections).rstrip() + "\n"

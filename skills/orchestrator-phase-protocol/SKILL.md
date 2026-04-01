@@ -3,7 +3,7 @@ name: orchestrator-phase-protocol
 description: Use for the container orchestrator. Defines the full phase execution protocol — implement, parallel review, consolidate fixes, commit gate, cycle budget, and final decomposition review.
 ---
 
-# Orchestrator Phase Execution Protocol
+## Phase Execution Protocol
 
 For each phase in the plan, execute these steps in sequence. Never bundle requirements from multiple phases into a single sub-agent invocation. Never advance to phase N+1 until phase N is committed and `phase_complete` is posted.
 
@@ -17,7 +17,7 @@ For each phase in the plan, execute these steps in sequence. Never bundle requir
 - **Every phase is reviewed.** No exceptions — single-phase tasks, small changes, "trivial" additions all go through the full review cycle. Skipping review is a protocol violation.
 - If you encounter ambiguity in the plan, make the conservative choice and document it — do not stop to ask.
 
-## Step 1 — Implement & Build
+### Step 1 — Implement & Build
 
 Post `phase_start` to `general`.
 
@@ -25,7 +25,6 @@ Delegate to **implementer** with:
 
 - **Only this phase's requirements** — never include work from subsequent phases
 - The phase's requirements from the plan (verbatim)
-- Any supplementary notes from the CLAUDE.md role mapping
 - Instruction to write a debrief to `Notes/docker-claude/debriefs/` before building
 - **Note:** When touching a file, fix any unambiguous style or best practice violations in that file (whether new or pre-existing). Do not leave code worse than you found it.
 
@@ -33,19 +32,31 @@ The implementer builds after making changes and iterates internally until the bu
 
 **If the implementer reports a clean build could not be achieved:** verify it actually attempted the build. If it skipped the build, re-delegate with emphatic instruction to run the build command. If it genuinely attempted and failed after retries, attempt one more delegation with the error output. If that also fails, post `phase_failed` and stop.
 
-## Step 2 — Parallel Code Review
+### Step 2 — Parallel Code Review
 
 Run all three reviewers **in parallel** (use multiple Agent tool calls in a single message):
 
-1. **style-reviewer** — delegate with the list of changed file paths
-2. **safety-reviewer** — delegate with the list of changed file paths + brief context on what the code does (one sentence)
-3. **reviewer** (correctness) — delegate with the phase's requirements from the plan (as the specification to review against) + the list of changed file paths
+1. **style-reviewer** -- delegate with:
+    - The list of changed file paths
+
+2. **safety-reviewer** -- delegate with:
+    - The list of changed file paths
+    - Brief context on what the code does (one sentence)
+
+3. **reviewer** (correctness) -- delegate with:
+    - The phase's requirements from the plan (as the specification to review against)
+    - The list of changed file paths
 
 Each reviewer produces an independent verdict. **All three must APPROVE for the phase to pass.**
 
 ### Step 2a — Consolidate and Fix
 
-Collect all findings from all three reviewers. **All BLOCKING and WARNING issues must be fixed.** There is no "accept and proceed" for warnings.
+Collect all findings from all three reviewers. **All BLOCKING and WARNING issues must be fixed.** There is no "accept and proceed" for warnings -- if any reviewer flags it, it must be addressed.
+
+**For unambiguous style or best practice violations in files the implementer already touched:** the implementer must fix
+these even if they are pre-existing. "Unambiguous" means violations that are straightforward style, naming, or convention
+fixes -- not architectural redesigns that would require significant refactoring outside this phase's scope. The
+implementer should note in commit messages or comments when fixing pre-existing violations, but must not leave them as-is.
 
 Pass the **combined findings from all reviewers** to the **implementer** as a single batch, with instruction to address everything and rebuild. Do not send three separate fix rounds — consolidation avoids churn.
 
@@ -53,7 +64,7 @@ Then return to Step 2 for re-review by all three reviewers.
 
 ### Step 2b — Cycle Budget
 
-Maximum **5 review cycles** per phase. If after 5 cycles the reviewers and implementer cannot converge (e.g. fixes introduce new issues in a regressive loop), mark the phase as failed.
+Maximum **5 review cycles** per phase. The goal is not to avoid failure -- it is to keep raising quality. If after 5 cycles the reviewers and implementer cannot converge (e.g. fixes introduce new issues in a regressive loop), mark the phase as failed. The user will review and provide input.
 
 **NOTE issues** are informational only — record them and proceed.
 
@@ -61,17 +72,17 @@ Maximum **5 review cycles** per phase. If after 5 cycles the reviewers and imple
 
 Post **each reviewer's full output** to the message board as separate `status_update` messages. Tag each with the reviewer type (e.g., `[STYLE REVIEW]`, `[SAFETY REVIEW]`, `[CORRECTNESS REVIEW]`). This is a critical audit trail — never omit, truncate, or summarize below the reviewer's own level of detail.
 
-## Step 3 — Commit
+### Step 3 — Commit
 
 After the implementer's final successful build and all three reviewers returning clean verdicts, ensure the phase's work is committed. Each phase MUST land as a distinct commit or commit series before the orchestrator advances.
 
 **This is a hard gate.** Do not proceed to Step 4 until `git status` confirms a clean working tree or the implementer has committed all changes. If uncommitted changes exist, delegate to the implementer with instruction to commit all phase work with a message referencing the phase number and title.
 
-**Verify commit scope.** After confirming a clean working tree, check that the most recent commit message(s) reference the current phase number or title. If commits bundle work from multiple phases, delegate to the implementer to create a new commit (not an amend) with a message referencing this phase.
+**Verify commit scope.** After confirming a clean working tree, check that the most recent commit message(s) since the last `phase_complete` reference the current phase number or title. If commits exist that bundle work from multiple phases, or if the commit message does not identify the current phase, delegate to the implementer with instruction to create a new commit (not an amend -- the original may already be pushed) with a message referencing this phase (e.g., `Phase 2: Add retry logic to build route`).
 
-**Re-verify after delegation.** If you delegated to commit, run `git status` again. Do not proceed to Step 4 until the working tree is confirmed clean.
+**Re-verify after delegation.** If you delegated to the implementer to commit, run `git status` again after the delegation returns. Do not proceed to Step 4 until the working tree is confirmed clean. If it is still dirty, re-delegate -- do not post `phase_complete` on uncommitted work.
 
-## Step 4 — Advance
+### Step 4 — Advance
 
 Post `phase_complete` to `general`: `{"phase":"<id>","title":"<title>","build":"pass","review":"pass"}`.
 
@@ -81,9 +92,11 @@ Proceed to the next phase. Do not wait.
 
 After **all phases** have completed successfully, run a final decomposition review. This catches file bloat, excessive nesting, and missing abstractions introduced across the entire plan.
 
+This stage runs last because it may propose more invasive structural changes than the per-phase reviewers. The tests established during earlier phases are the safety net against regressions.
+
 ### Decomp Step 1 — Collect Changed Files
 
-Gather the full list of `.h` and `.cpp` files changed across all phases. Use `git diff` against the branch base.
+Gather the full list of `.ts`, `.tsx`, and `.sh` files changed across all phases. Use `git diff` against the branch base.
 
 ### Decomp Step 2 — Review
 
@@ -123,7 +136,7 @@ You do NOT:
 
 ## Error Escalation
 
-If any phase cannot be completed, stop and include in your final output:
+If any phase cannot be completed (build fails after retries, review cycles exhausted), stop and include in your final output:
 
 1. Which phase failed and at which step
 2. The sub-agent's error output

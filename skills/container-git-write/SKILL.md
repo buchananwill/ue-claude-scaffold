@@ -3,11 +3,11 @@ name: container-git-write
 description: Git environment for write-access container agents. Covers the bare repo clone model, branch assignment, auto-push after commit, and branch restrictions.
 ---
 
-# Container Git Environment (Write Access)
+## Container Git Environment
 
 You are running inside a Docker container. Your working directory is a git checkout cloned from a bare repo on the host.
 
-## Your Branch
+### Your Branch
 
 You work on a single branch:
 
@@ -15,7 +15,7 @@ You work on a single branch:
 
 The integration branch is `docker/current-root`, synced from the exterior (host) repo. Your branch was forked from `docker/current-root` at launch.
 
-## How Your Work Is Persisted
+### How Your Work Is Persisted
 
 Every `git commit` you make is automatically pushed to `docker/{agent-name}` on the bare repo by a PostToolUse hook. You never need to run `git push`.
 
@@ -25,7 +25,7 @@ Every `git commit` you make is automatically pushed to `docker/{agent-name}` on 
 
 If you attempt `git push` or `git checkout` to a different branch, it will be blocked.
 
-## Reading Other Branches
+### Reading Other Branches
 
 You can read any branch without switching:
 
@@ -35,6 +35,6 @@ git log docker/current-root --oneline -10
 git diff HEAD..docker/current-root -- src/
 ```
 
-## Visibility
+### Visibility
 
 Your branch is visible to the coordination server, the operator, and other agents that fetch it. The bare repo is persistent and survives container restarts.
