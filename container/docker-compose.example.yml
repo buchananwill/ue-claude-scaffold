@@ -1,5 +1,6 @@
-# Template docker-compose for a single agent.
-# Copy to docker-compose.yml and adjust paths, or use launch.sh which generates this.
+# Reference template for docker-compose.yml.
+# launch.sh generates docker-compose.yml automatically at launch time —
+# do not copy this file manually.  This example exists for documentation only.
 
 services:
   claude-worker:
