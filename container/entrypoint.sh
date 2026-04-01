@@ -71,7 +71,7 @@ EXCL
 
 # ── Read access scope from compiler sidecar metadata ─────────────────────────
 ACCESS_SCOPE="read-only"
-META_FILE="${AGENTS_PATH:-/agents}/${AGENT_TYPE}.meta.json"
+META_FILE="${AGENTS_PATH:-/home/claude/.claude/agents}/${AGENT_TYPE}.meta.json"
 if [ -f "$META_FILE" ]; then
     ACCESS_SCOPE=$(jq -r '.["access-scope"] // "read-only"' "$META_FILE")
 fi
