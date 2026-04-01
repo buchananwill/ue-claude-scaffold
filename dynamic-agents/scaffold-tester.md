@@ -9,7 +9,7 @@ skills:
   - implementation-loop
   - scaffold-test-format
   - scaffold-environment
-  - container-git-environment
+  - container-git-write
   - commit-discipline
   - debrief-protocol
   - message-board-protocol

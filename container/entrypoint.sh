@@ -305,8 +305,26 @@ SESSION_TOKEN=$(echo "$REG_BODY" | jq -r '.sessionToken // empty')
 export SESSION_TOKEN
 echo "Registered with coordination server (token: ${SESSION_TOKEN:0:8}...)"
 
-# Write MCP config for chat channel (after registration so SESSION_TOKEN is available)
-cat > /home/claude/.claude/mcp.json <<MCPEOF
+# ── Smoke test: verify message board is reachable ───────────────────────────
+SMOKE_RESPONSE=$(_curl_server -s -w "\n%{http_code}" -X POST "${SERVER_URL}/messages" \
+    -H "Content-Type: application/json" \
+    -d "{\"channel\":\"general\",\"type\":\"status_update\",\"payload\":{\"message\":\"Container online. Preparing to launch Claude agent.\"}}" \
+    --max-time 10 2>/dev/null) || SMOKE_RESPONSE=$'\n000'
+SMOKE_STATUS="${SMOKE_RESPONSE##*$'\n'}"
+if [ "$SMOKE_STATUS" = "200" ] || [ "$SMOKE_STATUS" = "201" ]; then
+    echo "Message board smoke test passed (HTTP ${SMOKE_STATUS})"
+else
+    echo "ERROR: Message board smoke test failed (HTTP ${SMOKE_STATUS})" >&2
+    echo "Response: ${SMOKE_RESPONSE%$'\n'*}" >&2
+    echo "The operator will have no visibility into agent progress. Aborting." >&2
+    exit 1
+fi
+
+# Write MCP config (after registration so SESSION_TOKEN is available)
+# Chat channel MCP is only mounted for team/chat mode — for solo agents it
+# competes with the curl-based message board and confuses the agent.
+if [ -n "${CHAT_ROOM:-}" ]; then
+    cat > /home/claude/.claude/mcp.json <<MCPEOF
 {
   "mcpServers": {
     "chat": {
@@ -321,11 +339,20 @@ cat > /home/claude/.claude/mcp.json <<MCPEOF
   }
 }
 MCPEOF
-
-echo ""
-echo "── Resolved MCP config ──"
-cat /home/claude/.claude/mcp.json
-echo ""
+    echo ""
+    echo "── Resolved MCP config (chat mode) ──"
+    cat /home/claude/.claude/mcp.json
+    echo ""
+else
+    cat > /home/claude/.claude/mcp.json <<MCPEOF
+{
+  "mcpServers": {}
+}
+MCPEOF
+    echo ""
+    echo "── MCP config: no chat channel (solo agent mode) ──"
+    echo ""
+fi
 
 # ── Pre-launch diagnostics ──────────────────────────────────────────────────
 echo ""
@@ -524,9 +551,10 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
         --output-format text
         --max-turns "$MAX_TURNS"
         --mcp-config /home/claude/.claude/mcp.json
-        --channels server:chat
-        --dangerously-load-development-channels server:chat
     )
+    if [ -n "${CHAT_ROOM:-}" ]; then
+        CLAUDE_ARGS+=(--channels server:chat --dangerously-load-development-channels server:chat)
+    fi
     if [ -n "$AGENT_TYPE" ]; then
         CLAUDE_ARGS+=(--agent "$AGENT_TYPE")
     fi
@@ -778,6 +806,53 @@ if [ "${WORKSPACE_READONLY:-false}" = "true" ]; then
 fi
 
 # ── Main execution loop ─────────────────────────────────────────────────────
+
+# ── Direct prompt mode (troubleshooting / smoke tests) ──────────────────────
+if [ -n "${DIRECT_PROMPT:-}" ]; then
+    echo "Direct prompt mode: bypassing task queue"
+    echo "Prompt: ${DIRECT_PROMPT}"
+    echo ""
+
+    _post_status "working"
+
+    CLAUDE_ARGS=(
+        -p "$DIRECT_PROMPT"
+        --dangerously-skip-permissions
+        --output-format text
+        --max-turns "$MAX_TURNS"
+        --mcp-config /home/claude/.claude/mcp.json
+    )
+    if [ -n "${CHAT_ROOM:-}" ]; then
+        CLAUDE_ARGS+=(--channels server:chat --dangerously-load-development-channels server:chat)
+    fi
+    if [ -n "$AGENT_TYPE" ]; then
+        CLAUDE_ARGS+=(--agent "$AGENT_TYPE")
+    fi
+
+    rm -f "$CLAUDE_OUTPUT_LOG"
+    CLAUDE_START_TS=$(date +%s)
+
+    set +e
+    claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$CLAUDE_OUTPUT_LOG" &
+    CLAUDE_PID=$!
+    _watch_for_stop "$CLAUDE_PID" &
+    WATCHDOG_PID=$!
+    wait "$CLAUDE_PID" || true
+    EXIT_CODE=$?
+    kill "$WATCHDOG_PID" 2>/dev/null || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
+    set -e
+
+    echo ""
+    echo "=== Claude Code exited with code $EXIT_CODE ==="
+
+    if [ $EXIT_CODE -eq 0 ]; then
+        _post_status "done"
+    else
+        _post_status "error"
+    fi
+    exit $EXIT_CODE
+fi
 
 # ── Chat-only mode (design team agents) ──────────────────────────────────────
 if [ -n "${CHAT_ROOM:-}" ] && [ "${WORKER_MODE:-false}" = "false" ]; then

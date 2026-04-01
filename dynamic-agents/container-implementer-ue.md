@@ -8,7 +8,7 @@ skills:
   - action-boundary
   - commit-discipline
   - container-build-routing
-  - container-git-environment
+  - container-git-build-intercept
   - implementation-loop
   - ue-cpp-style
   - ue-correctness

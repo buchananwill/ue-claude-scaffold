@@ -63,6 +63,10 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
     current_key = None
 
     for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped == "":
+            continue
+
         # Continuation of a multi-line list
         if line.startswith("  - ") and current_key is not None:
             val = line.strip().lstrip("- ").strip()
@@ -156,18 +160,14 @@ def compile_agent(
     # Build the compiled body: original "why" paragraph + injected skills
     sections = [body.strip()]
 
-    if skills:
-        sections.append("\n---\n")
-        sections.append("<!-- Injected skills (compiled from dynamic-agents) -->\n")
-
     highest_scope = "read-only"
     for skill_name in skills:
         skill_content, scope = resolve_skill(skill_name, skills_dir)
         if scope is not None:
             if SCOPE_RANK.get(scope, 1) > SCOPE_RANK.get(highest_scope, 0):
                 highest_scope = scope
+        sections.append("---")
         sections.append(skill_content)
-        sections.append("")  # blank line between skills
 
     compiled_body = "\n\n".join(sections).rstrip() + "\n"
     compiled_frontmatter = serialize_frontmatter(meta)

@@ -28,6 +28,7 @@ Options:
   --fresh             Reset agent branch to docker/current-root HEAD (clean start)
   --team TEAM_ID      Launch a design team (reads teams/<TEAM_ID>.json)
   --brief PATH        Repo-relative path to a brief file (required with --team)
+  --prompt TEXT       Pass a direct prompt to the agent (bypasses task queue)
   --dry-run           Print resolved configuration and exit without launching
   --hooks             Force all hooks enabled (build intercept + C++ lint)
   --no-hooks          Force all hooks disabled
@@ -62,6 +63,7 @@ _CLI_TEAM=""
 _CLI_BRIEF=""
 _CLI_HOOK_BUILD=""
 _CLI_HOOK_LINT=""
+_CLI_PROMPT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -91,6 +93,8 @@ while [[ $# -gt 0 ]]; do
       _CLI_HOOK_BUILD="true"; _CLI_HOOK_LINT="true"; shift ;;
     --no-hooks)
       _CLI_HOOK_BUILD="false"; _CLI_HOOK_LINT="false"; shift ;;
+    --prompt)
+      _CLI_PROMPT="$2"; shift 2 ;;
     --dry-run)
       _CLI_DRY_RUN=true; shift ;;
     --help)
@@ -690,6 +694,7 @@ services:
       - CHAT_ROOM=\${CHAT_ROOM:-}
       - TEAM_ROLE=\${TEAM_ROLE:-}
       - BRIEF_PATH=\${BRIEF_PATH:-}
+      - DIRECT_PROMPT=\${DIRECT_PROMPT:-}
     volumes:
 ${_volumes}
     ports:
@@ -708,6 +713,7 @@ export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH LOGS_PATH
 export WORKER_MODE WORKER_POLL_INTERVAL WORKER_SINGLE_TASK
 export AGENT_MODE="${AGENT_MODE:-single}"
 export SERVER_PORT="${SERVER_PORT:-9100}"
+export DIRECT_PROMPT="${_CLI_PROMPT:-}"
 
 # ── Launch ───────────────────────────────────────────────────────────────────
 if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
