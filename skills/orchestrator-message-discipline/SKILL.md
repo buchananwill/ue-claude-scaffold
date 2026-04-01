@@ -56,12 +56,37 @@ This confirms you can reach the message board and that you are visible to the op
 
 ### Payload Conventions
 
-Keep payloads concise -- they are stored in SQLite. Include at minimum:
+Keep payloads concise -- they are stored in SQLite. Use **exactly** these `type` and `payload` field names. Do not invent alternatives.
 
-- **Phase events**: `{ "phase": "<id>", "title": "<title>", "status": "...", "notes": "..." }`
-- **Build results**: `{ "phase": "<id>", "outcome": "pass" | "fail", "errors": ["..."] }`
-- **Status updates**: `{ "message": "<your message>" }`
-- **Summary**: `{ "summary": "<markdown block>" }`
+**Phase start:**
+```json
+{"channel":"general","type":"phase_start","payload":{"phase":"1","title":"Add retry logic","status":"starting","notes":"..."}}
+```
+
+**Phase complete:**
+```json
+{"channel":"general","type":"phase_complete","payload":{"phase":"1","title":"Add retry logic","build":"pass","review":"pass"}}
+```
+
+**Phase failed:**
+```json
+{"channel":"general","type":"phase_failed","payload":{"phase":"1","title":"Add retry logic","reason":"build failed after 3 retries"}}
+```
+
+**Build result:**
+```json
+{"channel":"general","type":"build_result","payload":{"phase":"1","outcome":"pass","errors":[]}}
+```
+
+**Status update:**
+```json
+{"channel":"general","type":"status_update","payload":{"message":"Your message text here"}}
+```
+
+**Summary:**
+```json
+{"channel":"general","type":"summary","payload":{"summary":"## Execution Summary\n..."}}
+```
 
 ### Who Posts
 

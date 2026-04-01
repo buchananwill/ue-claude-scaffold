@@ -2,7 +2,11 @@
 set -euo pipefail
 
 WORK_BRANCH="${WORK_BRANCH:-main}"
-AGENT_TYPE="${AGENT_TYPE:-container-orchestrator}"
+AGENT_TYPE="${AGENT_TYPE:-}"
+if [ -z "$AGENT_TYPE" ]; then
+    echo "ERROR: AGENT_TYPE is not set. Every container must run a named agent." >&2
+    exit 1
+fi
 AGENT_NAME="${AGENT_NAME:-agent-1}"
 MAX_TURNS="${MAX_TURNS:-200}"
 SERVER_URL="${SERVER_URL:-http://host.docker.internal:9100}"
@@ -64,6 +68,31 @@ cat > .git/info/exclude <<'EXCL'
 .claude/
 EXCL
 
+# ── Snapshot staged agents into container-local directory ─────────────────────
+# Agent definitions are bind-mounted read-only at /staged-agents. Copy them to
+# the working agents directory so the container owns its copy and is immune to
+# external recompilation or deletion during the run.
+AGENTS_DIR="/home/claude/.claude/agents"
+mkdir -p "$AGENTS_DIR"
+if [ -d /staged-agents ] && ls /staged-agents/*.md &>/dev/null; then
+    cp /staged-agents/* "$AGENTS_DIR/"
+    echo "── Agent definitions snapshotted ──"
+    ls -1 "$AGENTS_DIR"/*.md 2>/dev/null | while read -r f; do echo "  $(basename "$f")"; done
+    # Verify the requested agent type is present
+    if [ ! -f "$AGENTS_DIR/${AGENT_TYPE}.md" ]; then
+        echo "ERROR: Agent type '${AGENT_TYPE}' not found in snapshotted agents." >&2
+        echo "Available agents:" >&2
+        ls -1 "$AGENTS_DIR"/*.md 2>/dev/null | xargs -I{} basename {} .md >&2
+        echo "Check AGENT_TYPE in .env and ensure the agent was compiled." >&2
+        exit 1
+    fi
+    echo "Verified: ${AGENT_TYPE}.md is present."
+else
+    echo "WARNING: No agent definitions found at /staged-agents." >&2
+    echo "The container will run without an agent definition." >&2
+fi
+echo ""
+
 # ── Set up Claude Code project settings ──────────────────────────────────────
 # Install to user-level settings (not project-level) to keep them out of the
 # git working tree entirely.  Claude Code merges user + project settings, so
@@ -71,7 +100,7 @@ EXCL
 
 # ── Read access scope from compiler sidecar metadata ─────────────────────────
 ACCESS_SCOPE="read-only"
-META_FILE="${AGENTS_PATH:-/home/claude/.claude/agents}/${AGENT_TYPE}.meta.json"
+META_FILE="${AGENTS_DIR}/${AGENT_TYPE}.meta.json"
 if [ -f "$META_FILE" ]; then
     ACCESS_SCOPE=$(jq -r '.["access-scope"] // "read-only"' "$META_FILE")
 fi
@@ -551,6 +580,7 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
         --output-format text
         --max-turns "$MAX_TURNS"
         --mcp-config /home/claude/.claude/mcp.json
+        --debug-file /logs/claude-debug.log
     )
     if [ -n "${CHAT_ROOM:-}" ]; then
         CLAUDE_ARGS+=(--channels server:chat --dangerously-load-development-channels server:chat)
@@ -726,6 +756,7 @@ All agents must remain in the meeting until the discussion leader posts DISCUSSI
         --dangerously-skip-permissions \
         --output-format text \
         --mcp-config /home/claude/.claude/mcp.json \
+        --debug-file /logs/claude-debug.log \
         --channels server:chat \
         --dangerously-load-development-channels server:chat \
         --agent "$AGENT_TYPE" \

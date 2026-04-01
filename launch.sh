@@ -421,9 +421,8 @@ fi
 
 # ── Compile dynamic agents ─────────────────────────────────────────────────
 # Compile agents before team-mode/launch checks because team mode exits early
-# and needs AGENTS_PATH. The rm -rf of .compiled-agents/ may affect bind-mounts
-# of already-running containers; this is an accepted tradeoff (same as any build
-# artifact rebuild).
+# and needs AGENTS_PATH. The rm -rf is safe because containers snapshot agents
+# from /staged-agents into their own filesystem at startup (entrypoint.sh).
 COMPILED_AGENTS_DIR="$SCRIPT_DIR/.compiled-agents"
 rm -rf "$COMPILED_AGENTS_DIR"
 mkdir -p "$COMPILED_AGENTS_DIR"
@@ -665,7 +664,7 @@ _generate_compose() {
       # Claude authentication (OAuth credentials file)
       - \${CLAUDE_CREDENTIALS_PATH:?Set CLAUDE_CREDENTIALS_PATH in .env}:/home/claude/.claude/.credentials.json:ro
       # Agent definitions (compiled by launch.sh)
-      - \${AGENTS_PATH:-../agents}:/home/claude/.claude/agents:ro"
+      - \${AGENTS_PATH:-../agents}:/staged-agents:ro"
 
   # UE engine mount — only for projects that declare an engine path
   if [ -n "${UE_ENGINE_PATH:-}" ]; then

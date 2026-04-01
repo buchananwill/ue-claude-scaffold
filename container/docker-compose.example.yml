@@ -36,7 +36,7 @@ services:
       - ${CLAUDE_CREDENTIALS_PATH:?Set CLAUDE_CREDENTIALS_PATH in .env}:/home/claude/.claude/.credentials.json:ro
       # Option B — API key: set ANTHROPIC_API_KEY in environment above instead
       # Agent definitions (container-orchestrator, etc.)
-      - ${AGENTS_PATH:-../agents}:/home/claude/.claude/agents:ro
+      - ${AGENTS_PATH:-../agents}:/staged-agents:ro
       # UE engine (read-only, optional — omit or set to /dev/null for non-UE projects)
       - ${UE_ENGINE_PATH:-/dev/null}:/engine:ro
       # Optional: read-only plugin mounts (symlinked into Plugins/ at startup)
