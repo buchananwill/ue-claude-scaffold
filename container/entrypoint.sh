@@ -153,6 +153,10 @@ jq -n --argjson pre "$PRE_MATCHERS" --argjson post "$POST_MATCHERS" \
     > /home/claude/.claude/settings.json
 
 echo "Hook settings: buildIntercept=${HOOK_BUILD_INTERCEPT}, cppLint=${HOOK_CPP_LINT}, gitSync=${HOOK_GIT_SYNC}"
+echo ""
+echo "── Resolved hook settings.json ──"
+cat /home/claude/.claude/settings.json
+echo ""
 
 # MCP config is written after agent registration (needs SESSION_TOKEN)
 
@@ -318,6 +322,42 @@ cat > /home/claude/.claude/mcp.json <<MCPEOF
 }
 MCPEOF
 
+echo ""
+echo "── Resolved MCP config ──"
+cat /home/claude/.claude/mcp.json
+echo ""
+
+# ── Pre-launch diagnostics ──────────────────────────────────────────────────
+echo ""
+echo "── Pre-launch diagnostics ──"
+echo "Claude CLI version: $(claude --version 2>&1 || echo 'unknown')"
+echo "Container hostname: $(hostname)"
+echo "Working directory:  $(pwd)"
+echo "Git HEAD:           $(git -C /workspace log --oneline -1 2>/dev/null || echo 'N/A')"
+echo "Git branch:         $(git -C /workspace branch --show-current 2>/dev/null || echo 'N/A')"
+echo "Git commit count:   $(git -C /workspace rev-list --count HEAD 2>/dev/null || echo 'N/A')"
+echo ""
+echo "── Environment snapshot ──"
+echo "  AGENT_NAME=$AGENT_NAME"
+echo "  AGENT_TYPE=$AGENT_TYPE"
+echo "  AGENT_MODE=$AGENT_MODE"
+echo "  WORK_BRANCH=$WORK_BRANCH"
+echo "  MAX_TURNS=$MAX_TURNS"
+echo "  SERVER_URL=$SERVER_URL"
+echo "  PROJECT_ID=$PROJECT_ID"
+echo "  LOG_VERBOSITY=$LOG_VERBOSITY"
+echo "  WORKER_MODE=${WORKER_MODE:-false}"
+echo "  WORKER_SINGLE_TASK=$WORKER_SINGLE_TASK"
+echo "  WORKER_POLL_INTERVAL=$WORKER_POLL_INTERVAL"
+echo "  HOOK_BUILD_INTERCEPT=$HOOK_BUILD_INTERCEPT"
+echo "  HOOK_GIT_SYNC=$HOOK_GIT_SYNC"
+echo "  HOOK_CPP_LINT=$HOOK_CPP_LINT"
+echo "  WORKSPACE_READONLY=$WORKSPACE_READONLY"
+echo "  CHAT_ROOM=${CHAT_ROOM:-}"
+echo "  TEAM_ROLE=${TEAM_ROLE:-}"
+echo "  HOOK_OVERRIDE=${HOOK_OVERRIDE:-}"
+echo ""
+
 # ── Worker mode: poll and claim ──────────────────────────────────────────────
 
 poll_and_claim_task() {
@@ -364,6 +404,10 @@ poll_and_claim_task() {
             CURRENT_TASK_SOURCE=$(echo "$body" | jq -r '.task.sourcePath // ""')
             CURRENT_TASK_FILES=$(echo "$body" | jq -r '(.task.files // []) | join(", ")')
             echo "Claimed task #${CURRENT_TASK_ID}: ${CURRENT_TASK_TITLE}"
+            echo ""
+            echo "── Claimed task record ──"
+            echo "$body" | jq '.task' 2>/dev/null || echo "$body"
+            echo ""
             return 0
         fi
 
@@ -451,7 +495,18 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
     fi
 
     echo "Task prompt assembled ($(echo -n "$FULL_PROMPT" | wc -c) bytes)"
+
+    # ── Audit: dump full prompt text to log ─────────────────────────────────
     echo ""
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    echo "║                    FULL PROMPT TEXT                             ║"
+    echo "╚══════════════════════════════════════════════════════════════════╝"
+    echo "$FULL_PROMPT"
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    echo "║                  END FULL PROMPT TEXT                           ║"
+    echo "╚══════════════════════════════════════════════════════════════════╝"
+    echo ""
+
     echo "Starting Claude Code (agent: ${AGENT_TYPE:-default})..."
     echo ""
 
@@ -491,8 +546,19 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
     wait "$WATCHDOG_PID" 2>/dev/null || true
     set -e
 
+    CLAUDE_END_TS=$(date +%s)
+    CLAUDE_ELAPSED=$((CLAUDE_END_TS - CLAUDE_START_TS))
+
     echo ""
-    echo "=== Claude Code exited with code $EXIT_CODE ==="
+    echo "=== Claude Code exited with code $EXIT_CODE (wall-clock: ${CLAUDE_ELAPSED}s) ==="
+
+    # Log output tail on non-zero exit for quick diagnosis
+    if [ "$EXIT_CODE" -ne 0 ] && [ -f "$CLAUDE_OUTPUT_LOG" ]; then
+        echo ""
+        echo "── Last 30 lines of Claude output ──"
+        tail -30 "$CLAUDE_OUTPUT_LOG"
+        echo "── end tail ──"
+    fi
 
     # If stopped externally, skip post-run flow and let the EXIT trap handle cleanup
     if [ -f /tmp/.stop_requested ]; then
@@ -537,6 +603,15 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
     if ! git diff --cached --quiet; then
         git commit -m "Container final commit" --no-gpg-sign
     fi
+
+    # Audit: log what the agent actually changed (diff from branch start)
+    echo ""
+    echo "── Git diff stats (cumulative changes on branch) ──"
+    git diff --stat "origin/${WORK_BRANCH}" HEAD 2>/dev/null || echo "(could not compute diff stats)"
+    echo "── Git log (commits this session) ──"
+    git log --oneline "origin/${WORK_BRANCH}..HEAD" 2>/dev/null || echo "(could not compute log)"
+    echo ""
+
     git push origin "HEAD:${WORK_BRANCH}" --force
     echo "Final state pushed to bare repo"
 
@@ -595,7 +670,18 @@ All agents must remain in the meeting until the discussion leader posts DISCUSSI
 
     echo "Chat-only mode: room=${CHAT_ROOM}, role=${TEAM_ROLE:-participant}"
     echo "Prompt assembled ($(echo -n "$FULL_PROMPT" | wc -c) bytes)"
+
+    # ── Audit: dump full prompt text to log ─────────────────────────────────
     echo ""
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    echo "║                    FULL PROMPT TEXT                             ║"
+    echo "╚══════════════════════════════════════════════════════════════════╝"
+    echo "$FULL_PROMPT"
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    echo "║                  END FULL PROMPT TEXT                           ║"
+    echo "╚══════════════════════════════════════════════════════════════════╝"
+    echo ""
+
     echo "Starting Claude Code..."
     echo ""
 
@@ -625,8 +711,19 @@ All agents must remain in the meeting until the discussion leader posts DISCUSSI
     wait "$WATCHDOG_PID" 2>/dev/null || true
     set -e
 
+    CLAUDE_END_TS=$(date +%s)
+    CLAUDE_ELAPSED=$((CLAUDE_END_TS - CLAUDE_START_TS))
+
     echo ""
-    echo "=== Claude Code exited with code $EXIT_CODE ==="
+    echo "=== Claude Code exited with code $EXIT_CODE (wall-clock: ${CLAUDE_ELAPSED}s) ==="
+
+    # Log output tail on non-zero exit for quick diagnosis
+    if [ "$EXIT_CODE" -ne 0 ] && [ -f "$CLAUDE_OUTPUT_LOG" ]; then
+        echo ""
+        echo "── Last 30 lines of Claude output ──"
+        tail -30 "$CLAUDE_OUTPUT_LOG"
+        echo "── end tail ──"
+    fi
 
     # If stopped externally, skip post-run flow and let the EXIT trap handle cleanup
     if [ -f /tmp/.stop_requested ]; then
@@ -649,6 +746,15 @@ All agents must remain in the meeting until the discussion leader posts DISCUSSI
     if ! git diff --cached --quiet; then
         git commit -m "Container final commit" --no-gpg-sign
     fi
+
+    # Audit: log what the agent actually changed
+    echo ""
+    echo "── Git diff stats (cumulative changes on branch) ──"
+    git diff --stat "origin/${WORK_BRANCH}" HEAD 2>/dev/null || echo "(could not compute diff stats)"
+    echo "── Git log (commits this session) ──"
+    git log --oneline "origin/${WORK_BRANCH}..HEAD" 2>/dev/null || echo "(could not compute log)"
+    echo ""
+
     git push origin "HEAD:${WORK_BRANCH}" --force
     echo "Final state pushed to bare repo"
 
