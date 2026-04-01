@@ -390,43 +390,12 @@ poll_and_claim_task() {
 }
 
 # ── Assemble the task prompt ─────────────────────────────────────────────────
-# Standing instructions from /task/instructions/*.md are prepended (sorted by
-# filename) before the main task prompt.
+# Standing instructions have been superseded by the modular skills system.
+# Each dynamic agent's compiled definition includes the skills it needs.
+# The task prompt now contains only runtime context (verbosity, chat room,
+# team role) and the task specification.
 
 TASK_PROMPT=""
-
-INSTRUCTIONS_DIR="/standing-instructions"
-if [ -d "$INSTRUCTIONS_DIR" ]; then
-    for f in $(find "$INSTRUCTIONS_DIR" -maxdepth 1 -name '*.md' | sort); do
-        # Chat-only agents load chat etiquette + team-member protocol
-        if [ -n "${CHAT_ROOM:-}" ] && [ "${WORKER_MODE:-false}" = "false" ]; then
-            case "$(basename "$f")" in
-                *chat*) ;;  # everyone in chat gets etiquette
-                *team-member*)
-                    # Leader has its own arc definition — skip member protocol
-                    if [ "${AGENT_TYPE}" = "design-leader" ]; then
-                        echo "Skipping instruction (leader): $(basename "$f")"
-                        continue
-                    fi
-                    ;;
-                *changeling*)
-                    # Jester prompt: only for changeling agent in chat mode
-                    if [ "${AGENT_TYPE}" != "changeling" ]; then
-                        echo "Skipping instruction (not changeling): $(basename "$f")"
-                        continue
-                    fi
-                    ;;
-                *) echo "Skipping instruction (chat-only mode): $(basename "$f")"; continue ;;
-            esac
-        fi
-        echo "Loading instruction: $(basename "$f")"
-        TASK_PROMPT="${TASK_PROMPT}$(cat "$f")
-
----
-
-"
-    done
-fi
 
 # Inject verbosity directive
 TASK_PROMPT="${TASK_PROMPT}LOG_VERBOSITY: ${LOG_VERBOSITY}

@@ -36,8 +36,8 @@ services:
       # Option B — API key: set ANTHROPIC_API_KEY in environment above instead
       # Agent definitions (container-orchestrator, etc.)
       - ${AGENTS_PATH:-../agents}:/home/claude/.claude/agents:ro
-      # UE engine (read-only)
-      - ${UE_ENGINE_PATH:?Set UE_ENGINE_PATH}:/engine:ro
+      # UE engine (read-only, optional — omit or set to /dev/null for non-UE projects)
+      - ${UE_ENGINE_PATH:-/dev/null}:/engine:ro
       # Optional: read-only plugin mounts (symlinked into Plugins/ at startup)
       # Add entries like:
       # - /path/to/MyPlugin:/plugins-ro/MyPlugin:ro

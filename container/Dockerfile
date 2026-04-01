@@ -39,9 +39,6 @@ COPY patch_workspace.py /patch_workspace.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Copy standing instructions (build-loop, debrief, messages, etc.)
-COPY instructions/ /standing-instructions/
-
 # Create directories owned by claude user
 RUN mkdir -p /workspace /task && chown claude:claude /workspace
 RUN mkdir -p /home/claude/.claude && chown claude:claude /home/claude/.claude
