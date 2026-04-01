@@ -19,7 +19,7 @@ Launch a containerized Claude Code agent against your Unreal Engine project.
 Options:
   --agent-name NAME   Agent identifier (default: from .env or "agent-1")
   --plan PATH         Path to a plan markdown file (copied to TASKS_PATH/prompt.md)
-  --agent-type TYPE   Agent type (default: from .env or "container-orchestrator")
+  --agent-type TYPE   Agent type (required: set in .env, scaffold.config.json, or here)
   --project ID        Project identifier for multi-project configs (default: "default")
   --verbosity LEVEL   Message board verbosity: quiet, normal, verbose (default: normal)
   --worker            Run in task-queue worker mode (no plan file needed)
@@ -206,7 +206,11 @@ AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
 if [ "$_CLI_NO_AGENT" = "true" ]; then
   AGENT_TYPE=""
 else
-  AGENT_TYPE="${_CLI_AGENT_TYPE:-${PROJECT_AGENT_TYPE:-${AGENT_TYPE:-container-orchestrator}}}"
+  AGENT_TYPE="${_CLI_AGENT_TYPE:-${PROJECT_AGENT_TYPE:-${AGENT_TYPE:-}}}"
+  if [ -z "$AGENT_TYPE" ]; then
+    echo "Error: AGENT_TYPE is not set. Set it in .env, scaffold.config.json, or pass --agent-type." >&2
+    exit 1
+  fi
 fi
 
 # ── Validate AGENT_NAME and AGENT_TYPE (prevent path traversal) ────────────
@@ -684,7 +688,7 @@ services:
     environment:
       - AGENT_NAME=\${AGENT_NAME:-agent-1}
       - WORK_BRANCH=\${WORK_BRANCH:-main}
-      - AGENT_TYPE=\${AGENT_TYPE:-container-orchestrator}
+      - AGENT_TYPE=\${AGENT_TYPE:?Set AGENT_TYPE in .env}
       - MAX_TURNS=\${MAX_TURNS:-200}
       - SERVER_URL=http://host.docker.internal:\${SERVER_PORT:-9100}
       - TASK_PROMPT_FILE=/task/prompt.md

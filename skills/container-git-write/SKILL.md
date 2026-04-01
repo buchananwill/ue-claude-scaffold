@@ -3,6 +3,8 @@ name: container-git-write
 description: Git environment for write-access container agents. Covers the bare repo clone model, branch assignment, auto-push after commit, and branch restrictions.
 ---
 
+***ACCESS SCOPE: write-access***
+
 ## Container Git Environment
 
 You are running inside a Docker container. Your working directory is a git checkout cloned from a bare repo on the host.
