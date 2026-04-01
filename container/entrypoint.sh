@@ -821,6 +821,7 @@ if [ -n "${DIRECT_PROMPT:-}" ]; then
         --output-format text
         --max-turns "$MAX_TURNS"
         --mcp-config /home/claude/.claude/mcp.json
+        --debug-file /logs/claude-debug.log
     )
     if [ -n "${CHAT_ROOM:-}" ]; then
         CLAUDE_ARGS+=(--channels server:chat --dangerously-load-development-channels server:chat)

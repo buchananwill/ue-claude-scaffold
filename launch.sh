@@ -64,6 +64,7 @@ _CLI_BRIEF=""
 _CLI_HOOK_BUILD=""
 _CLI_HOOK_LINT=""
 _CLI_PROMPT=""
+_CLI_NO_AGENT=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -95,6 +96,8 @@ while [[ $# -gt 0 ]]; do
       _CLI_HOOK_BUILD="false"; _CLI_HOOK_LINT="false"; shift ;;
     --prompt)
       _CLI_PROMPT="$2"; shift 2 ;;
+    --no-agent)
+      _CLI_NO_AGENT=true; shift ;;
     --dry-run)
       _CLI_DRY_RUN=true; shift ;;
     --help)
@@ -200,7 +203,11 @@ export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH CLAUDE_CREDENTIALS_
 
 # ── Apply CLI overrides ─────────────────────────────────────────────────────
 AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
-AGENT_TYPE="${_CLI_AGENT_TYPE:-${PROJECT_AGENT_TYPE:-${AGENT_TYPE:-container-orchestrator}}}"
+if [ "$_CLI_NO_AGENT" = "true" ]; then
+  AGENT_TYPE=""
+else
+  AGENT_TYPE="${_CLI_AGENT_TYPE:-${PROJECT_AGENT_TYPE:-${AGENT_TYPE:-container-orchestrator}}}"
+fi
 
 # ── Validate AGENT_NAME and AGENT_TYPE (prevent path traversal) ────────────
 if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
@@ -208,7 +215,7 @@ if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
   echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
   exit 1
 fi
-if [[ ! "$AGENT_TYPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+if [[ -n "$AGENT_TYPE" && ! "$AGENT_TYPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
   echo "Error: AGENT_TYPE contains invalid characters: $AGENT_TYPE" >&2
   echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
   exit 1
