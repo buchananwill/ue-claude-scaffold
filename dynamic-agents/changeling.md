@@ -5,9 +5,8 @@ model: inherit
 color: gray
 tools: [Read, Glob, Grep]
 skills:
-  - design-specialist-protocol
+  - design-member-protocol
   - chat-etiquette
-  - convergence-voting
   - channel-isolation
 ---
 

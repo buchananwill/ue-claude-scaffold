@@ -1,32 +1,40 @@
 ---
 name: chat-etiquette
-description: Use for any agent participating in a multi-agent chat room. Defines how to read messages (check_messages), send messages (reply), @-addressing conventions, and conversation discipline.
+description: Use for any agent that communicates with other agents or the user via a chat channel. Defines the reply/check_messages tool mechanics, @-addressing, and the conversational posture — engaged, concise, patient, and grounded.
+axis: protocol
 ---
 
 # Chat Etiquette
 
-Rules for communicating in a multi-agent chat room.
+Rules and posture for communicating in a multi-agent chat channel.
 
-## Reading Messages
+## Tools
 
-Call the `check_messages` tool with your room ID to read the conversation. It returns ALL messages since your last `reply` as a structured chat log — you see the full thread, not isolated messages. If there are no new messages, it returns "No unread messages."
+### Sending Messages
 
-You will also receive channel notifications when new messages arrive, but these are just alerts — always call `check_messages` to read the actual conversation in context.
+**EVERY message you want others to see MUST go through the `reply` tool.** Text you write outside of tool calls is invisible to other agents — it goes to your local log, not to the chat channel. If you want to say something, call `reply`. There is no other way to communicate.
 
-## Sending Messages
+### Reading Messages
 
-**EVERY message you want the team to see MUST go through the `reply` tool.** Text you write outside of tool calls is invisible to other agents — it goes to your local log, not to the chat room.
+Call `check_messages` with your room ID to read the conversation. It returns ALL messages since your last `reply` as a structured chat log. If there are no new messages, it returns "No unread messages."
+
+You will receive channel notifications when new messages arrive, but these are just alerts — always call `check_messages` to read the actual conversation in context.
 
 ## Addressing
 
-1. If you are addressed directly (via `@your-agent-name`), reply as soon as you are able — even if only to say you are not yet ready to reply in full. Use `@agent-name` to address the agent you're replying to.
-2. If you have not been directly addressed since your last message but would like to contribute, send a short (one sentence) message, optionally `@agent-name` to a specific agent, as a ping to request the floor.
-3. Use `@everyone` to address the whole chatroom.
-4. You may address multiple agents simultaneously (e.g. `@agent-1 @agent-2`) to request similar input or share a common reply.
-5. If there is an active `@`-addressing dialogue between other agents, that does not prohibit you from engaging with concise support or dissent.
+1. If you are addressed directly (via `@your-agent-name`), reply as soon as you are able — even if only to say you need a moment.
+2. To address a specific agent, use `@agent-name`. To address everyone, use `@everyone`.
+3. You may address multiple agents simultaneously (e.g. `@agent-1 @agent-2`).
+4. If you have not been directly addressed since your last message but want to contribute, send a short ping (one sentence) to request the floor.
+5. An active dialogue between other agents does not prohibit you from engaging with concise support or dissent.
 
-## Conversation Discipline
+## Conversational Posture
 
-- Respond to what was said — do not ignore other agents' messages to push your own agenda.
-- If a message from `user` asks you to change approach, prioritize it. User messages are directives.
-- This is a working conversation, not a status report. No preamble, no summaries of what you already said.
+**Be engaged, concise, patient, and grounded.**
+
+- **Engaged:** Stay active. Between incoming messages, do your own research — read code, investigate questions, build context. Never go dark. If you need time, say so: "Researching — back shortly." A silent agent is indistinguishable from a stuck agent.
+- **Concise:** Keep messages to 1-3 sentences unless explicitly invited to elaborate. One point per message. If you have several points, state the most important and offer to continue.
+- **Patient:** Do not race to conclusions. Do not declare your work complete prematurely. If the conversation is ongoing, you are ongoing. Respond to what others said — do not ignore their messages to push your own agenda.
+- **Grounded:** Base contributions on evidence, not speculation. Read the codebase before proposing or critiquing. Cite file paths and line numbers when making claims about code.
+
+This is a working conversation, not a status report. No preamble, no summaries of what you already said. If a message from `user` asks you to change approach, prioritize it — user messages are directives.
