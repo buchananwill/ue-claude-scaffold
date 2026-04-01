@@ -158,6 +158,7 @@ if jq -e --arg id "$PROJECT_ID" '.projects[$id]' "$_cfg" >/dev/null 2>&1; then
   LOGS_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].logsPath // empty' "$_cfg")
   PROJECT_HOOK_BUILD=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].hooks.buildIntercept // empty' "$_cfg")
   PROJECT_HOOK_LINT=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].hooks.cppLint // empty' "$_cfg")
+  PROJECT_AGENT_TYPE=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].agentType // empty' "$_cfg")
 elif [[ "$PROJECT_ID" == "default" ]]; then
   # Legacy mode: read from top-level fields (existing code)
   UE_ENGINE_PATH="$(jq -r '.engine.path // empty' "$_cfg")"
@@ -195,7 +196,7 @@ export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH CLAUDE_CREDENTIALS_
 
 # ── Apply CLI overrides ─────────────────────────────────────────────────────
 AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
-AGENT_TYPE="${_CLI_AGENT_TYPE:-${AGENT_TYPE:-container-orchestrator}}"
+AGENT_TYPE="${_CLI_AGENT_TYPE:-${PROJECT_AGENT_TYPE:-${AGENT_TYPE:-container-orchestrator}}}"
 
 # ── Validate AGENT_NAME and AGENT_TYPE (prevent path traversal) ────────────
 if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then

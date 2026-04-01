@@ -21,6 +21,20 @@ curl -s -X POST "${SERVER_URL}/messages" \
 
 `SERVER_URL` and `AGENT_NAME` are environment variables already set in the container. The `|| true` makes the call non-fatal.
 
+## Smoke Test — First Message
+
+Your very first action, before reading the plan or doing any work, is to post a hello message to the `general` channel:
+
+```bash
+curl -sf -X POST "${SERVER_URL}/messages" \
+  -H "Content-Type: application/json" \
+  -H "X-Agent-Name: ${AGENT_NAME}" \
+  -d '{"channel":"general","type":"status_update","payload":{"message":"Agent online. Beginning work."}}' \
+  --max-time 5
+```
+
+This confirms you can reach the message board and that you are visible to the operator. If this post fails, stop immediately and report the error as your final output — a broken message board means the operator has no visibility into your work.
+
 ## Channels
 
 - **`general`** — Phase transitions, failures, and final summaries. This is what the human reads.
@@ -48,7 +62,7 @@ Keep payloads concise — they are stored in SQLite. Include at minimum:
 
 ## Who Posts
 
-The **orchestrator** is the primary message poster. Sub-agents (implementer, reviewer, tester) do not post to the message board. The orchestrator reads their output and relays the relevant parts. This avoids fragile multi-hop messaging chains.
+You are the primary message poster. Your sub-agents do not post to the message board — you read their output and relay the relevant parts. This avoids fragile multi-hop messaging chains.
 
 ## Verbosity
 
@@ -63,5 +77,11 @@ Your delegation prompt may include a `LOG_VERBOSITY` level (`quiet`, `normal`, o
 - Post after completing each significant chunk.
 - Post when you encounter something unexpected or make a non-obvious decision.
 - Post build results with enough detail to diagnose without reading the full log.
+- Post when resolving sub-agent mappings (which agent type you selected and why).
+- Post when locating (or failing to locate) the task document or plan file you need.
+- Post when any tool call fails: web search errors, connection timeouts, permission denials, unexpected exit codes.
+- Post when retrying something, and what you changed on the retry.
 
-When in doubt about whether to post in verbose mode, post. The cost of a message is negligible; the cost of a silent 25-minute gap is an operator who can't tell if you're stuck or making progress.
+These message posts are your observability trail. If you log what you are doing, _especially_ anything that fails, it gives the operator the opportunity to diagnose and fix these issues so you can complete your work. Silence during failures is the worst outcome: you struggle alone with no help, and the operator cannot tell whether you are stuck or making progress.
+
+When in doubt about whether to post in verbose mode, post. The cost of a message is negligible; the cost of a silent 25-minute gap is far higher.
