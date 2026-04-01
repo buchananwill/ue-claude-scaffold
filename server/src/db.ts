@@ -9,7 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT OR IGNORE INTO schema_version(version) VALUES (13);
+INSERT OR IGNORE INTO schema_version(version) VALUES (14);
 
 -- Agent registration and status
 CREATE TABLE IF NOT EXISTS agents (
@@ -313,6 +313,16 @@ export function openDb(dbPath: string): Database.Database {
     instance.exec('DELETE FROM schema_version WHERE version < 13');
     instance.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (13)");
     console.log('[db] Migrated to v13');
+  }
+
+  // Migration: add project_id column to messages, rooms, teams (v13 -> v14)
+  try { instance.exec("ALTER TABLE messages ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already exists */ }
+  try { instance.exec("ALTER TABLE rooms ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already exists */ }
+  try { instance.exec("ALTER TABLE teams ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already exists */ }
+  if (!schemaRow || schemaRow.version < 14) {
+    instance.exec('DELETE FROM schema_version WHERE version < 14');
+    instance.exec("INSERT OR IGNORE INTO schema_version(version) VALUES (14)");
+    console.log('[db] Migrated to v14');
   }
 
   // Enable FK enforcement now that all migrations are complete
