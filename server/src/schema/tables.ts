@@ -3,12 +3,14 @@ import {
   text,
   serial,
   integer,
+  boolean,
   timestamp,
   jsonb,
   primaryKey,
   uniqueIndex,
   index,
   check,
+  foreignKey,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -96,7 +98,7 @@ export const tasks = pgTable('tasks', {
 }, (table) => [
   check('tasks_status_check', sql`${table.status} IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')`),
   index('idx_tasks_status').on(table.status),
-  index('idx_tasks_priority').on(table.priority, table.id),
+  index('idx_tasks_priority').on(table.priority.desc(), table.id.asc()),
 ]);
 
 // 7. files
@@ -160,6 +162,7 @@ export const chatMessages = pgTable('chat_messages', {
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   index('idx_chat_room_id').on(table.roomId, table.id),
+  foreignKey({ columns: [table.replyTo], foreignColumns: [table.id] }),
 ]);
 
 // 13. teams
@@ -181,8 +184,8 @@ export const teamMembers = pgTable('team_members', {
   teamId: text('team_id').notNull().references(() => teams.id, { onDelete: 'cascade' }),
   agentName: text('agent_name').notNull(),
   role: text('role').notNull(),
-  isLeader: integer('is_leader').notNull().default(0),
+  isLeader: boolean('is_leader').notNull().default(false),
 }, (table) => [
   primaryKey({ columns: [table.teamId, table.agentName] }),
-  uniqueIndex('idx_team_leader').on(table.teamId).where(sql`is_leader = 1`),
+  uniqueIndex('idx_team_leader').on(table.teamId).where(sql`is_leader = true`),
 ]);

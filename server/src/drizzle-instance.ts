@@ -18,6 +18,8 @@ export type DrizzleDb = ReturnType<typeof drizzlePg<typeof schema>> | ReturnType
 
 let instance: DrizzleDb | null = null;
 let pgliteClient: PGlite | null = null;
+let pgPool: pg.Pool | null = null;
+let initPromise: Promise<DrizzleDb> | null = null;
 
 export interface InitDrizzleOpts {
   /** Postgres connection string. Falls back to process.env.DATABASE_URL. */
@@ -26,19 +28,16 @@ export interface InitDrizzleOpts {
   pgliteDataDir?: string;
 }
 
-/**
- * Initialise the Drizzle instance. Safe to call multiple times — returns the
- * existing instance if already initialised.
- */
-export async function initDrizzle(opts?: InitDrizzleOpts): Promise<DrizzleDb> {
-  if (instance) return instance;
-
+async function doInit(opts?: InitDrizzleOpts): Promise<DrizzleDb> {
   const databaseUrl = opts?.databaseUrl ?? process.env.DATABASE_URL;
 
   if (databaseUrl) {
     // Production: node-postgres
-    const pool = new pg.Pool({ connectionString: databaseUrl });
-    instance = drizzlePg(pool, { schema });
+    pgPool = new pg.Pool({ connectionString: databaseUrl });
+    pgPool.on('error', (err) => {
+      console.error('[drizzle] pg pool idle client error', err);
+    });
+    instance = drizzlePg(pgPool, { schema });
   } else {
     // Local / test: PGlite (in-process Postgres)
     const dataDir = opts?.pgliteDataDir; // undefined = in-memory
@@ -47,6 +46,20 @@ export async function initDrizzle(opts?: InitDrizzleOpts): Promise<DrizzleDb> {
   }
 
   return instance;
+}
+
+/**
+ * Initialise the Drizzle instance. Safe to call multiple times — returns the
+ * existing instance if already initialised. Guards against concurrent calls.
+ */
+export function initDrizzle(opts?: InitDrizzleOpts): Promise<DrizzleDb> {
+  if (instance) return Promise.resolve(instance);
+  if (initPromise) return initPromise;
+  initPromise = doInit(opts).catch((err) => {
+    initPromise = null;
+    throw err;
+  });
+  return initPromise;
 }
 
 /** Return the initialised Drizzle instance. Throws if not yet initialised. */
@@ -59,9 +72,14 @@ export function getDb(): DrizzleDb {
 
 /** Tear down the connection (useful in tests). */
 export async function closeDrizzle(): Promise<void> {
+  if (pgPool) {
+    await pgPool.end();
+    pgPool = null;
+  }
   if (pgliteClient) {
     await pgliteClient.close();
     pgliteClient = null;
   }
   instance = null;
+  initPromise = null;
 }
