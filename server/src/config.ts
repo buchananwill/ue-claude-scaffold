@@ -161,7 +161,7 @@ export function loadConfig(): ScaffoldConfig {
   return config;
 }
 
-export function validateConfig(config: ScaffoldConfig, hasExplicitProjects: boolean): void {
+function validateConfig(config: ScaffoldConfig, hasExplicitProjects: boolean): void {
   const missing: string[] = [];
 
   if (hasExplicitProjects) {

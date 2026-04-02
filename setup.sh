@@ -92,7 +92,7 @@ echo ""
 
 # Helper: clone a bare repo and create docker/current-root branch.
 # Usage: _create_bare_and_root <bare_repo_path> <project_path> [<label>]
-# Returns 0 on success, 1 on clone failure, 2 on update-ref failure.
+# Returns 0 always; errors are printed to stderr (caller continues under set -e).
 _create_bare_and_root() {
   local bare="$1"
   local proj="$2"
