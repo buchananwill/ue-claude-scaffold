@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import sensible from '@fastify/sensible';
 import { loadConfig } from './config.js';
-import { initDrizzle } from './drizzle-instance.js';
+import { initDrizzle, closeDrizzle, getDbStatus } from './drizzle-instance.js';
 import projectIdPlugin from './plugins/project-id.js';
 import {
   healthPlugin,
@@ -52,7 +52,8 @@ try {
   });
   console.log(`Coordination server listening at ${address}`);
   console.log(`  Project: ${config.project.name}`);
-  console.log(`  DB: PGlite (${pgliteDataDir})`);
+  const dbStatus = getDbStatus();
+  console.log(`  DB: ${dbStatus.backend}${dbStatus.backend === 'pglite' ? ` (${pgliteDataDir})` : ''}`);
   console.log(`  UBT lock timeout: ${config.server.ubtLockTimeoutMs}ms`);
 
   setInterval(() => {
@@ -60,6 +61,17 @@ try {
       server.log.error(err, 'UBT stale-lock sweep failed');
     });
   }, 60_000);
+
+  // Graceful shutdown
+  const shutdown = async (signal: string) => {
+    console.log(`Received ${signal}, shutting down gracefully…`);
+    await server.close();
+    await closeDrizzle();
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 } catch (err) {
   server.log.error(err);
   process.exit(1);

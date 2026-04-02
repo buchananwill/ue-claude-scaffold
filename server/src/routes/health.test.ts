@@ -21,7 +21,7 @@ describe('GET /health', () => {
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.equal(body.status, 'ok');
-    assert.equal(body.db, 'PGlite (./data/pglite)');
+    assert.equal(body.db.backend, 'pglite');
     assert.equal(body.config.port, 9200);
     assert.equal(body.config.projectName, 'TestProject');
     assert.equal(body.config.ubtLockTimeoutMs, 300000);

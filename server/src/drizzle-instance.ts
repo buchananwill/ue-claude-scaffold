@@ -33,7 +33,12 @@ async function doInit(opts?: InitDrizzleOpts): Promise<DrizzleDb> {
 
   if (databaseUrl) {
     // Production: node-postgres
-    pgPool = new pg.Pool({ connectionString: databaseUrl });
+    pgPool = new pg.Pool({
+      connectionString: databaseUrl,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    });
     pgPool.on('error', (err) => {
       console.error('[drizzle] pg pool idle client error', err);
     });
@@ -83,6 +88,21 @@ export function _setInstanceForTest(db: DrizzleDb): () => void {
   const prev = instance;
   instance = db;
   return () => { instance = prev; };
+}
+
+/** Return status info about the DB backend (for /health). */
+export function getDbStatus(): { backend: string; pool?: { total: number; idle: number; waiting: number } } {
+  if (pgPool) {
+    return {
+      backend: 'postgres',
+      pool: {
+        total: pgPool.totalCount,
+        idle: pgPool.idleCount,
+        waiting: pgPool.waitingCount,
+      },
+    };
+  }
+  return { backend: 'pglite' };
 }
 
 /** Tear down the connection (useful in tests). */
