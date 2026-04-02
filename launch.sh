@@ -82,9 +82,19 @@ while [[ $# -gt 0 ]]; do
     --project)
       _CLI_PROJECT="$2"; shift 2 ;;
     --team)
-      _CLI_TEAM="$2"; shift 2 ;;
+      _CLI_TEAM="$2"; shift 2
+      if [[ ! "$_CLI_TEAM" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "Error: --team value contains invalid characters: $_CLI_TEAM" >&2
+        exit 1
+      fi
+      ;;
     --brief)
-      _CLI_BRIEF="$2"; shift 2 ;;
+      _CLI_BRIEF="$2"; shift 2
+      if [[ "$_CLI_BRIEF" == /* || "$_CLI_BRIEF" == *..* ]]; then
+        echo "Error: --brief must be a relative repo path without '..' components" >&2
+        exit 1
+      fi
+      ;;
     --hooks)
       _CLI_HOOK_BUILD="true"; _CLI_HOOK_LINT="true"; shift ;;
     --no-hooks)
@@ -153,8 +163,10 @@ if jq -e --arg id "$PROJECT_ID" '.projects[$id]' "$_cfg" >/dev/null 2>&1; then
   PROJECT_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].path // empty' "$_cfg")
   UE_ENGINE_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].engine.path // empty' "$_cfg")
   SERVER_PORT=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].serverPort // .server.port // 9100' "$_cfg")
-  BUILD_SCRIPT_NAME=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.scriptPath // .build.scriptPath // "build.py"' "$_cfg" | xargs basename)
-  TEST_SCRIPT_NAME=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.testScriptPath // .build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)
+  _raw_build=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.scriptPath // .build.scriptPath // "build.py"' "$_cfg")
+  BUILD_SCRIPT_NAME=$(basename "$_raw_build")
+  _raw_test=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.testScriptPath // .build.testScriptPath // "run_tests.py"' "$_cfg")
+  TEST_SCRIPT_NAME=$(basename "$_raw_test")
   DEFAULT_TEST_FILTERS=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.defaultTestFilters // .build.defaultTestFilters // [] | if type == "array" then join(" ") else . end' "$_cfg")
   LOGS_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].logsPath // empty' "$_cfg")
   PROJECT_HOOK_BUILD=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].hooks.buildIntercept // empty' "$_cfg")
@@ -166,8 +178,10 @@ elif [[ "$PROJECT_ID" == "default" ]]; then
   PROJECT_PATH="$(jq -r '.project.path // empty' "$_cfg")"
   BARE_REPO_PATH="$(jq -r '.server.bareRepoPath // empty' "$_cfg")"
   SERVER_PORT="$(jq -r '.server.port // 9100' "$_cfg")"
-  BUILD_SCRIPT_NAME="$(jq -r '.build.scriptPath // "build.py"' "$_cfg" | xargs basename)"
-  TEST_SCRIPT_NAME="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)"
+  _raw_build="$(jq -r '.build.scriptPath // "build.py"' "$_cfg")"
+  BUILD_SCRIPT_NAME="$(basename "$_raw_build")"
+  _raw_test="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg")"
+  TEST_SCRIPT_NAME="$(basename "$_raw_test")"
   DEFAULT_TEST_FILTERS="$(jq -r '.build.defaultTestFilters // [] | join(" ")' "$_cfg")"
   LOGS_PATH="$(jq -r '.logs.path // empty' "$_cfg")"
   PROJECT_HOOK_BUILD=$(jq -r '.hooks.buildIntercept // empty' "$_cfg")

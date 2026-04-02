@@ -248,7 +248,7 @@ function parseProjectConfig(id: string, p: Record<string, unknown>): ProjectConf
 export function getProject(config: ScaffoldConfig, id: string): ProjectConfig {
   const project = config.resolvedProjects[id];
   if (!project) {
-    throw new Error(`Unknown project: "${id}"`);
+    throw new Error(`Unknown project: "${id.slice(0, 64).replace(/[^a-zA-Z0-9_-]/g, '?')}"`);
   }
   return project;
 }

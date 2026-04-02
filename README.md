@@ -62,7 +62,7 @@ cd ue-claude-scaffold
 # 3. Edit .env with your authentication credentials
 
 # 4. Edit scaffold.config.json with your project paths
-#    Required: project.path, engine.path, server.bareRepoPath, tasks.path
+#    Required: project.path, engine.path, server.bareRepoPath
 
 # 5. Start the coordination server
 cd server && npm run dev
@@ -198,7 +198,6 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 | `project.uprojectFile`       | The `.uproject` filename                      |
 | `engine.path`                | Absolute path to the UE engine                |
 | `engine.version`             | UE version string (e.g. `"5.7"`)              |
-| `tasks.path`                 | Absolute path to the tasks directory          |
 | `build.scriptPath`           | Build script path relative to project root    |
 | `build.testScriptPath`       | Test script path relative to project root     |
 | `build.defaultTestFilters`   | Array of default test filter strings          |
@@ -208,7 +207,7 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 | `container.defaultBranch`    | Default branch for new agents                 |
 | `server.port`                | Coordination server port                      |
 | `server.ubtLockTimeoutMs`    | Timeout for UBT lock acquisition              |
-| `server.stagingWorktreePath` | Path to the host-side staging worktree        |
+| `server.stagingWorktreeRoot` | Path to the host-side staging worktree        |
 | `server.bareRepoPath`        | Path to the bare repo                         |
 
 ## Scripts
