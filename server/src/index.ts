@@ -78,7 +78,8 @@ try {
   if (projectIds.length > 1) {
     console.log(`  Projects: ${projectIds.join(', ')}`);
   } else {
-    console.log(`  Project: ${config.project.name}`);
+    const singleId = projectIds[0];
+    console.log(`  Project: ${config.resolvedProjects[singleId]?.name ?? singleId}`);
   }
   const dbStatus = getDbStatus();
   console.log(`  DB: ${dbStatus.backend}${dbStatus.backend === 'pglite' ? ` (${pgliteDataDir})` : ''}`);

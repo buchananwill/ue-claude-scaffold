@@ -237,6 +237,9 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   fastify.post<{
     Body: { clean?: boolean };
   }>('/build', async (request) => {
+    // NOTE: x-agent-name is trusted without authentication. This relies on
+    // network-isolated deployment (containers on the same host). If the server
+    // is exposed to untrusted networks, agent identity must be authenticated.
     const agentName = request.headers['x-agent-name'] as string | undefined;
     const project = await resolveProjectForAgent(agentName);
     const projectId = await resolveProjectIdForAgent(agentName);

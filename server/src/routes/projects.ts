@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { getDb } from '../drizzle-instance.js';
 import * as projectsQ from '../queries/projects.js';
 
+// No opts needed — DB access is via getDb() singleton, not injected through opts.
 const projectsPlugin: FastifyPluginAsync = async (fastify) => {
   // GET /projects - list all projects
   fastify.get('/projects', async () => {
@@ -59,6 +60,9 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
       if (typeof engineVersion !== 'string' || engineVersion.length > 64) {
         return reply.badRequest('engineVersion must be a string (max 64 chars)');
       }
+      if (!/^[a-zA-Z0-9._+-]+$/.test(engineVersion)) {
+        return reply.badRequest('engineVersion contains invalid characters');
+      }
     }
     if (buildTimeoutMs !== undefined && buildTimeoutMs !== null) {
       if (!Number.isInteger(buildTimeoutMs) || buildTimeoutMs <= 0 || buildTimeoutMs > 3600000) {
@@ -110,6 +114,9 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
     if (engineVersion !== undefined && engineVersion !== null) {
       if (typeof engineVersion !== 'string' || engineVersion.length > 64) {
         return reply.badRequest('engineVersion must be a string (max 64 chars)');
+      }
+      if (!/^[a-zA-Z0-9._+-]+$/.test(engineVersion)) {
+        return reply.badRequest('engineVersion contains invalid characters');
       }
     }
     if (name !== undefined) {
