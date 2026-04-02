@@ -6,8 +6,8 @@ color: green
 tools: [Read, Edit, Write, Glob, Grep, Bash]
 skills:
   - action-boundary
-  - implementation-loop
-  - implementation-io-schema
+  - tdd-implementation-loop
+  - tdd-implementation-io-schema
   - scaffold-environment
   - scaffold-server-patterns
   - scaffold-dashboard-patterns

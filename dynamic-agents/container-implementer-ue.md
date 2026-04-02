@@ -9,12 +9,12 @@ skills:
   - commit-discipline
   - container-build-routing
   - container-git-build-intercept
-  - implementation-loop
+  - tdd-implementation-loop
   - ue-cpp-style
   - ue-correctness
   - ue-safety
   - lint-hook-awareness
-  - implementation-io-schema
+  - tdd-implementation-io-schema
   - debrief-protocol
   - message-board-protocol
 ---
