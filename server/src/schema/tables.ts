@@ -162,7 +162,7 @@ export const chatMessages = pgTable('chat_messages', {
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   index('idx_chat_room_id').on(table.roomId, table.id),
-  foreignKey({ columns: [table.replyTo], foreignColumns: [table.id] }),
+  foreignKey({ columns: [table.replyTo], foreignColumns: [table.id] }).onDelete('set null'),
 ]);
 
 // 13. teams

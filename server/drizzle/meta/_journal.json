@@ -15,6 +15,13 @@
       "when": 1775088015731,
       "tag": "0001_fine_stone_men",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775088158474,
+      "tag": "0002_material_maddog",
+      "breakpoints": true
     }
   ]
 }
