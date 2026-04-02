@@ -245,10 +245,68 @@ function parseProjectConfig(id: string, p: Record<string, unknown>): ProjectConf
   };
 }
 
-export function getProject(config: ScaffoldConfig, id: string): ProjectConfig {
+export interface MergedProjectConfig extends ProjectConfig {
+  /** Portable fields from DB (null if project not in DB) */
+  dbRecord?: {
+    engineVersion: string | null;
+    seedBranch: string | null;
+    buildTimeoutMs: number | null;
+    testTimeoutMs: number | null;
+  };
+}
+
+export interface ProjectDbRow {
+  id: string;
+  name: string;
+  engineVersion: string | null;
+  seedBranch: string | null;
+  buildTimeoutMs: number | null;
+  testTimeoutMs: number | null;
+}
+
+/**
+ * Get a project's config by merging local paths from JSON config with
+ * portable fields from the DB row (if provided).
+ *
+ * DB values override JSON values for portable fields (name, timeouts, seed branch).
+ */
+export function getProject(config: ScaffoldConfig, id: string, dbRow?: ProjectDbRow | null): MergedProjectConfig {
   const project = config.resolvedProjects[id];
   if (!project) {
     throw new Error(`Unknown project: "${id.slice(0, 64).replace(/[^a-zA-Z0-9_-]/g, '?')}"`);
   }
-  return project;
+
+  if (!dbRow) {
+    return { ...project };
+  }
+
+  // Merge: DB is authoritative for portable fields
+  const merged: MergedProjectConfig = { ...project };
+
+  // DB name overrides JSON name
+  merged.name = dbRow.name;
+
+  // DB seed branch overrides JSON plan branch
+  if (dbRow.seedBranch != null) {
+    merged.planBranch = dbRow.seedBranch;
+  }
+
+  // DB timeouts override JSON build timeouts
+  if (merged.build) {
+    if (dbRow.buildTimeoutMs != null) {
+      merged.build = { ...merged.build, buildTimeoutMs: dbRow.buildTimeoutMs };
+    }
+    if (dbRow.testTimeoutMs != null) {
+      merged.build = { ...merged.build, testTimeoutMs: dbRow.testTimeoutMs };
+    }
+  }
+
+  merged.dbRecord = {
+    engineVersion: dbRow.engineVersion,
+    seedBranch: dbRow.seedBranch,
+    buildTimeoutMs: dbRow.buildTimeoutMs,
+    testTimeoutMs: dbRow.testTimeoutMs,
+  };
+
+  return merged;
 }

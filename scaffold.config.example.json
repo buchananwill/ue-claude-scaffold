@@ -62,13 +62,10 @@
       "path": "D:\\Projects\\MyUEGame",
       "uprojectFile": "MyUEGame.uproject",
       "bareRepoPath": "D:\\Repos\\my-ue-game.git",
-      "planBranch": "docker/current-root",
       "engine": { "path": "C:\\UE_5.7", "version": "5.7" },
       "build": {
         "scriptPath": "Scripts/build.py",
-        "testScriptPath": "Scripts/run_tests.py",
-        "buildTimeoutMs": 660000,
-        "testTimeoutMs": 700000
+        "testScriptPath": "Scripts/run_tests.py"
       },
       "plugins": {
         "stagingCopies": [

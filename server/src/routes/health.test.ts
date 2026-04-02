@@ -23,8 +23,9 @@ describe('GET /health', () => {
     assert.equal(body.status, 'ok');
     assert.equal(body.db.backend, 'pglite');
     assert.equal(body.config.port, 9200);
-    assert.equal(body.config.projectName, 'TestProject');
     assert.equal(body.config.ubtLockTimeoutMs, 300000);
+    // projectName is no longer returned without x-project-id header
+    assert.equal(body.config.projectName, undefined);
 
     await ctx.app.close();
   });

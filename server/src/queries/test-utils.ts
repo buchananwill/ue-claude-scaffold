@@ -167,6 +167,17 @@ CREATE TABLE "team_members" (
   CONSTRAINT "team_members_team_id_agent_name_pk" PRIMARY KEY("team_id", "agent_name")
 );
 CREATE UNIQUE INDEX "idx_team_leader" ON "team_members" ("team_id") WHERE is_leader = true;
+
+CREATE TABLE "projects" (
+  "id" text PRIMARY KEY NOT NULL,
+  "name" text NOT NULL,
+  "engine_version" text,
+  "seed_branch" text,
+  "build_timeout_ms" integer,
+  "test_timeout_ms" integer,
+  "created_at" timestamp DEFAULT now(),
+  CONSTRAINT "projects_id_check" CHECK ("id" ~ '^[a-zA-Z0-9_-]{1,64}$')
+);
 `;
 
 export async function createTestDb(): Promise<TestDb> {

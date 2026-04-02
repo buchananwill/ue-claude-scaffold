@@ -17,12 +17,28 @@ import {
   syncPlugin,
   roomsPlugin,
   teamsPlugin,
+  projectsPlugin,
 } from './routes/index.js';
 import { sweepStaleLock } from './routes/ubt.js';
+import { getDb } from './drizzle-instance.js';
+import { seedFromConfig } from './queries/projects.js';
 
 const config = loadConfig();
 const pgliteDataDir = './data/pglite';
 await initDrizzle({ pgliteDataDir });
+
+// Seed projects from config into DB (INSERT-only, skip existing)
+{
+  const db = getDb();
+  const projectIds = Object.keys(config.resolvedProjects);
+  const { inserted, skipped } = await seedFromConfig(db, projectIds);
+  if (inserted.length > 0) {
+    console.log(`Seeded projects: ${inserted.join(', ')}`);
+  }
+  if (skipped.length > 0) {
+    console.log(`Skipped existing projects: ${skipped.join(', ')}`);
+  }
+}
 
 const server = Fastify({
   logger: true,
@@ -44,6 +60,7 @@ await server.register(coalescePlugin);
 await server.register(syncPlugin, { config });
 await server.register(roomsPlugin);
 await server.register(teamsPlugin);
+await server.register(projectsPlugin);
 
 try {
   const address = await server.listen({
