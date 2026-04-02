@@ -18,6 +18,9 @@ Thumbs.db
 .idea/
 *.swp
 
+# PGlite local database
+server/data/
+
 # Docker build context artifacts
 repo.git/
 

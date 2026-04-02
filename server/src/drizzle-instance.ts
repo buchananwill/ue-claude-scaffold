@@ -10,8 +10,11 @@
 
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
+import { migrate as migratePg } from 'drizzle-orm/node-postgres/migrator';
+import { migrate as migratePglite } from 'drizzle-orm/pglite/migrator';
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
+import { mkdirSync } from 'node:fs';
 import * as schema from './schema/index.js';
 
 export type DrizzleDb = ReturnType<typeof drizzlePg<typeof schema>> | ReturnType<typeof drizzlePglite<typeof schema>>;
@@ -43,11 +46,16 @@ async function doInit(opts?: InitDrizzleOpts): Promise<DrizzleDb> {
       console.error('[drizzle] pg pool idle client error', err);
     });
     instance = drizzlePg(pgPool, { schema });
+    await migratePg(instance, { migrationsFolder: './drizzle' });
   } else {
     // Local / test: PGlite (in-process Postgres)
     const dataDir = opts?.pgliteDataDir; // undefined = in-memory
+    if (dataDir) {
+      mkdirSync(dataDir, { recursive: true });
+    }
     pgliteClient = new PGlite(dataDir);
     instance = drizzlePglite(pgliteClient, { schema });
+    await migratePglite(instance as Parameters<typeof migratePglite>[0], { migrationsFolder: './drizzle' });
   }
 
   return instance;

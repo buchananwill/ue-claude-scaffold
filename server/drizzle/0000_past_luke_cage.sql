@@ -108,7 +108,7 @@ CREATE TABLE "team_members" (
 	"team_id" text NOT NULL,
 	"agent_name" text NOT NULL,
 	"role" text NOT NULL,
-	"is_leader" integer DEFAULT 0 NOT NULL,
+	"is_leader" boolean DEFAULT false NOT NULL,
 	CONSTRAINT "team_members_team_id_agent_name_pk" PRIMARY KEY("team_id","agent_name")
 );
 --> statement-breakpoint
@@ -140,6 +140,7 @@ CREATE TABLE "ubt_queue" (
 );
 --> statement-breakpoint
 ALTER TABLE "chat_messages" ADD CONSTRAINT "chat_messages_room_id_rooms_id_fk" FOREIGN KEY ("room_id") REFERENCES "public"."rooms"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "chat_messages" ADD CONSTRAINT "chat_messages_reply_to_chat_messages_id_fk" FOREIGN KEY ("reply_to") REFERENCES "public"."chat_messages"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "room_members" ADD CONSTRAINT "room_members_room_id_rooms_id_fk" FOREIGN KEY ("room_id") REFERENCES "public"."rooms"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "task_dependencies" ADD CONSTRAINT "task_dependencies_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "task_dependencies" ADD CONSTRAINT "task_dependencies_depends_on_tasks_id_fk" FOREIGN KEY ("depends_on") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -153,5 +154,5 @@ CREATE INDEX "idx_task_deps_task" ON "task_dependencies" USING btree ("task_id")
 CREATE INDEX "idx_task_deps_dep" ON "task_dependencies" USING btree ("depends_on");--> statement-breakpoint
 CREATE INDEX "idx_task_files_path" ON "task_files" USING btree ("file_path");--> statement-breakpoint
 CREATE INDEX "idx_tasks_status" ON "tasks" USING btree ("status");--> statement-breakpoint
-CREATE INDEX "idx_tasks_priority" ON "tasks" USING btree ("priority","id");--> statement-breakpoint
-CREATE UNIQUE INDEX "idx_team_leader" ON "team_members" USING btree ("team_id") WHERE is_leader = 1;
+CREATE INDEX "idx_tasks_priority" ON "tasks" USING btree ("priority" DESC NULLS LAST,"id");--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_team_leader" ON "team_members" USING btree ("team_id") WHERE is_leader = true;
