@@ -10,6 +10,10 @@ axis: protocol
 
 The coordination server at `$SERVER_URL` provides a message board -- your **only communication channel with the human operator**. The operator reads `GET /messages/general` to understand what is happening. All posts are fire-and-forget (`|| true`).
 
+### Identity Tag
+
+Every message you post must be prefixed with your role tag: `[ORCHESTRATOR]`. This tag goes at the start of every `payload.message` string in `status_update` messages, and in the `notes` field of phase events. It allows the operator to distinguish your posts from sub-agent posts at a glance.
+
 ### How to Post
 
 Use curl via the Bash tool:
@@ -18,7 +22,7 @@ Use curl via the Bash tool:
 curl -s -X POST "${SERVER_URL}/messages" \
   -H "Content-Type: application/json" \
   -H "X-Agent-Name: ${AGENT_NAME}" \
-  -d '{"channel":"general","type":"phase_start","payload":{"phase":"1","title":"...","status":"starting","notes":"..."}}' \
+  -d '{"channel":"general","type":"status_update","payload":{"message":"[ORCHESTRATOR] Status message here."}}' \
   --max-time 5 >/dev/null 2>&1 || true
 ```
 
@@ -32,7 +36,7 @@ Your very first action, before reading the plan or doing any work, is to post a 
 curl -sf -X POST "${SERVER_URL}/messages" \
   -H "Content-Type: application/json" \
   -H "X-Agent-Name: ${AGENT_NAME}" \
-  -d '{"channel":"general","type":"status_update","payload":{"message":"Agent online. Beginning work."}}' \
+  -d '{"channel":"general","type":"status_update","payload":{"message":"[ORCHESTRATOR] Agent online. Beginning work."}}' \
   --max-time 5
 ```
 

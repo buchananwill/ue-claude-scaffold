@@ -7,6 +7,12 @@ description: Use for any container agent that posts progress to the coordination
 
 The coordination server at `$SERVER_URL` provides a message board for reporting progress. The human operator reads `GET /messages/general` to reconstruct a timeline of your work. Always post at the prescribed moments — but never let a failed post interrupt your work.
 
+## Identity Tag
+
+Every message you post must be prefixed with your role tag in square brackets. Derive the tag from your agent definition name: strip the `container-` or `scaffold-` prefix, uppercase the remainder, and use that as your tag. Examples: `container-implementer` -> `[IMPLEMENTER]`, `scaffold-tester` -> `[TESTER]`, `container-orchestrator` -> `[ORCHESTRATOR]`.
+
+This tag goes at the start of every `payload.message` string in `status_update` messages, and in the `notes` field of phase events. It allows the operator to see at a glance which agent posted each message.
+
 ## How to Post
 
 Use curl via the Bash tool:
@@ -15,7 +21,7 @@ Use curl via the Bash tool:
 curl -s -X POST "${SERVER_URL}/messages" \
   -H "Content-Type: application/json" \
   -H "X-Agent-Name: ${AGENT_NAME}" \
-  -d '{"channel":"general","type":"phase_start","payload":{"phase":"1","title":"...","status":"starting","notes":"..."}}' \
+  -d '{"channel":"general","type":"status_update","payload":{"message":"[YOUR-ROLE] Status message here."}}' \
   --max-time 5 >/dev/null 2>&1 || true
 ```
 
@@ -29,9 +35,11 @@ Your very first action, before reading the plan or doing any work, is to post a 
 curl -sf -X POST "${SERVER_URL}/messages" \
   -H "Content-Type: application/json" \
   -H "X-Agent-Name: ${AGENT_NAME}" \
-  -d '{"channel":"general","type":"status_update","payload":{"message":"Agent online. Beginning work."}}' \
+  -d '{"channel":"general","type":"status_update","payload":{"message":"[YOUR-ROLE] Agent online. Beginning work."}}' \
   --max-time 5
 ```
+
+Replace `[YOUR-ROLE]` with your actual role tag (e.g. `[IMPLEMENTER]`).
 
 This confirms you can reach the message board and that you are visible to the operator. If this post fails, stop immediately and report the error as your final output — a broken message board means the operator has no visibility into your work.
 
