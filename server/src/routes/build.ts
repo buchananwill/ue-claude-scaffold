@@ -129,8 +129,8 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     }
   }
 
-  async function checkLock(agentName: string | undefined): Promise<string | null> {
-    const lock = await ubtQ.getLock(getDb(), 'default');
+  async function checkLock(agentName: string | undefined, projectId: string): Promise<string | null> {
+    const lock = await ubtQ.getLock(getDb(), projectId);
     if (!lock || !lock.holder) {
       return null;
     }
@@ -240,7 +240,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const agentName = request.headers['x-agent-name'] as string | undefined;
     const project = await resolveProjectForAgent(agentName);
     const projectId = await resolveProjectIdForAgent(agentName);
-    const holder = await checkLock(agentName);
+    const holder = await checkLock(agentName, projectId);
     if (holder) {
       return {
         success: false,
@@ -291,7 +291,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const agentName = request.headers['x-agent-name'] as string | undefined;
     const project = await resolveProjectForAgent(agentName);
     const projectId = await resolveProjectIdForAgent(agentName);
-    const holder = await checkLock(agentName);
+    const holder = await checkLock(agentName, projectId);
     if (holder) {
       return {
         success: false,

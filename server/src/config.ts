@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import type { ProjectRow } from './queries/projects.js';
 
 export interface ProjectConfig {
   name: string;
@@ -255,22 +256,13 @@ export interface MergedProjectConfig extends ProjectConfig {
   };
 }
 
-export interface ProjectDbRow {
-  id: string;
-  name: string;
-  engineVersion: string | null;
-  seedBranch: string | null;
-  buildTimeoutMs: number | null;
-  testTimeoutMs: number | null;
-}
-
 /**
  * Get a project's config by merging local paths from JSON config with
  * portable fields from the DB row (if provided).
  *
  * DB values override JSON values for portable fields (name, timeouts, seed branch).
  */
-export function getProject(config: ScaffoldConfig, id: string, dbRow?: ProjectDbRow | null): MergedProjectConfig {
+export function getProject(config: ScaffoldConfig, id: string, dbRow?: ProjectRow | null): MergedProjectConfig {
   const project = config.resolvedProjects[id];
   if (!project) {
     throw new Error(`Unknown project: "${id.slice(0, 64).replace(/[^a-zA-Z0-9_-]/g, '?')}"`);

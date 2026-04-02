@@ -106,7 +106,12 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     // Validate PATCH body field constraints
-    const { name, seedBranch, buildTimeoutMs, testTimeoutMs } = request.body;
+    const { name, engineVersion, seedBranch, buildTimeoutMs, testTimeoutMs } = request.body;
+    if (engineVersion !== undefined && engineVersion !== null) {
+      if (typeof engineVersion !== 'string' || engineVersion.length > 64) {
+        return reply.badRequest('engineVersion must be a string (max 64 chars)');
+      }
+    }
     if (name !== undefined) {
       if (typeof name !== 'string' || name.length === 0 || name.length > 256) {
         return reply.badRequest('name must be a non-empty string (max 256 chars)');

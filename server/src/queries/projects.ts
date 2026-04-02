@@ -59,6 +59,13 @@ export async function create(db: DrizzleDb, opts: CreateProjectOpts): Promise<Pr
   return rows[0] as ProjectRow;
 }
 
+/**
+ * Update a project's portable fields.
+ *
+ * Returns the updated row, or `null` if the project does not exist.
+ * When `opts` contains no fields to update, falls back to `getById` —
+ * which also returns `null` for a non-existent ID.
+ */
 export async function update(db: DrizzleDb, id: string, opts: UpdateProjectOpts): Promise<ProjectRow | null> {
   const set: Partial<typeof projects.$inferInsert> = {};
   if (opts.name !== undefined) set.name = opts.name;

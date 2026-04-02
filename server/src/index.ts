@@ -74,7 +74,12 @@ try {
     host: '0.0.0.0',
   });
   console.log(`Coordination server listening at ${address}`);
-  console.log(`  Project: ${config.project.name}`);
+  const projectIds = Object.keys(config.resolvedProjects);
+  if (projectIds.length > 1) {
+    console.log(`  Projects: ${projectIds.join(', ')}`);
+  } else {
+    console.log(`  Project: ${config.project.name}`);
+  }
   const dbStatus = getDbStatus();
   console.log(`  DB: ${dbStatus.backend}${dbStatus.backend === 'pglite' ? ` (${pgliteDataDir})` : ''}`);
   console.log(`  UBT lock timeout: ${config.server.ubtLockTimeoutMs}ms`);
