@@ -6,7 +6,6 @@ export interface ProjectConfig {
   path: string;
   uprojectFile?: string;
   bareRepoPath: string;
-  tasksPath?: string;
   planBranch?: string;
   engine?: { path: string; version: string };
   build?: { scriptPath?: string; testScriptPath?: string; buildTimeoutMs?: number; testTimeoutMs?: number };
@@ -146,7 +145,6 @@ export function loadConfig(): ScaffoldConfig {
       path: config.project.path,
       uprojectFile: config.project.uprojectFile || undefined,
       bareRepoPath: config.server.bareRepoPath,
-      tasksPath: config.tasks?.path || undefined,
       planBranch: config.tasks?.planBranch,
       engine: config.engine.path ? { path: config.engine.path, version: config.engine.version } : undefined,
       build: config.build.scriptPath ? {
@@ -227,7 +225,6 @@ function parseProjectConfig(id: string, p: Record<string, unknown>): ProjectConf
     path: String(p.path ?? ''),
     uprojectFile: p.uprojectFile != null ? String(p.uprojectFile) : undefined,
     bareRepoPath: String(p.bareRepoPath ?? ''),
-    tasksPath: p.tasksPath != null ? String(p.tasksPath) : undefined,
     planBranch: p.planBranch != null ? String(p.planBranch) : undefined,
     engine: engine ? { path: String(engine.path ?? ''), version: String(engine.version ?? '') } : undefined,
     build: build ? {

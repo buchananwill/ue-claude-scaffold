@@ -67,8 +67,8 @@ cd ue-claude-scaffold
 # 5. Start the coordination server
 cd server && npm run dev
 
-# 6. In another terminal — launch an agent with a plan
-./launch.sh --plan path/to/your-plan.md
+# 6. In another terminal — launch an agent
+./launch.sh
 
 # 7. Monitor progress (terminal or browser)
 ./status.sh --follow
@@ -218,15 +218,14 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 Parameterized launcher for container agents.
 
 ```bash
-# Launch with a plan (branch auto-derived from filename)
-./launch.sh --plan plans/add-inventory-system.md
-# -> branch: feature/add-inventory-system
+# Launch an agent (tasks come from the task queue)
+./launch.sh
 
-# Explicit branch and agent name
-./launch.sh --agent-name agent-2 --branch feature/ui --plan plans/ui-rework.md
+# Explicit agent name
+./launch.sh --agent-name agent-2
 
 # Preview what would happen without launching
-./launch.sh --plan plans/my-plan.md --dry-run
+./launch.sh --dry-run
 
 # Full usage
 ./launch.sh --help

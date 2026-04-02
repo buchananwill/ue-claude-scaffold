@@ -63,7 +63,6 @@
       "path": "D:\\Projects\\MyUEGame",
       "uprojectFile": "MyUEGame.uproject",
       "bareRepoPath": "D:\\Repos\\my-ue-game.git",
-      "tasksPath": "D:\\Projects\\MyUEGame\\tasks",
       "planBranch": "docker/current-root",
       "engine": { "path": "C:\\UE_5.7", "version": "5.7" },
       "build": {
@@ -86,8 +85,7 @@
     "my-ue-game-dashboard": {
       "name": "MyUEGameDashboard",
       "path": "D:\\Projects\\MyUEGame",
-      "bareRepoPath": "D:\\Repos\\my-ue-game.git",
-      "tasksPath": "D:\\Projects\\MyUEGame\\dashboard\\tasks"
+      "bareRepoPath": "D:\\Repos\\my-ue-game.git"
     },
     "this-scaffold": {
       "name": "UEClaudeScaffold",
@@ -97,8 +95,7 @@
     "side-project": {
       "name": "SideProject",
       "path": "D:\\Projects\\side-project",
-      "bareRepoPath": "D:\\Repos\\side-project.git",
-      "tasksPath": "D:\\Projects\\side-project\\tasks"
+      "bareRepoPath": "D:\\Repos\\side-project.git"
     },
     "web-dashboard": {
       "name": "WebDashboard",

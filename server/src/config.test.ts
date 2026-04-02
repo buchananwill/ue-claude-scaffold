@@ -156,7 +156,6 @@ describe('multi-project config', () => {
     assert.deepEqual(def.engine, { path: '/tmp/engine', version: '5.4' });
     assert.ok(def.build);
     assert.equal(def.build?.scriptPath, '/tmp/b.sh');
-    assert.equal(def.tasksPath, '/tmp/tasks');
     assert.equal(def.planBranch, 'plans');
     assert.equal(def.stagingWorktreeRoot, '/tmp/staging');
   });
