@@ -14,31 +14,60 @@ export interface TaskRow {
   base_priority: number;
   progress_log: string | null;
   created_at: string;
+  // Drizzle (camelCase) variants
+  projectId?: string;
+  sourcePath?: string | null;
+  acceptanceCriteria?: string | null;
+  claimedBy?: string | null;
+  claimedAt?: string | Date | null;
+  completedAt?: string | Date | null;
+  basePriority?: number;
+  progressLog?: string | null;
+  createdAt?: string | Date | null;
+}
+
+function parseResult(raw: unknown): unknown {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === 'object') return raw; // Drizzle returns jsonb as objects
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+  return null;
+}
+
+/** Pick the camelCase field if the key exists on the object, otherwise fall back to snake_case. */
+function pick<T>(row: Record<string, unknown>, camel: string, snake: string): T {
+  if (camel in row) return row[camel] as T;
+  return row[snake] as T;
 }
 
 export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[], blockedBy?: number[], blockReasons?: string[]) {
+  const r = row as unknown as Record<string, unknown>;
+  const result = parseResult(pick(r, 'result', 'result'));
+  const completedBy = (() => {
+    if (!result || typeof result !== 'object') return null;
+    return (result as Record<string, unknown>).agent as string ?? null;
+  })();
+
   return {
     id: row.id,
     title: row.title,
     description: row.description,
-    sourcePath: row.source_path,
-    acceptanceCriteria: row.acceptance_criteria,
+    sourcePath: pick<string | null>(r, 'sourcePath', 'source_path'),
+    acceptanceCriteria: pick<string | null>(r, 'acceptanceCriteria', 'acceptance_criteria'),
     status: row.status,
     priority: row.priority,
     files: files ?? [],
     dependsOn: dependsOn ?? [],
     blockedBy: blockedBy ?? [],
     blockReasons: blockReasons ?? [],
-    claimedBy: row.claimed_by,
-    claimedAt: row.claimed_at,
-    completedAt: row.completed_at,
-    result: row.result ? JSON.parse(row.result) : null,
-    completedBy: (() => {
-      if (!row.result) return null;
-      try { return JSON.parse(row.result)?.agent ?? null; } catch { return null; }
-    })(),
-    progressLog: row.progress_log,
-    createdAt: row.created_at,
-    projectId: row.project_id,
+    claimedBy: pick<string | null>(r, 'claimedBy', 'claimed_by'),
+    claimedAt: pick<string | Date | null>(r, 'claimedAt', 'claimed_at'),
+    completedAt: pick<string | Date | null>(r, 'completedAt', 'completed_at'),
+    result,
+    completedBy,
+    progressLog: pick<string | null>(r, 'progressLog', 'progress_log'),
+    createdAt: pick<string | Date | null>(r, 'createdAt', 'created_at'),
+    projectId: pick<string>(r, 'projectId', 'project_id'),
   };
 }
