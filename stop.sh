@@ -11,9 +11,9 @@ Usage: ./stop.sh [OPTIONS]
 Stop running Claude Code agent containers.
 
 Options:
-  --agent NAME        Stop a specific agent (project name = claude-NAME)
+  --agent NAME        Stop a specific agent (defaults to 'default' project if --project not specified)
   --team TEAM_ID      Stop all members of a design team and dissolve it
-  --project ID        Scope operation to a specific project
+  --project ID        Scope operation to a specific project (multi-project: required with --agent)
   --drain             Graceful shutdown — pause pumps, wait for in-flight
                       tasks, stop containers
   --timeout SECONDS   Max wait time for drain mode (default: 600)
@@ -132,10 +132,14 @@ stop_all() {
     }
 
     local filtered=""
+    local prefix="claude-${PROJECT_ID}-"
     for project in $projects; do
-      local name="${project#claude-}"
-      if echo "$project_agents" | grep -qx "$name"; then
-        filtered="$filtered $project"
+      # Extract agent name from docker project (format: claude-${PROJECT_ID}-${AGENT_NAME})
+      if [[ "$project" == "${prefix}"* ]]; then
+        local agent_name="${project#${prefix}}"
+        if echo "$project_agents" | grep -qx "$agent_name"; then
+          filtered="$filtered $project"
+        fi
       fi
     done
     projects="${filtered# }"
@@ -149,8 +153,13 @@ stop_all() {
   # Signal all agents via server BEFORE killing containers, so the
   # entrypoint's _shutdown handler can complete the two-call DELETE.
   for project in $projects; do
-    local name="${project#claude-}"
-    signal_stop "$name"
+    # Extract agent name from docker project
+    if [[ -n "$PROJECT_ID" ]]; then
+      local agent_name="${project#claude-${PROJECT_ID}-}"
+    else
+      local agent_name="${project#claude-}"
+    fi
+    signal_stop "$agent_name"
   done
 
   for project in $projects; do
@@ -171,11 +180,15 @@ fi
 
 # ── Mode: agent — stop specific ──────────────────────────────────────────────
 if [[ "$MODE" == "agent" ]]; then
-  echo "Stopping agent: $AGENT_NAME ..."
+  # If --project not specified, default to "default" project for backwards compatibility
+  local project_prefix="${PROJECT_ID:-default}"
+  local compose_project_name="claude-${project_prefix}-${AGENT_NAME}"
+
+  echo "Stopping agent: $AGENT_NAME (project: $project_prefix)..."
   signal_stop "$AGENT_NAME"
   (cd "$SCRIPT_DIR/container" && \
-    $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" down 2>/dev/null) || true
-  echo "Stopped claude-${AGENT_NAME}."
+    $COMPOSE_CMD --project-name "$compose_project_name" down 2>/dev/null) || true
+  echo "Stopped $compose_project_name."
   exit 0
 fi
 

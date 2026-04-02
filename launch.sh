@@ -727,7 +727,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
       WORKER_MODE=true \
       WORKER_SINGLE_TASK=false \
       AGENT_MODE=pump \
-      $COMPOSE_CMD --project-name "claude-${_AGENT}" up --build --detach)
+      $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${_AGENT}" up --build --detach)
 
     echo "  Launched $_AGENT on branch $_BRANCH"
   done
@@ -747,9 +747,9 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
 else
   cd "$SCRIPT_DIR/container"
   if [ "$_CLI_FRESH" = "true" ]; then
-      $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" build --no-cache
+      $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${AGENT_NAME}" build --no-cache
   fi
-  $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" up --build --detach
+  $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${AGENT_NAME}" up --build --detach
 
   echo ""
   echo "=== Agent Launched ==="
@@ -762,8 +762,8 @@ else
   echo "  ./status.sh --follow"
   echo ""
   echo "View container logs:"
-  echo "  docker compose --project-name claude-${AGENT_NAME} -f $SCRIPT_DIR/container/docker-compose.yml logs -f"
+  echo "  docker compose --project-name claude-${PROJECT_ID}-${AGENT_NAME} -f $SCRIPT_DIR/container/docker-compose.yml logs -f"
   echo ""
   echo "Stop agent:"
-  echo "  $COMPOSE_CMD --project-name \"claude-${AGENT_NAME}\" down"
+  echo "  $COMPOSE_CMD --project-name \"claude-${PROJECT_ID}-${AGENT_NAME}\" down"
 fi
