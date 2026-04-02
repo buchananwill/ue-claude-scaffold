@@ -1,7 +1,7 @@
 ---
 name: scaffold-tester
 description: Writes Node.js built-in test runner tests for the ue-claude-scaffold server inside a Docker container. Uses createTestApp() helper and app.inject() for HTTP contract testing.
-model: inherit
+model: sonnet
 color: blue
 tools: [Read, Edit, Write, Glob, Grep, Bash]
 skills:

@@ -1,7 +1,7 @@
 ---
 name: scaffold-style-reviewer
 description: Reviews ue-claude-scaffold code for ESM compliance, Fastify plugin patterns, TypeScript idioms, and naming consistency. Read-only, narrow mandate.
-model: inherit
+model: sonnet
 color: yellow
 tools: [Read, Glob, Grep, Bash]
 skills:

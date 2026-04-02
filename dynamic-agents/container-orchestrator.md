@@ -1,7 +1,7 @@
 ---
 name: container-orchestrator
 description: Autonomous orchestrator for Docker container execution. Executes a pre-authored plan E2E with no human in the loop. Each phase must build and pass code review before advancing.
-model: inherit
+model: opus
 color: cyan
 tools: [Agent, Read, Glob, Grep, Bash]
 skills:

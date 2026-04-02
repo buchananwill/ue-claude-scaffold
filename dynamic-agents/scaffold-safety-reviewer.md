@@ -1,7 +1,7 @@
 ---
 name: scaffold-safety-reviewer
 description: Reviews ue-claude-scaffold code for SQL injection, input validation, shell injection, auth patterns, and error handling. Read-only, narrow mandate.
-model: inherit
+model: sonnet
 color: red
 tools: [Read, Glob, Grep, Bash]
 skills:

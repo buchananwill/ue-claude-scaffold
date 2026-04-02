@@ -1,7 +1,7 @@
 ---
 name: scaffold-typescript-type-reviewer
 description: Reviews TypeScript code for type discipline — inline types, hand-copied fields, missing exports, and failure to remap from core project types. Read-only, narrow mandate.
-model: inherit
+model: sonnet
 color: cyan
 tools: [Read, Glob, Grep, Bash]
 skills:

@@ -1,7 +1,7 @@
 ---
 name: scaffold-decomposition-reviewer
 description: Reviews ue-claude-scaffold code for file bloat, module sprawl, DRY violations, and decomposition opportunities. Read-only, narrow mandate.
-model: inherit
+model: opus
 color: purple
 tools: [Read, Glob, Grep, Bash]
 skills:

@@ -1,7 +1,7 @@
 ---
 name: changeling
 description: Variable multi-purpose participant in multi-agent design discussions. Adapts role to team context. Communicates exclusively via the reply tool.
-model: inherit
+model: sonnet
 color: gray
 tools: [Read, Glob, Grep]
 skills:

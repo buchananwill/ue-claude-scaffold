@@ -1,7 +1,7 @@
 ---
 name: container-decomposition-reviewer-ue
 description: Reviews Unreal Engine C++ code for file bloat, DRY violations, and decomposition opportunities. Read-only, narrow mandate. Considers UE lifetime and GC constraints when proposing splits.
-model: inherit
+model: opus
 color: purple
 tools: [Read, Glob, Grep, Bash]
 skills:

@@ -1,7 +1,7 @@
 ---
 name: scaffold-orchestrator
 description: Autonomous orchestrator for Docker container execution against the ue-claude-scaffold project. Executes a pre-authored plan E2E with no human in the loop. Each phase must build and pass code review before advancing.
-model: inherit
+model: opus
 tools: [ Agent, Read, Glob, Grep, Bash ]
 skills:
   - container-git-write

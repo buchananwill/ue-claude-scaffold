@@ -1,7 +1,7 @@
 ---
 name: container-style-reviewer-ue
 description: Reviews Unreal Engine C++ code for style and convention compliance. Read-only, narrow mandate. Does not re-report what the lint hook already catches.
-model: inherit
+model: sonnet
 color: yellow
 tools: [Read, Glob, Grep, Bash]
 skills:

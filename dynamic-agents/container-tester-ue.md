@@ -1,7 +1,7 @@
 ---
 name: container-tester-ue
 description: Writes UE5 automation tests inside a Docker container. Reads existing helpers, generates test files in Tests/ directories, verifies compilation via host-routed hook.
-model: inherit
+model: sonnet
 color: blue
 tools: [Read, Edit, Write, Glob, Grep, Bash]
 skills:
