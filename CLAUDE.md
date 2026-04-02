@@ -40,8 +40,8 @@ The dashboard talks to the coordination server (default `http://localhost:9100`)
 
 ```bash
 ./setup.sh               # First-time setup (prereqs, config files, deps)
-./launch.sh --plan path/to/plan.md   # Launch container agent (resumes existing branch by default)
-./launch.sh --fresh --plan path/to/plan.md  # Reset agent branch to docker/current-root before launch
+./launch.sh              # Launch container agent (resumes existing branch by default)
+./launch.sh --fresh      # Reset agent branch to docker/current-root before launch
 ./launch.sh --dry-run    # Preview resolved config and branch names without launching
 ./stop.sh                # Stop all running agent containers
 ./stop.sh --agent agent-1  # Stop a specific agent
@@ -100,10 +100,15 @@ Container agents don't run builds directly. Two PreToolUse hooks in `container/h
 - **`intercept_build_test.sh`** — intercepts build/test commands, commits+pushes to the bare repo, then calls the coordination server's `/build` or `/test` endpoint. The server syncs to a staging worktree and runs the real UE build scripts.
 - **`block-push-passthrough.sh`** — blocks manual `git push` commands. Pushes are handled automatically by the build/test intercept hook, so direct pushes are an error.
 
-### Two Execution Modes
+### Task-Queue Execution
 
-- **Plan mode** (default): `launch.sh --plan plan.md` launches a container on branch `docker/{agent-name}`. By default the container resumes its existing branch; `--fresh` resets it to `docker/current-root` HEAD first. Plan documents live in `plans/`.
-- **Worker mode**: `launch.sh --worker` — container polls `GET /tasks?status=pending`, claims tasks, executes them, reports results. Uses the same branch model.
+Containers get work from the task queue. The workflow is:
+
+1. Ingest tasks via `POST /tasks` or `scripts/ingest-tasks.sh`
+2. Launch a container with `./launch.sh` (no plan file needed)
+3. The container polls `POST /tasks/claim-next` to claim and execute tasks
+
+By default the container resumes its existing branch; `--fresh` resets it to `docker/current-root` HEAD first. Use `--worker` for single-task mode or `--pump` for continuous multi-task mode.
 
 ### Branch Model
 

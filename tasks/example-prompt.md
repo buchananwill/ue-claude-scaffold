@@ -1,8 +1,8 @@
 # Example Task Prompt
 
 > **This is a template, not a real task.** Copy this structure when writing a plan
-> for the container orchestrator. Place your actual prompt at the path configured
-> in `TASKS_PATH` (mounted as `/task/prompt.md` in the container).
+> for the container orchestrator. Ingest tasks into the task queue via
+> `POST /tasks` or `scripts/ingest-tasks.sh`.
 
 ---
 

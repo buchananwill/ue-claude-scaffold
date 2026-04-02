@@ -12,7 +12,6 @@ services:
       - AGENT_TYPE=${AGENT_TYPE:?Set AGENT_TYPE in .env}
       - MAX_TURNS=${MAX_TURNS:-200}
       - SERVER_URL=http://host.docker.internal:${SERVER_PORT:-9100}
-      - TASK_PROMPT_FILE=/task/prompt.md
       # Hook config — set these to match your project's build/test scripts
       - BUILD_SCRIPT_NAME=${BUILD_SCRIPT_NAME:-build.py}
       - TEST_SCRIPT_NAME=${TEST_SCRIPT_NAME:-run_tests.py}
@@ -26,8 +25,6 @@ services:
     volumes:
       # Required: bare repo for git operations
       - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git
-      # Required: task prompt and standing instructions
-      - ${TASKS_PATH:?Set TASKS_PATH}:/task:ro
       # Host-side logs (exit logs persist after container shutdown for forensic review)
       - ${LOGS_PATH:-./logs}:/logs
       # Required: Claude authentication (pick one)

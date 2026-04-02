@@ -62,13 +62,13 @@ cd ue-claude-scaffold
 # 3. Edit .env with your authentication credentials
 
 # 4. Edit scaffold.config.json with your project paths
-#    Required: project.path, engine.path, server.bareRepoPath, tasks.path
+#    Required: project.path, engine.path, server.bareRepoPath
 
 # 5. Start the coordination server
 cd server && npm run dev
 
-# 6. In another terminal — launch an agent with a plan
-./launch.sh --plan path/to/your-plan.md
+# 6. In another terminal — launch an agent
+./launch.sh
 
 # 7. Monitor progress (terminal or browser)
 ./status.sh --follow
@@ -198,7 +198,6 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 | `project.uprojectFile`       | The `.uproject` filename                      |
 | `engine.path`                | Absolute path to the UE engine                |
 | `engine.version`             | UE version string (e.g. `"5.7"`)              |
-| `tasks.path`                 | Absolute path to the tasks directory          |
 | `build.scriptPath`           | Build script path relative to project root    |
 | `build.testScriptPath`       | Test script path relative to project root     |
 | `build.defaultTestFilters`   | Array of default test filter strings          |
@@ -208,7 +207,7 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 | `container.defaultBranch`    | Default branch for new agents                 |
 | `server.port`                | Coordination server port                      |
 | `server.ubtLockTimeoutMs`    | Timeout for UBT lock acquisition              |
-| `server.stagingWorktreePath` | Path to the host-side staging worktree        |
+| `server.stagingWorktreeRoot` | Path to the host-side staging worktree        |
 | `server.bareRepoPath`        | Path to the bare repo                         |
 
 ## Scripts
@@ -218,15 +217,14 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 Parameterized launcher for container agents.
 
 ```bash
-# Launch with a plan (branch auto-derived from filename)
-./launch.sh --plan plans/add-inventory-system.md
-# -> branch: feature/add-inventory-system
+# Launch an agent (tasks come from the task queue)
+./launch.sh
 
-# Explicit branch and agent name
-./launch.sh --agent-name agent-2 --branch feature/ui --plan plans/ui-rework.md
+# Explicit agent name
+./launch.sh --agent-name agent-2
 
 # Preview what would happen without launching
-./launch.sh --plan plans/my-plan.md --dry-run
+./launch.sh --dry-run
 
 # Full usage
 ./launch.sh --help

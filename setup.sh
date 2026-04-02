@@ -90,6 +90,32 @@ echo ""
 
 # ── Bare repo initialization ────────────────────────────────────────────────
 
+# Helper: clone a bare repo and create docker/current-root branch.
+# Usage: _create_bare_and_root <bare_repo_path> <project_path> [<label>]
+# Returns 0 always; errors are printed to stderr (caller continues under set -e).
+_create_bare_and_root() {
+  local bare="$1"
+  local proj="$2"
+  local label="${3:-}"
+
+  if ! git clone --bare "$proj" "$bare"; then
+    echo "  Error: Failed to create bare repo at $bare${label:+ ($label)}" >&2
+    return 0  # return 0 to continue processing remaining projects under set -e
+  fi
+  local head
+  if ! head=$(git -C "$bare" rev-parse HEAD 2>/dev/null); then
+    if ! head=$(git -C "$proj" rev-parse HEAD 2>/dev/null); then
+      echo "  Warning: could not resolve HEAD in bare or project repo — skipping update-ref${label:+ ($label)}."
+      return 0
+    fi
+  fi
+  if ! git -C "$bare" update-ref refs/heads/docker/current-root "$head"; then
+    echo "  Error: Failed to create docker/current-root in $bare${label:+ ($label)}" >&2
+    return 0
+  fi
+  echo "  Created docker/current-root branch in bare repo."
+}
+
 # Helper: create or verify a bare repo for a given project path and bare repo path.
 # Usage: _init_bare_repo <bare_repo_path> <project_path> [<label>]
 _init_bare_repo() {
@@ -109,41 +135,11 @@ _init_bare_repo() {
   if [[ ! -d "$bare" ]]; then
     if [[ "$NON_INTERACTIVE" == true ]]; then
       echo "Creating bare repo at $bare${label:+ ($label)} ..."
-      if ! git clone --bare "$proj" "$bare"; then
-        echo "  Error: Failed to create bare repo at $bare${label:+ ($label)}" >&2
-        return 0  # return 0 to continue processing remaining projects under set -e
-      fi
-      local head
-      if ! head=$(git -C "$bare" rev-parse HEAD 2>/dev/null); then
-        if ! head=$(git -C "$proj" rev-parse HEAD 2>/dev/null); then
-          echo "  Warning: could not resolve HEAD in bare or project repo — skipping update-ref${label:+ ($label)}."
-          return 0
-        fi
-      fi
-      if ! git -C "$bare" update-ref refs/heads/docker/current-root "$head"; then
-        echo "  Error: Failed to create docker/current-root in $bare${label:+ ($label)}" >&2
-        return 0
-      fi
-      echo "  Created docker/current-root branch in bare repo."
+      _create_bare_and_root "$bare" "$proj" "${label:-}"
     else
       read -rp "Create bare repo at $bare${label:+ ($label)} from $proj? [y/N] " _answer
       if [[ "${_answer,,}" == "y" ]]; then
-        if ! git clone --bare "$proj" "$bare"; then
-          echo "  Error: Failed to create bare repo at $bare${label:+ ($label)}" >&2
-          return 0
-        fi
-        local head
-        if ! head=$(git -C "$bare" rev-parse HEAD 2>/dev/null); then
-          if ! head=$(git -C "$proj" rev-parse HEAD 2>/dev/null); then
-            echo "  Warning: could not resolve HEAD in bare or project repo — skipping update-ref${label:+ ($label)}."
-            return 0
-          fi
-        fi
-        if ! git -C "$bare" update-ref refs/heads/docker/current-root "$head"; then
-          echo "  Error: Failed to create docker/current-root in $bare${label:+ ($label)}" >&2
-          return 0
-        fi
-        echo "  Created docker/current-root branch in bare repo."
+        _create_bare_and_root "$bare" "$proj" "${label:-}"
       else
         echo "  Skipped bare repo creation. You can create it later or launch.sh will create it."
       fi
@@ -240,5 +236,5 @@ echo "Next steps:"
 echo "  1. Edit .env with your authentication credentials"
 echo "  2. Edit scaffold.config.json with your project paths"
 echo "  3. Start the coordination server:  cd server && npm run dev"
-echo "  4. Launch an agent:                ./launch.sh --plan path/to/plan.md"
+echo "  4. Launch an agent:                ./launch.sh"
 echo "  5. Monitor progress:               ./status.sh --follow"

@@ -18,7 +18,6 @@ Launch a containerized Claude Code agent against your Unreal Engine project.
 
 Options:
   --agent-name NAME   Agent identifier (default: from .env or "agent-1")
-  --plan PATH         Path to a plan markdown file (copied to TASKS_PATH/prompt.md)
   --agent-type TYPE   Agent type (required: set in .env, scaffold.config.json, or here)
   --project ID        Project identifier for multi-project configs (default: "default")
   --verbosity LEVEL   Message board verbosity: quiet, normal, verbose (default: normal)
@@ -37,11 +36,10 @@ Options:
 Branch is docker/{agent-name}, forked from docker/current-root.
 
 Examples:
-  ./launch.sh --plan plans/add-inventory.md
   ./launch.sh --agent-name agent-2 --worker
   ./launch.sh --worker --agent-name worker-1
   ./launch.sh --pump --agent-name pump-1
-  ./launch.sh --verbosity verbose --plan plans/tricky-refactor.md
+  ./launch.sh --verbosity verbose
   ./launch.sh --parallel 3
   ./launch.sh --team design-team-1 --brief Notes/docker-claude/briefs/inventory.md
   ./launch.sh --dry-run
@@ -50,7 +48,6 @@ USAGE
 
 # ── Parse CLI flags ──────────────────────────────────────────────────────────
 _CLI_AGENT_NAME=""
-_CLI_PLAN=""
 _CLI_AGENT_TYPE=""
 _CLI_VERBOSITY=""
 _CLI_DRY_RUN=false
@@ -70,8 +67,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent-name)
       _CLI_AGENT_NAME="$2"; shift 2 ;;
-    --plan)
-      _CLI_PLAN="$2"; shift 2 ;;
     --agent-type)
       _CLI_AGENT_TYPE="$2"; shift 2 ;;
     --verbosity)
@@ -87,9 +82,19 @@ while [[ $# -gt 0 ]]; do
     --project)
       _CLI_PROJECT="$2"; shift 2 ;;
     --team)
-      _CLI_TEAM="$2"; shift 2 ;;
+      _CLI_TEAM="$2"; shift 2
+      if [[ ! "$_CLI_TEAM" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "Error: --team value contains invalid characters: $_CLI_TEAM" >&2
+        exit 1
+      fi
+      ;;
     --brief)
-      _CLI_BRIEF="$2"; shift 2 ;;
+      _CLI_BRIEF="$2"; shift 2
+      if [[ "$_CLI_BRIEF" == /* || "$_CLI_BRIEF" == *..* ]]; then
+        echo "Error: --brief must be a relative repo path without '..' components" >&2
+        exit 1
+      fi
+      ;;
     --hooks)
       _CLI_HOOK_BUILD="true"; _CLI_HOOK_LINT="true"; shift ;;
     --no-hooks)
@@ -157,10 +162,11 @@ if jq -e --arg id "$PROJECT_ID" '.projects[$id]' "$_cfg" >/dev/null 2>&1; then
   BARE_REPO_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].bareRepoPath // empty' "$_cfg")
   PROJECT_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].path // empty' "$_cfg")
   UE_ENGINE_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].engine.path // empty' "$_cfg")
-  TASKS_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].tasksPath // empty' "$_cfg")
   SERVER_PORT=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].serverPort // .server.port // 9100' "$_cfg")
-  BUILD_SCRIPT_NAME=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.scriptPath // .build.scriptPath // "build.py"' "$_cfg" | xargs basename)
-  TEST_SCRIPT_NAME=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.testScriptPath // .build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)
+  _raw_build=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.scriptPath // .build.scriptPath // "build.py"' "$_cfg")
+  BUILD_SCRIPT_NAME=$(basename "$_raw_build")
+  _raw_test=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.testScriptPath // .build.testScriptPath // "run_tests.py"' "$_cfg")
+  TEST_SCRIPT_NAME=$(basename "$_raw_test")
   DEFAULT_TEST_FILTERS=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.defaultTestFilters // .build.defaultTestFilters // [] | if type == "array" then join(" ") else . end' "$_cfg")
   LOGS_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].logsPath // empty' "$_cfg")
   PROJECT_HOOK_BUILD=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].hooks.buildIntercept // empty' "$_cfg")
@@ -171,10 +177,11 @@ elif [[ "$PROJECT_ID" == "default" ]]; then
   UE_ENGINE_PATH="$(jq -r '.engine.path // empty' "$_cfg")"
   PROJECT_PATH="$(jq -r '.project.path // empty' "$_cfg")"
   BARE_REPO_PATH="$(jq -r '.server.bareRepoPath // empty' "$_cfg")"
-  TASKS_PATH="$(jq -r '.tasks.path // empty' "$_cfg")"
   SERVER_PORT="$(jq -r '.server.port // 9100' "$_cfg")"
-  BUILD_SCRIPT_NAME="$(jq -r '.build.scriptPath // "build.py"' "$_cfg" | xargs basename)"
-  TEST_SCRIPT_NAME="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg" | xargs basename)"
+  _raw_build="$(jq -r '.build.scriptPath // "build.py"' "$_cfg")"
+  BUILD_SCRIPT_NAME="$(basename "$_raw_build")"
+  _raw_test="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg")"
+  TEST_SCRIPT_NAME="$(basename "$_raw_test")"
   DEFAULT_TEST_FILTERS="$(jq -r '.build.defaultTestFilters // [] | join(" ")' "$_cfg")"
   LOGS_PATH="$(jq -r '.logs.path // empty' "$_cfg")"
   PROJECT_HOOK_BUILD=$(jq -r '.hooks.buildIntercept // empty' "$_cfg")
@@ -199,7 +206,7 @@ if [ -z "$LOGS_PATH" ]; then
 fi
 mkdir -p "$LOGS_PATH"
 
-export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH CLAUDE_CREDENTIALS_PATH SERVER_PORT LOGS_PATH PROJECT_ID
+export BARE_REPO_PATH UE_ENGINE_PATH PROJECT_PATH CLAUDE_CREDENTIALS_PATH SERVER_PORT LOGS_PATH PROJECT_ID
 
 # ── Apply CLI overrides ─────────────────────────────────────────────────────
 AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
@@ -225,7 +232,6 @@ if [[ -n "$AGENT_TYPE" && ! "$AGENT_TYPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
   exit 1
 fi
 MAX_TURNS="${MAX_TURNS:-200}"
-PLAN_PATH="${_CLI_PLAN}"
 # --parallel implies pump mode
 if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
     _CLI_PUMP=true
@@ -258,15 +264,6 @@ case "$LOG_VERBOSITY" in
     exit 1 ;;
 esac
 
-# ── Resolve plan path to absolute ────────────────────────────────────────────
-if [[ -n "$PLAN_PATH" ]]; then
-  if [[ ! -f "$PLAN_PATH" ]]; then
-    echo "Error: Plan file not found: $PLAN_PATH" >&2
-    exit 1
-  fi
-  PLAN_PATH="$(cd "$(dirname "$PLAN_PATH")" && pwd)/$(basename "$PLAN_PATH")"
-fi
-
 # ── Validate required vars ───────────────────────────────────────────────────
 _errors=()
 if [[ -z "${BARE_REPO_PATH:-}" ]]; then
@@ -282,14 +279,6 @@ if [[ -z "${UE_ENGINE_PATH:-}" ]]; then
   fi
   if [[ "$_has_engine" == true ]]; then
     _errors+=("UE_ENGINE_PATH is not set. Set engine.path in scaffold.config.json.")
-  fi
-fi
-# TASKS_PATH is required for plan mode and worker mode
-if [[ -z "${TASKS_PATH:-}" ]]; then
-  if [[ "$WORKER_MODE" == "true" ]]; then
-    _errors+=("TASKS_PATH is not set. Set tasksPath in scaffold.config.json (required for worker mode).")
-  elif [[ -n "$PLAN_PATH" ]]; then
-    _errors+=("TASKS_PATH is not set. Set tasksPath in scaffold.config.json (required when using --plan).")
   fi
 fi
 
@@ -399,9 +388,7 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   echo "  MAX_TURNS:        $MAX_TURNS"
   echo "  BARE_REPO_PATH:   $BARE_REPO_PATH"
   echo "  UE_ENGINE_PATH:   $UE_ENGINE_PATH"
-  echo "  TASKS_PATH:       $TASKS_PATH"
   echo "  SERVER_PORT:      ${SERVER_PORT:-9100}"
-  echo "  PLAN_PATH:        ${PLAN_PATH:-<none>}"
   echo "  WORKER_MODE:      $WORKER_MODE"
   echo "  WORKER_POLL_INT:  $WORKER_POLL_INTERVAL"
   echo "  WORKER_SINGLE:    $WORKER_SINGLE_TASK"
@@ -551,7 +538,6 @@ if [[ -n "$_CLI_TEAM" ]]; then
       TEAM_ROLE="$_MEMBER_ROLE" \
       BRIEF_PATH="$_CLI_BRIEF" \
       BARE_REPO_PATH="$BARE_REPO_PATH" \
-      TASKS_PATH="$TASKS_PATH" \
       UE_ENGINE_PATH="$UE_ENGINE_PATH" \
       CLAUDE_CREDENTIALS_PATH="$CLAUDE_CREDENTIALS_PATH" \
       AGENTS_PATH="$AGENTS_PATH" \
@@ -592,16 +578,6 @@ if [[ -n "$_CLI_TEAM" ]]; then
   exit 0
 fi
 
-# ── Copy plan file to TASKS_PATH/prompt.md (skip in worker mode) ─────────────
-if [[ "$WORKER_MODE" != "true" && -n "$PLAN_PATH" ]]; then
-  if [[ -f "$TASKS_PATH/prompt.md" ]]; then
-    echo "Warning: Overwriting existing $TASKS_PATH/prompt.md" >&2
-  fi
-  mkdir -p "$TASKS_PATH"
-  cp "$PLAN_PATH" "$TASKS_PATH/prompt.md"
-  echo "Copied plan to $TASKS_PATH/prompt.md"
-fi
-
 # ── Check coordination server ────────────────────────────────────────────────
 if ! curl -sf "http://localhost:${SERVER_PORT:-9100}/health" >/dev/null 2>&1; then
   echo "Error: Coordination server is not running on port ${SERVER_PORT:-9100}." >&2
@@ -616,6 +592,27 @@ fi
 )
 
 # ── Branch setup in persistent bare repo ────────────────────────────────────
+
+# Helper: set up a branch in the bare repo (fresh reset, create, or resume).
+# Usage: _setup_branch <branch_name> <fresh_flag>
+_setup_branch() {
+  local branch="$1"
+  local fresh="$2"
+
+  if [ "$fresh" = "true" ]; then
+    local root_sha
+    root_sha=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
+    git -C "$BARE_REPO_PATH" update-ref "refs/heads/${branch}" "$root_sha"
+    echo "  Reset branch ${branch} to ${ROOT_BRANCH} (--fresh)"
+  elif ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${branch}" &>/dev/null; then
+    local root_sha
+    root_sha=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
+    git -C "$BARE_REPO_PATH" update-ref "refs/heads/${branch}" "$root_sha"
+    echo "  Created branch ${branch} from ${ROOT_BRANCH}"
+  else
+    echo "  Resuming existing branch ${branch}"
+  fi
+}
 
 if [[ ! -d "$BARE_REPO_PATH" ]]; then
   echo "Error: Bare repo not found at $BARE_REPO_PATH" >&2
@@ -633,19 +630,7 @@ fi
 
 if ! [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
   # Single-agent branch setup
-  if [ "$_CLI_FRESH" = "true" ]; then
-    echo "Resetting ${AGENT_BRANCH} to ${ROOT_BRANCH} (--fresh)..."
-    ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
-    git -C "$BARE_REPO_PATH" update-ref "refs/heads/${AGENT_BRANCH}" "$ROOT_SHA"
-  else
-    if ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${AGENT_BRANCH}" &>/dev/null; then
-      echo "No existing branch ${AGENT_BRANCH}. Creating from ${ROOT_BRANCH}..."
-      ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
-      git -C "$BARE_REPO_PATH" update-ref "refs/heads/${AGENT_BRANCH}" "$ROOT_SHA"
-    else
-      echo "Resuming from existing branch ${AGENT_BRANCH}."
-    fi
-  fi
+  _setup_branch "$AGENT_BRANCH" "$_CLI_FRESH"
 fi
 
 resolve_hooks ""
@@ -661,8 +646,6 @@ _generate_compose() {
   local _volumes=""
   _volumes="      # Required: bare repo for git operations
       - \${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git
-      # Required: task prompt and standing instructions
-      - \${TASKS_PATH:?Set TASKS_PATH}:/task:ro
       # Host-side logs (persist after container shutdown for forensic review)
       - \${LOGS_PATH:-./logs}:/logs
       # Claude authentication (OAuth credentials file)
@@ -691,7 +674,6 @@ services:
       - AGENT_TYPE=\${AGENT_TYPE:?Set AGENT_TYPE in .env}
       - MAX_TURNS=\${MAX_TURNS:-200}
       - SERVER_URL=http://host.docker.internal:\${SERVER_PORT:-9100}
-      - TASK_PROMPT_FILE=/task/prompt.md
       - BUILD_SCRIPT_NAME=\${BUILD_SCRIPT_NAME:-build.py}
       - TEST_SCRIPT_NAME=\${TEST_SCRIPT_NAME:-run_tests.py}
       - DEFAULT_TEST_FILTERS=\${DEFAULT_TEST_FILTERS:-}
@@ -719,7 +701,7 @@ _generate_compose
 # ── Export vars for docker-compose ───────────────────────────────────────────
 export HOOK_CPP_LINT
 export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS LOG_VERBOSITY PROJECT_ID
-export BARE_REPO_PATH UE_ENGINE_PATH TASKS_PATH PROJECT_PATH LOGS_PATH
+export BARE_REPO_PATH UE_ENGINE_PATH PROJECT_PATH LOGS_PATH
 export WORKER_MODE WORKER_POLL_INTERVAL WORKER_SINGLE_TASK
 export AGENT_MODE="${AGENT_MODE:-single}"
 export SERVER_PORT="${SERVER_PORT:-9100}"
@@ -733,17 +715,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
     _AGENT="agent-${i}"
     _BRANCH="docker/${_AGENT}"
 
-    if [ "$_CLI_FRESH" = "true" ]; then
-      _ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
-      git -C "$BARE_REPO_PATH" update-ref "refs/heads/${_BRANCH}" "$_ROOT_SHA"
-      echo "  Reset branch ${_BRANCH} to ${ROOT_BRANCH} (--fresh)"
-    elif ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${_BRANCH}" &>/dev/null; then
-      _ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
-      git -C "$BARE_REPO_PATH" update-ref "refs/heads/${_BRANCH}" "$_ROOT_SHA"
-      echo "  Created branch ${_BRANCH} from ${ROOT_BRANCH}"
-    else
-      echo "  Resuming existing branch ${_BRANCH}"
-    fi
+    _setup_branch "$_BRANCH" "$_CLI_FRESH"
 
     (cd "$SCRIPT_DIR/container" && \
       AGENT_NAME="$_AGENT" \

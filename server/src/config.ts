@@ -6,7 +6,6 @@ export interface ProjectConfig {
   path: string;
   uprojectFile?: string;
   bareRepoPath: string;
-  tasksPath?: string;
   planBranch?: string;
   engine?: { path: string; version: string };
   build?: { scriptPath?: string; testScriptPath?: string; buildTimeoutMs?: number; testTimeoutMs?: number };
@@ -46,7 +45,6 @@ export interface ScaffoldConfig {
     }>;
   };
   tasks?: {
-    path: string;
     planBranch?: string;
   };
   /** @deprecated No longer used — CLAUDE.md is now environment-agnostic. */
@@ -120,7 +118,6 @@ export function loadConfig(): ScaffoldConfig {
         : [],
     },
     tasks: {
-      path: raw.tasks?.path ?? '',
       planBranch: raw.tasks?.planBranch,
     },
     resolvedProjects: {},
@@ -146,7 +143,6 @@ export function loadConfig(): ScaffoldConfig {
       path: config.project.path,
       uprojectFile: config.project.uprojectFile || undefined,
       bareRepoPath: config.server.bareRepoPath,
-      tasksPath: config.tasks?.path || undefined,
       planBranch: config.tasks?.planBranch,
       engine: config.engine.path ? { path: config.engine.path, version: config.engine.version } : undefined,
       build: config.build.scriptPath ? {
@@ -160,8 +156,12 @@ export function loadConfig(): ScaffoldConfig {
     };
   }
 
-  // Validate required fields — relaxed for multi-project configs
-  const hasExplicitProjects = !!raw.projects;
+  validateConfig(config, !!raw.projects);
+
+  return config;
+}
+
+function validateConfig(config: ScaffoldConfig, hasExplicitProjects: boolean): void {
   const missing: string[] = [];
 
   if (hasExplicitProjects) {
@@ -208,8 +208,6 @@ export function loadConfig(): ScaffoldConfig {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`server.port must be 1–65535 (got ${port})`);
   }
-
-  return config;
 }
 
 function coercePositiveNumber(value: unknown): number | undefined {
@@ -227,7 +225,6 @@ function parseProjectConfig(id: string, p: Record<string, unknown>): ProjectConf
     path: String(p.path ?? ''),
     uprojectFile: p.uprojectFile != null ? String(p.uprojectFile) : undefined,
     bareRepoPath: String(p.bareRepoPath ?? ''),
-    tasksPath: p.tasksPath != null ? String(p.tasksPath) : undefined,
     planBranch: p.planBranch != null ? String(p.planBranch) : undefined,
     engine: engine ? { path: String(engine.path ?? ''), version: String(engine.version ?? '') } : undefined,
     build: build ? {
@@ -251,7 +248,7 @@ function parseProjectConfig(id: string, p: Record<string, unknown>): ProjectConf
 export function getProject(config: ScaffoldConfig, id: string): ProjectConfig {
   const project = config.resolvedProjects[id];
   if (!project) {
-    throw new Error(`Unknown project: "${id}"`);
+    throw new Error(`Unknown project: "${id.slice(0, 64).replace(/[^a-zA-Z0-9_-]/g, '?')}"`);
   }
   return project;
 }
