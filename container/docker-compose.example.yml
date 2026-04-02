@@ -39,7 +39,5 @@ services:
       # Optional: read-only plugin mounts (symlinked into Plugins/ at startup)
       # Add entries like:
       # - /path/to/MyPlugin:/plugins-ro/MyPlugin:ro
-    ports:
-      - "8788:8788"
     extra_hosts:
       - "host.docker.internal:host-gateway"

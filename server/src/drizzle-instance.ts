@@ -55,6 +55,8 @@ async function doInit(opts?: InitDrizzleOpts): Promise<DrizzleDb> {
     }
     pgliteClient = new PGlite(dataDir);
     instance = drizzlePglite(pgliteClient, { schema });
+    // Set timezone to UTC so DEFAULT now() and all timestamps are in UTC
+    await (instance as any).execute('SET timezone TO \'UTC\'');
     await migratePglite(instance as Parameters<typeof migratePglite>[0], { migrationsFolder: './drizzle' });
   }
 

@@ -689,8 +689,6 @@ services:
       - DIRECT_PROMPT=\${DIRECT_PROMPT:-}
     volumes:
 ${_volumes}
-    ports:
-      - "8788:8788"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 COMPOSEOF
