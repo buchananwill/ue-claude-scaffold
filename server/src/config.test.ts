@@ -145,7 +145,7 @@ describe('multi-project config', () => {
     const raw = {
       ...validRaw,
       server: { ...validRaw.server, stagingWorktreeRoot: '/tmp/staging' },
-      tasks: { planBranch: 'plans' },
+      tasks: { seedBranch: 'plans' },
     };
     const config = loadConfigFromJson(raw);
     const def = config.resolvedProjects['default'];
@@ -156,7 +156,7 @@ describe('multi-project config', () => {
     assert.deepEqual(def.engine, { path: '/tmp/engine', version: '5.4' });
     assert.ok(def.build);
     assert.equal(def.build?.scriptPath, '/tmp/b.sh');
-    assert.equal(def.planBranch, 'plans');
+    assert.equal(def.seedBranch, 'plans');
     assert.equal(def.stagingWorktreeRoot, '/tmp/staging');
   });
 

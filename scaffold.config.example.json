@@ -8,7 +8,7 @@
   },
 
   "tasks": {
-    "planBranch": "docker/current-root"
+    "seedBranch": "docker/current-root"
   },
 
   "engine": {

@@ -60,10 +60,10 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
     if (sp && row.status !== 'cycle') {
       const bareRepo = config.server.bareRepoPath;
       if (bareRepo) {
-        const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
-        if (!existsInBareRepo(bareRepo, planBranch, sp)) {
+        const seedBranch = config.tasks?.seedBranch ?? 'docker/current-root';
+        if (!existsInBareRepo(bareRepo, seedBranch, sp)) {
           return reply.unprocessableEntity(
-            `sourcePath '${sp}' not found on branch '${planBranch}' in bare repo`
+            `sourcePath '${sp}' not found on branch '${seedBranch}' in bare repo`
           );
         }
       } else {

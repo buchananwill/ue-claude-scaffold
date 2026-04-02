@@ -7,7 +7,7 @@ export interface ProjectConfig {
   path: string;
   uprojectFile?: string;
   bareRepoPath: string;
-  planBranch?: string;
+  seedBranch?: string;
   engine?: { path: string; version: string };
   build?: { scriptPath?: string; testScriptPath?: string; buildTimeoutMs?: number; testTimeoutMs?: number };
   plugins?: { stagingCopies?: Array<{ source: string; relativeDest: string }> };
@@ -46,7 +46,7 @@ export interface ScaffoldConfig {
     }>;
   };
   tasks?: {
-    planBranch?: string;
+    seedBranch?: string;
   };
   /** @deprecated No longer used — CLAUDE.md is now environment-agnostic. */
   claudeMdPatches?: {
@@ -119,7 +119,7 @@ export function loadConfig(): ScaffoldConfig {
         : [],
     },
     tasks: {
-      planBranch: raw.tasks?.planBranch,
+      seedBranch: raw.tasks?.seedBranch ?? raw.tasks?.planBranch,
     },
     resolvedProjects: {},
   };
@@ -144,7 +144,7 @@ export function loadConfig(): ScaffoldConfig {
       path: config.project.path,
       uprojectFile: config.project.uprojectFile || undefined,
       bareRepoPath: config.server.bareRepoPath,
-      planBranch: config.tasks?.planBranch,
+      seedBranch: config.tasks?.seedBranch,
       engine: config.engine.path ? { path: config.engine.path, version: config.engine.version } : undefined,
       build: config.build.scriptPath ? {
         scriptPath: config.build.scriptPath,
@@ -226,7 +226,7 @@ function parseProjectConfig(id: string, p: Record<string, unknown>): ProjectConf
     path: String(p.path ?? ''),
     uprojectFile: p.uprojectFile != null ? String(p.uprojectFile) : undefined,
     bareRepoPath: String(p.bareRepoPath ?? ''),
-    planBranch: p.planBranch != null ? String(p.planBranch) : undefined,
+    seedBranch: p.seedBranch != null ? String(p.seedBranch) : (p.planBranch != null ? String(p.planBranch) : undefined),
     engine: engine ? { path: String(engine.path ?? ''), version: String(engine.version ?? '') } : undefined,
     build: build ? {
       scriptPath: build.scriptPath != null ? String(build.scriptPath) : undefined,
@@ -278,9 +278,9 @@ export function getProject(config: ScaffoldConfig, id: string, dbRow?: ProjectRo
   // DB name overrides JSON name
   merged.name = dbRow.name;
 
-  // DB seed branch overrides JSON plan branch
+  // DB seed branch overrides JSON seed branch
   if (dbRow.seedBranch != null) {
-    merged.planBranch = dbRow.seedBranch;
+    merged.seedBranch = dbRow.seedBranch;
   }
 
   // DB timeouts override JSON build timeouts

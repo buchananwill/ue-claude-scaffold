@@ -13,7 +13,7 @@ interface SyncOpts {
 const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
   const { config } = opts;
 
-  // POST /sync/plans — merge committed state from exterior repo into bare repo's plan branch.
+  // POST /sync/plans — merge committed state from exterior repo into bare repo's seed branch.
   // The exterior repo (config.project.path) is the source of truth for plans.
   // This endpoint fetches its HEAD into a temp branch, merges into docker/current-root,
   // and optionally propagates to agent branches.
@@ -51,9 +51,9 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
       });
     }
 
-    const planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
+    const seedBranch = project.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
 
-    const syncResult = syncExteriorToBareRepo(exteriorRepo, bareRepo, planBranch, fastify.log);
+    const syncResult = syncExteriorToBareRepo(exteriorRepo, bareRepo, seedBranch, fastify.log);
 
     if (!syncResult.ok) {
       return reply.code(409).send({
@@ -64,7 +64,7 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
 
     const { exteriorHead, commitSha } = syncResult;
 
-    // Optionally merge plan branch into agent branches
+    // Optionally merge seed branch into agent branches
     const { targetAgents } = request.body ?? {};
     const mergedAgents: string[] = [];
     const failedMerges: Array<{ agent: string; reason: string }> = [];
@@ -81,7 +81,7 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
 
       for (const agentName of agentNames) {
         const targetBranch = `docker/${agentName}`;
-        const result = mergeIntoBranch(bareRepo, planBranch, targetBranch);
+        const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
         if (result.ok) {
           mergedAgents.push(agentName);
         } else {

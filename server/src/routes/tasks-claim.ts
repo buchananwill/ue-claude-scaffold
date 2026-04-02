@@ -43,21 +43,21 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     if (!bareRepo) return { valid: true };
 
     const agentRow = await agentsQ.getWorktreeInfo(db, agent);
-    let planBranch: string;
+    let seedBranch: string;
     try {
       const project = getProject(config, taskProjectId, dbRow ?? undefined);
-      planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
+      seedBranch = project.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
     } catch {
-      planBranch = config.tasks?.planBranch ?? 'docker/current-root';
+      seedBranch = config.tasks?.seedBranch ?? 'docker/current-root';
     }
-    const branch = agentRow?.worktree ?? planBranch;
+    const branch = agentRow?.worktree ?? seedBranch;
 
     if (existsInBareRepo(bareRepo, branch, sp)) {
       return { valid: true, branch };
     }
-    // Fallback: if agent branch differs from planBranch, try planBranch
-    if (branch !== planBranch && existsInBareRepo(bareRepo, planBranch, sp)) {
-      return { valid: true, branch: planBranch };
+    // Fallback: if agent branch differs from seedBranch, try seedBranch
+    if (branch !== seedBranch && existsInBareRepo(bareRepo, seedBranch, sp)) {
+      return { valid: true, branch: seedBranch };
     }
     return { valid: false, branch };
   }

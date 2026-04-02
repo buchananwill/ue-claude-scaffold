@@ -84,19 +84,19 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
       const bareRepo = project.bareRepoPath;
       if (bareRepo) {
-        const planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
-        if (!existsInBareRepo(bareRepo, planBranch, sourcePath)) {
+        const seedBranch = project.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
+        if (!existsInBareRepo(bareRepo, seedBranch, sourcePath)) {
           // Auto-sync from exterior repo before rejecting
           const exteriorRepo = project.path;
           if (exteriorRepo) {
-            syncExteriorToBareRepo(exteriorRepo, bareRepo, planBranch, fastify.log);
+            syncExteriorToBareRepo(exteriorRepo, bareRepo, seedBranch, fastify.log);
           }
           // Re-check after sync
-          if (!existsInBareRepo(bareRepo, planBranch, sourcePath)) {
+          if (!existsInBareRepo(bareRepo, seedBranch, sourcePath)) {
             return reply.code(422).send({
               statusCode: 422,
               error: 'Unprocessable Entity',
-              message: `sourcePath '${sourcePath}' not found on branch '${planBranch}' in bare repo. ` +
+              message: `sourcePath '${sourcePath}' not found on branch '${seedBranch}' in bare repo. ` +
                 `Commit the plan in the exterior repo and retry.`,
             });
           }
@@ -137,7 +137,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    // Merge plan branch into agent branches if requested
+    // Merge seed branch into agent branches if requested
     const mergedAgents: string[] = [];
     const failedMerges: Array<{ agent: string; reason: string }> = [];
 
@@ -164,16 +164,16 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       if (!bareRepo) {
         fastify.log.warn('targetAgents requested but bareRepoPath is not configured');
       } else {
-        const planBranch = mergeProject.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
+        const seedBranch = mergeProject.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
 
         for (const agentName of agentNames) {
           const targetBranch = `docker/${agentName}`;
-          const result = mergeIntoBranch(bareRepo, planBranch, targetBranch);
+          const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
           if (result.ok) {
             mergedAgents.push(agentName);
           } else {
             failedMerges.push({ agent: agentName, reason: result.reason });
-            fastify.log.warn(`Failed to merge ${planBranch} into ${targetBranch}: ${result.reason}`);
+            fastify.log.warn(`Failed to merge ${seedBranch} into ${targetBranch}: ${result.reason}`);
           }
         }
       }
@@ -284,22 +284,22 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         }
         const bareRepo = project.bareRepoPath;
         if (bareRepo) {
-          const planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
-          if (!existsInBareRepo(bareRepo, planBranch, t.sourcePath)) {
+          const seedBranch = project.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
+          if (!existsInBareRepo(bareRepo, seedBranch, t.sourcePath)) {
             // Auto-sync from exterior repo on first miss (once per batch)
             if (!batchSynced) {
               const exteriorRepo = project.path;
               if (exteriorRepo) {
-                syncExteriorToBareRepo(exteriorRepo, bareRepo, planBranch, fastify.log);
+                syncExteriorToBareRepo(exteriorRepo, bareRepo, seedBranch, fastify.log);
               }
               batchSynced = true;
             }
             // Re-check after sync
-            if (!existsInBareRepo(bareRepo, planBranch, t.sourcePath)) {
+            if (!existsInBareRepo(bareRepo, seedBranch, t.sourcePath)) {
               return reply.code(422).send({
                 statusCode: 422,
                 error: 'Unprocessable Entity',
-                message: `Task ${i}: sourcePath '${t.sourcePath}' not found on branch '${planBranch}' in bare repo. ` +
+                message: `Task ${i}: sourcePath '${t.sourcePath}' not found on branch '${seedBranch}' in bare repo. ` +
                   `Commit the plan in the exterior repo and retry.`,
               });
             }
@@ -493,10 +493,10 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
       const bareRepo = patchProject.bareRepoPath;
       if (bareRepo) {
-        const planBranch = patchProject.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
-        if (!existsInBareRepo(bareRepo, planBranch, body.sourcePath)) {
+        const seedBranch = patchProject.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
+        if (!existsInBareRepo(bareRepo, seedBranch, body.sourcePath)) {
           return reply.unprocessableEntity(
-            `sourcePath '${body.sourcePath}' not found on branch '${planBranch}' in bare repo`
+            `sourcePath '${body.sourcePath}' not found on branch '${seedBranch}' in bare repo`
           );
         }
       } else {

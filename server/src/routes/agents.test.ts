@@ -259,7 +259,7 @@ describe('POST /agents/:name/sync (drizzle)', () => {
 
     const config = createTestConfig({
       server: { port: 9100, ubtLockTimeoutMs: 600000, bareRepoPath: tmpBareRepo },
-      tasks: { planBranch: 'docker/current-root' },
+      tasks: { seedBranch: 'docker/current-root' },
     });
     await ctx.app.register(agentsPlugin, { config });
   });

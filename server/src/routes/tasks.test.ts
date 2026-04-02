@@ -515,7 +515,7 @@ describe('tasks with bare repo and agents', () => {
 
     const config = createTestConfig({
       server: { port: 9100, ubtLockTimeoutMs: 600000, bareRepoPath: tmpBareRepo },
-      tasks: { planBranch: 'docker/current-root' },
+      tasks: { seedBranch: 'docker/current-root' },
     });
     await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });

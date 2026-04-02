@@ -49,7 +49,7 @@ export function createTestConfig(overrides?: Partial<ScaffoldConfig>): ScaffoldC
     if (overrides?.server?.stagingWorktreeRoot) rp.stagingWorktreeRoot = overrides.server.stagingWorktreeRoot;
     if (overrides?.project?.path) rp.path = overrides.project.path;
     if (overrides?.project?.name) rp.name = overrides.project.name;
-    if (overrides?.tasks?.planBranch) rp.planBranch = overrides.tasks.planBranch;
+    if (overrides?.tasks?.seedBranch) rp.seedBranch = overrides.tasks.seedBranch;
     if (overrides?.build?.scriptPath) {
       rp.build = rp.build ?? {};
       rp.build.scriptPath = overrides.build.scriptPath;

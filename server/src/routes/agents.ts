@@ -153,7 +153,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     return { ok: true, removed: result };
   });
 
-  // POST /agents/:name/sync — merge plan branch into agent's branch
+  // POST /agents/:name/sync — merge seed branch into agent's branch
   fastify.post<{ Params: { name: string } }>('/agents/:name/sync', async (request, reply) => {
     const { name } = request.params;
     const db = getDb();
@@ -183,10 +183,10 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
       });
     }
 
-    const planBranch = project.planBranch ?? 'docker/current-root';
+    const seedBranch = project.seedBranch ?? 'docker/current-root';
     const targetBranch = `docker/${name}`;
 
-    const result = mergeIntoBranch(bareRepo, planBranch, targetBranch);
+    const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
     if (result.ok) {
       return reply.send({ ok: true, ...(result.commitSha ? { commitSha: result.commitSha } : {}) });
     } else {

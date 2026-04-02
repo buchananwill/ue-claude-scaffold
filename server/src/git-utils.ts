@@ -37,7 +37,7 @@ export function existsInBareRepo(bareRepoPath: string, branch: string, filePath:
 }
 
 /**
- * Sync the exterior repo's HEAD into the bare repo's plan branch.
+ * Sync the exterior repo's HEAD into the bare repo's seed branch.
  * This is the core logic behind POST /sync/plans, extracted so task
  * creation endpoints can auto-sync before validating sourcePath.
  *
@@ -47,7 +47,7 @@ export function existsInBareRepo(bareRepoPath: string, branch: string, filePath:
 export function syncExteriorToBareRepo(
   exteriorRepo: string,
   bareRepo: string,
-  planBranch: string,
+  seedBranch: string,
   log?: FastifyBaseLogger,
 ): { ok: true; exteriorHead: string; commitSha?: string } | { ok: false; reason: string } {
   const tempRef = '_sync/exterior';
@@ -73,10 +73,10 @@ export function syncExteriorToBareRepo(
     return { ok: false, reason: `Failed to fetch from exterior repo: ${err.message}` };
   }
 
-  // Merge temp branch into plan branch
+  // Merge temp branch into seed branch
   let mergeResult: ReturnType<typeof mergeIntoBranch>;
   try {
-    mergeResult = mergeIntoBranch(bareRepo, tempRef, planBranch);
+    mergeResult = mergeIntoBranch(bareRepo, tempRef, seedBranch);
   } finally {
     // Clean up temp branch regardless of outcome
     try {
@@ -90,7 +90,7 @@ export function syncExteriorToBareRepo(
     return { ok: false, reason: mergeResult.reason };
   }
 
-  log?.info(`Auto-synced exterior repo (${exteriorHead.slice(0, 8)}) into ${planBranch}`);
+  log?.info(`Auto-synced exterior repo (${exteriorHead.slice(0, 8)}) into ${seedBranch}`);
   return { ok: true, exteriorHead, commitSha: mergeResult.commitSha };
 }
 

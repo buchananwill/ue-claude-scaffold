@@ -120,9 +120,9 @@ export async function blockReasonsForTask(row: TaskRow, agent: string, config: S
       const project = getProject(config, projectId, dbRow ?? undefined);
       const bareRepo = project.bareRepoPath;
       if (bareRepo) {
-        const planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
-        if (!existsInBareRepo(bareRepo, planBranch, sp)) {
-          reasons.push(`sourcePath '${sp}' not found on ${planBranch}`);
+        const seedBranch = project.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
+        if (!existsInBareRepo(bareRepo, seedBranch, sp)) {
+          reasons.push(`sourcePath '${sp}' not found on ${seedBranch}`);
         }
       }
     } catch {
