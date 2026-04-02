@@ -1,7 +1,7 @@
 # Plan: Server Multi-Tenancy and Project-Namespaced Branches
 
-**Goal:** Make the server a fully multi-tenant system: project config lives in the database (not JSON), all branches are
-namespaced by project ID, and shell scripts respect the new naming convention.
+**Goal:** Make the server a fully multi-tenant system with clear data ownership, project-namespaced branches, and shell
+scripts that respect the new naming convention.
 
 **Tech Stack:** TypeScript/Fastify (server), Drizzle ORM + PGlite (DB), Bash (shell scripts), Node.js built-in test
 runner.
@@ -12,47 +12,66 @@ runner.
 
 Two concerns converge here:
 
-1. **Split authority** - Project configuration lives in `scaffold.config.json` (`resolvedProjects`) while all other
-   server state lives in the database. The DB should be the single authority for project definitions.
+1. **Muddled data ownership** - Project configuration lives entirely in `scaffold.config.json` (`resolvedProjects`),
+   mixing identity (what projects exist), local environment (filesystem paths), and secrets. These three concerns have
+   different owners and different lifecycles.
 2. **Branch collision** - Two projects sharing a bare repo both resolve to `docker/current-root` and `docker/agent-1`.
    Launching containers for both simultaneously has them writing to the same branches. Branches must be namespaced:
    `docker/{project-id}/current-root`, `docker/{project-id}/{agent-name}`.
 
-These are tackled in order: first unify project config into the DB, then namespace branches using the project IDs that
-are now first-class entities.
+### Data Ownership Model
+
+| Layer | Authority on | Example fields | Format |
+|-------|-------------|----------------|--------|
+| **Database** | _What_ projects exist and their portable config | `id`, `name`, `engine_version`, `seed_branch`, `build_timeout_ms`, `test_timeout_ms` | Drizzle tables |
+| **`scaffold.config.json`** | Local environment paths (machine-specific, non-secret) | `path`, `bare_repo_path`, `engine_path`, `build_script_path`, `test_script_path`, `tasks_path`, `staging_worktree_root`, `staging_copies` | JSON, keyed by project ID |
+| **`.env`** | Secrets and sensitive local config | API keys, credential paths, auth tokens | Env vars |
+
+Paths are inherently local data: they differ per machine, have no meaning outside the host, and should never be
+replicated or served via API. The DB stores the portable identity and tuning of a project; the JSON provides the
+filesystem wiring that connects it to the local host.
+
+These are tackled in order: first establish the data ownership split and DB-backed project identity, then namespace
+branches using the project IDs that are now first-class entities.
 
 ---
 
 ## Phase 1: Projects Table and CRUD
 
-**Goal:** Move project configuration from JSON into the database. Make the DB the single source of truth for project
-identity and configuration.
+**Goal:** Establish the DB as the authority on _what_ projects exist and their portable configuration. Local paths stay
+in `scaffold.config.json`.
 
 ### 1.1 New `projects` Table
 
-Add a Drizzle table for project configuration:
+Add a Drizzle table for portable project configuration (no filesystem paths):
 
 ```
 projects
-  id           text PK        (validated: [a-zA-Z0-9_-]{1,64})
-  name         text NOT NULL
-  path         text NOT NULL   (host project path)
-  uproject_file text
-  bare_repo_path text NOT NULL
-  tasks_path   text
-  plan_branch  text
-  engine_path  text
-  engine_version text
-  build_script_path text
-  test_script_path text
+  id               text PK        (validated: [a-zA-Z0-9_-]{1,64})
+  name             text NOT NULL
+  engine_version   text
+  seed_branch      text
   build_timeout_ms integer
-  test_timeout_ms integer
-  staging_worktree_root text
-  staging_copies jsonb         (array of {source, relativeDest})
-  created_at   timestamp DEFAULT now()
+  test_timeout_ms  integer
+  created_at       timestamp DEFAULT now()
 ```
 
-This mirrors the existing `ProjectConfig` interface (`server/src/config.ts:4-15`).
+### 1.1b Path Fields Stay in `scaffold.config.json`
+
+The following fields are local environment config and remain in the JSON, keyed by project ID:
+
+- `path` (host project path)
+- `uproject_file`
+- `bare_repo_path`
+- `tasks_path`
+- `engine_path`
+- `build_script_path`
+- `test_script_path`
+- `staging_worktree_root`
+- `staging_copies` (array of `{source, relativeDest}`)
+
+These are inherently local: they differ per machine, have no meaning outside the host, and must not be served via API
+or replicated.
 
 **Files:**
 
@@ -60,14 +79,14 @@ This mirrors the existing `ProjectConfig` interface (`server/src/config.ts:4-15`
 
 ### 1.2 Seed from JSON Config
 
-On server startup, seed the `projects` table from `resolvedProjects` in the JSON config using INSERT-only semantics:
+On server startup, seed the `projects` table from the project keys in `scaffold.config.json` using INSERT-only
+semantics:
 
-- If a project ID from JSON does **not** exist in the DB: insert it.
-- If a project ID from JSON **already** exists in the DB: validate that the JSON config matches the DB record. Log an
-  error if they diverge (but don't overwrite). Skip the insert.
+- If a project ID from JSON does **not** exist in the DB: insert it with `name` defaulting to the project ID.
+- If a project ID from JSON **already** exists in the DB: skip. The DB record is authoritative for portable fields.
 
-JSON + boot is a convenience path for initializing a new DB without manual API calls. Changes to existing projects must
-go through the API endpoints.
+JSON provides the local path wiring; the DB provides portable identity and tuning. The seed step only ensures the DB
+knows about every project the local config references.
 
 **Files:**
 
@@ -90,12 +109,13 @@ DELETE /projects/:id          - reject with 409 if any data exists for this proj
 
 ### 1.4 Refactor `getProject()` and Route Handlers
 
-- `getProject(config, id)` (`server/src/config.ts:251`) currently reads from `config.resolvedProjects`. This becomes a
-  DB query.
+- `getProject(config, id)` (`server/src/config.ts:251`) currently reads from `config.resolvedProjects`. It now needs to
+  merge two sources: portable config from the DB row, and local paths from the JSON entry. The returned object combines
+  both.
 - Routes that use `request.projectId` (from the `project-id` plugin) should validate the project exists in the DB, not
   in config.
-- The `project-id` plugin (`server/src/plugins/project-id.ts`) should validate against DB and attach the full project
-  record to the request (not just the string ID).
+- The `project-id` plugin (`server/src/plugins/project-id.ts`) should validate against DB and attach the merged project
+  record (DB + local paths) to the request.
 
 **Files:**
 
@@ -104,15 +124,14 @@ DELETE /projects/:id          - reject with 409 if any data exists for this proj
 
 ### 1.5 Simplify `scaffold.config.json`
 
-After this change, the JSON config retains only server-level concerns:
+After this change, the JSON config retains:
 
-- `server.port`
-- `server.ubtLockTimeoutMs`
-- PGlite data directory (if applicable)
-- Any other host-level settings not scoped to a project
+- Server-level concerns: `server.port`, `server.ubtLockTimeoutMs`, PGlite data directory
+- Per-project local paths: `path`, `bare_repo_path`, `engine_path`, `build_script_path`, `test_script_path`,
+  `tasks_path`, `staging_worktree_root`, `staging_copies`, `uproject_file`
 
-Project-specific fields (`project.*`, `engine.*`, `build.*`, `tasks.*`, `plugins.*`) move to the DB. The legacy format
-is still accepted for initial seeding but is not the runtime authority.
+Portable project fields (`name`, `engine_version`, `plan_branch`, timeouts) live in the DB. The JSON is still keyed by
+project ID, but only carries path/environment data.
 
 **Files:**
 
@@ -142,12 +161,12 @@ Write tests for the new projects CRUD endpoints and the seed-from-JSON behaviour
 
 - **Delete semantics:** `DELETE /projects/:id` returns 409 Conflict if any agents, tasks, messages, builds, or other
   data exist for that project. User must clean up associated data first.
-- **JSON seed behaviour:** INSERT-only, not upsert. Validate-and-warn on conflict. JSON is a convenience for DB
-  initialization, not the runtime authority.
-- **Config scope:** Full `ProjectConfig` in the DB (all build/engine/plugin fields). DB is the single authority for
-  everything project-specific.
-- **Hot reload:** DB-backed config naturally supports hot changes without server restart, which is an advantage over
-  JSON.
+- **JSON seed behaviour:** INSERT-only. If the project already exists in the DB, skip. JSON seeds identity; the DB is
+  authoritative for portable fields thereafter.
+- **Config split:** DB owns portable config (name, version, timeouts, seed branch). JSON owns local paths. `getProject()`
+  merges both at runtime.
+- **Hot reload:** DB-backed portable config supports hot changes without server restart. Path changes require a server
+  restart (or JSON re-read), which is acceptable since paths rarely change.
 
 ---
 
@@ -162,8 +181,12 @@ Write tests for the new projects CRUD endpoints and the seed-from-JSON behaviour
 | `docker/current-root` | `docker/{project-id}/current-root` |
 | `docker/{agent-name}` | `docker/{project-id}/{agent-name}` |
 
-The `planBranch` config field (now a column in the `projects` table) allows explicit override. When unset, the default
-shifts from `docker/current-root` to `docker/{project-id}/current-root`. Explicit `planBranch` values are used as-is.
+The `seedBranch` config field (now a column in the `projects` table) allows explicit override. When unset, the default
+shifts from `docker/current-root` to `docker/{project-id}/current-root`. Explicit `seedBranch` values are used as-is.
+
+**Rename:** The field formerly called `planBranch` is renamed to `seedBranch` throughout the codebase (config, DB column,
+route variables, helper functions, shell scripts). The old name was confusing because "plan" is overloaded with task
+`sourcePath` references. "Seed" reflects the actual role: the branch that fresh containers start from.
 
 ### 2.1 Write Failing Tests
 
@@ -175,22 +198,22 @@ shifts from `docker/current-root` to `docker/{project-id}/current-root`. Explici
 // server/src/branch-naming.test.ts
 import {describe, it} from 'node:test';
 import assert from 'node:assert/strict';
-import {planBranchFor, agentBranchFor} from './branch-naming.js';
+import {seedBranchFor, agentBranchFor} from './branch-naming.js';
 
-describe('planBranchFor', () => {
+describe('seedBranchFor', () => {
     it('returns docker/{projectId}/current-root when no override', () => {
-        assert.equal(planBranchFor('piste-perfect'), 'docker/piste-perfect/current-root');
+        assert.equal(seedBranchFor('piste-perfect'), 'docker/piste-perfect/current-root');
     });
 
-    it('returns explicit planBranch when provided', () => {
+    it('returns explicit seedBranch when provided', () => {
         assert.equal(
-            planBranchFor('piste-perfect', {planBranch: 'custom/branch'}),
+            seedBranchFor('piste-perfect', {seedBranch: 'custom/branch'}),
             'custom/branch',
         );
     });
 
     it('works with default project id', () => {
-        assert.equal(planBranchFor('default'), 'docker/default/current-root');
+        assert.equal(seedBranchFor('default'), 'docker/default/current-root');
     });
 });
 
@@ -215,15 +238,15 @@ describe('agentBranchFor', () => {
 // server/src/branch-naming.ts
 
 /**
- * Compute the plan/integration branch for a project.
- * If the project config specifies an explicit planBranch, use it;
+ * Compute the seed branch for a project.
+ * If the project config specifies an explicit seedBranch, use it;
  * otherwise derive from the project ID.
  */
-export function planBranchFor(
+export function seedBranchFor(
     projectId: string,
-    projectConfig?: { planBranch?: string | null },
+    projectConfig?: { seedBranch?: string | null },
 ): string {
-    return projectConfig?.planBranch ?? `docker/${projectId}/current-root`;
+    return projectConfig?.seedBranch ?? `docker/${projectId}/current-root`;
 }
 
 /**
@@ -247,15 +270,15 @@ Each route file currently has inline `'docker/current-root'` fallbacks and `` `d
 them all with the helpers from Phase 2. Every route already has `projectId` available (via `X-Project-Id` header or
 `resolveProjectIdForAgent`).
 
-After Phase 1, `getProject()` returns a DB record. The `planBranch` field is now a column on that record, so
-`planBranchFor(projectId, project)` reads `project.planBranch` from the DB row.
+After Phase 1, `getProject()` returns a merged record (DB + local paths). The `seedBranch` field is a column on the DB
+row, so `seedBranchFor(projectId, project)` reads `project.seedBranch` from it.
 
 ### 3.1 Update `agents.ts`
 
 Add import, replace lines 184-185:
 
 ```ts
-const planBranch = planBranchFor(projectId, project);
+const seedBranch = seedBranchFor(projectId, project);
 const targetBranch = agentBranchFor(projectId, name);
 ```
 
@@ -264,14 +287,14 @@ const targetBranch = agentBranchFor(projectId, name);
 ### 3.2 Update `build.ts`
 
 Thread `projectId` into `syncWorktree` as a parameter. Replace `'docker/current-root'` fallback with
-`planBranchFor(projectId, project)`.
+`seedBranchFor(projectId, project)`.
 
 **Files:** `server/src/routes/build.ts`
 
 ### 3.3 Update `sync.ts`
 
 Replace `project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root'` with
-`planBranchFor(projectId, project)`. Drop the legacy `config.tasks?.planBranch` fallback (ambiguous in multi-project
+`seedBranchFor(projectId, project)`. Drop the legacy `config.tasks?.planBranch` fallback (ambiguous in multi-project
 context). Replace `` `docker/${agentName}` `` with `agentBranchFor(projectId, agentName)`.
 
 **Files:** `server/src/routes/sync.ts`
@@ -280,14 +303,14 @@ context). Replace `` `docker/${agentName}` `` with `agentBranchFor(projectId, ag
 
 Same pattern at each location (lines 85, 164, 167, 283, 490):
 
-- `planBranchFor(projectId, project)` replaces plan branch fallbacks
+- `seedBranchFor(projectId, project)` replaces plan branch fallbacks
 - `agentBranchFor(projectId, agentName)` replaces inline construction
 
 **Files:** `server/src/routes/tasks.ts`
 
 ### 3.5 Update `tasks-files.ts`, `tasks-lifecycle.ts`, `tasks-claim.ts`
 
-Same pattern: add import, replace `'docker/current-root'` fallbacks with `planBranchFor(projectId, project)`.
+Same pattern: add import, replace `'docker/current-root'` fallbacks with `seedBranchFor(projectId, project)`.
 
 **Files:**
 
@@ -357,7 +380,28 @@ Smoke test: `./launch.sh --project content-catalogue-dashboard --dry-run`
 
 **Files:** `launch.sh`
 
-### 5.2 Update `setup.sh`
+### 5.2 Agent Collision Guard in `launch.sh`
+
+Before launching the Docker container, `launch.sh` must query the server to check whether the target agent name is
+already active. If `GET /agents/{name}` returns a registered agent with status `active` (or any non-terminated state),
+the launch sequence terminates with a clear error:
+
+```bash
+# After branch construction, before docker compose up:
+if curl -sf "http://localhost:${SERVER_PORT}/agents/${AGENT_NAME}" \
+    -H "x-project-id: ${PROJECT_ID}" | grep -q '"status":"active"'; then
+  echo "ERROR: agent '${AGENT_NAME}' is already active for project '${PROJECT_ID}'."
+  echo "Use a different --agent name, or stop the existing container first."
+  exit 1
+fi
+```
+
+This prevents the scenario where two containers target the same agent branch, causing push conflicts and data
+corruption. The check is cheap (single HTTP GET) and runs before any Docker resources are allocated.
+
+**Files:** `launch.sh`
+
+### 5.3 Update `setup.sh`
 
 Update `ensure_bare_repo` to accept project ID as a parameter and create `docker/{project-id}/current-root` instead of
 `docker/current-root`.
@@ -370,7 +414,7 @@ Validate: `bash -n setup.sh`
 
 **Files:** `setup.sh`
 
-### 5.3 Migration Path for Existing Bare Repos
+### 5.4 Migration Path for Existing Bare Repos
 
 In `ensure_bare_repo`, after checking that the bare repo exists, detect old-style `docker/current-root` branches and
 copy them to `docker/{project-id}/current-root`:
@@ -387,14 +431,14 @@ copy them to `docker/{project-id}/current-root`:
 
 ### 6.1 `scaffold.config.example.json`
 
-Update `planBranch` and `defaultBranch` examples to `docker/{project-id}/current-root`.
+Rename `planBranch`/`defaultBranch` to `seedBranch`. Update examples to `docker/{project-id}/current-root`.
 
 ### 6.2 `CLAUDE.md`
 
 Update the branch model section and Git Data Flow diagram:
 
 ```
-docker/{project-id}/current-root    <- integration branch (user-controlled)
+docker/{project-id}/current-root    <- seed branch (fresh containers start here)
 docker/{project-id}/agent-1         <- agent-1's working branch
 docker/{project-id}/agent-2         <- agent-2's working branch
 ```
@@ -425,8 +469,8 @@ In each container-git skill and `cleanup-session-protocol`, replace:
 
 1. **Legacy `config.tasks.planBranch` fallback**: Several routes chain
    `project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root'`. The middle fallback is a legacy top-level
-   field. With per-project namespacing, it's ambiguous. Decision: drop it. Routes use
-   `planBranchFor(projectId, project)` which checks the project's DB record, then falls back to the computed default.
+   field. With per-project namespacing, it's ambiguous. Decision: drop it. The renamed `seedBranch` field on the DB
+   record is the only override; `seedBranchFor(projectId, project)` falls back to the computed default.
 
 2. **`ROOT_BRANCH` env var override**: `launch.sh` allows `ROOT_BRANCH` to be set explicitly in `.env`. The new default
    changes but the override still works: `ROOT_BRANCH="${ROOT_BRANCH:-docker/${PROJECT_ID}/current-root}"`.
