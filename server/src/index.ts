@@ -62,11 +62,9 @@ try {
   console.log(`  UBT lock timeout: ${config.server.ubtLockTimeoutMs}ms`);
 
   setInterval(() => {
-    try {
-      sweepStaleLock();
-    } catch (err) {
+    sweepStaleLock().catch((err) => {
       server.log.error(err, 'UBT stale-lock sweep failed');
-    }
+    });
   }, 60_000);
 } catch (err) {
   server.log.error(err);

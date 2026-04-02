@@ -1,6 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { randomBytes } from 'node:crypto';
-import { db } from '../db.js';
+import { getDb } from '../drizzle-instance.js';
+import * as agentsQ from '../queries/agents.js';
+import * as roomsQ from '../queries/rooms.js';
+import * as filesQ from '../queries/files.js';
+import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
 import type { ScaffoldConfig } from '../config.js';
 import { getProject } from '../config.js';
 import { mergeIntoBranch } from '../git-utils.js';
@@ -10,64 +14,29 @@ interface AgentsOpts { config: ScaffoldConfig }
 export interface AgentRow {
   name: string;
   worktree: string;
-  plan_doc: string | null;
+  planDoc: string | null;
   status: string;
   mode: string;
-  registered_at: string;
-  container_host: string | null;
-  project_id: string;
+  registeredAt: string | Date | null;
+  containerHost: string | null;
+  projectId: string;
 }
 
-export function formatAgent(row: AgentRow) {
+export function formatAgent(row: any) {
   return {
     name: row.name,
     worktree: row.worktree,
-    planDoc: row.plan_doc,
+    planDoc: row.planDoc ?? row.plan_doc ?? null,
     status: row.status,
     mode: row.mode,
-    registeredAt: row.registered_at,
-    containerHost: row.container_host,
-    projectId: row.project_id,
+    registeredAt: row.registeredAt ?? row.registered_at ?? null,
+    containerHost: row.containerHost ?? row.container_host ?? null,
+    projectId: row.projectId ?? row.project_id ?? 'default',
   };
 }
 
 const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   const { config } = opts;
-  const insertAgent = db.prepare(
-    `INSERT INTO agents (name, worktree, plan_doc, status, mode, registered_at, container_host, session_token, project_id)
-     VALUES (@name, @worktree, @planDoc, 'idle', @mode, CURRENT_TIMESTAMP, @containerHost, @sessionToken, @projectId)
-     ON CONFLICT(name) DO UPDATE SET
-       worktree = excluded.worktree,
-       plan_doc = excluded.plan_doc,
-       status = 'idle',
-       mode = excluded.mode,
-       registered_at = CURRENT_TIMESTAMP,
-       container_host = COALESCE(excluded.container_host, agents.container_host),
-       session_token = excluded.session_token,
-       project_id = excluded.project_id`
-  );
-
-  const allAgents = db.prepare('SELECT * FROM agents');
-  const agentsByProject = db.prepare('SELECT * FROM agents WHERE project_id = ?');
-
-  const updateStatus = db.prepare(
-    'UPDATE agents SET status = @status WHERE name = @name'
-  );
-
-  const getAgent = db.prepare('SELECT * FROM agents WHERE name = @name');
-
-  const deleteAgent = db.prepare('DELETE FROM agents WHERE name = @name');
-
-  const deleteAllAgents = db.prepare('DELETE FROM agents');
-
-  const releaseAgentFiles = db.prepare(
-    'UPDATE files SET claimant = NULL, claimed_at = NULL WHERE claimant = ?'
-  );
-
-  const releaseAgentTasks = db.prepare(
-    `UPDATE tasks SET status = 'pending', claimed_by = NULL, claimed_at = NULL
-     WHERE claimed_by = @name AND status IN ('claimed', 'in_progress')`
-  );
 
   fastify.post<{
     Body: { name: string; worktree: string; planDoc?: string; mode?: 'single' | 'pump'; containerHost?: string };
@@ -75,16 +44,30 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     const { name, worktree, planDoc, mode, containerHost } = request.body;
     const projectId = (request.headers['x-project-id'] as string) || 'default';
     const sessionToken = randomBytes(16).toString('hex');
-    insertAgent.run({ name, worktree, planDoc: planDoc ?? null, mode: mode ?? 'single', containerHost: containerHost ?? null, sessionToken, projectId });
+    const db = getDb();
+
+    await agentsQ.register(db, {
+      name,
+      worktree,
+      planDoc: planDoc ?? null,
+      mode: mode ?? 'single',
+      containerHost: containerHost ?? null,
+      sessionToken,
+      projectId,
+    });
 
     const roomId = `${name}-direct`;
-    const existingRoom = db.prepare('SELECT 1 FROM rooms WHERE id = ?').get(roomId);
+    const existingRoom = await roomsQ.getRoom(db, roomId);
     if (!existingRoom) {
-      db.transaction(() => {
-        db.prepare('INSERT INTO rooms (id, name, type, created_by) VALUES (?, ?, ?, ?)').run(roomId, `Direct: ${name}`, 'direct', name);
-        db.prepare('INSERT OR IGNORE INTO room_members (room_id, member) VALUES (?, ?)').run(roomId, name);
-        db.prepare('INSERT OR IGNORE INTO room_members (room_id, member) VALUES (?, ?)').run(roomId, 'user');
-      })();
+      await roomsQ.createRoom(db, {
+        id: roomId,
+        name: `Direct: ${name}`,
+        type: 'direct',
+        createdBy: name,
+        projectId,
+      });
+      await roomsQ.addMember(db, roomId, name);
+      await roomsQ.addMember(db, roomId, 'user');
     }
 
     return { ok: true, sessionToken };
@@ -94,17 +77,17 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     Querystring: { project?: string };
   }>('/agents', async (request) => {
     const { project } = request.query;
-    if (project) {
-      return (agentsByProject.all(project) as AgentRow[]).map(formatAgent);
-    }
-    return (allAgents.all() as AgentRow[]).map(formatAgent);
+    const db = getDb();
+    const rows = await agentsQ.getAll(db, project || undefined);
+    return rows.map(formatAgent);
   });
 
   // GET /agents/:name — fetch a single agent by name
   fastify.get<{
     Params: { name: string };
   }>('/agents/:name', async (request, reply) => {
-    const row = getAgent.get({ name: request.params.name }) as AgentRow | undefined;
+    const db = getDb();
+    const row = await agentsQ.getByName(db, request.params.name);
     if (!row) {
       return reply.notFound(`Agent '${request.params.name}' not registered`);
     }
@@ -117,17 +100,14 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   }>('/agents/:name/status', async (request, reply) => {
     const { name } = request.params;
     const { status } = request.body;
-    const agent = getAgent.get({ name });
+    const db = getDb();
+    const agent = await agentsQ.getByName(db, name);
     if (!agent) {
       return reply.notFound(`Agent '${name}' not registered`);
     }
-    updateStatus.run({ name, status });
+    await agentsQ.updateStatus(db, name, status);
     return { ok: true };
   });
-
-  const setStoppingStatus = db.prepare(
-    "UPDATE agents SET status = 'stopping' WHERE name = @name"
-  );
 
   // DELETE /agents/:name — deregister a single agent
   // First call (operator): sets status to 'stopping', releases file ownership.
@@ -136,58 +116,60 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     Params: { name: string };
   }>('/agents/:name', async (request, reply) => {
     const { name } = request.params;
-    const agent = getAgent.get({ name }) as AgentRow | undefined;
+    const db = getDb();
+    const agent = await agentsQ.getByName(db, name);
     if (!agent) {
       return reply.notFound(`Agent '${name}' not registered`);
     }
 
     if (agent.status === 'stopping') {
       // Second call — container acknowledging stop; hard-delete the row
-      db.transaction(() => {
-        deleteAgent.run({ name });
-        releaseAgentFiles.run(name);
-      })();
+      await db.transaction(async (tx) => {
+        await agentsQ.hardDelete(tx as any, name);
+        await filesQ.releaseByClaimant(tx as any, name);
+      });
       return { ok: true };
     }
 
     // First call — operator initiating shutdown; set status to stopping
-    db.transaction(() => {
-      setStoppingStatus.run({ name });
-      releaseAgentFiles.run(name);
-      releaseAgentTasks.run({ name });
-    })();
+    await db.transaction(async (tx) => {
+      await agentsQ.softDelete(tx as any, name);
+      await filesQ.releaseByClaimant(tx as any, name);
+      await tasksLifecycleQ.releaseByAgent(tx as any, name);
+    });
     return { ok: true, stopping: true };
   });
 
   // DELETE /agents — deregister all agents (e.g. server restart cleanup)
   fastify.delete('/agents', async () => {
-    const result = db.transaction(() => {
-      const info = deleteAllAgents.run();
-      db.prepare('UPDATE files SET claimant = NULL, claimed_at = NULL').run();
-      db.prepare("UPDATE tasks SET status = 'pending', claimed_by = NULL, claimed_at = NULL WHERE status IN ('claimed', 'in_progress')").run();
-      return info.changes;
-    })();
+    const db = getDb();
+    const result = await db.transaction(async (tx) => {
+      const count = await agentsQ.deleteAll(tx as any);
+      await filesQ.releaseAll(tx as any);
+      await tasksLifecycleQ.releaseAllActive(tx as any);
+      return count;
+    });
     return { ok: true, removed: result };
   });
 
   // POST /agents/:name/sync — merge plan branch into agent's branch
   fastify.post<{ Params: { name: string } }>('/agents/:name/sync', async (request, reply) => {
     const { name } = request.params;
+    const db = getDb();
 
-    const agent = db.prepare('SELECT name, worktree, project_id FROM agents WHERE name = ?').get(name) as
-      { name: string; worktree: string; project_id: string } | undefined;
+    const agent = await agentsQ.getWorktreeInfo(db, name);
     if (!agent) {
       return reply.notFound(`Agent '${name}' not found`);
     }
 
     let project;
     try {
-      project = getProject(config, agent.project_id);
+      project = getProject(config, agent.projectId);
     } catch {
       return reply.code(400).send({
         statusCode: 400,
         error: 'Bad Request',
-        message: `Unknown project: "${agent.project_id}"`,
+        message: `Unknown project: "${agent.projectId}"`,
       });
     }
     const bareRepo = project.bareRepoPath;

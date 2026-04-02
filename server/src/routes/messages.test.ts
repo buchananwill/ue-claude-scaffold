@@ -1,19 +1,19 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, type TestContext } from '../test-helper.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import messagesPlugin from './messages.js';
 
-describe('messages routes', () => {
-  let ctx: TestContext;
+describe('messages routes (drizzle)', () => {
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(messagesPlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('POST /messages creates a message, GET /messages/:channel returns it', async () => {

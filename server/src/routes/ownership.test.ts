@@ -2,7 +2,6 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
 import tasksPlugin from './tasks.js';
-import agentsPlugin from './agents.js';
 import filesPlugin from './files.js';
 
 describe('file write ownership', () => {
@@ -12,7 +11,6 @@ describe('file write ownership', () => {
     ctx = await createTestApp();
     const config = createTestConfig();
     await ctx.app.register(tasksPlugin, { config });
-    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(filesPlugin);
   });
 
@@ -35,14 +33,6 @@ describe('file write ownership', () => {
       method: 'POST',
       url: `/tasks/${id}/claim`,
       headers: { 'x-agent-name': agent },
-    });
-  }
-
-  async function registerAgent(name: string) {
-    return ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name, worktree: `/tmp/${name}` },
     });
   }
 
@@ -141,42 +131,7 @@ describe('file write ownership', () => {
     assert.deepEqual(paths, ['Source/A.cpp', 'Source/B.cpp', 'Source/C.cpp']);
   });
 
-  it('agent deregistration releases all claimed files', async () => {
-    await registerAgent('agent-1');
-    const t1 = await createTask('Task 1', ['Source/A.cpp', 'Source/B.cpp']);
-    await claimTask(t1, 'agent-1');
-
-    const beforeFiles = await getFiles('claimant=agent-1');
-    assert.equal(beforeFiles.length, 2);
-
-    await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
-
-    const afterFiles = await getFiles('claimant=agent-1');
-    assert.equal(afterFiles.length, 0);
-
-    const unclaimed = await getFiles('unclaimed=true');
-    const paths = unclaimed.map((f: { path: string }) => f.path).sort();
-    assert.ok(paths.includes('Source/A.cpp'));
-    assert.ok(paths.includes('Source/B.cpp'));
-  });
-
-  it('after deregistration of agent-1, agent-2 can claim files [A, B]', async () => {
-    await registerAgent('agent-1');
-    const t1 = await createTask('Task 1', ['Source/A.cpp', 'Source/B.cpp']);
-    await claimTask(t1, 'agent-1');
-
-    await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
-
-    // Reset the task to pending so agent-2 can claim it
-    await ctx.app.inject({ method: 'POST', url: `/tasks/${t1}/release` });
-
-    const res = await claimTask(t1, 'agent-2');
-    assert.equal(res.statusCode, 200);
-
-    const files = await getFiles('claimant=agent-2');
-    const paths = files.map((f: { path: string }) => f.path).sort();
-    assert.deepEqual(paths, ['Source/A.cpp', 'Source/B.cpp']);
-  });
+  // NOTE: Agent deregistration releasing files is tested in agents.test.ts
 
   it('releasing a claimed task back to pending does NOT release file ownership', async () => {
     const t1 = await createTask('Task 1', ['Source/A.cpp', 'Source/B.cpp']);
@@ -227,38 +182,7 @@ describe('file write ownership', () => {
     }
   });
 
-  it('bulk DELETE /agents releases all file claims', async () => {
-    await registerAgent('agent-1');
-    await registerAgent('agent-2');
-
-    const t1 = await createTask('Task 1', ['Source/A.cpp']);
-    await claimTask(t1, 'agent-1');
-    const t2 = await createTask('Task 2', ['Source/B.cpp']);
-    await claimTask(t2, 'agent-2');
-
-    // Both agents own files
-    const before1 = await getFiles('claimant=agent-1');
-    const before2 = await getFiles('claimant=agent-2');
-    assert.equal(before1.length, 1);
-    assert.equal(before2.length, 1);
-
-    // Bulk delete all agents
-    const res = await ctx.app.inject({ method: 'DELETE', url: '/agents' });
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.json().removed, 2);
-
-    // All files should now be unclaimed
-    const unclaimed = await getFiles('unclaimed=true');
-    const paths = unclaimed.map((f: { path: string }) => f.path).sort();
-    assert.ok(paths.includes('Source/A.cpp'));
-    assert.ok(paths.includes('Source/B.cpp'));
-
-    // No files should have any claimant
-    const a1Files = await getFiles('claimant=agent-1');
-    const a2Files = await getFiles('claimant=agent-2');
-    assert.equal(a1Files.length, 0);
-    assert.equal(a2Files.length, 0);
-  });
+  // NOTE: Bulk agent delete releasing files is tested in agents.test.ts
 
   it('failing a task does NOT release file ownership (sticky)', async () => {
     const t1 = await createTask('Task 1', ['Source/A.cpp', 'Source/B.cpp']);

@@ -272,14 +272,14 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
 
     const buildTimeoutMs = project.build?.buildTimeoutMs ?? config.build.buildTimeoutMs;
     const agentForHistory = agentName ?? 'unknown';
-    const histId = recordBuildStart(agentForHistory, 'build', projectId);
+    const histId = await recordBuildStart(agentForHistory, 'build', projectId);
     const t0 = Date.now();
     const result = await runWithUbtRetry(
       () => runCommand(command, scriptArgs, cwd, buildTimeoutMs),
       config.build.ubtRetryCount,
       config.build.ubtRetryDelayMs,
     );
-    recordBuildEnd(histId, Date.now() - t0, result.success, result.output, result.stderr);
+    await recordBuildEnd(histId, Date.now() - t0, result.success, result.output, result.stderr);
     return result;
   });
 
@@ -322,14 +322,14 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
 
     const testTimeoutMs = project.build?.testTimeoutMs ?? config.build.testTimeoutMs;
     const agentForHistory = agentName ?? 'unknown';
-    const histId = recordBuildStart(agentForHistory, 'test', projectId);
+    const histId = await recordBuildStart(agentForHistory, 'test', projectId);
     const t0 = Date.now();
     const result = await runWithUbtRetry(
       () => runCommand(command, scriptArgs, cwd, testTimeoutMs),
       config.build.ubtRetryCount,
       config.build.ubtRetryDelayMs,
     );
-    recordBuildEnd(histId, Date.now() - t0, result.success, result.output, result.stderr);
+    await recordBuildEnd(histId, Date.now() - t0, result.success, result.output, result.stderr);
     return result;
   });
 };

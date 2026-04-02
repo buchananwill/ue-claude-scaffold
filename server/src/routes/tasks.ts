@@ -380,7 +380,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     const base = { ok: true as const, ids };
     if (request.query.replan === 'true') {
-      return { ...base, replan: runReplan() };
+      return { ...base, replan: await runReplan() };
     }
     return base;
   });

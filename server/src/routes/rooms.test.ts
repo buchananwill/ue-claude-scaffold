@@ -1,6 +1,9 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
+import { rooms, roomMembers } from '../schema/tables.js';
+import { eq } from 'drizzle-orm';
 import roomsPlugin from './rooms.js';
 import agentsPlugin from './agents.js';
 
@@ -8,7 +11,7 @@ import agentsPlugin from './agents.js';
 /*  Helper: create a room via inject                                   */
 /* ------------------------------------------------------------------ */
 async function createRoom(
-  ctx: TestContext,
+  ctx: { app: import('fastify').FastifyInstance },
   opts: { id: string; name: string; type: string; members?: string[]; agent?: string },
 ) {
   const headers: Record<string, string> = {};
@@ -25,16 +28,16 @@ async function createRoom(
 /*  Room CRUD                                                          */
 /* ------------------------------------------------------------------ */
 describe('rooms CRUD', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('POST /rooms creates a room and returns {ok, id}', async () => {
@@ -187,10 +190,10 @@ describe('rooms CRUD', () => {
 /*  Chat messages                                                      */
 /* ------------------------------------------------------------------ */
 describe('chat messages', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
     // Create a room with alice and bob as members
     await ctx.app.inject({
@@ -203,7 +206,7 @@ describe('chat messages', () => {
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('POST /rooms/:id/messages — member posts message, returns {ok, id}', async () => {
@@ -391,17 +394,16 @@ describe('chat messages', () => {
 /*  Auto-direct-room on agent registration                             */
 /* ------------------------------------------------------------------ */
 describe('auto-direct-room on agent registration', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(agentsPlugin, { config: createTestConfig() });
-    await ctx.app.register(roomsPlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('POST /agents/register creates {name}-direct room with type direct', async () => {
@@ -411,11 +413,11 @@ describe('auto-direct-room on agent registration', () => {
       payload: { name: 'agent-1', worktree: '/tmp/wt1' },
     });
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/rooms/agent-1-direct' });
-    assert.equal(res.statusCode, 200);
-    const room = res.json();
-    assert.equal(room.type, 'direct');
-    assert.equal(room.name, 'Direct: agent-1');
+    // Verify room via direct DB query
+    const roomRows = await ctx.db.select().from(rooms).where(eq(rooms.id, 'agent-1-direct'));
+    assert.equal(roomRows.length, 1);
+    assert.equal(roomRows[0].type, 'direct');
+    assert.equal(roomRows[0].name, 'Direct: agent-1');
   });
 
   it('direct room has members [agent-name, "user"]', async () => {
@@ -425,9 +427,9 @@ describe('auto-direct-room on agent registration', () => {
       payload: { name: 'agent-1', worktree: '/tmp/wt1' },
     });
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/rooms/agent-1-direct' });
-    const members = res.json().members.map((m: { member: string }) => m.member).sort();
-    assert.deepEqual(members, ['agent-1', 'user']);
+    const memberRows = await ctx.db.select().from(roomMembers).where(eq(roomMembers.roomId, 'agent-1-direct'));
+    const memberNames = memberRows.map(m => m.member).sort();
+    assert.deepEqual(memberNames, ['agent-1', 'user']);
   });
 
   it('re-registering same agent does NOT duplicate the room', async () => {
@@ -442,9 +444,8 @@ describe('auto-direct-room on agent registration', () => {
       payload: { name: 'agent-1', worktree: '/tmp/wt2' },
     });
 
-    const rooms = await ctx.app.inject({ method: 'GET', url: '/rooms?member=agent-1' });
-    const directRooms = rooms.json().filter((r: { type: string }) => r.type === 'direct');
-    assert.equal(directRooms.length, 1);
+    const roomRows = await ctx.db.select().from(rooms).where(eq(rooms.id, 'agent-1-direct'));
+    assert.equal(roomRows.length, 1);
   });
 
   it('registration with containerHost stores it', async () => {
@@ -464,17 +465,17 @@ describe('auto-direct-room on agent registration', () => {
 /*  Chat message broadcast (Phase 5b)                                  */
 /* ------------------------------------------------------------------ */
 describe('chat message broadcast', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(agentsPlugin, { config: createTestConfig() });
     await ctx.app.register(roomsPlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('message POST succeeds when member has no container_host', async () => {

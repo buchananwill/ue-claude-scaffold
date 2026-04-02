@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, type TestContext } from '../test-helper.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import roomsPlugin from './rooms.js';
 import teamsPlugin from './teams.js';
 
@@ -8,7 +8,7 @@ import teamsPlugin from './teams.js';
 /*  Helper: create a team via inject                                   */
 /* ------------------------------------------------------------------ */
 async function createTeam(
-  ctx: TestContext,
+  ctx: { app: import('fastify').FastifyInstance },
   opts: {
     id: string;
     name: string;
@@ -36,17 +36,17 @@ async function createTeam(
 /*  POST /teams — create team                                          */
 /* ------------------------------------------------------------------ */
 describe('POST /teams', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('creates a team and returns {ok, id, roomId}', async () => {
@@ -124,17 +124,17 @@ describe('POST /teams', () => {
 /*  GET /teams — list teams                                            */
 /* ------------------------------------------------------------------ */
 describe('GET /teams', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('returns all teams', async () => {
@@ -177,17 +177,17 @@ describe('GET /teams', () => {
 /*  GET /teams/:id — team detail                                       */
 /* ------------------------------------------------------------------ */
 describe('GET /teams/:id', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('returns detail with members array, roomId, status', async () => {
@@ -231,17 +231,17 @@ describe('GET /teams/:id', () => {
 /*  DELETE /teams/:id — dissolve team                                  */
 /* ------------------------------------------------------------------ */
 describe('DELETE /teams/:id', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('sets status to dissolved and dissolved_at', async () => {
@@ -283,17 +283,17 @@ describe('DELETE /teams/:id', () => {
 /*  PATCH /teams/:id — update team                                     */
 /* ------------------------------------------------------------------ */
 describe('PATCH /teams/:id', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('updates status to converging', async () => {

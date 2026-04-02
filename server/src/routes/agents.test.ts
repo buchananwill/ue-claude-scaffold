@@ -1,22 +1,26 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync, spawnSync } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
+import { createTestConfig } from '../test-helper.js';
+import { tasks } from '../schema/tables.js';
+import { eq, sql } from 'drizzle-orm';
 import agentsPlugin from './agents.js';
-import tasksPlugin from './tasks.js';
 
-describe('agents routes', () => {
-  let ctx: TestContext;
+describe('agents routes (drizzle)', () => {
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(agentsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('GET /agents returns empty array initially', async () => {
@@ -214,12 +218,13 @@ describe('agents routes', () => {
   });
 });
 
-describe('POST /agents/:name/sync', () => {
-  let ctx: TestContext;
+describe('POST /agents/:name/sync (drizzle)', () => {
+  let ctx: DrizzleTestContext;
   let tmpBareRepo: string;
+  let tmpDir: string;
 
-  function initBareRepoWithBranch(tmpDir: string, branchName: string): { repo: string; initSha: string } {
-    const repo = path.join(tmpDir, 'test.git');
+  function initBareRepoWithBranch(dir: string, branchName: string): { repo: string; initSha: string } {
+    const repo = path.join(dir, 'test.git');
     execSync(`git init --bare "${repo}"`);
     const emptyTree = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
     const initSha = execSync(`git -C "${repo}" commit-tree ${emptyTree} -m "init"`, { encoding: 'utf-8' }).trim();
@@ -244,8 +249,9 @@ describe('POST /agents/:name/sync', () => {
   }
 
   beforeEach(async () => {
-    ctx = await createTestApp();
-    const { repo, initSha } = initBareRepoWithBranch(ctx.tmpDir, 'docker/current-root');
+    ctx = await createDrizzleTestApp();
+    tmpDir = mkdtempSync(path.join(tmpdir(), 'agent-sync-test-'));
+    const { repo, initSha } = initBareRepoWithBranch(tmpDir, 'docker/current-root');
     tmpBareRepo = repo;
 
     // Create agent branch from the same initial commit
@@ -260,7 +266,7 @@ describe('POST /agents/:name/sync', () => {
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('returns 404 when agent not found', async () => {
@@ -334,49 +340,51 @@ describe('POST /agents/:name/sync', () => {
   });
 });
 
-describe('DELETE /agents task release', () => {
-  let ctx: TestContext;
+describe('DELETE /agents task release (drizzle)', () => {
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     const config = createTestConfig();
     await ctx.app.register(agentsPlugin, { config });
-    await ctx.app.register(tasksPlugin, { config });
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
+  /** Create a task directly via DB */
+  async function createTask(title: string, status: string = 'pending', claimedBy: string | null = null): Promise<number> {
+    const rows = await ctx.db.insert(tasks).values({
+      title,
+      status,
+      claimedBy,
+      claimedAt: claimedBy ? sql`now()` : null,
+      projectId: 'default',
+    }).returning();
+    return rows[0].id;
+  }
+
+  /** Get task by id from DB */
+  async function getTask(id: number) {
+    const rows = await ctx.db.select().from(tasks).where(eq(tasks.id, id));
+    return rows[0];
+  }
+
   it('DELETE /agents/:name (first call) releases claimed tasks to pending', async () => {
-    // Register agent
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/register',
       payload: { name: 'agent-1', worktree: '/tmp/wt1' },
     });
 
-    // Create a task
-    const createRes = await ctx.app.inject({
-      method: 'POST',
-      url: '/tasks',
-      payload: { title: 'task-1' },
-    });
-    const taskId = createRes.json().id;
-
-    // Claim the task
-    const claimRes = await ctx.app.inject({
-      method: 'POST',
-      url: `/tasks/${taskId}/claim`,
-      headers: { 'x-agent-name': 'agent-1' },
-    });
-    assert.equal(claimRes.statusCode, 200);
+    const taskId = await createTask('task-1', 'claimed', 'agent-1');
 
     // Verify task is claimed
-    const beforeDel = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
-    assert.equal(beforeDel.json().status, 'claimed');
-    assert.equal(beforeDel.json().claimedBy, 'agent-1');
+    const before = await getTask(taskId);
+    assert.equal(before.status, 'claimed');
+    assert.equal(before.claimedBy, 'agent-1');
 
     // First DELETE — sets stopping and releases tasks
     const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
@@ -384,32 +392,19 @@ describe('DELETE /agents task release', () => {
     assert.equal(del.json().stopping, true);
 
     // Verify task reverted to pending with no claimant
-    const afterDel = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
-    assert.equal(afterDel.json().status, 'pending');
-    assert.equal(afterDel.json().claimedBy, null);
+    const after = await getTask(taskId);
+    assert.equal(after.status, 'pending');
+    assert.equal(after.claimedBy, null);
   });
 
   it('DELETE /agents (bulk) releases claimed tasks to pending', async () => {
-    // Register agent
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/register',
       payload: { name: 'agent-1', worktree: '/tmp/wt1' },
     });
 
-    // Create and claim a task
-    const createRes = await ctx.app.inject({
-      method: 'POST',
-      url: '/tasks',
-      payload: { title: 'bulk-task' },
-    });
-    const taskId = createRes.json().id;
-
-    await ctx.app.inject({
-      method: 'POST',
-      url: `/tasks/${taskId}/claim`,
-      headers: { 'x-agent-name': 'agent-1' },
-    });
+    const taskId = await createTask('bulk-task', 'claimed', 'agent-1');
 
     // Bulk DELETE all agents
     const del = await ctx.app.inject({ method: 'DELETE', url: '/agents' });
@@ -417,47 +412,24 @@ describe('DELETE /agents task release', () => {
     assert.equal(del.json().ok, true);
 
     // Verify task reverted to pending
-    const afterDel = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
-    assert.equal(afterDel.json().status, 'pending');
-    assert.equal(afterDel.json().claimedBy, null);
+    const after = await getTask(taskId);
+    assert.equal(after.status, 'pending');
+    assert.equal(after.claimedBy, null);
   });
 
   it('DELETE /agents/:name (first call) releases in_progress tasks to pending', async () => {
-    // Register agent
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/register',
       payload: { name: 'agent-1', worktree: '/tmp/wt1' },
     });
 
-    // Create a task
-    const createRes = await ctx.app.inject({
-      method: 'POST',
-      url: '/tasks',
-      payload: { title: 'in-progress-task' },
-    });
-    const taskId = createRes.json().id;
-
-    // Claim the task
-    const claimRes = await ctx.app.inject({
-      method: 'POST',
-      url: `/tasks/${taskId}/claim`,
-      headers: { 'x-agent-name': 'agent-1' },
-    });
-    assert.equal(claimRes.statusCode, 200);
-
-    // Transition to in_progress via update
-    const updateRes = await ctx.app.inject({
-      method: 'POST',
-      url: `/tasks/${taskId}/update`,
-      payload: { progress: 'Working on it' },
-    });
-    assert.equal(updateRes.statusCode, 200);
+    const taskId = await createTask('in-progress-task', 'in_progress', 'agent-1');
 
     // Verify task is in_progress
-    const beforeDel = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
-    assert.equal(beforeDel.json().status, 'in_progress');
-    assert.equal(beforeDel.json().claimedBy, 'agent-1');
+    const before = await getTask(taskId);
+    assert.equal(before.status, 'in_progress');
+    assert.equal(before.claimedBy, 'agent-1');
 
     // First DELETE — sets stopping and releases tasks
     const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
@@ -465,13 +437,12 @@ describe('DELETE /agents task release', () => {
     assert.equal(del.json().stopping, true);
 
     // Verify task reverted to pending with no claimant
-    const afterDel = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
-    assert.equal(afterDel.json().status, 'pending');
-    assert.equal(afterDel.json().claimedBy, null);
+    const after = await getTask(taskId);
+    assert.equal(after.status, 'pending');
+    assert.equal(after.claimedBy, null);
   });
 
   it('DELETE /agents/:name is idempotent — first sets stopping, second hard-deletes', async () => {
-    // Register agent
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/register',

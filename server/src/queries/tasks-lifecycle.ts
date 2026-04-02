@@ -169,6 +169,33 @@ export async function integrateAll(
   return result;
 }
 
+export async function releaseByAgent(db: DrizzleDb, agent: string) {
+  await db
+    .update(tasks)
+    .set({
+      status: 'pending',
+      claimedBy: null,
+      claimedAt: null,
+    })
+    .where(
+      and(
+        eq(tasks.claimedBy, agent),
+        sql`${tasks.status} IN ('claimed', 'in_progress')`,
+      ),
+    );
+}
+
+export async function releaseAllActive(db: DrizzleDb) {
+  await db
+    .update(tasks)
+    .set({
+      status: 'pending',
+      claimedBy: null,
+      claimedAt: null,
+    })
+    .where(sql`${tasks.status} IN ('claimed', 'in_progress')`);
+}
+
 export async function getCompletedByAgent(db: DrizzleDb, agent: string) {
   return db
     .select()

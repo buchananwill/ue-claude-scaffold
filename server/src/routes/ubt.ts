@@ -1,62 +1,32 @@
 import type { FastifyPluginAsync } from 'fastify';
-import type Database from 'better-sqlite3';
-import { db } from '../db.js';
+import { getDb } from '../drizzle-instance.js';
+import * as ubtQ from '../queries/ubt.js';
+import * as buildsQ from '../queries/builds.js';
 import type { ScaffoldConfig } from '../config.js';
 
 interface UbtOpts {
   config: ScaffoldConfig;
 }
 
-let getLock: Database.Statement;
-let insertLock: Database.Statement;
-let clearLock: Database.Statement;
-let popNext: Database.Statement;
+let _timeoutMs = 600000;
 
-let isAgentRegistered: Database.Statement;
-
-let insertBuildHistory: Database.Statement;
-let updateBuildHistory: Database.Statement;
-let avgBuildDuration: Database.Statement;
-
-function initBuildHistoryStatements(): void {
-  insertBuildHistory = db.prepare(
-    'INSERT INTO build_history (agent, type, project_id) VALUES (@agent, @type, @projectId)'
-  );
-  updateBuildHistory = db.prepare(
-    'UPDATE build_history SET duration_ms = @durationMs, success = @success, output = @output, stderr = @stderr WHERE id = @id'
-  );
-  avgBuildDuration = db.prepare(
-    `SELECT AVG(duration_ms) as avg_ms FROM (
-      SELECT duration_ms FROM build_history
-      WHERE type = @type AND success = 1 AND duration_ms IS NOT NULL
-      ORDER BY id DESC LIMIT 5
-    )`
-  );
+export function isStale(acquiredAt: string | Date | null): boolean {
+  if (!acquiredAt) return true;
+  const ts = typeof acquiredAt === 'string'
+    ? new Date(acquiredAt.endsWith('Z') ? acquiredAt : acquiredAt + 'Z').getTime()
+    : acquiredAt.getTime();
+  const elapsed = Date.now() - ts;
+  return elapsed > _timeoutMs;
 }
 
-export function initUbtStatements(): void {
-  getLock = db.prepare("SELECT * FROM ubt_lock WHERE project_id = 'default'");
-  insertLock = db.prepare(
-    `INSERT OR REPLACE INTO ubt_lock (project_id, holder, acquired_at, priority)
-     VALUES ('default', @holder, CURRENT_TIMESTAMP, @priority)`
-  );
-  clearLock = db.prepare("DELETE FROM ubt_lock WHERE project_id = 'default'");
-  popNext = db.prepare(
-    `DELETE FROM ubt_queue WHERE id = (
-       SELECT id FROM ubt_queue ORDER BY priority DESC, id ASC LIMIT 1
-     ) RETURNING *`
-  );
-  isAgentRegistered = db.prepare("SELECT 1 FROM agents WHERE name = @holder AND status != 'stopping'");
-  initBuildHistoryStatements();
-  initLastBuildStatement();
+export async function recordBuildStart(agent: string, type: 'build' | 'test', projectId: string = 'default'): Promise<number> {
+  const db = getDb();
+  return buildsQ.insertHistory(db, { agent, type, projectId });
 }
 
-export function recordBuildStart(agent: string, type: 'build' | 'test', projectId: string = 'default'): number {
-  return Number(insertBuildHistory.run({ agent, type, projectId }).lastInsertRowid);
-}
-
-export function recordBuildEnd(id: number, durationMs: number, success: boolean, output: string, stderr: string): void {
-  updateBuildHistory.run({ id, durationMs, success: success ? 1 : 0, output, stderr });
+export async function recordBuildEnd(id: number, durationMs: number, success: boolean, output: string, stderr: string): Promise<void> {
+  const db = getDb();
+  await buildsQ.updateHistory(db, id, { durationMs, success, output, stderr });
 }
 
 export interface LastBuildResult {
@@ -65,97 +35,65 @@ export interface LastBuildResult {
   stderr: string;
 }
 
-let lastCompletedBuild: Database.Statement;
-
-function initLastBuildStatement(): void {
-  lastCompletedBuild = db.prepare(
-    `SELECT success, output, stderr FROM build_history
-     WHERE agent = @agent AND type = @type AND duration_ms IS NOT NULL
-     ORDER BY id DESC LIMIT 1`
-  );
-}
-
 /** Return the most recent completed build/test result for an agent, or null if none. */
-export function getLastBuildResult(agent: string, type: 'build' | 'test'): LastBuildResult | null {
-  const row = lastCompletedBuild.get({ agent, type }) as
-    { success: number; output: string | null; stderr: string | null } | undefined;
+export async function getLastBuildResult(agent: string, type: 'build' | 'test'): Promise<LastBuildResult | null> {
+  const db = getDb();
+  const row = await buildsQ.lastCompleted(db, agent, type);
   if (!row) return null;
-  return { success: row.success === 1, output: row.output ?? '', stderr: row.stderr ?? '' };
+  return {
+    success: row.success === 1,
+    output: (row.output as string) ?? '',
+    stderr: (row.stderr as string) ?? '',
+  };
 }
 
-export function getEstimatedBuildMs(type?: string): number {
-  const row = avgBuildDuration.get({ type: type ?? 'build' }) as { avg_ms: number | null } | undefined;
-  return row?.avg_ms ? Math.round(row.avg_ms) : 300_000;
+export async function getEstimatedBuildMs(type?: string): Promise<number> {
+  const db = getDb();
+  const avg = await buildsQ.avgDuration(db, type ?? 'build');
+  return avg ?? 300_000;
 }
 
-let _timeoutMs = 600000;
-
-export function isStale(acquiredAt: string | null): boolean {
-  if (!acquiredAt) return true;
-  const elapsed = Date.now() - new Date(acquiredAt + 'Z').getTime();
-  return elapsed > _timeoutMs;
-}
-
-export function clearLockAndPromote(): { promoted?: string } {
-  return db.transaction(() => {
-    clearLock.run();
-
-    const next = popNext.get() as {
-      agent: string;
-      priority: number;
-    } | undefined;
-
+export async function clearLockAndPromote(): Promise<{ promoted?: string }> {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    await ubtQ.releaseLock(tx as any);
+    const next = await ubtQ.dequeue(tx as any);
     if (next) {
-      insertLock.run({ holder: next.agent, priority: next.priority });
+      await ubtQ.acquireLock(tx as any, next.agent, next.priority);
       return { promoted: next.agent };
     }
-
     return {};
-  })();
+  });
 }
 
-export function sweepStaleLock(): void {
-  const lock = getLock.get() as {
-    holder: string | null;
-    acquired_at: string | null;
-  } | undefined;
-
+export async function sweepStaleLock(): Promise<void> {
+  const db = getDb();
+  const lock = await ubtQ.getLock(db);
   if (!lock) return;
 
-  if (isStale(lock.acquired_at)) {
-    clearLockAndPromote();
-  } else if (lock.holder != null && !isAgentRegistered.get({ holder: lock.holder })) {
-    clearLockAndPromote();
+  if (isStale(lock.acquiredAt)) {
+    await clearLockAndPromote();
+  } else if (lock.holder != null) {
+    const registered = await ubtQ.isAgentRegistered(db, lock.holder);
+    if (!registered) {
+      await clearLockAndPromote();
+    }
   }
 }
 
+export function initUbtStatements(): void {
+  // No-op: query modules don't need init
+}
+
 const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
-  initUbtStatements();
   _timeoutMs = opts.config.server.ubtLockTimeoutMs;
 
-  const enqueue = db.prepare(
-    `INSERT INTO ubt_queue (agent, priority) VALUES (@agent, @priority)`
-  );
-  const getQueue = db.prepare(
-    'SELECT * FROM ubt_queue ORDER BY priority DESC, id ASC'
-  );
-  const queuePosition = db.prepare(
-    `SELECT COUNT(*) as pos FROM ubt_queue WHERE
-       (priority > @priority OR (priority = @priority AND id <= @id))`
-  );
-  const findInQueue = db.prepare(
-    'SELECT id, priority FROM ubt_queue WHERE agent = @agent'
-  );
-
   fastify.get('/ubt/status', async () => {
-    const lock = getLock.get() as {
-      holder: string | null;
-      acquired_at: string | null;
-      priority: number;
-    } | undefined;
-    const queue = getQueue.all();
+    const db = getDb();
+    const lock = await ubtQ.getLock(db);
+    const queue = await ubtQ.getQueue(db);
 
-    if (lock && isStale(lock.acquired_at)) {
+    if (lock && isStale(lock.acquiredAt)) {
       return { holder: null, acquiredAt: null, stale: true, queue, estimatedWaitMs: 0 };
     }
 
@@ -168,11 +106,12 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
       };
     }
 
+    const estimatedMs = await getEstimatedBuildMs();
     return {
       holder: lock.holder,
-      acquiredAt: lock.acquired_at ?? null,
+      acquiredAt: lock.acquiredAt ?? null,
       queue,
-      estimatedWaitMs: getEstimatedBuildMs() * (queue.length + 1),
+      estimatedWaitMs: estimatedMs * (queue.length + 1),
     };
   });
 
@@ -180,15 +119,17 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
     Body: { agent: string; priority?: number };
   }>('/ubt/acquire', async (request) => {
     const { agent, priority = 0 } = request.body;
+    const db = getDb();
 
-    return db.transaction(() => {
-      const lock = getLock.get() as {
-        holder: string | null;
-        acquired_at: string | null;
-      } | undefined;
+    // Pre-compute estimated build time outside the transaction to avoid
+    // deadlock on single-connection backends (PGlite).
+    const estimatedMs = await getEstimatedBuildMs();
 
-      if (!lock || isStale(lock.acquired_at)) {
-        insertLock.run({ holder: agent, priority });
+    return db.transaction(async (tx) => {
+      const lock = await ubtQ.getLock(tx as any);
+
+      if (!lock || isStale(lock.acquiredAt)) {
+        await ubtQ.acquireLock(tx as any, agent, priority);
         return { granted: true };
       }
 
@@ -196,47 +137,40 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
         return { granted: true };
       }
 
-      const existing = findInQueue.get({ agent }) as { id: number; priority: number } | undefined;
+      const existing = await ubtQ.findInQueue(tx as any, agent);
       if (existing) {
-        const pos = (queuePosition.get({
-          priority: existing.priority,
-          id: existing.id,
-        }) as { pos: number }).pos;
+        const pos = await ubtQ.getQueuePosition(tx as any, existing.id, existing.priority ?? 0);
         return {
           granted: false,
           position: pos,
           backoffMs: pos * 5000,
           holder: lock.holder,
-          holderSince: lock.acquired_at,
-          estimatedWaitMs: getEstimatedBuildMs() * pos,
+          holderSince: lock.acquiredAt,
+          estimatedWaitMs: estimatedMs * pos,
         };
       }
 
-      const entry = enqueue.run({ agent, priority });
-      const pos = (queuePosition.get({
-        priority,
-        id: Number(entry.lastInsertRowid),
-      }) as { pos: number }).pos;
+      const queueId = await ubtQ.enqueue(tx as any, agent, priority);
+      const pos = await ubtQ.getQueuePosition(tx as any, queueId, priority);
 
       return {
         granted: false,
         position: pos,
         backoffMs: pos * 5000,
         holder: lock.holder,
-        holderSince: lock.acquired_at,
-        estimatedWaitMs: getEstimatedBuildMs() * pos,
+        holderSince: lock.acquiredAt,
+        estimatedWaitMs: estimatedMs * pos,
       };
-    })();
+    });
   });
 
   fastify.post<{
     Body: { agent: string };
   }>('/ubt/release', async (request) => {
     const { agent } = request.body;
+    const db = getDb();
 
-    const lock = getLock.get() as {
-      holder: string | null;
-    } | undefined;
+    const lock = await ubtQ.getLock(db);
 
     if (!lock) {
       return { ok: false, reason: 'not_held' };
@@ -246,7 +180,7 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
       return { ok: false, reason: 'not_holder' };
     }
 
-    const result = clearLockAndPromote();
+    const result = await clearLockAndPromote();
     return { ok: true, ...result };
   });
 };

@@ -1,48 +1,11 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { db } from '../db.js';
+import { getDb } from '../drizzle-instance.js';
+import * as teamsQ from '../queries/teams.js';
+import * as roomsQ from '../queries/rooms.js';
 
 const VALID_STATUSES = ['active', 'converging', 'dissolved'] as const;
 
 const teamsPlugin: FastifyPluginAsync = async (fastify) => {
-  const insertTeam = db.prepare(
-    'INSERT INTO teams (id, name, brief_path) VALUES (@id, @name, @briefPath)'
-  );
-
-  const insertTeamMember = db.prepare(
-    'INSERT INTO team_members (team_id, agent_name, role, is_leader) VALUES (@teamId, @agentName, @role, @isLeader)'
-  );
-
-  const insertRoom = db.prepare(
-    'INSERT INTO rooms (id, name, type, created_by) VALUES (@id, @name, @type, @createdBy)'
-  );
-
-  const insertRoomMember = db.prepare(
-    'INSERT OR IGNORE INTO room_members (room_id, member) VALUES (@roomId, @member)'
-  );
-
-  const deleteRoomMembersByRoom = db.prepare('DELETE FROM room_members WHERE room_id = @roomId');
-  const deleteRoomById = db.prepare('DELETE FROM rooms WHERE id = @id');
-  const deleteTeamMembersByTeam = db.prepare('DELETE FROM team_members WHERE team_id = @teamId');
-  const deleteTeamById = db.prepare('DELETE FROM teams WHERE id = @id');
-
-  const teamById = db.prepare('SELECT * FROM teams WHERE id = @id');
-
-  const teamMembersByTeamId = db.prepare(
-    'SELECT agent_name, role, is_leader FROM team_members WHERE team_id = @teamId'
-  );
-
-  const dissolveTeam = db.prepare(
-    "UPDATE teams SET status = 'dissolved', dissolved_at = datetime('now') WHERE id = @id"
-  );
-
-  const updateTeamStatus = db.prepare(
-    'UPDATE teams SET status = @status WHERE id = @id'
-  );
-
-  const updateTeamDeliverable = db.prepare(
-    'UPDATE teams SET deliverable = @deliverable WHERE id = @id'
-  );
-
   // POST /teams — create a team
   fastify.post<{
     Body: {
@@ -54,6 +17,7 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
   }>('/teams', async (request, reply) => {
     const caller = (request.headers['x-agent-name'] as string | undefined) ?? 'user';
     const { id, name, briefPath, members } = request.body;
+    const db = getDb();
 
     const leaderCount = members.filter(m => m.isLeader).length;
     if (leaderCount !== 1) {
@@ -61,33 +25,27 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     try {
-      db.transaction(() => {
-        const existing = teamById.get({ id }) as { status: string } | undefined;
+      await db.transaction(async (tx) => {
+        const existing = await teamsQ.getById(tx as any, id);
         if (existing) {
           if (existing.status !== 'dissolved') {
             throw Object.assign(new Error(`Team '${id}' already exists and is not dissolved`), { statusCode: 409 });
           }
-          deleteRoomMembersByRoom.run({ roomId: id });
-          deleteRoomById.run({ id });
-          deleteTeamMembersByTeam.run({ teamId: id });
-          deleteTeamById.run({ id });
+          // Clean up old team data
+          await roomsQ.deleteRoom(tx as any, id);
+          await teamsQ.deleteTeam(tx as any, id);
         }
 
-        insertTeam.run({ id, name, briefPath: briefPath ?? null });
+        await teamsQ.create(tx as any, { id, name, briefPath: briefPath ?? null });
         for (const m of members) {
-          insertTeamMember.run({
-            teamId: id,
-            agentName: m.agentName,
-            role: m.role,
-            isLeader: m.isLeader ? 1 : 0,
-          });
+          await teamsQ.addMember(tx as any, id, m.agentName, m.role, m.isLeader);
         }
-        insertRoom.run({ id, name, type: 'group', createdBy: caller });
+        await roomsQ.createRoom(tx as any, { id, name, type: 'group', createdBy: caller });
         for (const m of members) {
-          insertRoomMember.run({ roomId: id, member: m.agentName });
+          await roomsQ.addMember(tx as any, id, m.agentName);
         }
-        insertRoomMember.run({ roomId: id, member: 'user' });
-      })();
+        await roomsQ.addMember(tx as any, id, 'user');
+      });
     } catch (err: unknown) {
       if (err instanceof Error && (err as Error & { statusCode?: number }).statusCode === 409) {
         return reply.status(409).send({ error: err.message });
@@ -102,29 +60,17 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
     Querystring: { status?: string };
   }>('/teams', async (request) => {
-    let sql = 'SELECT * FROM teams';
-    const params: unknown[] = [];
+    const db = getDb();
+    const rows = await teamsQ.list(db, { status: request.query.status || undefined });
 
-    if (request.query.status) {
-      sql += ' WHERE status = ?';
-      params.push(request.query.status);
-    }
-
-    type TeamRow = {
-      id: string; name: string; brief_path: string | null; status: string;
-      deliverable: string | null; created_at: string; dissolved_at: string | null;
-    };
-
-    const rows = db.prepare(sql).all(...params) as TeamRow[];
-
-    return rows.map(r => ({
+    return rows.map((r: any) => ({
       id: r.id,
       name: r.name,
-      briefPath: r.brief_path,
+      briefPath: r.briefPath,
       status: r.status,
       deliverable: r.deliverable,
-      createdAt: r.created_at,
-      dissolvedAt: r.dissolved_at,
+      createdAt: r.createdAt,
+      dissolvedAt: r.dissolvedAt,
     }));
   });
 
@@ -132,32 +78,27 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
     Params: { id: string };
   }>('/teams/:id', async (request, reply) => {
-    const team = teamById.get({ id: request.params.id }) as {
-      id: string; name: string; brief_path: string | null; status: string;
-      deliverable: string | null; created_at: string; dissolved_at: string | null;
-    } | undefined;
-
+    const db = getDb();
+    const team = await teamsQ.getById(db, request.params.id);
     if (!team) {
       return reply.notFound(`Team '${request.params.id}' not found`);
     }
 
-    const members = teamMembersByTeamId.all({ teamId: team.id }) as Array<{
-      agent_name: string; role: string; is_leader: number;
-    }>;
+    const members = await teamsQ.getMembers(db, team.id);
 
     return {
       id: team.id,
       name: team.name,
-      briefPath: team.brief_path,
+      briefPath: team.briefPath,
       status: team.status,
       deliverable: team.deliverable,
-      createdAt: team.created_at,
-      dissolvedAt: team.dissolved_at,
+      createdAt: team.createdAt,
+      dissolvedAt: team.dissolvedAt,
       roomId: team.id,
       members: members.map(m => ({
-        agentName: m.agent_name,
+        agentName: m.agentName,
         role: m.role,
-        isLeader: m.is_leader === 1,
+        isLeader: m.isLeader,
       })),
     };
   });
@@ -166,11 +107,12 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.delete<{
     Params: { id: string };
   }>('/teams/:id', async (request, reply) => {
-    const team = teamById.get({ id: request.params.id });
+    const db = getDb();
+    const team = await teamsQ.getById(db, request.params.id);
     if (!team) {
       return reply.notFound(`Team '${request.params.id}' not found`);
     }
-    dissolveTeam.run({ id: request.params.id });
+    await teamsQ.dissolve(db, request.params.id);
     return { ok: true };
   });
 
@@ -179,7 +121,8 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
     Params: { id: string };
     Body: { status?: string; deliverable?: string };
   }>('/teams/:id', async (request, reply) => {
-    const team = teamById.get({ id: request.params.id });
+    const db = getDb();
+    const team = await teamsQ.getById(db, request.params.id);
     if (!team) {
       return reply.notFound(`Team '${request.params.id}' not found`);
     }
@@ -192,19 +135,17 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
       }
     }
 
-    db.transaction(() => {
-      if (status !== undefined) {
-        if (status === 'dissolved') {
-          dissolveTeam.run({ id: request.params.id });
-        } else {
-          updateTeamStatus.run({ id: request.params.id, status });
-        }
+    if (status !== undefined) {
+      if (status === 'dissolved') {
+        await teamsQ.dissolve(db, request.params.id);
+      } else {
+        await teamsQ.updateStatus(db, request.params.id, status);
       }
+    }
 
-      if (deliverable !== undefined) {
-        updateTeamDeliverable.run({ id: request.params.id, deliverable });
-      }
-    })();
+    if (deliverable !== undefined) {
+      await teamsQ.updateDeliverable(db, request.params.id, deliverable);
+    }
 
     return { ok: true };
   });

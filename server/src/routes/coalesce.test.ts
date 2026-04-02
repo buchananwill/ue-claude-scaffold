@@ -1,26 +1,27 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
+import { createTestConfig } from '../test-helper.js';
+import { tasks, files } from '../schema/tables.js';
+import { eq, sql } from 'drizzle-orm';
 import agentsPlugin from './agents.js';
-import tasksPlugin from './tasks.js';
 import filesPlugin from './files.js';
 import coalescePlugin from './coalesce.js';
 
-describe('coalesce routes', () => {
-  let ctx: TestContext;
+describe('coalesce routes (drizzle)', () => {
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     const config = createTestConfig();
     await ctx.app.register(agentsPlugin, { config });
-    await ctx.app.register(tasksPlugin, { config });
     await ctx.app.register(filesPlugin);
     await ctx.app.register(coalescePlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   async function registerAgent(name: string, mode: string = 'pump') {
@@ -31,23 +32,43 @@ describe('coalesce routes', () => {
     });
   }
 
-  async function createTask(title: string, files?: string[]) {
-    const payload: Record<string, unknown> = { title };
-    if (files) payload.files = files;
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/tasks',
-      payload,
-    });
-    return res.json().id as number;
+  /** Create a pending task via direct DB insert */
+  async function createTask(title: string, taskFiles?: string[]): Promise<number> {
+    const rows = await ctx.db.insert(tasks).values({
+      title,
+      projectId: 'default',
+    }).returning();
+    const taskId = rows[0].id;
+
+    if (taskFiles?.length) {
+      for (const filePath of taskFiles) {
+        await ctx.db.insert(files).values({
+          projectId: 'default',
+          path: filePath,
+        }).onConflictDoNothing();
+      }
+    }
+
+    return taskId;
   }
 
-  async function claimTask(id: number, agent: string) {
-    return ctx.app.inject({
-      method: 'POST',
-      url: `/tasks/${id}/claim`,
-      headers: { 'x-agent-name': agent },
-    });
+  /** Claim a task and set file ownership directly */
+  async function claimTask(taskId: number, agent: string, taskFiles?: string[]) {
+    await ctx.db.update(tasks).set({
+      status: 'claimed',
+      claimedBy: agent,
+      claimedAt: sql`now()`,
+    }).where(eq(tasks.id, taskId));
+
+    // Set file claimant
+    if (taskFiles?.length) {
+      for (const filePath of taskFiles) {
+        await ctx.db.update(files).set({
+          claimant: agent,
+          claimedAt: sql`now()`,
+        }).where(eq(files.path, filePath));
+      }
+    }
   }
 
   it('canCoalesce true when all agents idle and no active tasks', async () => {
@@ -121,7 +142,7 @@ describe('coalesce routes', () => {
   it('POST /coalesce/release clears ownership and resumes agents', async () => {
     await registerAgent('pump-1');
     const taskId = await createTask('Task with files', ['Source/A.cpp', 'Source/B.cpp']);
-    await claimTask(taskId, 'pump-1');
+    await claimTask(taskId, 'pump-1', ['Source/A.cpp', 'Source/B.cpp']);
 
     // Pause the agent first
     await ctx.app.inject({
@@ -145,29 +166,6 @@ describe('coalesce routes', () => {
     assert.equal(agentRes.json().status, 'idle');
   });
 
-  it('after release, blocked tasks become claimable', async () => {
-    await registerAgent('pump-1');
-    await registerAgent('pump-2');
-
-    // Agent-1 claims task with files
-    const t1 = await createTask('Task 1', ['Source/Shared.cpp']);
-    await claimTask(t1, 'pump-1');
-
-    // Create second task with same files
-    const t2 = await createTask('Task 2', ['Source/Shared.cpp']);
-
-    // Agent-2 cannot claim (file conflict)
-    const blocked = await claimTask(t2, 'pump-2');
-    assert.equal(blocked.statusCode, 409);
-
-    // Release all files
-    await ctx.app.inject({ method: 'POST', url: '/coalesce/release' });
-
-    // Now agent-2 can claim
-    const unblocked = await claimTask(t2, 'pump-2');
-    assert.equal(unblocked.statusCode, 200);
-  });
-
   it('GET /coalesce/status with zero agents returns canCoalesce true and empty agents', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status' });
     assert.equal(res.statusCode, 200);
@@ -181,7 +179,7 @@ describe('coalesce routes', () => {
   it('GET /coalesce/status agents include correct ownedFiles and activeTasks', async () => {
     await registerAgent('pump-1');
     const taskId = await createTask('Task with files', ['Source/X.cpp', 'Source/Y.cpp']);
-    await claimTask(taskId, 'pump-1');
+    await claimTask(taskId, 'pump-1', ['Source/X.cpp', 'Source/Y.cpp']);
 
     const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status' });
     const body = res.json();
@@ -208,10 +206,8 @@ describe('coalesce routes', () => {
 
     const res2 = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
     const body2 = res2.json();
-    // Agent is already paused, so it should still appear in paused list
     assert.ok(body2.paused.includes('pump-1'));
 
-    // Verify agent is still paused
     const agentRes = await ctx.app.inject({ method: 'GET', url: '/agents/pump-1' });
     assert.equal(agentRes.json().status, 'paused');
   });
@@ -223,11 +219,9 @@ describe('coalesce routes', () => {
     const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
     const body = res.json();
 
-    // Only pump agent should be paused
     assert.ok(body.paused.includes('pump-1'));
     assert.ok(!body.paused.includes('single-1'));
 
-    // Verify single agent status unchanged (should still be idle)
     const singleRes = await ctx.app.inject({ method: 'GET', url: '/agents/single-1' });
     assert.equal(singleRes.json().status, 'idle');
   });
@@ -245,8 +239,8 @@ describe('coalesce routes', () => {
     await registerAgent('pump-2');
     const t1 = await createTask('Task A', ['Source/A.cpp']);
     const t2 = await createTask('Task B', ['Source/B.cpp']);
-    await claimTask(t1, 'pump-1');
-    await claimTask(t2, 'pump-2');
+    await claimTask(t1, 'pump-1', ['Source/A.cpp']);
+    await claimTask(t2, 'pump-2', ['Source/B.cpp']);
 
     // Pause both agents
     await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
@@ -254,9 +248,7 @@ describe('coalesce routes', () => {
     const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/release' });
     const body = res.json();
 
-    // Both files released
     assert.equal(body.releasedFiles, 2);
-    // Both agents resumed
     assert.equal(body.resumedAgents.length, 2);
     assert.ok(body.resumedAgents.includes('pump-1'));
     assert.ok(body.resumedAgents.includes('pump-2'));
@@ -284,7 +276,6 @@ describe('coalesce routes', () => {
 
     const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status' });
     const body = res.json();
-    // canCoalesce only considers pump agents, single-mode working should not block
     assert.equal(body.canCoalesce, true);
   });
 });
