@@ -8,7 +8,6 @@
   },
 
   "tasks": {
-    "path": "",
     "planBranch": "docker/current-root"
   },
 

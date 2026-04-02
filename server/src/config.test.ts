@@ -145,7 +145,7 @@ describe('multi-project config', () => {
     const raw = {
       ...validRaw,
       server: { ...validRaw.server, stagingWorktreeRoot: '/tmp/staging' },
-      tasks: { path: '/tmp/tasks', planBranch: 'plans' },
+      tasks: { planBranch: 'plans' },
     };
     const config = loadConfigFromJson(raw);
     const def = config.resolvedProjects['default'];

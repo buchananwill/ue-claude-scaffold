@@ -593,6 +593,27 @@ fi
 
 # ── Branch setup in persistent bare repo ────────────────────────────────────
 
+# Helper: set up a branch in the bare repo (fresh reset, create, or resume).
+# Usage: _setup_branch <branch_name> <fresh_flag>
+_setup_branch() {
+  local branch="$1"
+  local fresh="$2"
+
+  if [ "$fresh" = "true" ]; then
+    local root_sha
+    root_sha=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
+    git -C "$BARE_REPO_PATH" update-ref "refs/heads/${branch}" "$root_sha"
+    echo "  Reset branch ${branch} to ${ROOT_BRANCH} (--fresh)"
+  elif ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${branch}" &>/dev/null; then
+    local root_sha
+    root_sha=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
+    git -C "$BARE_REPO_PATH" update-ref "refs/heads/${branch}" "$root_sha"
+    echo "  Created branch ${branch} from ${ROOT_BRANCH}"
+  else
+    echo "  Resuming existing branch ${branch}"
+  fi
+}
+
 if [[ ! -d "$BARE_REPO_PATH" ]]; then
   echo "Error: Bare repo not found at $BARE_REPO_PATH" >&2
   echo "Run ./setup.sh to create it, or create it manually:" >&2
@@ -609,19 +630,7 @@ fi
 
 if ! [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
   # Single-agent branch setup
-  if [ "$_CLI_FRESH" = "true" ]; then
-    echo "Resetting ${AGENT_BRANCH} to ${ROOT_BRANCH} (--fresh)..."
-    ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
-    git -C "$BARE_REPO_PATH" update-ref "refs/heads/${AGENT_BRANCH}" "$ROOT_SHA"
-  else
-    if ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${AGENT_BRANCH}" &>/dev/null; then
-      echo "No existing branch ${AGENT_BRANCH}. Creating from ${ROOT_BRANCH}..."
-      ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
-      git -C "$BARE_REPO_PATH" update-ref "refs/heads/${AGENT_BRANCH}" "$ROOT_SHA"
-    else
-      echo "Resuming from existing branch ${AGENT_BRANCH}."
-    fi
-  fi
+  _setup_branch "$AGENT_BRANCH" "$_CLI_FRESH"
 fi
 
 resolve_hooks ""
@@ -706,17 +715,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
     _AGENT="agent-${i}"
     _BRANCH="docker/${_AGENT}"
 
-    if [ "$_CLI_FRESH" = "true" ]; then
-      _ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
-      git -C "$BARE_REPO_PATH" update-ref "refs/heads/${_BRANCH}" "$_ROOT_SHA"
-      echo "  Reset branch ${_BRANCH} to ${ROOT_BRANCH} (--fresh)"
-    elif ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${_BRANCH}" &>/dev/null; then
-      _ROOT_SHA=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
-      git -C "$BARE_REPO_PATH" update-ref "refs/heads/${_BRANCH}" "$_ROOT_SHA"
-      echo "  Created branch ${_BRANCH} from ${ROOT_BRANCH}"
-    else
-      echo "  Resuming existing branch ${_BRANCH}"
-    fi
+    _setup_branch "$_BRANCH" "$_CLI_FRESH"
 
     (cd "$SCRIPT_DIR/container" && \
       AGENT_NAME="$_AGENT" \

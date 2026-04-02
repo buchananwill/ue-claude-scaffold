@@ -45,7 +45,6 @@ export interface ScaffoldConfig {
     }>;
   };
   tasks?: {
-    path: string;
     planBranch?: string;
   };
   /** @deprecated No longer used — CLAUDE.md is now environment-agnostic. */
@@ -119,7 +118,6 @@ export function loadConfig(): ScaffoldConfig {
         : [],
     },
     tasks: {
-      path: raw.tasks?.path ?? '',
       planBranch: raw.tasks?.planBranch,
     },
     resolvedProjects: {},
@@ -158,8 +156,12 @@ export function loadConfig(): ScaffoldConfig {
     };
   }
 
-  // Validate required fields — relaxed for multi-project configs
-  const hasExplicitProjects = !!raw.projects;
+  validateConfig(config, !!raw.projects);
+
+  return config;
+}
+
+export function validateConfig(config: ScaffoldConfig, hasExplicitProjects: boolean): void {
   const missing: string[] = [];
 
   if (hasExplicitProjects) {
@@ -206,8 +208,6 @@ export function loadConfig(): ScaffoldConfig {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`server.port must be 1–65535 (got ${port})`);
   }
-
-  return config;
 }
 
 function coercePositiveNumber(value: unknown): number | undefined {
