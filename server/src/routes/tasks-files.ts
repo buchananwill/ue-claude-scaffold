@@ -1,8 +1,11 @@
-import type Database from 'better-sqlite3';
-import { db } from '../db.js';
 import type { ScaffoldConfig } from '../config.js';
 import { getProject } from '../config.js';
-import { existsInBareRepo, isCommittedInRepo } from '../git-utils.js';
+import { existsInBareRepo } from '../git-utils.js';
+import { getDb } from '../drizzle-instance.js';
+import * as tasksCore from '../queries/tasks-core.js';
+import * as taskFilesQ from '../queries/task-files.js';
+import * as taskDepsQ from '../queries/task-deps.js';
+import * as compositionQ from '../queries/composition.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
 
 export interface ConflictInfo {
@@ -49,332 +52,137 @@ export const patchBodyKeys: { [K in keyof Required<PatchBody>]: true } = {
   dependsOn: true,
 };
 
-export interface TasksSharedStatements {
-  insertTask: Database.Statement;
-  getTaskById: Database.Statement;
-  claimTask: Database.Statement;
-  updateProgress: Database.Statement;
-  completeTask: Database.Statement;
-  failTask: Database.Statement;
-  releaseTask: Database.Statement;
-  resetTask: Database.Statement;
-  integrateTask: Database.Statement;
-  integrateBatch: Database.Statement;
-  integrateAll: Database.Statement;
-  selectCompletedByAgent: Database.Statement;
-  selectAllCompleted: Database.Statement;
-  insertFile: Database.Statement;
-  insertTaskFile: Database.Statement;
-  getTaskFiles: Database.Statement;
-  deleteTaskFiles: Database.Statement;
-  insertDep: Database.Statement;
-  getDepsForTask: Database.Statement;
-  getIncompleteBlockersForTask: Database.Statement;
-  getWrongBranchBlockersForTask: Database.Statement;
-  deleteDepsForTask: Database.Statement;
-  claimFilesForAgent: Database.Statement;
-  getFileConflicts: Database.Statement;
-  getFileConflictsForTask: Database.Statement;
-  deleteTask: Database.Statement;
-  hasValue: (v: string | null | undefined) => boolean;
-  getValidationWorktree: () => string;
-  getBareRepoPath: () => string;
-  validateFilePaths: (files: string[]) => string | null;
-  unknownFields: <T>(body: unknown, known: { [K in keyof T]: true }) => string[];
-  linkFilesToTask: (taskId: number, files: string[], projectId?: string) => void;
-  linkDepsToTask: (taskId: number, depIds: number[]) => void;
-  filesForTask: (taskId: number) => string[];
-  depsForTask: (taskId: number) => number[];
-  blockersForTask: (taskId: number, agent: string) => number[];
-  blockReasonsForTask: (row: TaskRow, agent: string) => string[];
-  formatTaskWithFiles: (row: TaskRow, agent: string) => ReturnType<typeof formatTask>;
-  checkAndClaimFiles: (taskId: number, agent: string) => ConflictInfo[] | null;
+// ── Utility functions (no DB access) ──────────────────────────────
+
+/** True if a string field has a meaningful value (not null, undefined, or empty string). */
+export function hasValue(v: string | null | undefined): boolean {
+  return v !== null && v !== undefined && v !== '';
 }
 
-export function initTasksSharedStatements(config: ScaffoldConfig): TasksSharedStatements {
-  const insertTask = db.prepare(
-    `INSERT INTO tasks (title, description, source_path, acceptance_criteria, priority, base_priority, project_id)
-     VALUES (@title, @description, @sourcePath, @acceptanceCriteria, @priority, @priority, @projectId)`
-  );
+/** Returns unknown field names from a request body, inferred from a type's keys. */
+export function unknownFields<T>(body: unknown, known: { [K in keyof T]: true }): string[] {
+  if (typeof body !== 'object' || body === null) return [];
+  return Object.keys(body).filter(k => !(k in known));
+}
 
-  const getTaskById = db.prepare('SELECT * FROM tasks WHERE id = @id');
-
-  const claimTask = db.prepare(
-    `UPDATE tasks SET status = 'claimed', claimed_by = @agent, claimed_at = CURRENT_TIMESTAMP
-     WHERE id = @id AND status = 'pending'`
-  );
-
-  const updateProgress = db.prepare(
-    `UPDATE tasks SET status = 'in_progress',
-       progress_log = COALESCE(progress_log, '') || datetime('now') || ': ' || @progress || char(10)
-     WHERE id = @id AND status IN ('claimed', 'in_progress')`
-  );
-
-  const completeTask = db.prepare(
-    `UPDATE tasks SET status = 'completed', completed_at = CURRENT_TIMESTAMP, result = @result
-     WHERE id = @id AND status IN ('claimed', 'in_progress')`
-  );
-
-  const failTask = db.prepare(
-    `UPDATE tasks SET status = 'failed', completed_at = CURRENT_TIMESTAMP, result = @result
-     WHERE id = @id AND status IN ('claimed', 'in_progress')`
-  );
-
-  const releaseTask = db.prepare(
-    `UPDATE tasks SET status = 'pending', claimed_by = NULL, claimed_at = NULL
-     WHERE id = @id AND status IN ('claimed', 'in_progress')`
-  );
-
-  const resetTask = db.prepare(
-    `UPDATE tasks
-     SET status = 'pending',
-         claimed_by = NULL,
-         claimed_at = NULL,
-         completed_at = NULL,
-         result = NULL,
-         progress_log = NULL
-     WHERE id = @id AND status IN ('completed', 'failed', 'cycle')`
-  );
-
-  const integrateTask = db.prepare(
-    `UPDATE tasks SET status = 'integrated' WHERE id = @id AND status = 'completed'`
-  );
-
-  const integrateBatch = db.prepare(
-    `UPDATE tasks SET status = 'integrated' WHERE status = 'completed' AND json_extract(result, '$.agent') = ?`
-  );
-
-  const integrateAll = db.prepare(
-    `UPDATE tasks SET status = 'integrated' WHERE status = 'completed'`
-  );
-
-  const selectCompletedByAgent = db.prepare(
-    `SELECT id FROM tasks WHERE status = 'completed' AND json_extract(result, '$.agent') = ?`
-  );
-
-  const selectAllCompleted = db.prepare(
-    `SELECT id FROM tasks WHERE status = 'completed'`
-  );
-
-  const insertFile = db.prepare('INSERT OR IGNORE INTO files (project_id, path) VALUES (?, ?)');
-  const insertTaskFile = db.prepare('INSERT INTO task_files (task_id, file_path) VALUES (?, ?)');
-  const getTaskFiles = db.prepare('SELECT file_path FROM task_files WHERE task_id = ?');
-  const deleteTaskFiles = db.prepare('DELETE FROM task_files WHERE task_id = ?');
-
-  const insertDep = db.prepare('INSERT OR IGNORE INTO task_dependencies (task_id, depends_on) VALUES (?, ?)');
-  const getDepsForTask = db.prepare('SELECT depends_on FROM task_dependencies WHERE task_id = ?');
-  const getIncompleteBlockersForTask = db.prepare(`
-    SELECT d.depends_on FROM task_dependencies d
-    JOIN tasks dep ON dep.id = d.depends_on
-    WHERE d.task_id = ?
-      AND dep.status NOT IN ('completed', 'integrated')
-  `);
-  const getWrongBranchBlockersForTask = db.prepare(`
-    SELECT d.depends_on FROM task_dependencies d
-    JOIN tasks dep ON dep.id = d.depends_on
-    WHERE d.task_id = ?
-      AND dep.status = 'completed'
-      AND (json_extract(dep.result, '$.agent') IS NULL
-           OR json_extract(dep.result, '$.agent') != ?)
-  `);
-  const deleteDepsForTask = db.prepare('DELETE FROM task_dependencies WHERE task_id = ?');
-
-  const claimFilesForAgent = db.prepare(
-    `UPDATE files SET claimant = ?, claimed_at = CURRENT_TIMESTAMP
-     WHERE project_id = ? AND path = ? AND claimant IS NULL`
-  );
-
-  const getFileConflicts = db.prepare(
-    `SELECT f.path, f.claimant FROM task_files tf
-     JOIN tasks t ON t.id = tf.task_id
-     JOIN files f ON f.project_id = t.project_id AND f.path = tf.file_path
-     WHERE tf.task_id = ? AND f.claimant IS NOT NULL AND f.claimant != ?`
-  );
-
-  // NOTE: This query returns ALL file locks, not filtered by requesting agent.
-  // For pending tasks this is correct since pending tasks cannot hold file locks.
-  // If a task is released back to pending while the agent still holds files,
-  // the block reason may incorrectly include the original agent's locks.
-  const getFileConflictsForTask = db.prepare(
-    `SELECT f.path, f.claimant FROM task_files tf
-     JOIN tasks t ON t.id = tf.task_id
-     JOIN files f ON f.project_id = t.project_id AND f.path = tf.file_path
-     WHERE tf.task_id = ? AND f.claimant IS NOT NULL`
-  );
-
-  const deleteTask = db.prepare('DELETE FROM tasks WHERE id = @id AND status NOT IN (\'claimed\', \'in_progress\')');
-
-  /** True if a string field has a meaningful value (not null, undefined, or empty string). */
-  function hasValue(v: string | null | undefined): boolean {
-    return v !== null && v !== undefined && v !== '';
-  }
-
-  /** Validate sourcePath against the main project worktree (design team's canonical branch). */
-  function getValidationWorktree(): string {
-    return config.project.path;
-  }
-
-  function getBareRepoPath(): string {
-    return config.server.bareRepoPath;
-  }
-
-  /** Returns unknown field names from a request body, inferred from a type's keys. */
-  function unknownFields<T>(body: unknown, known: { [K in keyof T]: true }): string[] {
-    if (typeof body !== 'object' || body === null) return [];
-    return Object.keys(body).filter(k => !(k in known));
-  }
-
-  /** Validate file paths: must be relative, no .., no empty strings. */
-  function validateFilePaths(files: string[]): string | null {
-    for (const f of files) {
-      if (!f || f.startsWith('/') || f.includes('..') || f.trim() === '') {
-        return `Invalid file path: '${f}'. Paths must be relative, non-empty, with no '..' components.`;
-      }
-    }
-    return null;
-  }
-
-  /** Register files and link them to a task. Must be called within a transaction. */
-  function linkFilesToTask(taskId: number, files: string[], projectId: string = 'default'): void {
-    for (const f of files) {
-      insertFile.run(projectId, f);
-      insertTaskFile.run(taskId, f);
+/** Validate file paths: must be relative, no .., no empty strings. */
+export function validateFilePaths(files: string[]): string | null {
+  for (const f of files) {
+    if (!f || f.startsWith('/') || f.includes('..') || f.trim() === '') {
+      return `Invalid file path: '${f}'. Paths must be relative, non-empty, with no '..' components.`;
     }
   }
+  return null;
+}
 
-  function linkDepsToTask(taskId: number, depIds: number[]): void {
-    for (const depId of depIds) insertDep.run(taskId, depId);
-  }
+// ── Composition functions (async, use Drizzle query modules) ──────
 
-  function filesForTask(taskId: number): string[] {
-    return (getTaskFiles.all(taskId) as { file_path: string }[]).map(r => r.file_path);
-  }
+export async function linkFilesToTask(taskId: number, files: string[], projectId: string = 'default'): Promise<void> {
+  const db = getDb();
+  await compositionQ.linkFilesToTask(db, taskId, files, projectId);
+}
 
-  function depsForTask(taskId: number): number[] {
-    return (getDepsForTask.all(taskId) as { depends_on: number }[]).map(r => r.depends_on);
-  }
+export async function linkDepsToTask(taskId: number, depIds: number[]): Promise<void> {
+  const db = getDb();
+  await compositionQ.linkDepsToTask(db, taskId, depIds);
+}
 
-  function blockersForTask(taskId: number, agent: string): number[] {
-    const incomplete = (getIncompleteBlockersForTask.all(taskId) as { depends_on: number }[]).map(r => r.depends_on);
-    const wrongBranch = (getWrongBranchBlockersForTask.all(taskId, agent) as { depends_on: number }[]).map(r => r.depends_on);
-    return [...incomplete, ...wrongBranch];
-  }
+export async function filesForTask(taskId: number): Promise<string[]> {
+  const db = getDb();
+  return taskFilesQ.getFilesForTask(db, taskId);
+}
 
-  function blockReasonsForTask(row: TaskRow, agent: string): string[] {
-    if (row.status !== 'pending') return [];
-    const reasons: string[] = [];
+export async function depsForTask(taskId: number): Promise<number[]> {
+  const db = getDb();
+  return taskDepsQ.getDepsForTask(db, taskId);
+}
 
-    // Missing sourcePath check
-    if (row.source_path) {
-      try {
-        const project = getProject(config, row.project_id);
-        const bareRepo = project.bareRepoPath;
-        if (bareRepo) {
-          const planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
-          // NOTE: existsInBareRepo runs git cat-file synchronously per pending task.
-          // For large queues (50+ pending tasks with sourcePaths), this could cause
-          // latency spikes. Consider batch validation or caching if this becomes
-          // a bottleneck in practice.
-          if (!existsInBareRepo(bareRepo, planBranch, row.source_path)) {
-            reasons.push(`sourcePath '${row.source_path}' not found on ${planBranch}`);
-          }
+export async function blockersForTask(taskId: number, agent: string): Promise<number[]> {
+  const db = getDb();
+  const incomplete = await taskDepsQ.getIncompleteBlockers(db, taskId);
+  const wrongBranch = await taskDepsQ.getWrongBranchBlockers(db, taskId, agent);
+  return [...incomplete.map(r => r.id), ...wrongBranch.map(r => r.id)];
+}
+
+export async function blockReasonsForTask(row: TaskRow, agent: string, config: ScaffoldConfig): Promise<string[]> {
+  if (row.status !== 'pending') return [];
+  const db = getDb();
+  const reasons: string[] = [];
+
+  const sp = row.sourcePath ?? row.source_path;
+  const projectId = row.projectId ?? row.project_id;
+
+  // Missing sourcePath check
+  if (sp) {
+    try {
+      const project = getProject(config, projectId);
+      const bareRepo = project.bareRepoPath;
+      if (bareRepo) {
+        const planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
+        if (!existsInBareRepo(bareRepo, planBranch, sp)) {
+          reasons.push(`sourcePath '${sp}' not found on ${planBranch}`);
         }
-      } catch {
-        // Unknown project — skip sourcePath validation rather than crashing
       }
+    } catch {
+      // Unknown project — skip sourcePath validation rather than crashing
     }
-
-    // File-lock conflicts
-    const conflicts = getFileConflictsForTask.all(row.id) as { path: string; claimant: string }[];
-    if (conflicts.length > 0) {
-      const byClaimant = new Map<string, string[]>();
-      for (const c of conflicts) {
-        const list = byClaimant.get(c.claimant) ?? [];
-        list.push(c.path);
-        byClaimant.set(c.claimant, list);
-      }
-      for (const [claimant, paths] of byClaimant) {
-        reasons.push(`files locked by agent '${claimant}': ${paths.join(', ')}`);
-      }
-    }
-
-    // Unmet dependencies — incomplete (not completed/integrated)
-    const incomplete = (getIncompleteBlockersForTask.all(row.id) as { depends_on: number }[]).map(r => r.depends_on);
-    if (incomplete.length > 0) {
-      reasons.push(`blocked by incomplete task(s): #${incomplete.join(', #')}`);
-    }
-
-    // Unmet dependencies — completed on a different agent's branch
-    const wrongBranch = (getWrongBranchBlockersForTask.all(row.id, agent) as { depends_on: number }[]).map(r => r.depends_on);
-    if (wrongBranch.length > 0) {
-      reasons.push(`blocked by work on another branch: #${wrongBranch.join(', #')}`);
-    }
-
-    return reasons;
   }
 
-  function formatTaskWithFiles(row: TaskRow, agent: string) {
-    const reasons = blockReasonsForTask(row, agent);
-    return formatTask(row, filesForTask(row.id), depsForTask(row.id), blockersForTask(row.id, agent), reasons);
+  // File-lock conflicts
+  const conflicts = await taskFilesQ.getFileConflictsForTask(db, row.id);
+  const nonNullConflicts = conflicts.filter(c => c.claimant !== null);
+  if (nonNullConflicts.length > 0) {
+    const byClaimant = new Map<string, string[]>();
+    for (const c of nonNullConflicts) {
+      const list = byClaimant.get(c.claimant!) ?? [];
+      list.push(c.path);
+      byClaimant.set(c.claimant!, list);
+    }
+    for (const [claimant, paths] of byClaimant) {
+      reasons.push(`files locked by agent '${claimant}': ${paths.join(', ')}`);
+    }
   }
 
-  function checkAndClaimFiles(taskId: number, agent: string): ConflictInfo[] | null {
-    const deps = (getTaskFiles.all(taskId) as { file_path: string }[]).map(r => r.file_path);
-    if (deps.length === 0) return null;
-
-    const conflictRows = getFileConflicts.all(taskId, agent) as { path: string; claimant: string }[];
-
-    if (conflictRows.length > 0) {
-      return conflictRows.map(r => ({ file: r.path, claimant: r.claimant }));
-    }
-
-    const taskRow = getTaskById.get({ id: taskId }) as { project_id: string } | undefined;
-    const projectId = taskRow?.project_id ?? 'default';
-    for (const dep of deps) {
-      claimFilesForAgent.run(agent, projectId, dep);
-    }
-    return [];
+  // Unmet dependencies — incomplete (not completed/integrated)
+  const incomplete = await taskDepsQ.getIncompleteBlockers(db, row.id);
+  if (incomplete.length > 0) {
+    reasons.push(`blocked by incomplete task(s): #${incomplete.map(r => r.id).join(', #')}`);
   }
 
-  return {
-    insertTask,
-    getTaskById,
-    claimTask,
-    updateProgress,
-    completeTask,
-    failTask,
-    releaseTask,
-    resetTask,
-    integrateTask,
-    integrateBatch,
-    integrateAll,
-    selectCompletedByAgent,
-    selectAllCompleted,
-    insertFile,
-    insertTaskFile,
-    getTaskFiles,
-    deleteTaskFiles,
-    insertDep,
-    getDepsForTask,
-    getIncompleteBlockersForTask,
-    getWrongBranchBlockersForTask,
-    deleteDepsForTask,
-    claimFilesForAgent,
-    getFileConflicts,
-    getFileConflictsForTask,
-    deleteTask,
-    hasValue,
-    getValidationWorktree,
-    getBareRepoPath,
-    validateFilePaths,
-    unknownFields,
-    linkFilesToTask,
-    linkDepsToTask,
-    filesForTask,
-    depsForTask,
-    blockersForTask,
-    blockReasonsForTask,
-    formatTaskWithFiles,
-    checkAndClaimFiles,
-  };
+  // Unmet dependencies — completed on a different agent's branch
+  const wrongBranch = await taskDepsQ.getWrongBranchBlockers(db, row.id, agent);
+  if (wrongBranch.length > 0) {
+    reasons.push(`blocked by work on another branch: #${wrongBranch.map(r => r.id).join(', #')}`);
+  }
+
+  return reasons;
+}
+
+export async function formatTaskWithFiles(row: TaskRow, agent: string, config: ScaffoldConfig) {
+  const [files, deps, blockers, reasons] = await Promise.all([
+    filesForTask(row.id),
+    depsForTask(row.id),
+    blockersForTask(row.id, agent),
+    blockReasonsForTask(row, agent, config),
+  ]);
+  return formatTask(row, files, deps, blockers, reasons);
+}
+
+export async function checkAndClaimFiles(taskId: number, agent: string): Promise<ConflictInfo[] | null> {
+  const db = getDb();
+  const deps = await taskFilesQ.getFilesForTask(db, taskId);
+  if (deps.length === 0) return null;
+
+  const conflictRows = await taskFilesQ.getFileConflicts(db, taskId, agent);
+
+  if (conflictRows.length > 0) {
+    return conflictRows.map(r => ({ file: r.path, claimant: r.claimant }));
+  }
+
+  const taskRow = await tasksCore.getById(db, taskId);
+  const projectId = taskRow?.projectId ?? 'default';
+  for (const dep of deps) {
+    await taskFilesQ.claimFilesForAgent(db, agent, projectId, dep);
+  }
+  return [];
 }

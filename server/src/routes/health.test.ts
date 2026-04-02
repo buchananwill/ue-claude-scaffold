@@ -1,17 +1,17 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, createTestConfig } from '../test-helper.js';
+import { createTestConfig } from '../test-helper.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import healthPlugin from './health.js';
 
 describe('GET /health', () => {
   const config = createTestConfig({ server: { port: 9200, ubtLockTimeoutMs: 300000, bareRepoPath: '/tmp/repo.git' } });
-  let cleanup: () => void;
+  let ctx: DrizzleTestContext;
 
-  it('returns 200 with status, dbPath, and config summary', async () => {
-    const ctx = await createTestApp();
-    cleanup = ctx.cleanup;
+  it('returns 200 with status, db, and config summary', async () => {
+    ctx = await createDrizzleTestApp();
 
-    await ctx.app.register(healthPlugin, { dbPath: ctx.dbPath, config });
+    await ctx.app.register(healthPlugin, { config, pgliteDataDir: './data/pglite' });
 
     const res = await ctx.app.inject({
       method: 'GET',
@@ -21,7 +21,7 @@ describe('GET /health', () => {
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.equal(body.status, 'ok');
-    assert.equal(body.dbPath, ctx.dbPath);
+    assert.equal(body.db.backend, 'pglite');
     assert.equal(body.config.port, 9200);
     assert.equal(body.config.projectName, 'TestProject');
     assert.equal(body.config.ubtLockTimeoutMs, 300000);
@@ -29,7 +29,7 @@ describe('GET /health', () => {
     await ctx.app.close();
   });
 
-  after(() => {
-    cleanup?.();
+  after(async () => {
+    await ctx?.cleanup();
   });
 });

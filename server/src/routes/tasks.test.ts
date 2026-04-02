@@ -2,26 +2,26 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
-import { mkdtempSync, unlinkSync, rmdirSync } from 'node:fs';
+import { mkdtempSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
-import { db, openDb } from '../db.js';
-import Database from 'better-sqlite3';
+import { createTestConfig } from '../test-helper.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
+import { sql } from 'drizzle-orm';
 import tasksPlugin from './tasks.js';
 import agentsPlugin from './agents.js';
 
 describe('tasks routes', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     const config = createTestConfig();
     await ctx.app.register(tasksPlugin, { config });
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('POST /tasks creates a task and returns id', async () => {
@@ -490,11 +490,12 @@ describe('tasks routes', () => {
 });
 
 describe('tasks with bare repo and agents', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
   let tmpBareRepo: string;
+  let tmpDir: string;
 
-  function initBareRepoWithBranch(tmpDir: string, branchName: string): { repo: string; initSha: string } {
-    const repo = path.join(tmpDir, 'test.git');
+  function initBareRepoWithBranch(dir: string, branchName: string): { repo: string; initSha: string } {
+    const repo = path.join(dir, 'test.git');
     execSync(`git init --bare "${repo}"`);
     const emptyTree = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
     const initSha = execSync(`git -C "${repo}" commit-tree ${emptyTree} -m "init"`, { encoding: 'utf-8' }).trim();
@@ -503,8 +504,9 @@ describe('tasks with bare repo and agents', () => {
   }
 
   beforeEach(async () => {
-    ctx = await createTestApp();
-    const { repo, initSha } = initBareRepoWithBranch(ctx.tmpDir, 'docker/current-root');
+    ctx = await createDrizzleTestApp();
+    tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-test-'));
+    const { repo, initSha } = initBareRepoWithBranch(tmpDir, 'docker/current-root');
     tmpBareRepo = repo;
 
     // Create agent branches from the same initial commit
@@ -533,7 +535,8 @@ describe('tasks with bare repo and agents', () => {
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
+    try { rmdirSync(tmpDir, { recursive: true } as any); } catch {}
   });
 
   // ── Task Dependencies ────────────────────────────────────────────────
@@ -1205,7 +1208,7 @@ describe('tasks with bare repo and agents', () => {
         const { id } = post.json();
 
         // Bypass route validation by directly setting source_path in the DB
-        db.prepare('UPDATE tasks SET source_path = ? WHERE id = ?').run('plans/nonexistent.md', id);
+        await ctx.db.execute(sql`UPDATE tasks SET source_path = 'plans/nonexistent.md' WHERE id = ${id}`);
 
         const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
         const task = get.json();
@@ -1697,243 +1700,42 @@ describe('tasks with bare repo and agents', () => {
     });
   });
 
-  describe('v8 schema — integrated and cycle statuses', () => {
-    it('accepts integrated status on direct insert', () => {
-      const stmt = db.prepare("INSERT INTO tasks (title, status) VALUES (?, 'integrated')");
-      const info = stmt.run('Integrated task');
-      assert.equal(info.changes, 1);
-
-      const row = db.prepare('SELECT status FROM tasks WHERE id = ?').get(info.lastInsertRowid) as { status: string };
-      assert.equal(row.status, 'integrated');
+  describe('schema — integrated and cycle statuses', () => {
+    it('accepts integrated status on direct insert', async () => {
+      const result = await ctx.db.execute(
+        sql`INSERT INTO tasks (title, status) VALUES ('Integrated task', 'integrated') RETURNING id, status`
+      );
+      assert.equal(result.rows.length, 1);
+      assert.equal((result.rows[0] as any).status, 'integrated');
     });
 
-    it('accepts cycle status on direct insert', () => {
-      const stmt = db.prepare("INSERT INTO tasks (title, status) VALUES (?, 'cycle')");
-      const info = stmt.run('Cycle task');
-      assert.equal(info.changes, 1);
-
-      const row = db.prepare('SELECT status FROM tasks WHERE id = ?').get(info.lastInsertRowid) as { status: string };
-      assert.equal(row.status, 'cycle');
+    it('accepts cycle status on direct insert', async () => {
+      const result = await ctx.db.execute(
+        sql`INSERT INTO tasks (title, status) VALUES ('Cycle task', 'cycle') RETURNING id, status`
+      );
+      assert.equal(result.rows.length, 1);
+      assert.equal((result.rows[0] as any).status, 'cycle');
     });
 
-    it('rejects invalid status values', () => {
-      assert.throws(() => {
-        db.prepare("INSERT INTO tasks (title, status) VALUES (?, 'invalid')").run('Bad task');
-      }, /CHECK constraint failed/);
+    it('rejects invalid status values', async () => {
+      await assert.rejects(
+        () => ctx.db.execute(sql`INSERT INTO tasks (title, status) VALUES ('Bad task', 'invalid')`),
+      );
     });
 
-    it('CHECK constraint includes all expected statuses', () => {
+    it('CHECK constraint includes all expected statuses', async () => {
       const validStatuses = ['pending', 'claimed', 'in_progress', 'completed', 'failed', 'integrated', 'cycle'];
       for (const status of validStatuses) {
-        const info = db.prepare('INSERT INTO tasks (title, status) VALUES (?, ?)').run(`Task ${status}`, status);
-        assert.equal(info.changes, 1, `Status '${status}' should be accepted`);
+        const result = await ctx.db.execute(
+          sql`INSERT INTO tasks (title, status) VALUES (${`Task ${status}`}, ${status}) RETURNING id`
+        );
+        assert.equal(result.rows.length, 1, `Status '${status}' should be accepted`);
       }
-    });
-
-    it('schema_version is 13 on fresh database', () => {
-      const row = db.prepare('SELECT version FROM schema_version').get() as { version: number };
-      assert.equal(row.version, 13);
     });
   });
 
-  describe('v7 to v9 migration', () => {
-    it('openDb on a v7 database migrates CHECK constraint via writable_schema to v9', () => {
-      const v7TmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-v7-'));
-      const v7DbPath = path.join(v7TmpDir, 'v7.db');
-      const v7db = new Database(v7DbPath);
-      v7db.pragma('journal_mode = WAL');
-
-      // Create a realistic v7 schema: tasks table with the old CHECK constraint
-      // that lacks 'integrated' and 'cycle', plus all other tables that SCHEMA_SQL
-      // expects to exist (so CREATE TABLE IF NOT EXISTS is a no-op for them).
-      v7db.exec(`
-        CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
-        INSERT INTO schema_version(version) VALUES (7);
-
-        CREATE TABLE agents (
-          name        TEXT PRIMARY KEY,
-          worktree    TEXT NOT NULL,
-          plan_doc    TEXT,
-          status      TEXT NOT NULL DEFAULT 'idle',
-          mode        TEXT NOT NULL DEFAULT 'single',
-          registered_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE ubt_lock (
-          id          INTEGER PRIMARY KEY CHECK (id = 1),
-          holder      TEXT,
-          acquired_at DATETIME,
-          priority    INTEGER DEFAULT 0
-        );
-
-        CREATE TABLE ubt_queue (
-          id          INTEGER PRIMARY KEY AUTOINCREMENT,
-          agent       TEXT NOT NULL,
-          priority    INTEGER DEFAULT 0,
-          requested_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE build_history (
-          id           INTEGER PRIMARY KEY AUTOINCREMENT,
-          agent        TEXT NOT NULL,
-          type         TEXT NOT NULL CHECK (type IN ('build', 'test')),
-          started_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          duration_ms  INTEGER,
-          success      INTEGER,
-          output       TEXT,
-          stderr       TEXT
-        );
-
-        CREATE TABLE messages (
-          id          INTEGER PRIMARY KEY AUTOINCREMENT,
-          from_agent  TEXT NOT NULL,
-          channel     TEXT NOT NULL,
-          type        TEXT NOT NULL,
-          payload     TEXT NOT NULL,
-          claimed_by  TEXT,
-          claimed_at  DATETIME,
-          resolved_at DATETIME,
-          result      TEXT,
-          created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX idx_messages_channel ON messages(channel);
-        CREATE INDEX idx_messages_channel_id ON messages(channel, id);
-        CREATE INDEX idx_messages_claimed ON messages(claimed_by);
-
-        CREATE TABLE tasks (
-          id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-          title               TEXT NOT NULL,
-          description         TEXT DEFAULT '',
-          source_path         TEXT,
-          acceptance_criteria TEXT,
-          status              TEXT NOT NULL DEFAULT 'pending'
-                                CHECK (status IN ('pending','claimed','in_progress','completed','failed')),
-          priority            INTEGER NOT NULL DEFAULT 0,
-          claimed_by          TEXT,
-          claimed_at          DATETIME,
-          completed_at        DATETIME,
-          result              TEXT,
-          progress_log        TEXT,
-          created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX idx_tasks_status ON tasks(status);
-        CREATE INDEX idx_tasks_priority ON tasks(priority DESC, id ASC);
-
-        CREATE TABLE files (
-          path       TEXT PRIMARY KEY,
-          claimant   TEXT,
-          claimed_at DATETIME
-        );
-
-        CREATE TABLE task_files (
-          task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-          file_path  TEXT NOT NULL REFERENCES files(path),
-          PRIMARY KEY (task_id, file_path)
-        );
-        CREATE INDEX idx_task_files_path ON task_files(file_path);
-
-        CREATE TABLE task_dependencies (
-          task_id     INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-          depends_on  INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-          PRIMARY KEY (task_id, depends_on),
-          CHECK (task_id != depends_on)
-        );
-        CREATE INDEX idx_task_deps_task ON task_dependencies(task_id);
-        CREATE INDEX idx_task_deps_dep  ON task_dependencies(depends_on);
-      `);
-
-      // Seed a pre-existing row to verify data survives
-      v7db.prepare("INSERT INTO tasks (title, status) VALUES ('Existing task', 'completed')").run();
-
-      // Confirm the old constraint rejects 'integrated' before migration
-      assert.throws(() => {
-        v7db.prepare("INSERT INTO tasks (title, status) VALUES ('x', 'integrated')").run();
-      }, /CHECK constraint/, 'v7 schema should reject integrated status');
-
-      v7db.close();
-
-      // Run openDb which should migrate via writable_schema
-      let migratedDb: ReturnType<typeof openDb>;
-      try {
-        migratedDb = openDb(v7DbPath);
-      } catch (e: any) {
-        console.error('openDb failed:', e.message, e.code);
-        throw e;
-      }
-
-      // 1. schema_version bumped to 13 (old version rows deleted)
-      const row = migratedDb.prepare('SELECT version FROM schema_version').get() as any;
-      assert.strictEqual(row.version, 13, 'Schema version should be 13 after migration');
-
-      // 2. Existing data survived
-      const task = migratedDb.prepare("SELECT title, status FROM tasks WHERE title = 'Existing task'").get() as any;
-      assert.ok(task, 'Existing task should survive migration');
-      assert.strictEqual(task.status, 'completed');
-
-      // 3. New statuses accepted (writable_schema rewrote the CHECK constraint)
-      assert.doesNotThrow(() => {
-        migratedDb.prepare("INSERT INTO tasks (title, status) VALUES ('integrated task', 'integrated')").run();
-      }, 'integrated status should be accepted after migration');
-
-      assert.doesNotThrow(() => {
-        migratedDb.prepare("INSERT INTO tasks (title, status) VALUES ('cycle task', 'cycle')").run();
-      }, 'cycle status should be accepted after migration');
-
-      // 4. Invalid statuses still rejected
-      assert.throws(() => {
-        migratedDb.prepare("INSERT INTO tasks (title, status) VALUES ('bad task', 'invalid')").run();
-      }, /CHECK constraint/, 'invalid status should still be rejected after migration');
-
-      // 5. Verify the CHECK constraint in sqlite_master was actually rewritten
-      const schema = migratedDb.prepare(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
-      ).get() as any;
-      assert.ok(schema.sql.includes("'integrated'"), 'CHECK constraint should include integrated');
-      assert.ok(schema.sql.includes("'cycle'"), 'CHECK constraint should include cycle');
-
-      // 6. Verify base_priority column was added by migration
-      migratedDb.prepare("INSERT INTO tasks (title, priority, base_priority) VALUES ('bp test', 5, 5)").run();
-      const bpTask = migratedDb.prepare("SELECT base_priority FROM tasks WHERE title = 'bp test'").get() as any;
-      assert.strictEqual(bpTask.base_priority, 5, 'base_priority column should exist after migration');
-
-      // 7. Verify v13 migration structural changes: ubt_lock table
-      const ubtLockSchema = migratedDb.prepare(
-        "SELECT sql FROM sqlite_master WHERE name='ubt_lock'"
-      ).get() as any;
-      assert.ok(ubtLockSchema, 'ubt_lock table should exist');
-      assert.ok(ubtLockSchema.sql.includes('project_id'), 'ubt_lock should include project_id column');
-      assert.ok(!ubtLockSchema.sql.includes('id INTEGER PRIMARY KEY'), 'ubt_lock should not have id INTEGER PRIMARY KEY');
-
-      // 8. Verify v13 migration structural changes: files table
-      const filesSchema = migratedDb.prepare(
-        "SELECT sql FROM sqlite_master WHERE name='files'"
-      ).get() as any;
-      assert.ok(filesSchema, 'files table should exist');
-      assert.ok(filesSchema.sql.includes('project_id'), 'files table should include project_id column');
-
-      // 9. Verify project_id column exists on agents, tasks, build_history, ubt_queue
-      assert.doesNotThrow(() => {
-        migratedDb.prepare('SELECT project_id FROM agents LIMIT 0').all();
-      }, 'agents table should have project_id column');
-      assert.doesNotThrow(() => {
-        migratedDb.prepare('SELECT project_id FROM tasks LIMIT 0').all();
-      }, 'tasks table should have project_id column');
-      assert.doesNotThrow(() => {
-        migratedDb.prepare('SELECT project_id FROM build_history LIMIT 0').all();
-      }, 'build_history table should have project_id column');
-      assert.doesNotThrow(() => {
-        migratedDb.prepare('SELECT project_id FROM ubt_queue LIMIT 0').all();
-      }, 'ubt_queue table should have project_id column');
-
-      migratedDb.close();
-
-      // Cleanup
-      try { unlinkSync(v7DbPath); } catch {}
-      try { unlinkSync(v7DbPath + '-wal'); } catch {}
-      try { unlinkSync(v7DbPath + '-shm'); } catch {}
-      try { rmdirSync(v7TmpDir); } catch {}
-    });
-  });
+  // NOTE: SQLite migration tests (v7 to v9) removed — they test the legacy SQLite layer
+  // which is no longer exercised by these route tests (now using Drizzle/PGlite).
 
   describe('branch-aware lifecycle integration', () => {
     /** Helper: create a task and return its id */
@@ -1947,8 +1749,8 @@ describe('tasks with bare repo and agents', () => {
     }
 
     /** Helper: add a dependency edge via direct DB insert (needed for cycles) */
-    function addDep(taskId: number, dependsOn: number): void {
-      db.prepare('INSERT OR IGNORE INTO task_dependencies (task_id, depends_on) VALUES (?, ?)').run(taskId, dependsOn);
+    async function addDep(taskId: number, dependsOn: number): Promise<void> {
+      await ctx.db.execute(sql`INSERT INTO task_dependencies (task_id, depends_on) VALUES (${taskId}, ${dependsOn}) ON CONFLICT DO NOTHING`);
     }
 
     /** Helper: claim a task by id for a given agent */
@@ -2076,8 +1878,8 @@ describe('tasks with bare repo and agents', () => {
       // Create tasks with a cycle: A depends on B, B depends on A
       const idA = await createTask('A', 5);
       const idB = await createTask('B', 5);
-      addDep(idA, idB);
-      addDep(idB, idA);
+      await addDep(idA, idB);
+      await addDep(idB, idA);
 
       // Create independent task C
       const idC = await createTask('C', 3);

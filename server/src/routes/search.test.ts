@@ -1,26 +1,20 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
-import agentsPlugin from './agents.js';
-import messagesPlugin from './messages.js';
-import tasksPlugin from './tasks.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
+import { tasks, messages, agents } from '../schema/tables.js';
 import searchPlugin from './search.js';
 
-describe('search routes', () => {
-  let ctx: TestContext;
+describe('search routes (drizzle)', () => {
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
-    const config = createTestConfig();
-    await ctx.app.register(agentsPlugin, { config });
-    await ctx.app.register(messagesPlugin);
-    await ctx.app.register(tasksPlugin, { config });
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(searchPlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('returns 400 when q is missing', async () => {
@@ -34,10 +28,9 @@ describe('search routes', () => {
   });
 
   it('finds task by title substring', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/tasks',
-      payload: { title: 'Implement widget rendering' },
+    await ctx.db.insert(tasks).values({
+      title: 'Implement widget rendering',
+      projectId: 'default',
     });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/search?q=widget' });
@@ -48,10 +41,10 @@ describe('search routes', () => {
   });
 
   it('finds task by description substring', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/tasks',
-      payload: { title: 'Some task', description: 'Refactor the collision subsystem' },
+    await ctx.db.insert(tasks).values({
+      title: 'Some task',
+      description: 'Refactor the collision subsystem',
+      projectId: 'default',
     });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/search?q=collision' });
@@ -62,11 +55,12 @@ describe('search routes', () => {
   });
 
   it('finds message by payload content', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/messages',
-      headers: { 'x-agent-name': 'agent-1' },
-      payload: { channel: 'general', type: 'info', payload: { text: 'build succeeded perfectly' } },
+    await ctx.db.insert(messages).values({
+      fromAgent: 'agent-1',
+      channel: 'general',
+      type: 'info',
+      payload: { text: 'build succeeded perfectly' },
+      projectId: 'default',
     });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/search?q=succeeded' });
@@ -77,10 +71,10 @@ describe('search routes', () => {
   });
 
   it('finds agent by name', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name: 'builder-alpha', worktree: '/tmp/wt1' },
+    await ctx.db.insert(agents).values({
+      name: 'builder-alpha',
+      worktree: '/tmp/wt1',
+      projectId: 'default',
     });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/search?q=builder-alpha' });
@@ -92,10 +86,9 @@ describe('search routes', () => {
 
   it('respects limit parameter', async () => {
     for (let i = 0; i < 5; i++) {
-      await ctx.app.inject({
-        method: 'POST',
-        url: '/tasks',
-        payload: { title: `Searchable item ${i}` },
+      await ctx.db.insert(tasks).values({
+        title: `Searchable item ${i}`,
+        projectId: 'default',
       });
     }
 
@@ -106,17 +99,17 @@ describe('search routes', () => {
   });
 
   it('no cross-contamination: searching for a task title does not return unrelated messages', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/tasks',
-      payload: { title: 'Unique frobnicator task' },
+    await ctx.db.insert(tasks).values({
+      title: 'Unique frobnicator task',
+      projectId: 'default',
     });
 
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/messages',
-      headers: { 'x-agent-name': 'agent-1' },
-      payload: { channel: 'builds', type: 'info', payload: { text: 'completely unrelated content' } },
+    await ctx.db.insert(messages).values({
+      fromAgent: 'agent-1',
+      channel: 'builds',
+      type: 'info',
+      payload: { text: 'completely unrelated content' },
+      projectId: 'default',
     });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/search?q=frobnicator' });

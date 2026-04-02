@@ -1,11 +1,21 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { db } from '../db.js';
+import { getDb } from '../drizzle-instance.js';
+import * as tasksCore from '../queries/tasks-core.js';
+import * as taskFilesQ from '../queries/task-files.js';
+import * as taskDepsQ from '../queries/task-deps.js';
+import * as compositionQ from '../queries/composition.js';
+import * as agentsQ from '../queries/agents.js';
 import type { ScaffoldConfig } from '../config.js';
 import { getProject } from '../config.js';
 import { mergeIntoBranch, isCommittedInRepo, existsInBareRepo, syncExteriorToBareRepo } from '../git-utils.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
-import { initTasksSharedStatements, type TasksOpts, type TaskBody, type PatchBody, type TasksSharedStatements } from './tasks-files.js';
-import { taskBodyKeys, patchBodyKeys } from './tasks-files.js';
+import {
+  type TasksOpts, type TaskBody, type PatchBody,
+  taskBodyKeys, patchBodyKeys,
+  hasValue, validateFilePaths, unknownFields,
+  linkFilesToTask, linkDepsToTask, depsForTask,
+  formatTaskWithFiles,
+} from './tasks-files.js';
 import { runReplan } from './tasks-replan.js';
 import tasksReplanPlugin from './tasks-replan.js';
 import tasksClaimPlugin from './tasks-claim.js';
@@ -16,30 +26,9 @@ export { formatTask, type TaskRow } from './tasks-types.js';
 const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   const config = opts.config;
 
-  const shared = initTasksSharedStatements(config);
-
   await fastify.register(tasksReplanPlugin, { config });
-  await fastify.register(tasksClaimPlugin, { config, shared });
-  await fastify.register(tasksLifecyclePlugin, { config, shared });
-
-  const {
-    insertTask,
-    getTaskById,
-    deleteTaskFiles,
-    deleteDepsForTask,
-    deleteTask,
-    insertDep,
-    hasValue,
-    getValidationWorktree,
-    getBareRepoPath,
-    validateFilePaths,
-    unknownFields,
-    linkFilesToTask,
-    linkDepsToTask,
-    filesForTask,
-    depsForTask,
-    formatTaskWithFiles,
-  } = shared;
+  await fastify.register(tasksClaimPlugin, { config });
+  await fastify.register(tasksLifecyclePlugin, { config });
 
   // POST /tasks
   fastify.post<{ Body: TaskBody }>('/tasks', async (request, reply) => {
@@ -62,7 +51,6 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     // Tasks are a union: EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode).
-    // Mixed-protocol requests are rejected to prevent ambiguous task definitions.
     if (hasValue(sourcePath) && (hasValue(description) || hasValue(acceptanceCriteria))) {
       return reply.badRequest(
         'Mixed task protocol: a task must use EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode), not both. ' +
@@ -134,12 +122,13 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     // Validate dependsOn
+    const db = getDb();
     if (dependsOn?.length) {
       for (const depId of dependsOn) {
         if (typeof depId !== 'number' || depId <= 0 || !Number.isInteger(depId)) {
           return reply.badRequest(`Invalid dependency ID: ${depId}`);
         }
-        const dep = getTaskById.get({ id: depId }) as TaskRow | undefined;
+        const dep = await tasksCore.getById(db, depId);
         if (!dep) {
           return reply.badRequest(`Dependency task ${depId} does not exist`);
         }
@@ -153,10 +142,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if (targetAgents) {
       let agentNames: string[];
       if (targetAgents === '*') {
-        const activeAgents = db.prepare(
-          "SELECT name FROM agents WHERE status NOT IN ('done', 'error')"
-        ).all() as Array<{ name: string }>;
-        agentNames = activeAgents.map(a => a.name);
+        agentNames = await agentsQ.getActiveNames(db);
       } else {
         agentNames = targetAgents as string[];
       }
@@ -190,24 +176,21 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    const id = db.transaction(() => {
-      const result = insertTask.run({
-        title,
-        description: description ?? '',
-        sourcePath: sourcePath ?? null,
-        acceptanceCriteria: acceptanceCriteria ?? null,
-        priority: priority ?? 0,
-        projectId,
-      });
-      const taskId = Number(result.lastInsertRowid);
-      if (files?.length) {
-        linkFilesToTask(taskId, files, projectId);
-      }
-      if (dependsOn?.length) {
-        linkDepsToTask(taskId, dependsOn);
-      }
-      return taskId;
-    })();
+    const inserted = await tasksCore.insert(db, {
+      title,
+      description: description ?? '',
+      sourcePath: sourcePath ?? undefined,
+      acceptanceCriteria: acceptanceCriteria ?? undefined,
+      priority: priority ?? 0,
+      projectId,
+    });
+    const id = inserted.id;
+    if (files?.length) {
+      await linkFilesToTask(id, files, projectId);
+    }
+    if (dependsOn?.length) {
+      await linkDepsToTask(id, dependsOn);
+    }
 
     return {
       id,
@@ -230,6 +213,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     // Track whether we've already attempted auto-sync for this batch
     let batchSynced = false;
+    const db = getDb();
 
     // Validate all tasks before inserting any
     for (let i = 0; i < tasks.length; i++) {
@@ -277,7 +261,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
           if (typeof depId !== 'number' || depId <= 0 || !Number.isInteger(depId)) {
             return reply.badRequest(`Task ${i}: Invalid dependency ID: ${depId}`);
           }
-          const dep = getTaskById.get({ id: depId }) as TaskRow | undefined;
+          const dep = await tasksCore.getById(db, depId);
           if (!dep) {
             return reply.badRequest(`Task ${i}: Dependency task ${depId} does not exist`);
           }
@@ -327,8 +311,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    // Intra-batch cycle detection: check for mutual dependsOnIndex references.
-    // Only direct mutual cycles (A<->B) are detected; longer cycles (A->B->C->A) are not checked.
+    // Intra-batch cycle detection
     for (let i = 0; i < tasks.length; i++) {
       if (tasks[i].dependsOnIndex?.length) {
         for (const idx of tasks[i].dependsOnIndex!) {
@@ -339,48 +322,41 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    const ids = db.transaction(() => {
-      const result: number[] = [];
-      for (const t of tasks) {
-        const r = insertTask.run({
-          title: t.title,
-          description: t.description ?? '',
-          sourcePath: t.sourcePath ?? null,
-          acceptanceCriteria: t.acceptanceCriteria ?? null,
-          priority: t.priority ?? 0,
-          projectId,
-        });
-        const taskId = Number(r.lastInsertRowid);
-        if (t.files?.length) {
-          linkFilesToTask(taskId, t.files, projectId);
-        }
-        if (t.dependsOn?.length) {
-          linkDepsToTask(taskId, t.dependsOn);
-        }
-        result.push(taskId);
+    const ids: number[] = [];
+    for (const t of tasks) {
+      const inserted = await tasksCore.insert(db, {
+        title: t.title,
+        description: t.description ?? '',
+        sourcePath: t.sourcePath ?? undefined,
+        acceptanceCriteria: t.acceptanceCriteria ?? undefined,
+        priority: t.priority ?? 0,
+        projectId,
+      });
+      const taskId = inserted.id;
+      if (t.files?.length) {
+        await linkFilesToTask(taskId, t.files, projectId);
       }
-      return result;
-    })();
+      if (t.dependsOn?.length) {
+        await linkDepsToTask(taskId, t.dependsOn);
+      }
+      ids.push(taskId);
+    }
 
     // Resolve dependsOnIndex cross-references
-    // Mixed dependsOn + dependsOnIndex is permitted on the same task.
-    // INSERT OR IGNORE silently deduplicates if both reference the same resolved ID.
     const hasDependsOnIndex = tasks.some(t => t.dependsOnIndex?.length);
     if (hasDependsOnIndex) {
-      db.transaction(() => {
-        for (let i = 0; i < tasks.length; i++) {
-          if (tasks[i].dependsOnIndex?.length) {
-            for (const idx of tasks[i].dependsOnIndex!) {
-              insertDep.run(ids[i], ids[idx]);
-            }
+      for (let i = 0; i < tasks.length; i++) {
+        if (tasks[i].dependsOnIndex?.length) {
+          for (const idx of tasks[i].dependsOnIndex!) {
+            await taskDepsQ.insertDep(db, ids[i], ids[idx]);
           }
         }
-      })();
+      }
     }
 
     const base = { ok: true as const, ids };
     if (request.query.replan === 'true') {
-      return { ...base, replan: runReplan() };
+      return { ...base, replan: await runReplan() };
     }
     return base;
   });
@@ -394,56 +370,28 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const limitNum = Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 20);
     const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
 
-    let sql = 'SELECT * FROM tasks';
-    const params: unknown[] = [];
-    const conditions: string[] = [];
-
-    if (status) {
-      conditions.push('status = ?');
-      params.push(status);
-    }
-    if (projectId) {
-      conditions.push('project_id = ?');
-      params.push(projectId);
-    }
-    if (conditions.length > 0) {
-      sql += ' WHERE ' + conditions.join(' AND ');
-    }
-
-    let countSql = 'SELECT COUNT(*) as total FROM tasks';
-    const countParams: unknown[] = [];
-    const countConditions: string[] = [];
-    if (status) {
-      countConditions.push('status = ?');
-      countParams.push(status);
-    }
-    if (projectId) {
-      countConditions.push('project_id = ?');
-      countParams.push(projectId);
-    }
-    if (countConditions.length > 0) {
-      countSql += ' WHERE ' + countConditions.join(' AND ');
-    }
-
-    sql += ' ORDER BY priority DESC, id ASC LIMIT ? OFFSET ?';
-    params.push(limitNum, offsetNum);
-
-    const rows = db.prepare(sql).all(...params) as TaskRow[];
+    const db = getDb();
+    const rows = await tasksCore.list(db, { status, projectId, limit: limitNum, offset: offsetNum });
+    const total = await tasksCore.count(db, { status, projectId });
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
-    const total = (db.prepare(countSql).get(...countParams) as { total: number }).total;
-    return { tasks: rows.map(r => formatTaskWithFiles(r, agent)), total };
+
+    const formattedTasks = await Promise.all(
+      rows.map(r => formatTaskWithFiles(r as unknown as TaskRow, agent, config))
+    );
+    return { tasks: formattedTasks, total };
   });
 
   // GET /tasks/:id
   fastify.get<{
     Params: { id: string };
   }>('/tasks/:id', async (request, reply) => {
-    const row = getTaskById.get({ id: Number(request.params.id) }) as TaskRow | undefined;
+    const db = getDb();
+    const row = await tasksCore.getById(db, Number(request.params.id));
     if (!row) {
       return reply.notFound('task not found');
     }
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
-    return formatTaskWithFiles(row, agent);
+    return formatTaskWithFiles(row as unknown as TaskRow, agent, config);
   });
 
   // PATCH /tasks/:id — edit a pending task
@@ -453,6 +401,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   }>('/tasks/:id', async (request, reply) => {
     const id = Number(request.params.id);
     const body = request.body;
+    const db = getDb();
 
     const extra = unknownFields<PatchBody>(body, patchBodyKeys);
     if (extra.length > 0) {
@@ -462,32 +411,20 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       );
     }
 
-    const allowlist: Record<string, string> = {
-      title: 'title',
-      description: 'description',
-      sourcePath: 'source_path',
-      acceptanceCriteria: 'acceptance_criteria',
-      priority: 'priority',
-    };
-
-    const setClauses: string[] = [];
-    const params: Record<string, unknown> = { id };
-
-    for (const [camel, snake] of Object.entries(allowlist)) {
-      if (camel in body) {
-        setClauses.push(`${snake} = @${camel}`);
-        params[camel] = (body as Record<string, unknown>)[camel] ?? null;
-      }
-    }
-
-    if ('priority' in body) {
-      setClauses.push('base_priority = @priority');
-    }
-
     const hasFiles = 'files' in body && Array.isArray(body.files);
     const hasDeps = 'dependsOn' in body && Array.isArray(body.dependsOn);
 
-    if (setClauses.length === 0 && !hasFiles && !hasDeps) {
+    // Build the patch fields
+    const patchFields: tasksCore.PatchFields = {};
+    if ('title' in body) patchFields.title = body.title as string;
+    if ('description' in body) patchFields.description = body.description as string;
+    if ('sourcePath' in body) patchFields.sourcePath = body.sourcePath as string;
+    if ('acceptanceCriteria' in body) patchFields.acceptanceCriteria = body.acceptanceCriteria as string;
+    if ('priority' in body) patchFields.priority = body.priority as number;
+
+    const hasScalarFields = Object.keys(patchFields).length > 0;
+
+    if (!hasScalarFields && !hasFiles && !hasDeps) {
       return reply.badRequest('no updatable fields provided');
     }
 
@@ -497,7 +434,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       if (err) return reply.badRequest(err);
     }
 
-    const row = getTaskById.get({ id }) as TaskRow | undefined;
+    const row = await tasksCore.getById(db, id);
     if (!row) {
       return reply.notFound('task not found');
     }
@@ -506,9 +443,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     // Mixed-protocol check: evaluate resulting state (existing row + patch)
-    const resultSourcePath = 'sourcePath' in body ? body.sourcePath : row.source_path;
+    const resultSourcePath = 'sourcePath' in body ? body.sourcePath : (row as any).sourcePath ?? (row as any).source_path;
     const resultDesc = 'description' in body ? body.description : row.description;
-    const resultAC = 'acceptanceCriteria' in body ? body.acceptanceCriteria : row.acceptance_criteria;
+    const resultAC = 'acceptanceCriteria' in body ? body.acceptanceCriteria : (row as any).acceptanceCriteria ?? (row as any).acceptance_criteria;
     if (hasValue(resultSourcePath) && (hasValue(resultDesc) || hasValue(resultAC))) {
       return reply.badRequest(
         'Mixed task protocol: a task must use EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode), not both. ' +
@@ -525,12 +462,12 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         if (depId === id) {
           return reply.badRequest('Task cannot depend on itself');
         }
-        const dep = getTaskById.get({ id: depId }) as TaskRow | undefined;
+        const dep = await tasksCore.getById(db, depId);
         if (!dep) {
           return reply.badRequest(`Dependency task ${depId} does not exist`);
         }
-        // Only direct mutual cycles (A<->B) are detected; longer cycles (A->B->C->A) are not checked.
-        const existingDepsOfDep = depsForTask(depId);
+        // Only direct mutual cycles (A<->B) are detected
+        const existingDepsOfDep = await depsForTask(depId);
         if (existingDepsOfDep.includes(id)) {
           return reply.badRequest(`Cycle detected: task ${id} and task ${depId} depend on each other`);
         }
@@ -540,12 +477,12 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if ('sourcePath' in body && typeof body.sourcePath === 'string') {
       let patchProject;
       try {
-        patchProject = getProject(config, row.project_id);
+        patchProject = getProject(config, row.projectId ?? (row as any).project_id);
       } catch {
         return reply.code(400).send({
           statusCode: 400,
           error: 'Bad Request',
-          message: `Unknown project: "${row.project_id}"`,
+          message: `Unknown project: "${row.projectId ?? (row as any).project_id}"`,
         });
       }
       const bareRepo = patchProject.bareRepoPath;
@@ -567,26 +504,21 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    const updated = db.transaction(() => {
-      if (setClauses.length > 0) {
-        const sql = `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = @id AND status = 'pending'`;
-        const info = db.prepare(sql).run(params);
-        if (info.changes === 0) return false;
+    if (hasScalarFields) {
+      const updated = await tasksCore.patch(db, id, patchFields);
+      if (!updated) {
+        return reply.conflict('task is no longer pending');
       }
-      if (hasFiles) {
-        deleteTaskFiles.run(id);
-        linkFilesToTask(id, body.files!, row.project_id);
-      }
-      if (hasDeps) {
-        deleteDepsForTask.run(id);
-        linkDepsToTask(id, body.dependsOn!);
-      }
-      return true;
-    })();
-
-    if (!updated) {
-      return reply.conflict('task is no longer pending');
     }
+    if (hasFiles) {
+      await taskFilesQ.deleteFilesForTask(db, id);
+      await linkFilesToTask(id, body.files!, row.projectId ?? (row as any).project_id);
+    }
+    if (hasDeps) {
+      await taskDepsQ.deleteDepsForTask(db, id);
+      await linkDepsToTask(id, body.dependsOn!);
+    }
+
     return { ok: true };
   });
 
@@ -595,14 +527,15 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     Params: { id: string };
   }>('/tasks/:id', async (request, reply) => {
     const id = Number(request.params.id);
-    const task = getTaskById.get({ id }) as TaskRow | undefined;
+    const db = getDb();
+    const task = await tasksCore.getById(db, id);
     if (!task) {
       return reply.notFound('task not found');
     }
     if (task.status === 'claimed' || task.status === 'in_progress') {
       return reply.conflict('cannot delete a task that is claimed or in progress — release it first');
     }
-    deleteTask.run({ id });
+    await tasksCore.deleteById(db, id);
     return { ok: true };
   });
 
@@ -617,8 +550,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if (status === 'claimed' || status === 'in_progress') {
       return reply.conflict('cannot bulk-delete tasks that are claimed or in progress');
     }
-    const info = db.prepare('DELETE FROM tasks WHERE status = ?').run(status);
-    return { ok: true, deleted: info.changes };
+    const db = getDb();
+    const deleted = await tasksCore.deleteByStatus(db, status);
+    return { ok: true, deleted };
   });
 };
 

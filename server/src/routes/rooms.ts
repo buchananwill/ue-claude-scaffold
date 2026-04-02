@@ -1,60 +1,31 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { db } from '../db.js';
+import { getDb } from '../drizzle-instance.js';
+import * as roomsQ from '../queries/rooms.js';
+import * as chatQ from '../queries/chat.js';
+import * as agentsQ from '../queries/agents.js';
+import { sql, count as countFn, eq } from 'drizzle-orm';
+import { rooms, roomMembers, chatMessages } from '../schema/tables.js';
 
 const roomsPlugin: FastifyPluginAsync = async (fastify) => {
-  const insertRoom = db.prepare(
-    'INSERT INTO rooms (id, name, type, created_by) VALUES (@id, @name, @type, @createdBy)'
-  );
-
-  const insertMember = db.prepare(
-    'INSERT OR IGNORE INTO room_members (room_id, member) VALUES (@roomId, @member)'
-  );
-
-  const roomById = db.prepare('SELECT * FROM rooms WHERE id = @id');
-
-  const roomMembers = db.prepare(
-    'SELECT member, joined_at FROM room_members WHERE room_id = @roomId'
-  );
-
-  const deleteRoom = db.prepare('DELETE FROM rooms WHERE id = @id');
-
-  const removeMember = db.prepare(
-    'DELETE FROM room_members WHERE room_id = @roomId AND member = @member'
-  );
-
-  const insertChatMessage = db.prepare(
-    'INSERT INTO chat_messages (room_id, sender, content, reply_to) VALUES (@roomId, @sender, @content, @replyTo)'
-  );
-
-  const isMember = db.prepare(
-    'SELECT 1 FROM room_members WHERE room_id = @roomId AND member = @member'
-  );
-
-
-  const agentByToken = db.prepare(
-    'SELECT name FROM agents WHERE session_token = @token LIMIT 1'
-  );
-
   // POST /rooms — create a room
   fastify.post<{
     Body: { id: string; name: string; type: 'group' | 'direct'; members?: string[] };
   }>('/rooms', async (request, reply) => {
     const caller = (request.headers['x-agent-name'] as string | undefined) ?? 'user';
     const { id, name, type, members } = request.body;
+    const db = getDb();
 
     if (type !== 'group' && type !== 'direct') {
       return reply.badRequest('type must be "group" or "direct"');
     }
 
-    db.transaction(() => {
-      insertRoom.run({ id, name, type, createdBy: caller });
-      insertMember.run({ roomId: id, member: caller });
-      if (members) {
-        for (const m of members) {
-          insertMember.run({ roomId: id, member: m });
-        }
+    await roomsQ.createRoom(db, { id, name, type, createdBy: caller });
+    await roomsQ.addMember(db, id, caller);
+    if (members) {
+      for (const m of members) {
+        await roomsQ.addMember(db, id, m);
       }
-    })();
+    }
 
     return { ok: true, id };
   });
@@ -63,25 +34,20 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
     Querystring: { member?: string };
   }>('/rooms', async (request) => {
-    let sql = 'SELECT r.*, (SELECT COUNT(*) FROM room_members rm WHERE rm.room_id = r.id) as member_count FROM rooms r';
-    const params: unknown[] = [];
+    const db = getDb();
+    const rows = await roomsQ.listRooms(db, { member: request.query.member });
 
-    if (request.query.member) {
-      sql += ' WHERE r.id IN (SELECT room_id FROM room_members WHERE member = ?)';
-      params.push(request.query.member);
-    }
-
-    const rows = db.prepare(sql).all(...params) as Array<{
-      id: string; name: string; type: string; created_by: string; created_at: string; member_count: number;
-    }>;
-
-    return rows.map(r => ({
-      id: r.id,
-      name: r.name,
-      type: r.type,
-      createdBy: r.created_by,
-      createdAt: r.created_at,
-      memberCount: r.member_count,
+    // Compute member counts
+    return Promise.all(rows.map(async (r: any) => {
+      const members = await roomsQ.getMembers(db, r.id);
+      return {
+        id: r.id,
+        name: r.name,
+        type: r.type,
+        createdBy: r.createdBy ?? r.created_by,
+        createdAt: r.createdAt ?? r.created_at,
+        memberCount: members.length,
+      };
     }));
   });
 
@@ -89,60 +55,42 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
     Params: { id: string };
   }>('/rooms/:id', async (request, reply) => {
-    const room = roomById.get({ id: request.params.id }) as {
-      id: string; name: string; type: string; created_by: string; created_at: string;
-    } | undefined;
-
+    const db = getDb();
+    const room = await roomsQ.getRoom(db, request.params.id);
     if (!room) {
       return reply.notFound(`Room '${request.params.id}' not found`);
     }
 
-    const members = roomMembers.all({ roomId: room.id }) as Array<{ member: string; joined_at: string }>;
+    const members = await roomsQ.getMembers(db, room.id);
+    // Get join dates
+    const memberRows = await db.select().from(roomMembers).where(eq(roomMembers.roomId, room.id));
 
     return {
       id: room.id,
       name: room.name,
       type: room.type,
-      createdBy: room.created_by,
-      createdAt: room.created_at,
-      members: members.map(m => ({ member: m.member, joinedAt: m.joined_at })),
+      createdBy: room.createdBy,
+      createdAt: room.createdAt,
+      members: memberRows.map(m => ({ member: m.member, joinedAt: m.joinedAt })),
     };
   });
 
   // GET /rooms/:id/presence — who is in the room and are they online?
-  const presenceQuery = db.prepare(`
-    SELECT
-      rm.member,
-      rm.joined_at,
-      a.status AS agent_status,
-      a.registered_at AS agent_registered_at
-    FROM room_members rm
-    LEFT JOIN agents a ON a.name = rm.member
-    WHERE rm.room_id = @roomId
-    ORDER BY rm.member
-  `);
-
   fastify.get<{
     Params: { id: string };
   }>('/rooms/:id/presence', async (request, reply) => {
     const { id } = request.params;
-    const room = roomById.get({ id });
+    const db = getDb();
+
+    const room = await roomsQ.getRoom(db, id);
     if (!room) {
       return reply.notFound(`Room '${id}' not found`);
     }
 
-    const rows = presenceQuery.all({ roomId: id }) as Array<{
-      member: string; joined_at: string; agent_status: string | null; agent_registered_at: string | null;
-    }>;
-
+    const presenceRows = await roomsQ.getPresence(db, id);
     return {
       room: id,
-      members: rows.map(r => ({
-        name: r.member,
-        joinedAt: r.joined_at,
-        online: r.agent_status !== null,
-        status: r.agent_status ?? 'not-registered',
-      })),
+      members: presenceRows,
     };
   });
 
@@ -150,11 +98,12 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.delete<{
     Params: { id: string };
   }>('/rooms/:id', async (request, reply) => {
-    const room = roomById.get({ id: request.params.id });
+    const db = getDb();
+    const room = await roomsQ.getRoom(db, request.params.id);
     if (!room) {
       return reply.notFound(`Room '${request.params.id}' not found`);
     }
-    deleteRoom.run({ id: request.params.id });
+    await roomsQ.deleteRoom(db, request.params.id);
     return { ok: true };
   });
 
@@ -163,16 +112,15 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     Params: { id: string };
     Body: { members: string[] };
   }>('/rooms/:id/members', async (request, reply) => {
-    const room = roomById.get({ id: request.params.id });
+    const db = getDb();
+    const room = await roomsQ.getRoom(db, request.params.id);
     if (!room) {
       return reply.notFound(`Room '${request.params.id}' not found`);
     }
 
-    db.transaction(() => {
-      for (const m of request.body.members) {
-        insertMember.run({ roomId: request.params.id, member: m });
-      }
-    })();
+    for (const m of request.body.members) {
+      await roomsQ.addMember(db, request.params.id, m);
+    }
 
     return { ok: true };
   });
@@ -181,11 +129,12 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.delete<{
     Params: { id: string; member: string };
   }>('/rooms/:id/members/:member', async (request, reply) => {
-    const room = roomById.get({ id: request.params.id });
+    const db = getDb();
+    const room = await roomsQ.getRoom(db, request.params.id);
     if (!room) {
       return reply.notFound(`Room '${request.params.id}' not found`);
     }
-    removeMember.run({ roomId: request.params.id, member: request.params.member });
+    await roomsQ.removeMember(db, request.params.id, request.params.member);
     return { ok: true };
   });
 
@@ -195,12 +144,14 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     Body: { content: string; replyTo?: number };
   }>('/rooms/:id/messages', async (request, reply) => {
     let sender = request.headers['x-agent-name'] as string | undefined;
+    const db = getDb();
+
     if (!sender) {
       // Resolve sender from session token (Bearer or query param) when header is missing
       const auth = request.headers.authorization;
       const token = auth?.startsWith('Bearer ') ? auth.slice(7) : (request.query as Record<string, string>).token;
       if (token) {
-        const match = agentByToken.get({ token }) as { name: string } | undefined;
+        const match = await agentsQ.getByToken(db, token);
         sender = match?.name;
       }
       sender ??= 'user';
@@ -209,20 +160,18 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     const { content, replyTo } = request.body;
     fastify.log.info({ sender, roomId: id }, 'room message POST');
 
-    const room = roomById.get({ id });
+    const room = await roomsQ.getRoom(db, id);
     if (!room) {
       return reply.notFound(`Room '${id}' not found`);
     }
 
-    const membership = isMember.get({ roomId: id, member: sender });
+    const membership = await chatQ.isMember(db, id, sender);
     if (!membership) {
       return reply.code(403).send({ error: 'not_a_member' });
     }
 
-    const result = insertChatMessage.run({ roomId: id, sender, content, replyTo: replyTo ?? null });
-    const msgId = Number(result.lastInsertRowid);
-
-    return { ok: true, id: msgId };
+    const msg = await chatQ.sendMessage(db, { roomId: id, sender, content, replyTo: replyTo ?? null });
+    return { ok: true, id: msg.id };
   });
 
   // GET /rooms/:id/messages — get chat messages
@@ -233,93 +182,71 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params;
     const { since, before, limit } = request.query;
     const pageSize = Math.min(Math.max(Number(limit) || 100, 1), 500);
+    const db = getDb();
 
-    const room = roomById.get({ id });
+    const room = await roomsQ.getRoom(db, id);
     if (!room) {
       return reply.notFound(`Room '${id}' not found`);
     }
 
     const caller = request.headers['x-agent-name'] as string | undefined;
     if (caller) {
-      const membership = isMember.get({ roomId: id, member: caller });
+      const membership = await chatQ.isMember(db, id, caller);
       if (!membership) {
         return reply.code(403).send({ error: 'not_a_member' });
       }
     }
 
-    type ChatRow = {
-      id: number; room_id: string; sender: string; content: string; reply_to: number | null; created_at: string;
-    };
-
-    const format = (r: ChatRow) => ({
-      id: r.id,
-      roomId: r.room_id,
-      sender: r.sender,
-      content: r.content,
-      replyTo: r.reply_to,
-      createdAt: r.created_at,
+    const rows = await chatQ.getHistory(db, id, {
+      after: since ? Number(since) : undefined,
+      before: before ? Number(before) : undefined,
+      limit: pageSize,
     });
 
-    if (since) {
-      const sql = 'SELECT * FROM chat_messages WHERE room_id = ? AND id > ? ORDER BY id ASC LIMIT ?';
-      const rows = db.prepare(sql).all(id, Number(since), pageSize) as ChatRow[];
-      return rows.map(format);
-    }
-
-    if (before) {
-      const sql = 'SELECT * FROM chat_messages WHERE room_id = ? AND id < ? ORDER BY id DESC LIMIT ?';
-      const rows = db.prepare(sql).all(id, Number(before), pageSize) as ChatRow[];
-      rows.reverse();
-      return rows.map(format);
-    }
-
-    const sql = 'SELECT * FROM chat_messages WHERE room_id = ? ORDER BY id DESC LIMIT ?';
-    const rows = db.prepare(sql).all(id, pageSize) as ChatRow[];
-    rows.reverse();
-    return rows.map(format);
+    return rows.map((r: any) => ({
+      id: r.id,
+      roomId: r.roomId,
+      sender: r.sender,
+      content: r.content,
+      replyTo: r.replyTo,
+      createdAt: r.createdAt,
+    }));
   });
 
   // GET /transcript — readable chat transcript across all rooms (or one room)
-  const transcriptQuery = db.prepare(`
-    SELECT
-      r.name AS room_name,
-      cm.room_id,
-      cm.sender,
-      cm.content,
-      strftime('%m-%d %H:%M', cm.created_at) AS time
-    FROM chat_messages cm
-    JOIN rooms r ON r.id = cm.room_id
-    ORDER BY cm.room_id, cm.created_at
-  `);
-
-  const transcriptByRoom = db.prepare(`
-    SELECT
-      r.name AS room_name,
-      cm.room_id,
-      cm.sender,
-      cm.content,
-      strftime('%m-%d %H:%M', cm.created_at) AS time
-    FROM chat_messages cm
-    JOIN rooms r ON r.id = cm.room_id
-    WHERE cm.room_id = ?
-    ORDER BY cm.created_at
-  `);
-
   fastify.get<{
     Querystring: { room?: string };
   }>('/transcript', async (request, reply) => {
-    type Row = { room_name: string; room_id: string; sender: string; content: string; time: string };
+    const db = getDb();
 
-    const rows = request.query.room
-      ? transcriptByRoom.all(request.query.room) as Row[]
-      : transcriptQuery.all() as Row[];
+    // Use raw SQL for the transcript query since it joins rooms + chat_messages with formatting
+    const roomFilter = request.query.room;
+    const rows = roomFilter
+      ? await db.execute(sql`
+          SELECT r.name AS room_name, cm.room_id AS "roomId", cm.sender, cm.content,
+                 to_char(cm.created_at, 'MM-DD HH24:MI') AS time
+          FROM chat_messages cm
+          JOIN rooms r ON r.id = cm.room_id
+          WHERE cm.room_id = ${roomFilter}
+          ORDER BY cm.created_at
+        `)
+      : await db.execute(sql`
+          SELECT r.name AS room_name, cm.room_id AS "roomId", cm.sender, cm.content,
+                 to_char(cm.created_at, 'MM-DD HH24:MI') AS time
+          FROM chat_messages cm
+          JOIN rooms r ON r.id = cm.room_id
+          ORDER BY cm.room_id, cm.created_at
+        `);
+
+    type Row = { room_name: string; roomId: string; sender: string; content: string; time: string };
+    const typedRows = rows.rows as Row[];
 
     let text = '';
     let currentRoom = '';
-    for (const r of rows) {
-      if (r.room_id !== currentRoom) {
+    for (const r of typedRows) {
+      if (r.roomId !== currentRoom) {
         text += `\n══════ ${r.room_name} ══════\n\n`;
-        currentRoom = r.room_id;
+        currentRoom = r.roomId;
       }
       text += `[${r.time}] ${r.sender}:\n${r.content}\n\n`;
     }

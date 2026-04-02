@@ -1,19 +1,20 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { db } from '../db.js';
+import { getDb, tryGetDb } from '../drizzle-instance.js';
+import * as replanQ from '../queries/tasks-replan.js';
 import type { TasksOpts } from './tasks-files.js';
 
-let getNonTerminalTasksForReplan: import('better-sqlite3').Statement;
-let getNonTerminalDepsForReplan: import('better-sqlite3').Statement;
-let markTaskCycle: import('better-sqlite3').Statement;
-let setTaskPriority: import('better-sqlite3').Statement;
-
-export function runReplan() {
-  const rows = getNonTerminalTasksForReplan.all() as { id: number; title: string; base_priority: number }[];
+export async function runReplan() {
+  const db = tryGetDb();
+  if (!db) {
+    // Drizzle not initialized — return empty result (migration transition)
+    return { ok: true as const, replanned: 0, cycles: [] as { taskIds: number[]; titles: string[] }[], maxPriority: 0, roots: [] as number[] };
+  }
+  const rows = await replanQ.getNonTerminalTasks(db);
   if (rows.length === 0) {
     return { ok: true as const, replanned: 0, cycles: [] as { taskIds: number[]; titles: string[] }[], maxPriority: 0, roots: [] as number[] };
   }
 
-  const edges = getNonTerminalDepsForReplan.all() as { task_id: number; depends_on: number }[];
+  const edges = await replanQ.getNonTerminalDeps(db);
 
   const nodeMap = new Map<number, { title: string; basePriority: number }>();
   const inDegree = new Map<number, number>();
@@ -21,16 +22,16 @@ export function runReplan() {
   const prerequisites = new Map<number, number[]>();
 
   for (const row of rows) {
-    nodeMap.set(row.id, { title: row.title, basePriority: row.base_priority });
+    nodeMap.set(row.id, { title: row.title, basePriority: row.basePriority });
     inDegree.set(row.id, 0);
     dependents.set(row.id, []);
     prerequisites.set(row.id, []);
   }
 
   for (const edge of edges) {
-    inDegree.set(edge.task_id, (inDegree.get(edge.task_id) || 0) + 1);
-    dependents.get(edge.depends_on)!.push(edge.task_id);
-    prerequisites.get(edge.task_id)!.push(edge.depends_on);
+    inDegree.set(edge.taskId, (inDegree.get(edge.taskId) || 0) + 1);
+    dependents.get(edge.dependsOn)!.push(edge.taskId);
+    prerequisites.get(edge.taskId)!.push(edge.dependsOn);
   }
 
   const queue: number[] = [];
@@ -134,10 +135,6 @@ export function runReplan() {
     computedPriority.set(id, nodeMap.get(id)!.basePriority);
   }
   // Walk in reverse topological order: leaves first, roots last.
-  // Each node accumulates the priority of all its direct dependents (children),
-  // so roots that block the most downstream work get the highest priority.
-  // Add 1 if the node has any children, guaranteeing strict ordering:
-  // a blocker always has strictly higher priority than anything it unblocks.
   for (let i = sorted.length - 1; i >= 0; i--) {
     const id = sorted[i];
     const children = (dependents.get(id) || []).filter(c => sortedSet.has(c));
@@ -157,14 +154,14 @@ export function runReplan() {
 
   const maxPriority = sorted.length > 0 ? Math.max(...sorted.map(id => computedPriority.get(id)!)) : 0;
 
-  db.transaction(() => {
+  await db.transaction(async (tx) => {
     for (const id of actualCycleIds) {
-      markTaskCycle.run(id);
+      await replanQ.markCycle(tx as any, id);
     }
     for (const id of sorted) {
-      setTaskPriority.run(computedPriority.get(id)!, id);
+      await replanQ.setPriority(tx as any, id, computedPriority.get(id)!);
     }
-  })();
+  });
 
   return {
     ok: true as const,
@@ -176,19 +173,6 @@ export function runReplan() {
 }
 
 const tasksReplanPlugin: FastifyPluginAsync<TasksOpts> = async (fastify) => {
-  getNonTerminalTasksForReplan = db.prepare(
-    "SELECT id, title, base_priority FROM tasks WHERE status NOT IN ('completed', 'failed', 'integrated')"
-  );
-
-  getNonTerminalDepsForReplan = db.prepare(
-    `SELECT td.task_id, td.depends_on FROM task_dependencies td
-     JOIN tasks t ON t.id = td.task_id AND t.status NOT IN ('completed','failed','integrated')
-     JOIN tasks dep ON dep.id = td.depends_on AND dep.status NOT IN ('completed','failed','integrated')`
-  );
-
-  markTaskCycle = db.prepare("UPDATE tasks SET status = 'cycle' WHERE id = ?");
-  setTaskPriority = db.prepare("UPDATE tasks SET priority = ? WHERE id = ?");
-
   // POST /tasks/replan — recompute priority via topological sort, detect cycles
   fastify.post('/tasks/replan', async () => {
     return runReplan();

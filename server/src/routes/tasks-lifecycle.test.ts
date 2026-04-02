@@ -1,20 +1,21 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
+import { createTestConfig } from '../test-helper.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import tasksPlugin from './tasks.js';
 
 describe('tasks-lifecycle routes', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     const config = createTestConfig();
     await ctx.app.register(tasksPlugin, { config });
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('POST /tasks/:id/complete marks task completed with result', async () => {

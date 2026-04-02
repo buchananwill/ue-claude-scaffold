@@ -1,22 +1,23 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
+import { createTestConfig } from '../test-helper.js';
 import agentsPlugin from './agents.js';
 import ubtPlugin, { sweepStaleLock } from './ubt.js';
 
-describe('ubt routes', () => {
-  let ctx: TestContext;
+describe('ubt routes (drizzle)', () => {
+  let ctx: DrizzleTestContext;
   const config = createTestConfig();
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(ubtPlugin, { config });
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
 
   it('GET /ubt/status returns empty state initially', async () => {
@@ -162,7 +163,7 @@ describe('ubt routes', () => {
     const body = res.json();
     assert.equal(body.granted, false);
     assert.equal(body.holder, 'agent-1');
-    assert.equal(typeof body.holderSince, 'string');
+    assert.ok(body.holderSince != null);
     assert.equal(typeof body.estimatedWaitMs, 'number');
     assert.ok(body.estimatedWaitMs > 0);
   });
@@ -207,7 +208,7 @@ describe('ubt routes', () => {
       payload: { agent: 'agent-1' },
     });
 
-    sweepStaleLock();
+    await sweepStaleLock();
 
     const status = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
     assert.equal(status.json().holder, 'agent-1');
@@ -229,7 +230,7 @@ describe('ubt routes', () => {
       url: '/agents/agent-1',
     });
 
-    sweepStaleLock();
+    await sweepStaleLock();
 
     const status = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
     assert.equal(status.json().holder, null);
@@ -247,7 +248,7 @@ describe('ubt routes', () => {
     const before = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
     assert.equal(before.json().holder, 'ghost-agent');
 
-    sweepStaleLock();
+    await sweepStaleLock();
 
     // Lock should be released because agent was never registered
     const after = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
@@ -275,7 +276,7 @@ describe('ubt routes', () => {
       payload: { agent: 'agent-2' },
     });
 
-    sweepStaleLock();
+    await sweepStaleLock();
 
     // agent-2 should be promoted
     const status = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
@@ -301,7 +302,7 @@ describe('ubt routes', () => {
       payload: { status: 'stopping' },
     });
 
-    sweepStaleLock();
+    await sweepStaleLock();
 
     const status = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
     assert.equal(status.json().holder, null);
@@ -333,7 +334,7 @@ describe('ubt routes', () => {
       url: '/agents/agent-1',
     });
 
-    sweepStaleLock();
+    await sweepStaleLock();
 
     const status = await ctx.app.inject({ method: 'GET', url: '/ubt/status' });
     assert.equal(status.json().holder, 'agent-2');

@@ -1,16 +1,13 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { db } from '../db.js';
+import { getDb } from '../drizzle-instance.js';
+import * as tasksCore from '../queries/tasks-core.js';
+import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
 import { existsInBareRepo, isCommittedInRepo } from '../git-utils.js';
 import type { TaskRow } from './tasks-types.js';
-import type { TasksOpts, TasksSharedStatements } from './tasks-files.js';
+import type { TasksOpts } from './tasks-files.js';
 
-interface TasksLifecycleOpts extends TasksOpts {
-  shared: TasksSharedStatements;
-}
-
-const tasksLifecyclePlugin: FastifyPluginAsync<TasksLifecycleOpts> = async (fastify, opts) => {
+const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   const config = opts.config;
-  const shared = opts.shared;
 
   // POST /tasks/:id/complete
   fastify.post<{
@@ -19,9 +16,10 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksLifecycleOpts> = async (fast
   }>('/tasks/:id/complete', async (request, reply) => {
     const id = Number(request.params.id);
     const { result } = request.body;
+    const db = getDb();
 
-    const info = shared.completeTask.run({ id, result: JSON.stringify(result) });
-    if (info.changes === 0) {
+    const ok = await tasksLifecycleQ.complete(db, id, result);
+    if (!ok) {
       return reply.conflict('task not in claimed or in_progress state');
     }
     return { ok: true };
@@ -34,9 +32,10 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksLifecycleOpts> = async (fast
   }>('/tasks/:id/fail', async (request, reply) => {
     const id = Number(request.params.id);
     const { error } = request.body;
+    const db = getDb();
 
-    const info = shared.failTask.run({ id, result: JSON.stringify({ error }) });
-    if (info.changes === 0) {
+    const ok = await tasksLifecycleQ.fail(db, id, { error });
+    if (!ok) {
       return reply.conflict('task not in claimed or in_progress state');
     }
     return { ok: true };
@@ -47,8 +46,9 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksLifecycleOpts> = async (fast
     Params: { id: string };
   }>('/tasks/:id/reset', async (request, reply) => {
     const id = Number(request.params.id);
+    const db = getDb();
 
-    const row = shared.getTaskById.get({ id }) as TaskRow | undefined;
+    const row = await tasksCore.getById(db, id);
     if (!row) {
       return reply.notFound('task not found');
     }
@@ -56,27 +56,28 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksLifecycleOpts> = async (fast
       return reply.conflict('task can only be reset when completed, failed, or cycle');
     }
 
-    if (row.source_path && row.status !== 'cycle') {
-      const bareRepo = shared.getBareRepoPath();
+    const sp = row.sourcePath ?? (row as any).source_path;
+    if (sp && row.status !== 'cycle') {
+      const bareRepo = config.server.bareRepoPath;
       if (bareRepo) {
         const planBranch = config.tasks?.planBranch ?? 'docker/current-root';
-        if (!existsInBareRepo(bareRepo, planBranch, row.source_path)) {
+        if (!existsInBareRepo(bareRepo, planBranch, sp)) {
           return reply.unprocessableEntity(
-            `sourcePath '${row.source_path}' not found on branch '${planBranch}' in bare repo`
+            `sourcePath '${sp}' not found on branch '${planBranch}' in bare repo`
           );
         }
       } else {
-        const worktree = shared.getValidationWorktree();
-        if (!isCommittedInRepo(worktree, row.source_path)) {
+        const worktree = config.project.path;
+        if (!isCommittedInRepo(worktree, sp)) {
           return reply.unprocessableEntity(
-            `sourcePath '${row.source_path}' is no longer committed in the staging worktree`
+            `sourcePath '${sp}' is no longer committed in the staging worktree`
           );
         }
       }
     }
 
-    const info = shared.resetTask.run({ id });
-    if (info.changes === 0) {
+    const ok = await tasksLifecycleQ.reset(db, id);
+    if (!ok) {
       return reply.conflict('task is no longer in a resettable state');
     }
     return { ok: true };
@@ -87,8 +88,9 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksLifecycleOpts> = async (fast
     Params: { id: string };
   }>('/tasks/:id/integrate', async (request, reply) => {
     const id = Number(request.params.id);
+    const db = getDb();
 
-    const row = shared.getTaskById.get({ id }) as TaskRow | undefined;
+    const row = await tasksCore.getById(db, id);
     if (!row) {
       return reply.notFound('task not found');
     }
@@ -96,8 +98,8 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksLifecycleOpts> = async (fast
       return reply.badRequest('task must be in completed status to integrate');
     }
 
-    const info = shared.integrateTask.run({ id });
-    if (info.changes === 0) {
+    const ok = await tasksLifecycleQ.integrate(db, id);
+    if (!ok) {
       return reply.conflict('task status changed concurrently');
     }
     return { ok: true };
@@ -112,26 +114,16 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksLifecycleOpts> = async (fast
       return reply.badRequest('agent must be a string');
     }
 
-    const result = db.transaction(() => {
-      const rows = shared.selectCompletedByAgent.all(agent) as { id: number }[];
-      const ids = rows.map(r => r.id);
-      shared.integrateBatch.run(agent);
-      return { ok: true, count: ids.length, ids };
-    })();
-
-    return result;
+    const db = getDb();
+    const result = await tasksLifecycleQ.integrateBatch(db, agent);
+    return { ok: true, count: result.count, ids: result.ids };
   });
 
   // POST /tasks/integrate-all — mark all completed tasks as integrated
   fastify.post('/tasks/integrate-all', async () => {
-    const result = db.transaction(() => {
-      const rows = shared.selectAllCompleted.all() as { id: number }[];
-      const ids = rows.map(r => r.id);
-      shared.integrateAll.run();
-      return { ok: true, count: ids.length, ids };
-    })();
-
-    return result;
+    const db = getDb();
+    const result = await tasksLifecycleQ.integrateAll(db);
+    return { ok: true, count: result.count, ids: result.ids };
   });
 };
 

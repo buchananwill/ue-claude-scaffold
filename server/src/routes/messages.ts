@@ -1,82 +1,63 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { db } from '../db.js';
+import { getDb } from '../drizzle-instance.js';
+import * as msgQ from '../queries/messages.js';
 
 export interface MessageRow {
   id: number;
-  from_agent: string;
+  fromAgent: string;
   channel: string;
   type: string;
-  payload: string;
-  claimed_by: string | null;
-  claimed_at: string | null;
-  resolved_at: string | null;
-  result: string | null;
-  created_at: string;
+  payload: unknown;
+  claimedBy: string | null;
+  claimedAt: string | Date | null;
+  resolvedAt: string | Date | null;
+  result: unknown;
+  createdAt: string | Date | null;
 }
 
 export function formatMessage(row: MessageRow) {
-  let payload: unknown;
-  try {
-    payload = JSON.parse(row.payload);
-  } catch {
-    payload = row.payload;
+  let payload: unknown = row.payload;
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); } catch { /* keep as string */ }
   }
 
   let result: unknown = null;
   if (row.result) {
-    try {
-      result = JSON.parse(row.result);
-    } catch {
+    if (typeof row.result === 'string') {
+      try { result = JSON.parse(row.result); } catch { result = row.result; }
+    } else {
       result = row.result;
     }
   }
 
   return {
     id: row.id,
-    fromAgent: row.from_agent,
+    fromAgent: row.fromAgent,
     channel: row.channel,
     type: row.type,
     payload,
-    claimedBy: row.claimed_by,
-    claimedAt: row.claimed_at,
-    resolvedAt: row.resolved_at,
+    claimedBy: row.claimedBy,
+    claimedAt: row.claimedAt,
+    resolvedAt: row.resolvedAt,
     result,
-    createdAt: row.created_at,
+    createdAt: row.createdAt,
   };
 }
 
 const messagesPlugin: FastifyPluginAsync = async (fastify) => {
-  const insertMessage = db.prepare(
-    `INSERT INTO messages (from_agent, channel, type, payload)
-     VALUES (@fromAgent, @channel, @type, @payload)`
-  );
-
-  const claimMessage = db.prepare(
-    `UPDATE messages SET claimed_by = @claimedBy, claimed_at = CURRENT_TIMESTAMP
-     WHERE id = @id AND claimed_by IS NULL`
-  );
-
-  const resolveMessage = db.prepare(
-    `UPDATE messages SET resolved_at = CURRENT_TIMESTAMP, result = @result
-     WHERE id = @id`
-  );
-
-  const deleteMessageById = db.prepare('DELETE FROM messages WHERE id = @id');
-  const deleteMessagesByChannel = db.prepare('DELETE FROM messages WHERE channel = @channel');
-  const deleteMessagesByChannelBefore = db.prepare('DELETE FROM messages WHERE channel = @channel AND id < @before');
-
   fastify.post<{
     Body: { channel: string; type: string; payload: unknown };
   }>('/messages', async (request) => {
     const agent = request.headers['x-agent-name'] as string | undefined;
     const { channel, type, payload } = request.body;
-    const result = insertMessage.run({
+    const db = getDb();
+    const id = await msgQ.insert(db, {
       fromAgent: agent ?? 'unknown',
       channel,
       type,
-      payload: JSON.stringify(payload),
+      payload,
     });
-    return { id: Number(result.lastInsertRowid), ok: true };
+    return { id, ok: true };
   });
 
   fastify.get<{
@@ -85,25 +66,15 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
   }>('/messages/:channel/count', async (request) => {
     const { channel } = request.params;
     const { type, from_agent } = request.query;
-
     const isAll = channel === '_all';
-    let sql = isAll
-      ? 'SELECT COUNT(*) as count FROM messages WHERE 1=1'
-      : 'SELECT COUNT(*) as count FROM messages WHERE channel = ?';
-    const params: unknown[] = isAll ? [] : [channel];
+    const db = getDb();
 
-    if (type) {
-      sql += ' AND type = ?';
-      params.push(type);
-    }
-
-    if (from_agent) {
-      sql += ' AND from_agent = ?';
-      params.push(from_agent);
-    }
-
-    const row = db.prepare(sql).get(...params) as { count: number };
-    return { count: row.count };
+    const cnt = await msgQ.count(db, {
+      channel: isAll ? undefined : channel,
+      type: type || undefined,
+      fromAgent: from_agent || undefined,
+    });
+    return { count: cnt };
   });
 
   fastify.get<{
@@ -112,52 +83,19 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
   }>('/messages/:channel', async (request) => {
     const { channel } = request.params;
     const { since, before, type, limit, from_agent } = request.query;
-    const pageSize = Math.min(Math.max(Number(limit) || 100, 1), 500);
-
     const isAll = channel === '_all';
-    let sql = isAll
-      ? 'SELECT * FROM messages WHERE 1=1'
-      : 'SELECT * FROM messages WHERE channel = ?';
-    const params: unknown[] = isAll ? [] : [channel];
+    const db = getDb();
 
-    if (since) {
-      // Polling path: return all messages after cursor, no limit
-      sql += ' AND id > ?';
-      params.push(Number(since));
-      if (type) {
-        sql += ' AND type = ?';
-        params.push(type);
-      }
-      if (from_agent) {
-        sql += ' AND from_agent = ?';
-        params.push(from_agent);
-      }
-      sql += ' ORDER BY id ASC';
-      const rows = db.prepare(sql).all(...params) as MessageRow[];
-      return rows.map(formatMessage);
-    }
+    const rows = await msgQ.list(db, {
+      channel: isAll ? undefined : channel,
+      since: since ? Number(since) : undefined,
+      before: before ? Number(before) : undefined,
+      type: type || undefined,
+      fromAgent: from_agent || undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
 
-    if (before) {
-      sql += ' AND id < ?';
-      params.push(Number(before));
-    }
-
-    if (type) {
-      sql += ' AND type = ?';
-      params.push(type);
-    }
-
-    if (from_agent) {
-      sql += ' AND from_agent = ?';
-      params.push(from_agent);
-    }
-
-    sql += ' ORDER BY id DESC LIMIT ?';
-    params.push(pageSize);
-
-    const rows = db.prepare(sql).all(...params) as MessageRow[];
-    rows.reverse();
-    return rows.map(formatMessage);
+    return rows.map((r) => formatMessage(r as unknown as MessageRow));
   });
 
   fastify.post<{
@@ -165,13 +103,10 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
   }>('/messages/:id/claim', async (request, reply) => {
     const id = Number(request.params.id);
     const agent = request.headers['x-agent-name'] as string | undefined;
+    const db = getDb();
 
-    const result = db.transaction(() => {
-      const info = claimMessage.run({ id, claimedBy: agent ?? 'unknown' });
-      return info.changes > 0;
-    })();
-
-    if (result) {
+    const claimed = await msgQ.claim(db, id, agent ?? 'unknown');
+    if (claimed) {
       return { ok: true };
     }
     return reply.conflict('already_claimed');
@@ -183,9 +118,11 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
   }>('/messages/:id/resolve', async (request) => {
     const id = Number(request.params.id);
     const { result } = request.body;
-    resolveMessage.run({ id, result: JSON.stringify(result) });
+    const db = getDb();
+    await msgQ.resolve(db, id, result);
     return { ok: true };
   });
+
   // DELETE /messages/:param — disambiguates by param format:
   // numeric positive integer => delete single message by ID
   // non-numeric string => purge messages by channel name (with optional ?before=<id>)
@@ -196,10 +133,11 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
     const { param } = request.params;
     const asNum = Number(param);
     const isId = Number.isInteger(asNum) && asNum > 0;
+    const db = getDb();
 
     if (isId) {
-      const info = deleteMessageById.run({ id: asNum });
-      if (info.changes === 0) {
+      const deleted = await msgQ.deleteById(db, asNum);
+      if (!deleted) {
         return reply.notFound('message not found');
       }
       return { ok: true };
@@ -209,12 +147,12 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
     const { before } = request.query;
 
     if (before) {
-      const info = deleteMessagesByChannelBefore.run({ channel, before: Number(before) });
-      return { ok: true, deleted: info.changes };
+      const count = await msgQ.deleteByChannelBefore(db, channel, Number(before));
+      return { ok: true, deleted: count };
     }
 
-    const info = deleteMessagesByChannel.run({ channel });
-    return { ok: true, deleted: info.changes };
+    const count = await msgQ.deleteByChannel(db, channel);
+    return { ok: true, deleted: count };
   });
 };
 

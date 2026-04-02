@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { db } from '../db.js';
+import { getDb } from '../drizzle-instance.js';
+import * as buildsQ from '../queries/builds.js';
 
 export interface BuildRow {
   id: number;
@@ -12,16 +13,16 @@ export interface BuildRow {
   stderr: string | null;
 }
 
-export function formatBuildRecord(row: BuildRow) {
+export function formatBuildRecord(row: any) {
   return {
     id: row.id,
     agent: row.agent,
     type: row.type,
-    startedAt: row.started_at,
-    durationMs: row.duration_ms,
-    success: row.success === null ? null : row.success === 1,
-    output: row.output,
-    stderr: row.stderr,
+    startedAt: row.startedAt ?? row.started_at,
+    durationMs: row.durationMs ?? row.duration_ms ?? null,
+    success: row.success === null || row.success === undefined ? null : row.success === 1 || row.success === true,
+    output: row.output ?? null,
+    stderr: row.stderr ?? null,
   };
 }
 
@@ -31,34 +32,16 @@ const buildsPlugin: FastifyPluginAsync = async (fastify) => {
   }>('/builds', async (request) => {
     const { agent, type, limit, since, project } = request.query;
 
-    const conditions: string[] = [];
-    const params: Record<string, string | number> = {};
-
-    if (agent) {
-      conditions.push('agent = @agent');
-      params.agent = agent;
-    }
-    if (type) {
-      conditions.push('type = @type');
-      params.type = type;
-    }
-    if (since) {
-      conditions.push('id > @since');
-      params.since = Number(since);
-    }
-    if (project) {
-      conditions.push('project_id = @project');
-      params.project = project;
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const limitVal = Math.max(1, Math.min(isFinite(Number(limit)) ? Number(limit) : 50, 500));
 
-    const stmt = db.prepare(
-      `SELECT * FROM build_history ${where} ORDER BY id DESC LIMIT ${limitVal}`
-    );
+    const rows = await buildsQ.list(getDb(), {
+      agent: agent || undefined,
+      type: type || undefined,
+      since: since ? Number(since) : undefined,
+      project: project || undefined,
+      limit: limitVal,
+    });
 
-    const rows = stmt.all(params) as BuildRow[];
     return rows.map(formatBuildRecord);
   });
 };

@@ -1,16 +1,17 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { ScaffoldConfig } from '../config.js';
+import { getDbStatus } from '../drizzle-instance.js';
 
 interface HealthOpts {
-  dbPath: string;
   config: ScaffoldConfig;
+  pgliteDataDir?: string;
 }
 
 const healthPlugin: FastifyPluginAsync<HealthOpts> = async (fastify, opts) => {
   fastify.get('/health', async () => {
     return {
       status: 'ok',
-      dbPath: opts.dbPath,
+      db: getDbStatus(),
       config: {
         port: opts.config.server.port,
         projectName: opts.config.project.name,
