@@ -10,7 +10,7 @@ interface HealthOpts {
 
 const healthPlugin: FastifyPluginAsync<HealthOpts> = async (fastify, opts) => {
   fastify.get('/health', async (request) => {
-    const projectId = (request.headers['x-project-id'] as string) || undefined;
+    const projectId = request.projectId !== 'default' ? request.projectId : undefined;
     let projectName: string | undefined;
 
     if (projectId) {

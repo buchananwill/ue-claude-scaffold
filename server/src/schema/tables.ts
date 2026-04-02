@@ -179,7 +179,7 @@ export const teams = pgTable('teams', {
   check('teams_status_check', sql`${table.status} IN ('active','converging','dissolved')`),
 ]);
 
-// 15. projects — portable project configuration (no filesystem paths)
+// 14. projects — portable project configuration (no filesystem paths)
 export const projects = pgTable('projects', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
@@ -192,7 +192,7 @@ export const projects = pgTable('projects', {
   check('projects_id_check', sql`${table.id} ~ '^[a-zA-Z0-9_-]{1,64}$'`),
 ]);
 
-// 14. teamMembers
+// 15. teamMembers
 export const teamMembers = pgTable('team_members', {
   teamId: text('team_id').notNull().references(() => teams.id, { onDelete: 'cascade' }),
   agentName: text('agent_name').notNull(),

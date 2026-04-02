@@ -1,4 +1,4 @@
-import { describe, it, after } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import projectsPlugin from './projects.js';
@@ -8,14 +8,14 @@ import { eq } from 'drizzle-orm';
 describe('projects routes', () => {
   let ctx: DrizzleTestContext;
 
+  before(async () => {
+    ctx = await createDrizzleTestApp();
+    await ctx.app.register(projectsPlugin);
+  });
+
   after(async () => {
     await ctx?.app.close();
     await ctx?.cleanup();
-  });
-
-  it('setup', async () => {
-    ctx = await createDrizzleTestApp();
-    await ctx.app.register(projectsPlugin);
   });
 
   it('POST /projects creates a project', async () => {
@@ -58,6 +58,15 @@ describe('projects routes', () => {
     assert.equal(res.statusCode, 400);
   });
 
+  it('POST /projects rejects empty-string ID', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/projects',
+      payload: { id: '', name: 'X' },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
   it('POST /projects rejects missing fields', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
@@ -83,8 +92,8 @@ describe('projects routes', () => {
     const body = res.json();
     assert.ok(Array.isArray(body));
     assert.ok(body.length >= 2);
-    assert.ok(body.some((p: any) => p.id === 'test-proj'));
-    assert.ok(body.some((p: any) => p.id === 'proj-b'));
+    assert.ok(body.some((p: { id: string }) => p.id === 'test-proj'));
+    assert.ok(body.some((p: { id: string }) => p.id === 'proj-b'));
   });
 
   it('GET /projects/:id returns a project', async () => {

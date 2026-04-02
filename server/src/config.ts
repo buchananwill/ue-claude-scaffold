@@ -301,6 +301,11 @@ export function getProject(config: ScaffoldConfig, id: string, dbRow?: ProjectDb
     }
   }
 
+  // DB engine version overrides JSON engine version
+  if (dbRow.engineVersion != null && merged.engine) {
+    merged.engine = { ...merged.engine, version: dbRow.engineVersion };
+  }
+
   merged.dbRecord = {
     engineVersion: dbRow.engineVersion,
     seedBranch: dbRow.seedBranch,

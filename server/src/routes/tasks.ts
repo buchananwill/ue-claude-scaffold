@@ -32,7 +32,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
   // POST /tasks
   fastify.post<{ Body: TaskBody }>('/tasks', async (request, reply) => {
-    const projectId = (request.headers['x-project-id'] as string) || 'default';
+    const projectId = request.projectId;
     const unknown = unknownFields<TaskBody>(request.body, taskBodyKeys);
     if (unknown.length > 0) {
       return reply.badRequest(
@@ -205,7 +205,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     Body: { tasks: TaskBody[] };
     Querystring: { replan?: string };
   }>('/tasks/batch', async (request, reply) => {
-    const projectId = (request.headers['x-project-id'] as string) || 'default';
+    const projectId = request.projectId;
     const { tasks } = request.body;
     if (!Array.isArray(tasks) || tasks.length === 0) {
       return reply.badRequest('tasks must be a non-empty array');
@@ -366,7 +366,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     Querystring: { status?: string; limit?: string; offset?: string; project?: string };
   }>('/tasks', async (request) => {
     const { status, limit, offset, project } = request.query;
-    const projectId = project || ((request.headers['x-project-id'] as string) || undefined);
+    const projectId = project || request.projectId;
     const limitNum = Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 20);
     const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
 

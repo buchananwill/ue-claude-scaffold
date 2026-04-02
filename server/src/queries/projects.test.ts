@@ -103,7 +103,11 @@ describe('projects queries', () => {
   });
 
   it('should seed from config (insert-only)', async () => {
-    const { inserted, skipped } = await projectsQ.seedFromConfig(db, ['proj-1', 'proj-new', 'proj-newer']);
+    const { inserted, skipped } = await projectsQ.seedFromConfig(db, [
+      { id: 'proj-1' },
+      { id: 'proj-new' },
+      { id: 'proj-newer', name: 'Project Newer' },
+    ]);
     // proj-1 already exists -> skipped
     assert.ok(skipped.includes('proj-1'));
     assert.ok(inserted.includes('proj-new'));
@@ -113,12 +117,20 @@ describe('projects queries', () => {
     const projNew = await projectsQ.getById(db, 'proj-new');
     assert.ok(projNew);
     assert.equal(projNew.name, 'proj-new'); // name defaults to ID
+
+    // Verify name from config is used when provided
+    const projNewer = await projectsQ.getById(db, 'proj-newer');
+    assert.ok(projNewer);
+    assert.equal(projNewer.name, 'Project Newer');
   });
 
-  it('should skip invalid project IDs during seed', async () => {
-    const { inserted, skipped } = await projectsQ.seedFromConfig(db, ['valid-id', 'has spaces']);
+  it('should report invalid project IDs during seed', async () => {
+    const { inserted, invalid } = await projectsQ.seedFromConfig(db, [
+      { id: 'valid-id' },
+      { id: 'has spaces' },
+    ]);
     assert.ok(inserted.includes('valid-id'));
-    assert.ok(skipped.includes('has spaces'));
+    assert.ok(invalid.includes('has spaces'));
   });
 
   it('should detect referencing data', async () => {

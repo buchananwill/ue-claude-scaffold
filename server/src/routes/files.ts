@@ -8,7 +8,7 @@ const filesPlugin: FastifyPluginAsync = async (fastify) => {
     Querystring: { claimant?: string; unclaimed?: string; project?: string };
   }>('/files', async (request) => {
     const { claimant, unclaimed, project } = request.query;
-    const projectId = project || ((request.headers['x-project-id'] as string) || 'default');
+    const projectId = project || request.projectId;
 
     const db = getDb();
     const rows = await filesQ.list(db, projectId, {

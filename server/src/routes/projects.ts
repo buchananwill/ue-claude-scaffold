@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { getDb } from '../drizzle-instance.js';
 import * as projectsQ from '../queries/projects.js';
 
-const projectsPlugin: FastifyPluginAsync = async (fastify) => {
+const projectsPlugin: FastifyPluginAsync<Record<never, never>> = async (fastify) => {
   // GET /projects - list all projects
   fastify.get('/projects', async () => {
     const db = getDb();
@@ -12,10 +12,14 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
 
   // GET /projects/:id - get single project
   fastify.get<{ Params: { id: string } }>('/projects/:id', async (request, reply) => {
+    const { id } = request.params;
+    if (!projectsQ.isValidProjectId(id)) {
+      return reply.badRequest('Invalid project ID format');
+    }
     const db = getDb();
-    const row = await projectsQ.getById(db, request.params.id);
+    const row = await projectsQ.getById(db, id);
     if (!row) {
-      return reply.notFound(`Project not found: ${request.params.id}`);
+      return reply.notFound(`Project not found: ${id}`);
     }
     return row;
   });
@@ -71,9 +75,35 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
       testTimeoutMs?: number | null;
     };
   }>('/projects/:id', async (request, reply) => {
-    const db = getDb();
     const { id } = request.params;
+    if (!projectsQ.isValidProjectId(id)) {
+      return reply.badRequest('Invalid project ID format');
+    }
 
+    // Validate body fields (item 10)
+    const { name, seedBranch, buildTimeoutMs, testTimeoutMs } = request.body;
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.length === 0 || name.length > 256) {
+        return reply.badRequest('name must be a non-empty string (max 256 chars)');
+      }
+    }
+    if (seedBranch !== undefined && seedBranch !== null) {
+      if (typeof seedBranch !== 'string' || !/^[a-zA-Z0-9/_.-]{1,200}$/.test(seedBranch)) {
+        return reply.badRequest('seedBranch must match ^[a-zA-Z0-9/_.-]{1,200}$');
+      }
+    }
+    if (buildTimeoutMs !== undefined && buildTimeoutMs !== null) {
+      if (!Number.isInteger(buildTimeoutMs) || buildTimeoutMs <= 0 || buildTimeoutMs > 3600000) {
+        return reply.badRequest('buildTimeoutMs must be a positive integer up to 3600000');
+      }
+    }
+    if (testTimeoutMs !== undefined && testTimeoutMs !== null) {
+      if (!Number.isInteger(testTimeoutMs) || testTimeoutMs <= 0 || testTimeoutMs > 3600000) {
+        return reply.badRequest('testTimeoutMs must be a positive integer up to 3600000');
+      }
+    }
+
+    const db = getDb();
     const existing = await projectsQ.getById(db, id);
     if (!existing) {
       return reply.notFound(`Project not found: ${id}`);
@@ -85,9 +115,11 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
 
   // DELETE /projects/:id - reject with 409 if any data exists
   fastify.delete<{ Params: { id: string } }>('/projects/:id', async (request, reply) => {
-    const db = getDb();
     const { id } = request.params;
-
+    if (!projectsQ.isValidProjectId(id)) {
+      return reply.badRequest('Invalid project ID format');
+    }
+    const db = getDb();
     const existing = await projectsQ.getById(db, id);
     if (!existing) {
       return reply.notFound(`Project not found: ${id}`);

@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { projects } from '../schema/tables.js';
+import { projects, agents, buildHistory, messages, tasks, files, ubtLock, ubtQueue, rooms, teams } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 
 export interface ProjectRow {
@@ -60,7 +60,7 @@ export async function create(db: DrizzleDb, opts: CreateProjectOpts): Promise<Pr
 }
 
 export async function update(db: DrizzleDb, id: string, opts: UpdateProjectOpts): Promise<ProjectRow | null> {
-  const set: Record<string, unknown> = {};
+  const set: Partial<typeof projects.$inferInsert> = {};
   if (opts.name !== undefined) set.name = opts.name;
   if (opts.engineVersion !== undefined) set.engineVersion = opts.engineVersion;
   if (opts.seedBranch !== undefined) set.seedBranch = opts.seedBranch;
@@ -87,25 +87,26 @@ export async function remove(db: DrizzleDb, id: string): Promise<boolean> {
 /**
  * Seed projects from config JSON. INSERT-only: skip if already exists.
  */
-export async function seedFromConfig(db: DrizzleDb, projectIds: string[]): Promise<{ inserted: string[]; skipped: string[] }> {
+export async function seedFromConfig(db: DrizzleDb, projectEntries: Array<{ id: string; name?: string }>): Promise<{ inserted: string[]; skipped: string[]; invalid: string[] }> {
   const inserted: string[] = [];
   const skipped: string[] = [];
+  const invalid: string[] = [];
 
-  for (const id of projectIds) {
-    if (!isValidProjectId(id)) {
-      skipped.push(id);
+  for (const entry of projectEntries) {
+    if (!isValidProjectId(entry.id)) {
+      invalid.push(entry.id);
       continue;
     }
-    const existing = await getById(db, id);
+    const existing = await getById(db, entry.id);
     if (existing) {
-      skipped.push(id);
+      skipped.push(entry.id);
     } else {
-      await create(db, { id, name: id });
-      inserted.push(id);
+      await create(db, { id: entry.id, name: entry.name ?? entry.id });
+      inserted.push(entry.id);
     }
   }
 
-  return { inserted, skipped };
+  return { inserted, skipped, invalid };
 }
 
 /**
@@ -113,9 +114,6 @@ export async function seedFromConfig(db: DrizzleDb, projectIds: string[]): Promi
  * Used to prevent deletion of projects that still have associated data.
  */
 export async function hasReferencingData(db: DrizzleDb, projectId: string): Promise<boolean> {
-  // Import all tables that have project_id
-  const { agents, buildHistory, messages, tasks, files, ubtLock, ubtQueue, rooms, teams } = await import('../schema/tables.js');
-
   const tablesToCheck = [
     { table: agents, col: agents.projectId },
     { table: buildHistory, col: buildHistory.projectId },

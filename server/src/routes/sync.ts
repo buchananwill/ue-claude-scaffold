@@ -19,7 +19,7 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
   fastify.post<{
     Body: { targetAgents?: string[] | string };
   }>('/sync/plans', async (request, reply) => {
-    const projectId = (request.headers['x-project-id'] as string) || 'default';
+    const projectId = request.projectId;
     let project;
     try {
       project = getProject(config, projectId);

@@ -30,13 +30,19 @@ await initDrizzle({ pgliteDataDir });
 // Seed projects from config into DB (INSERT-only, skip existing)
 {
   const db = getDb();
-  const projectIds = Object.keys(config.resolvedProjects);
-  const { inserted, skipped } = await seedFromConfig(db, projectIds);
+  const projectEntries = Object.entries(config.resolvedProjects).map(([id, proj]) => ({
+    id,
+    name: proj.name,
+  }));
+  const { inserted, skipped, invalid } = await seedFromConfig(db, projectEntries);
   if (inserted.length > 0) {
     console.log(`Seeded projects: ${inserted.join(', ')}`);
   }
   if (skipped.length > 0) {
     console.log(`Skipped existing projects: ${skipped.join(', ')}`);
+  }
+  if (invalid.length > 0) {
+    console.error(`Invalid project IDs skipped during seed: ${invalid.join(', ')}`);
   }
 }
 

@@ -5,7 +5,7 @@ import * as agentsQ from '../queries/agents.js';
 
 const coalescePlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get('/coalesce/status', async (request) => {
-    const projectId = (request.headers['x-project-id'] as string) || 'default';
+    const projectId = request.projectId;
     const db = getDb();
 
     const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
@@ -50,7 +50,7 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.post('/coalesce/pause', async (request) => {
-    const projectId = (request.headers['x-project-id'] as string) || 'default';
+    const projectId = request.projectId;
     const db = getDb();
 
     await coalesceQ.pausePumpAgents(db, projectId);
@@ -67,7 +67,7 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.post('/coalesce/release', async (request) => {
-    const projectId = (request.headers['x-project-id'] as string) || 'default';
+    const projectId = request.projectId;
     const db = getDb();
 
     const result = await db.transaction(async (tx) => {

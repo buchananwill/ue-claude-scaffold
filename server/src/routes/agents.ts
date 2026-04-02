@@ -42,7 +42,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     Body: { name: string; worktree: string; planDoc?: string; mode?: 'single' | 'pump'; containerHost?: string };
   }>('/agents/register', async (request) => {
     const { name, worktree, planDoc, mode, containerHost } = request.body;
-    const projectId = (request.headers['x-project-id'] as string) || 'default';
+    const projectId = request.projectId;
     const sessionToken = randomBytes(16).toString('hex');
     const db = getDb();
 
