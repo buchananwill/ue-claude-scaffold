@@ -44,7 +44,7 @@ export async function register(db: DrizzleDb, opts: RegisterOpts) {
         status: 'idle',
         mode,
         registeredAt: sql`now()`,
-        containerHost: sql`COALESCE(${containerHost}, ${agents.containerHost})`,
+        containerHost: sql`COALESCE(excluded.container_host, ${agents.containerHost})`,
         sessionToken,
         projectId,
       },

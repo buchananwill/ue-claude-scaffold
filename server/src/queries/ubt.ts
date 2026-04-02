@@ -52,18 +52,24 @@ export async function enqueue(
 }
 
 export async function dequeue(db: DrizzleDb, projectId: string = 'default') {
-  // Select the highest-priority entry, then delete it
-  const top = await db
-    .select()
-    .from(ubtQueue)
-    .where(eq(ubtQueue.projectId, projectId))
-    .orderBy(desc(ubtQueue.priority), asc(ubtQueue.id))
-    .limit(1);
-
-  if (top.length === 0) return null;
-
-  await db.delete(ubtQueue).where(eq(ubtQueue.id, top[0].id));
-  return top[0];
+  // Atomic delete+return via subquery — avoids TOCTOU race under concurrent access
+  const rows = await db.execute<{
+    id: number;
+    project_id: string;
+    agent: string;
+    priority: number;
+    requested_at: Date;
+  }>(sql`
+    DELETE FROM ubt_queue
+    WHERE id = (
+      SELECT id FROM ubt_queue
+      WHERE project_id = ${projectId}
+      ORDER BY priority DESC, id ASC
+      LIMIT 1
+    )
+    RETURNING *
+  `);
+  return rows.rows[0] ?? null;
 }
 
 export async function getQueue(db: DrizzleDb, projectId: string = 'default') {

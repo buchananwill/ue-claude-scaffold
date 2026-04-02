@@ -57,6 +57,23 @@ describe('agents queries', () => {
     assert.equal(agent.projectId, 'proj-x');
   });
 
+  it('should preserve containerHost on re-register with null', async () => {
+    await agentQ.register(db, {
+      name: 'agent-host-test',
+      worktree: 'docker/agent-host-test',
+      containerHost: 'host-a',
+    });
+    // Re-register without containerHost — should keep 'host-a'
+    await agentQ.register(db, {
+      name: 'agent-host-test',
+      worktree: 'docker/agent-host-test-v2',
+    });
+    const agent = await agentQ.getByName(db, 'agent-host-test');
+    assert.ok(agent);
+    assert.equal(agent.containerHost, 'host-a');
+    assert.equal(agent.worktree, 'docker/agent-host-test-v2');
+  });
+
   it('should get all agents', async () => {
     await agentQ.register(db, { name: 'agent-2', worktree: 'docker/agent-2' });
     const all = await agentQ.getAll(db);
