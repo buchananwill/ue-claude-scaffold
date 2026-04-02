@@ -1,22 +1,48 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
-import { writeFileSync, chmodSync, mkdirSync } from 'node:fs';
+import { createTestConfig } from '../test-helper.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { mkdtempSync, unlinkSync, rmdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { openDb } from '../db.js';
 import buildPlugin, { isUbtContentionResult } from './build.js';
-import agentsPlugin from './agents.js';
 import { initUbtStatements } from './ubt.js';
+import { agents } from '../schema/tables.js';
+
+/**
+ * build.ts still uses recordBuildStart/recordBuildEnd from ubt.ts (SQLite)
+ * during the transition. We need both a SQLite DB (for ubt recording) and
+ * a Drizzle instance (for agent/lock queries).
+ */
+function createSqliteForUbt() {
+  const tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-test-'));
+  const dbPath = path.join(tmpDir, 'test.db');
+  openDb(dbPath);
+  initUbtStatements();
+  return {
+    cleanup: () => {
+      try { unlinkSync(dbPath); } catch {}
+      try { unlinkSync(dbPath + '-wal'); } catch {}
+      try { unlinkSync(dbPath + '-shm'); } catch {}
+      try { rmdirSync(tmpDir); } catch {}
+    },
+  };
+}
 
 describe('build routes', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
+  let sqliteCleanup: () => void;
   let mockScriptPath: string;
+  let tmpDir: string;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
 
-    // Create a mock build/test script (a node script that prints to stdout/stderr)
-    mockScriptPath = path.join(ctx.tmpDir, 'mock-build.js');
+    tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-test-'));
+    mockScriptPath = path.join(tmpDir, 'mock-build.js');
     writeFileSync(
       mockScriptPath,
       `process.stdout.write('build output line\\n');
@@ -25,8 +51,8 @@ process.exit(0);
 `
     );
 
-    // initUbtStatements must be called since build.ts uses isStale which depends on ubt statements
-    initUbtStatements();
+    const sqlite = createSqliteForUbt();
+    sqliteCleanup = sqlite.cleanup;
 
     const config = createTestConfig({
       build: {
@@ -41,7 +67,7 @@ process.exit(0);
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
-        bareRepoPath: ctx.tmpDir,
+        bareRepoPath: tmpDir,
       },
     });
 
@@ -50,17 +76,17 @@ process.exit(0);
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
+    sqliteCleanup();
+    try { rmdirSync(tmpDir, { recursive: true } as any); } catch {}
   });
 
   it('POST /build returns the correct response shape', async () => {
-    // syncWorktree will likely fail (no real git repo), so we test the shape
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
       payload: {},
     });
-    // We expect either a success response or a syncWorktree failure with the right shape
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.equal(typeof body.success, 'boolean');
@@ -85,15 +111,18 @@ process.exit(0);
 });
 
 describe('build route branch resolution', () => {
-  let ctx: TestContext;
+  let ctx: DrizzleTestContext;
+  let sqliteCleanup: () => void;
   let mockScriptPath: string;
   let stagingRoot: string;
   let projectPath: string;
+  let tmpDir: string;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createDrizzleTestApp();
 
-    mockScriptPath = path.join(ctx.tmpDir, 'mock-build.js');
+    tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-test-'));
+    mockScriptPath = path.join(tmpDir, 'mock-build.js');
     writeFileSync(
       mockScriptPath,
       `process.stdout.write('build output line\\n');
@@ -102,19 +131,17 @@ process.exit(0);
 `
     );
 
-    initUbtStatements();
+    const sqlite = createSqliteForUbt();
+    sqliteCleanup = sqlite.cleanup;
 
-    // Create a bare repo so git fetch can run and fail on the branch name
-    const bareRepoDir = path.join(ctx.tmpDir, 'bare.git');
+    const bareRepoDir = path.join(tmpDir, 'bare.git');
     mkdirSync(bareRepoDir);
     execSync('git init --bare', { cwd: bareRepoDir, stdio: 'ignore' });
 
-    // Create staging worktree root and a project path directory, each with a git repo
-    // so that git fetch actually runs and produces an error mentioning the branch name.
-    stagingRoot = path.join(ctx.tmpDir, 'staging');
+    stagingRoot = path.join(tmpDir, 'staging');
     mkdirSync(stagingRoot);
 
-    projectPath = path.join(ctx.tmpDir, 'project');
+    projectPath = path.join(tmpDir, 'project');
     mkdirSync(projectPath);
     execSync('git init', { cwd: projectPath, stdio: 'ignore' });
 
@@ -141,18 +168,17 @@ process.exit(0);
       },
     });
 
-    // Register both agents and build plugins so we can register agents and test branch resolution
-    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(buildPlugin, { config });
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
+    sqliteCleanup();
+    try { rmdirSync(tmpDir, { recursive: true } as any); } catch {}
   });
 
   it('defaults to docker/current-root when no agent is registered', async () => {
-    // Create staging dir for this agent name and init git so git fetch actually runs
     const agentDir = path.join(stagingRoot, 'unknown-agent');
     mkdirSync(agentDir);
     execSync('git init', { cwd: agentDir, stdio: 'ignore' });
@@ -188,18 +214,16 @@ process.exit(0);
   });
 
   it('uses agent-specific branch when agent is registered with a worktree', async () => {
-    // Create staging dir for this agent and init git
     const agentDir = path.join(stagingRoot, 'test-agent');
     mkdirSync(agentDir);
     execSync('git init', { cwd: agentDir, stdio: 'ignore' });
 
-    // Register an agent with a specific worktree/branch
-    const regRes = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name: 'test-agent', worktree: 'docker/test-agent' },
+    // Register agent directly via Drizzle
+    await ctx.db.insert(agents).values({
+      name: 'test-agent',
+      worktree: 'docker/test-agent',
+      projectId: 'default',
     });
-    assert.equal(regRes.statusCode, 200);
 
     const res = await ctx.app.inject({
       method: 'POST',
@@ -217,15 +241,14 @@ process.exit(0);
   });
 
   it('uses agent-specific branch for /test endpoint too', async () => {
-    // Create staging dir for this agent and init git
     const agentDir = path.join(stagingRoot, 'test-agent');
     mkdirSync(agentDir);
     execSync('git init', { cwd: agentDir, stdio: 'ignore' });
 
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name: 'test-agent', worktree: 'docker/test-agent' },
+    await ctx.db.insert(agents).values({
+      name: 'test-agent',
+      worktree: 'docker/test-agent',
+      projectId: 'default',
     });
 
     const res = await ctx.app.inject({
@@ -339,5 +362,4 @@ describe('UBT contention detection and retry', () => {
       );
     });
   });
-
 });

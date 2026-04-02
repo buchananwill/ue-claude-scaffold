@@ -70,6 +70,21 @@ export function getDb(): DrizzleDb {
   return instance;
 }
 
+/** Return the Drizzle instance, or null if not yet initialised. */
+export function tryGetDb(): DrizzleDb | null {
+  return instance;
+}
+
+/**
+ * Replace the singleton instance (test-only).
+ * Returns a restore function that puts the previous value back.
+ */
+export function _setInstanceForTest(db: DrizzleDb): () => void {
+  const prev = instance;
+  instance = db;
+  return () => { instance = prev; };
+}
+
 /** Tear down the connection (useful in tests). */
 export async function closeDrizzle(): Promise<void> {
   if (pgPool) {

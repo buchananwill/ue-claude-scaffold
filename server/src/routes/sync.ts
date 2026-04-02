@@ -2,7 +2,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ScaffoldConfig } from '../config.js';
 import { getProject } from '../config.js';
 import { syncExteriorToBareRepo, mergeIntoBranch } from '../git-utils.js';
-import { db } from '../db.js';
+import { getDb } from '../drizzle-instance.js';
+import * as agentsQ from '../queries/agents.js';
 
 interface SyncOpts {
   config: ScaffoldConfig;
@@ -69,10 +70,7 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
     if (targetAgents) {
       let agentNames: string[];
       if (targetAgents === '*') {
-        const activeAgents = db.prepare(
-          "SELECT name FROM agents WHERE status NOT IN ('done', 'error')"
-        ).all() as Array<{ name: string }>;
-        agentNames = activeAgents.map(a => a.name);
+        agentNames = await agentsQ.getActiveNames(getDb());
       } else if (Array.isArray(targetAgents)) {
         agentNames = targetAgents;
       } else {

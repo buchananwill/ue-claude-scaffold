@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './config.js';
 import { openDb } from './db.js';
+import { initDrizzle } from './drizzle-instance.js';
+import projectIdPlugin from './plugins/project-id.js';
 import {
   healthPlugin,
   agentsPlugin,
@@ -26,6 +28,7 @@ const __dirname = import.meta.dirname ?? path.dirname(fileURLToPath(import.meta.
 const config = loadConfig();
 const dbPath = path.join(__dirname, '..', 'coordination.db');
 openDb(dbPath);
+await initDrizzle({ pgliteDataDir: './data/pglite' });
 
 const server = Fastify({
   logger: true,
@@ -33,6 +36,7 @@ const server = Fastify({
 });
 
 await server.register(sensible);
+await server.register(projectIdPlugin);
 await server.register(healthPlugin, { dbPath, config });
 await server.register(agentsPlugin, { config });
 await server.register(messagesPlugin);

@@ -1,22 +1,35 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, type TestContext } from '../test-helper.js';
-import { initUbtStatements, recordBuildStart, recordBuildEnd } from './ubt.js';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
+import * as buildsQ from '../queries/builds.js';
+import { buildHistory } from '../schema/tables.js';
 import buildsPlugin from './builds.js';
 
-describe('builds routes', () => {
-  let ctx: TestContext;
+describe('builds routes (drizzle)', () => {
+  let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
-    ctx = await createTestApp();
-    initUbtStatements();
+    ctx = await createDrizzleTestApp();
     await ctx.app.register(buildsPlugin);
   });
 
   afterEach(async () => {
     await ctx.app.close();
-    ctx.cleanup();
+    await ctx.cleanup();
   });
+
+  async function recordBuild(agent: string, type: string, opts?: { durationMs?: number; success?: boolean; output?: string; stderr?: string }) {
+    const id = await buildsQ.insertHistory(ctx.db, { agent, type, projectId: 'default' });
+    if (opts?.durationMs !== undefined) {
+      await buildsQ.updateHistory(ctx.db, id, {
+        durationMs: opts.durationMs,
+        success: opts.success ?? true,
+        output: opts.output ?? '',
+        stderr: opts.stderr ?? '',
+      });
+    }
+    return id;
+  }
 
   it('GET /builds returns empty array initially', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/builds' });
@@ -25,8 +38,9 @@ describe('builds routes', () => {
   });
 
   it('GET /builds returns record with correct camelCase fields', async () => {
-    const id = recordBuildStart('agent-1', 'build');
-    recordBuildEnd(id, 1234, true, 'some output', 'some warning');
+    const id = await recordBuild('agent-1', 'build', {
+      durationMs: 1234, success: true, output: 'some output', stderr: 'some warning',
+    });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/builds' });
     assert.equal(res.statusCode, 200);
@@ -37,7 +51,7 @@ describe('builds routes', () => {
     assert.equal(rec.id, id);
     assert.equal(rec.agent, 'agent-1');
     assert.equal(rec.type, 'build');
-    assert.equal(typeof rec.startedAt, 'string');
+    assert.ok(rec.startedAt != null);
     assert.equal(rec.durationMs, 1234);
     assert.equal(rec.success, true);
     assert.equal(rec.output, 'some output');
@@ -45,10 +59,8 @@ describe('builds routes', () => {
   });
 
   it('filters by agent', async () => {
-    const id1 = recordBuildStart('agent-a', 'build');
-    recordBuildEnd(id1, 100, true, '', '');
-    const id2 = recordBuildStart('agent-b', 'build');
-    recordBuildEnd(id2, 200, true, '', '');
+    await recordBuild('agent-a', 'build', { durationMs: 100, success: true });
+    await recordBuild('agent-b', 'build', { durationMs: 200, success: true });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/builds?agent=agent-a' });
     const records = res.json();
@@ -57,10 +69,8 @@ describe('builds routes', () => {
   });
 
   it('filters by type', async () => {
-    const id1 = recordBuildStart('agent-1', 'build');
-    recordBuildEnd(id1, 100, true, '', '');
-    const id2 = recordBuildStart('agent-1', 'test');
-    recordBuildEnd(id2, 200, true, '', '');
+    await recordBuild('agent-1', 'build', { durationMs: 100, success: true });
+    await recordBuild('agent-1', 'test', { durationMs: 200, success: true });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/builds?type=test' });
     const records = res.json();
@@ -70,8 +80,7 @@ describe('builds routes', () => {
 
   it('limit param works', async () => {
     for (let i = 0; i < 5; i++) {
-      const id = recordBuildStart('agent-1', 'build');
-      recordBuildEnd(id, 100, true, '', '');
+      await recordBuild('agent-1', 'build', { durationMs: 100, success: true });
     }
 
     const res = await ctx.app.inject({ method: 'GET', url: '/builds?limit=2' });
@@ -80,12 +89,9 @@ describe('builds routes', () => {
   });
 
   it('since param works (exclusive: id > since)', async () => {
-    const id1 = recordBuildStart('agent-1', 'build');
-    recordBuildEnd(id1, 100, true, '', '');
-    const id2 = recordBuildStart('agent-1', 'build');
-    recordBuildEnd(id2, 200, true, '', '');
-    const id3 = recordBuildStart('agent-1', 'build');
-    recordBuildEnd(id3, 300, true, '', '');
+    const id1 = await recordBuild('agent-1', 'build', { durationMs: 100, success: true });
+    await recordBuild('agent-1', 'build', { durationMs: 200, success: true });
+    await recordBuild('agent-1', 'build', { durationMs: 300, success: true });
 
     const res = await ctx.app.inject({ method: 'GET', url: `/builds?since=${id1}` });
     const records = res.json();
@@ -94,8 +100,8 @@ describe('builds routes', () => {
   });
 
   it('records without output/stderr return null', async () => {
-    const { db } = await import('../db.js');
-    db.prepare('INSERT INTO build_history (agent, type) VALUES (?, ?)').run('agent-null', 'build');
+    // Insert a record without calling updateHistory (no duration/success/output/stderr)
+    await buildsQ.insertHistory(ctx.db, { agent: 'agent-null', type: 'build', projectId: 'default' });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/builds?agent=agent-null' });
     const records = res.json();
@@ -107,10 +113,8 @@ describe('builds routes', () => {
   });
 
   it('success is boolean (true/false), not integer (0/1)', async () => {
-    const id1 = recordBuildStart('agent-1', 'build');
-    recordBuildEnd(id1, 100, true, '', '');
-    const id2 = recordBuildStart('agent-1', 'build');
-    recordBuildEnd(id2, 200, false, '', '');
+    const id1 = await recordBuild('agent-1', 'build', { durationMs: 100, success: true });
+    const id2 = await recordBuild('agent-1', 'build', { durationMs: 200, success: false });
 
     const res = await ctx.app.inject({ method: 'GET', url: '/builds' });
     const records = res.json();

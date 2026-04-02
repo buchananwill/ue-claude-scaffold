@@ -1,4 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { tryGetDb } from '../drizzle-instance.js';
+import * as filesQ from '../queries/files.js';
 import { db } from '../db.js';
 
 interface FileRow {
@@ -15,6 +17,21 @@ const filesPlugin: FastifyPluginAsync = async (fastify) => {
     const { claimant, unclaimed, project } = request.query;
     const projectId = project || ((request.headers['x-project-id'] as string) || 'default');
 
+    // Use Drizzle if initialised, otherwise fall back to SQLite (transition period)
+    const drizzle = tryGetDb();
+    if (drizzle) {
+      const rows = await filesQ.list(drizzle, projectId, {
+        claimant: claimant || undefined,
+        unclaimed: unclaimed === 'true',
+      });
+      return rows.map((r) => ({
+        path: r.path,
+        claimant: r.claimant,
+        claimedAt: r.claimedAt,
+      }));
+    }
+
+    // SQLite fallback
     let sql = 'SELECT * FROM files WHERE project_id = ?';
     const params: unknown[] = [projectId];
 
