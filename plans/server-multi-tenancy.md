@@ -56,26 +56,7 @@ projects
   created_at       timestamp DEFAULT now()
 ```
 
-### 1.1b Path Fields Stay in `scaffold.config.json`
-
-The following fields are local environment config and remain in the JSON, keyed by project ID:
-
-- `path` (host project path)
-- `uproject_file`
-- `bare_repo_path`
-- `tasks_path`
-- `engine_path`
-- `build_script_path`
-- `test_script_path`
-- `staging_worktree_root`
-- `staging_copies` (array of `{source, relativeDest}`)
-
-These are inherently local: they differ per machine, have no meaning outside the host, and must not be served via API
-or replicated.
-
-**Files:**
-
-- Modify: `server/src/schema/tables.ts`
+**Files:** Modify `server/src/schema/tables.ts`
 
 ### 1.2 Seed from JSON Config
 
@@ -103,9 +84,7 @@ PATCH  /projects/:id          - update project config
 DELETE /projects/:id          - reject with 409 if any data exists for this project
 ```
 
-**Files:**
-
-- New: `server/src/routes/projects.ts`
+**Files:** New `server/src/routes/projects.ts`
 
 ### 1.4 Refactor `getProject()` and Route Handlers
 
@@ -145,17 +124,7 @@ project ID, but only carries path/environment data.
 - Drop project info from health (it's a server-level endpoint), or
 - Accept `x-project-id` and return that project's name from the DB
 
-**Files:**
-
-- Modify: `server/src/routes/health.ts`
-
-### 1.7 Tests for Phase 1
-
-Write tests for the new projects CRUD endpoints and the seed-from-JSON behaviour.
-
-**Files:**
-
-- New: `server/src/routes/projects.test.ts`
+**Files:** Modify `server/src/routes/health.ts`
 
 ### Design Decisions (Phase 1)
 
@@ -188,79 +157,19 @@ shifts from `docker/current-root` to `docker/{project-id}/current-root`. Explici
 route variables, helper functions, shell scripts). The old name was confusing because "plan" is overloaded with task
 `sourcePath` references. "Seed" reflects the actual role: the branch that fresh containers start from.
 
-### 2.1 Write Failing Tests
-
-**Files:**
-
-- Create: `server/src/branch-naming.test.ts`
-
-```ts
-// server/src/branch-naming.test.ts
-import {describe, it} from 'node:test';
-import assert from 'node:assert/strict';
-import {seedBranchFor, agentBranchFor} from './branch-naming.js';
-
-describe('seedBranchFor', () => {
-    it('returns docker/{projectId}/current-root when no override', () => {
-        assert.equal(seedBranchFor('piste-perfect'), 'docker/piste-perfect/current-root');
-    });
-
-    it('returns explicit seedBranch when provided', () => {
-        assert.equal(
-            seedBranchFor('piste-perfect', {seedBranch: 'custom/branch'}),
-            'custom/branch',
-        );
-    });
-
-    it('works with default project id', () => {
-        assert.equal(seedBranchFor('default'), 'docker/default/current-root');
-    });
-});
-
-describe('agentBranchFor', () => {
-    it('returns docker/{projectId}/{agentName}', () => {
-        assert.equal(agentBranchFor('piste-perfect', 'agent-1'), 'docker/piste-perfect/agent-1');
-    });
-
-    it('works with default project id', () => {
-        assert.equal(agentBranchFor('default', 'agent-1'), 'docker/default/agent-1');
-    });
-});
-```
-
-### 2.2 Write Implementation
-
-**Files:**
-
-- Create: `server/src/branch-naming.ts`
+### API
 
 ```ts
 // server/src/branch-naming.ts
 
-/**
- * Compute the seed branch for a project.
- * If the project config specifies an explicit seedBranch, use it;
- * otherwise derive from the project ID.
- */
-export function seedBranchFor(
-    projectId: string,
-    projectConfig?: { seedBranch?: string | null },
-): string {
-    return projectConfig?.seedBranch ?? `docker/${projectId}/current-root`;
-}
+seedBranchFor(projectId: string, projectConfig?: { seedBranch?: string | null }): string
+// Returns projectConfig.seedBranch if set, otherwise `docker/${projectId}/current-root`
 
-/**
- * Compute the working branch for a specific agent within a project.
- */
-export function agentBranchFor(projectId: string, agentName: string): string {
-    return `docker/${projectId}/${agentName}`;
-}
+agentBranchFor(projectId: string, agentName: string): string
+// Returns `docker/${projectId}/${agentName}`
 ```
 
-### 2.3 Run Tests
-
-Run: `cd server && npx tsx --test src/branch-naming.test.ts`
-Expected: 5 passing tests.
+**Files:** New `server/src/branch-naming.ts`
 
 ---
 
@@ -275,7 +184,7 @@ row, so `seedBranchFor(projectId, project)` reads `project.seedBranch` from it.
 
 ### 3.1 Update `agents.ts`
 
-Add import, replace lines 184-185:
+Replace lines 184-185 with:
 
 ```ts
 const seedBranch = seedBranchFor(projectId, project);
@@ -310,7 +219,7 @@ Same pattern at each location (lines 85, 164, 167, 283, 490):
 
 ### 3.5 Update `tasks-files.ts`, `tasks-lifecycle.ts`, `tasks-claim.ts`
 
-Same pattern: add import, replace `'docker/current-root'` fallbacks with `seedBranchFor(projectId, project)`.
+Same pattern: replace `'docker/current-root'` fallbacks with `seedBranchFor(projectId, project)`.
 
 **Files:**
 
@@ -318,44 +227,19 @@ Same pattern: add import, replace `'docker/current-root'` fallbacks with `seedBr
 - `server/src/routes/tasks-lifecycle.ts`
 - `server/src/routes/tasks-claim.ts`
 
----
+### 3.6 Update Existing Tests
 
-## Phase 4: Update Server Tests
+All branch string references in existing tests must use the namespaced convention:
 
-Update all branch string references in existing tests to use the namespaced convention.
-
-### 4.1 Update `agents.test.ts`
-
-Replace:
-
-- `initBareRepoWithBranch(tmpDir, 'docker/current-root')` with `'docker/default/current-root'`
-- `refs/heads/docker/test-agent` with `refs/heads/docker/default/test-agent`
-- Related assertions and display strings
-
-**Files:** `server/src/routes/agents.test.ts`
-
-### 4.2 Update `build.test.ts`
-
-Replace branch strings in assertions and test agent worktree values.
-
-**Files:** `server/src/routes/build.test.ts`
-
-### 4.3 Update `tasks.test.ts`
-
-Replace `initBareRepoWithBranch` calls and `update-ref` commands.
-
-**Files:** `server/src/routes/tasks.test.ts`
-
-### 4.4 Run Full Test Suite
-
-Run: `cd server && npm test`
-Expected: ALL tests pass.
+- `initBareRepoWithBranch(tmpDir, 'docker/current-root')` becomes `'docker/default/current-root'`
+- `refs/heads/docker/test-agent` becomes `refs/heads/docker/default/test-agent`
+- Same pattern across `agents.test.ts`, `build.test.ts`, `tasks.test.ts`
 
 ---
 
-## Phase 5: Update Shell Scripts
+## Phase 4: Update Shell Scripts
 
-### 5.1 Update `launch.sh`
+### 4.1 Update `launch.sh`
 
 Branch construction (line 249-251):
 
@@ -380,7 +264,7 @@ Smoke test: `./launch.sh --project content-catalogue-dashboard --dry-run`
 
 **Files:** `launch.sh`
 
-### 5.2 Agent Collision Guard in `launch.sh`
+### 4.2 Agent Collision Guard in `launch.sh`
 
 Before launching the Docker container, `launch.sh` must query the server to check whether the target agent name is
 already active. If `GET /agents/{name}` returns a registered agent with status `active` (or any non-terminated state),
@@ -396,12 +280,9 @@ if curl -sf "http://localhost:${SERVER_PORT}/agents/${AGENT_NAME}" \
 fi
 ```
 
-This prevents the scenario where two containers target the same agent branch, causing push conflicts and data
-corruption. The check is cheap (single HTTP GET) and runs before any Docker resources are allocated.
-
 **Files:** `launch.sh`
 
-### 5.3 Update `setup.sh`
+### 4.3 Update `setup.sh`
 
 Update `ensure_bare_repo` to accept project ID as a parameter and create `docker/{project-id}/current-root` instead of
 `docker/current-root`.
@@ -414,7 +295,7 @@ Validate: `bash -n setup.sh`
 
 **Files:** `setup.sh`
 
-### 5.4 Migration Path for Existing Bare Repos
+### 4.4 Migration Path for Existing Bare Repos
 
 In `ensure_bare_repo`, after checking that the bare repo exists, detect old-style `docker/current-root` branches and
 copy them to `docker/{project-id}/current-root`:
@@ -427,13 +308,13 @@ copy them to `docker/{project-id}/current-root`:
 
 ---
 
-## Phase 6: Update Config Examples and Documentation
+## Phase 5: Update Config Examples and Documentation
 
-### 6.1 `scaffold.config.example.json`
+### 5.1 `scaffold.config.example.json`
 
 Rename `planBranch`/`defaultBranch` to `seedBranch`. Update examples to `docker/{project-id}/current-root`.
 
-### 6.2 `CLAUDE.md`
+### 5.2 `CLAUDE.md`
 
 Update the branch model section and Git Data Flow diagram:
 
@@ -445,7 +326,7 @@ docker/{project-id}/agent-2         <- agent-2's working branch
 
 Update `--fresh` description.
 
-### 6.3 Skill Files
+### 5.3 Skill Files
 
 In each container-git skill and `cleanup-session-protocol`, replace:
 
