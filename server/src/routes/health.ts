@@ -2,15 +2,15 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ScaffoldConfig } from '../config.js';
 
 interface HealthOpts {
-  dbPath: string;
   config: ScaffoldConfig;
+  pgliteDataDir?: string;
 }
 
 const healthPlugin: FastifyPluginAsync<HealthOpts> = async (fastify, opts) => {
   fastify.get('/health', async () => {
     return {
       status: 'ok',
-      dbPath: opts.dbPath,
+      db: `PGlite (${opts.pgliteDataDir ?? 'in-memory'})`,
       config: {
         port: opts.config.server.port,
         projectName: opts.config.project.name,

@@ -30,14 +30,11 @@
   "dependencies": {
     "@electric-sql/pglite": "^0.4.2",
     "@fastify/sensible": "^6",
-    "@supabase/supabase-js": "^2.100.1",
-    "better-sqlite3": "^11",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5",
     "pg": "^8.20.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7",
     "@types/node": "^22",
     "@types/pg": "^8.20.0",
     "c8": "^11.0.0",

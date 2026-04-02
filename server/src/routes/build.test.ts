@@ -4,37 +4,14 @@ import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, unlinkSync, rmdirSync } from 'node:fs';
+import { mkdtempSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { openDb } from '../db.js';
 import buildPlugin, { isUbtContentionResult } from './build.js';
-import { initUbtStatements } from './ubt.js';
 import { agents } from '../schema/tables.js';
-
-/**
- * build.ts still uses recordBuildStart/recordBuildEnd from ubt.ts (SQLite)
- * during the transition. We need both a SQLite DB (for ubt recording) and
- * a Drizzle instance (for agent/lock queries).
- */
-function createSqliteForUbt() {
-  const tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-test-'));
-  const dbPath = path.join(tmpDir, 'test.db');
-  openDb(dbPath);
-  initUbtStatements();
-  return {
-    cleanup: () => {
-      try { unlinkSync(dbPath); } catch {}
-      try { unlinkSync(dbPath + '-wal'); } catch {}
-      try { unlinkSync(dbPath + '-shm'); } catch {}
-      try { rmdirSync(tmpDir); } catch {}
-    },
-  };
-}
 
 describe('build routes', () => {
   let ctx: DrizzleTestContext;
-  let sqliteCleanup: () => void;
   let mockScriptPath: string;
   let tmpDir: string;
 
@@ -50,9 +27,6 @@ process.stderr.write('build warning\\n');
 process.exit(0);
 `
     );
-
-    const sqlite = createSqliteForUbt();
-    sqliteCleanup = sqlite.cleanup;
 
     const config = createTestConfig({
       build: {
@@ -77,7 +51,6 @@ process.exit(0);
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    sqliteCleanup();
     try { rmdirSync(tmpDir, { recursive: true } as any); } catch {}
   });
 
@@ -112,7 +85,6 @@ process.exit(0);
 
 describe('build route branch resolution', () => {
   let ctx: DrizzleTestContext;
-  let sqliteCleanup: () => void;
   let mockScriptPath: string;
   let stagingRoot: string;
   let projectPath: string;
@@ -130,9 +102,6 @@ process.stderr.write('build warning\\n');
 process.exit(0);
 `
     );
-
-    const sqlite = createSqliteForUbt();
-    sqliteCleanup = sqlite.cleanup;
 
     const bareRepoDir = path.join(tmpDir, 'bare.git');
     mkdirSync(bareRepoDir);
@@ -174,7 +143,6 @@ process.exit(0);
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    sqliteCleanup();
     try { rmdirSync(tmpDir, { recursive: true } as any); } catch {}
   });
 

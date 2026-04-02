@@ -1,10 +1,7 @@
-import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import Fastify, { type FastifyInstance } from 'fastify';
-import sensible from '@fastify/sensible';
 import type { ScaffoldConfig } from './config.js';
-import { openDb } from './db.js';
+
+// Re-export the Drizzle test helper as the canonical test app factory
+export { createDrizzleTestApp, type DrizzleTestContext } from './drizzle-test-helper.js';
 
 export function createTestConfig(overrides?: Partial<ScaffoldConfig>): ScaffoldConfig {
   const base: ScaffoldConfig = {
@@ -64,30 +61,4 @@ export function createTestConfig(overrides?: Partial<ScaffoldConfig>): ScaffoldC
   }
 
   return base;
-}
-
-export interface TestContext {
-  app: FastifyInstance;
-  dbPath: string;
-  tmpDir: string;
-  cleanup: () => void;
-}
-
-export async function createTestApp(): Promise<TestContext> {
-  const tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-test-'));
-  const dbPath = path.join(tmpDir, 'test.db');
-
-  openDb(dbPath);
-
-  const app = Fastify({ logger: false });
-  await app.register(sensible);
-
-  const cleanup = () => {
-    try { unlinkSync(dbPath); } catch {}
-    try { unlinkSync(dbPath + '-wal'); } catch {}
-    try { unlinkSync(dbPath + '-shm'); } catch {}
-    try { rmdirSync(tmpDir); } catch {}
-  };
-
-  return { app, dbPath, tmpDir, cleanup };
 }

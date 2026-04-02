@@ -1,9 +1,6 @@
 import Fastify from 'fastify';
 import sensible from '@fastify/sensible';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { loadConfig } from './config.js';
-import { openDb } from './db.js';
 import { initDrizzle } from './drizzle-instance.js';
 import projectIdPlugin from './plugins/project-id.js';
 import {
@@ -23,12 +20,9 @@ import {
 } from './routes/index.js';
 import { sweepStaleLock } from './routes/ubt.js';
 
-const __dirname = import.meta.dirname ?? path.dirname(fileURLToPath(import.meta.url));
-
 const config = loadConfig();
-const dbPath = path.join(__dirname, '..', 'coordination.db');
-openDb(dbPath);
-await initDrizzle({ pgliteDataDir: './data/pglite' });
+const pgliteDataDir = './data/pglite';
+await initDrizzle({ pgliteDataDir });
 
 const server = Fastify({
   logger: true,
@@ -37,7 +31,7 @@ const server = Fastify({
 
 await server.register(sensible);
 await server.register(projectIdPlugin);
-await server.register(healthPlugin, { dbPath, config });
+await server.register(healthPlugin, { config, pgliteDataDir });
 await server.register(agentsPlugin, { config });
 await server.register(messagesPlugin);
 await server.register(ubtPlugin, { config });
@@ -58,7 +52,7 @@ try {
   });
   console.log(`Coordination server listening at ${address}`);
   console.log(`  Project: ${config.project.name}`);
-  console.log(`  DB path: ${dbPath}`);
+  console.log(`  DB: PGlite (${pgliteDataDir})`);
   console.log(`  UBT lock timeout: ${config.server.ubtLockTimeoutMs}ms`);
 
   setInterval(() => {

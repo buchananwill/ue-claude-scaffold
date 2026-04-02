@@ -81,10 +81,6 @@ export async function sweepStaleLock(): Promise<void> {
   }
 }
 
-export function initUbtStatements(): void {
-  // No-op: query modules don't need init
-}
-
 const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
   _timeoutMs = opts.config.server.ubtLockTimeoutMs;
 

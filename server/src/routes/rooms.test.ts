@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestApp, createTestConfig, type TestContext } from '../test-helper.js';
+import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import { rooms, roomMembers } from '../schema/tables.js';
 import { eq } from 'drizzle-orm';

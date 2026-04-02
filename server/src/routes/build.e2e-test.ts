@@ -23,9 +23,10 @@ import { spawn, execSync } from 'node:child_process';
 import { existsSync, readFileSync, appendFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import Fastify from 'fastify';
+import sensible from '@fastify/sensible';
 import buildPlugin from './build.js';
-import { openDb, db } from '../db.js';
-import { initUbtStatements } from './ubt.js';
+import { initDrizzle, closeDrizzle } from '../drizzle-instance.js';
+import projectIdPlugin from '../plugins/project-id.js';
 import { loadConfig, type ScaffoldConfig } from '../config.js';
 
 // Resolve script path to interpreter + args (mirrors build.ts logic)
@@ -140,12 +141,11 @@ describe('E2E: UBT contention retry with real build', () => {
       },
     };
 
-    const os = await import('node:os');
-    const tmpDb = path.join(os.tmpdir(), `ubt-e2e-${Date.now()}.sqlite`);
-    openDb(tmpDb);
-    initUbtStatements();
+    await initDrizzle(); // in-memory PGlite
 
     const app = Fastify();
+    await app.register(sensible);
+    await app.register(projectIdPlugin);
     await app.register(buildPlugin, { config: testConfig });
     await app.ready();
 
@@ -162,6 +162,7 @@ describe('E2E: UBT contention retry with real build', () => {
     const directExitCode = await directDone;
 
     await app.close();
+    await closeDrizzle();
 
     // ── Step 4: Assertions ───────────────────────────────────────────────
     console.log(`Direct build exited with code ${directExitCode} (stdout: ${directStdout.length} bytes)`);
