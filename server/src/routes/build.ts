@@ -7,6 +7,7 @@ import { isStale, recordBuildStart, recordBuildEnd } from './ubt.js';
 import { ensureStagingPlugins } from '../staging-plugins.js';
 import { getDb } from '../drizzle-instance.js';
 import * as agentsQ from '../queries/agents.js';
+import * as projectsQ from '../queries/projects.js';
 import * as ubtQ from '../queries/ubt.js';
 
 interface BuildOpts {
@@ -121,7 +122,8 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   async function resolveProjectForAgent(agentName: string | undefined): Promise<ProjectConfig> {
     const projectId = await resolveProjectIdForAgent(agentName);
     try {
-      return getProject(config, projectId);
+      const dbRow = await projectsQ.getById(getDb(), projectId);
+      return getProject(config, projectId, dbRow ?? undefined);
     } catch {
       throw Object.assign(new Error(`Unknown project: "${projectId}"`), { statusCode: 400 });
     }

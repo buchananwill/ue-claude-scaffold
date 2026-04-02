@@ -6,6 +6,7 @@ import * as tasksCore from '../queries/tasks-core.js';
 import * as taskFilesQ from '../queries/task-files.js';
 import * as taskDepsQ from '../queries/task-deps.js';
 import * as compositionQ from '../queries/composition.js';
+import * as projectsQ from '../queries/projects.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
 
 export interface ConflictInfo {
@@ -115,7 +116,8 @@ export async function blockReasonsForTask(row: TaskRow, agent: string, config: S
   // Missing sourcePath check
   if (sp) {
     try {
-      const project = getProject(config, projectId);
+      const dbRow = await projectsQ.getById(db, projectId);
+      const project = getProject(config, projectId, dbRow ?? undefined);
       const bareRepo = project.bareRepoPath;
       if (bareRepo) {
         const planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';

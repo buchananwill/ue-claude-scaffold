@@ -5,6 +5,7 @@ import * as taskFilesQ from '../queries/task-files.js';
 import * as taskDepsQ from '../queries/task-deps.js';
 import * as compositionQ from '../queries/composition.js';
 import * as agentsQ from '../queries/agents.js';
+import * as projectsQ from '../queries/projects.js';
 import type { ScaffoldConfig } from '../config.js';
 import { getProject } from '../config.js';
 import { mergeIntoBranch, isCommittedInRepo, existsInBareRepo, syncExteriorToBareRepo } from '../git-utils.js';
@@ -72,7 +73,8 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if (sourcePath) {
       let project;
       try {
-        project = getProject(config, projectId);
+        const spDbRow = await projectsQ.getById(getDb(), projectId);
+        project = getProject(config, projectId, spDbRow ?? undefined);
       } catch {
         return reply.code(400).send({
           statusCode: 400,
@@ -149,7 +151,8 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
       let mergeProject;
       try {
-        mergeProject = getProject(config, projectId);
+        const dbRow = await projectsQ.getById(db, projectId);
+        mergeProject = getProject(config, projectId, dbRow ?? undefined);
       } catch {
         return reply.code(400).send({
           statusCode: 400,
@@ -270,7 +273,8 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       if (t.sourcePath) {
         let project;
         try {
-          project = getProject(config, projectId);
+          const dbRow = await projectsQ.getById(db, projectId);
+          project = getProject(config, projectId, dbRow ?? undefined);
         } catch {
           return reply.code(400).send({
             statusCode: 400,
@@ -477,7 +481,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if ('sourcePath' in body && typeof body.sourcePath === 'string') {
       let patchProject;
       try {
-        patchProject = getProject(config, row.projectId ?? (row as any).project_id);
+        const patchProjectId = row.projectId ?? (row as any).project_id;
+        const dbRow = await projectsQ.getById(db, patchProjectId);
+        patchProject = getProject(config, patchProjectId, dbRow ?? undefined);
       } catch {
         return reply.code(400).send({
           statusCode: 400,

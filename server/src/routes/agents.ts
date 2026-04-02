@@ -5,6 +5,7 @@ import * as agentsQ from '../queries/agents.js';
 import * as roomsQ from '../queries/rooms.js';
 import * as filesQ from '../queries/files.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
+import * as projectsQ from '../queries/projects.js';
 import type { ScaffoldConfig } from '../config.js';
 import { getProject } from '../config.js';
 import { mergeIntoBranch } from '../git-utils.js';
@@ -22,16 +23,16 @@ export interface AgentRow {
   projectId: string;
 }
 
-export function formatAgent(row: any) {
+export function formatAgent(row: AgentRow) {
   return {
     name: row.name,
     worktree: row.worktree,
-    planDoc: row.planDoc ?? row.plan_doc ?? null,
+    planDoc: row.planDoc ?? null,
     status: row.status,
     mode: row.mode,
-    registeredAt: row.registeredAt ?? row.registered_at ?? null,
-    containerHost: row.containerHost ?? row.container_host ?? null,
-    projectId: row.projectId ?? row.project_id ?? 'default',
+    registeredAt: row.registeredAt ?? null,
+    containerHost: row.containerHost ?? null,
+    projectId: row.projectId ?? 'default',
   };
 }
 
@@ -164,7 +165,8 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
 
     let project;
     try {
-      project = getProject(config, agent.projectId);
+      const dbRow = await projectsQ.getById(db, agent.projectId);
+      project = getProject(config, agent.projectId, dbRow ?? undefined);
     } catch {
       return reply.code(400).send({
         statusCode: 400,

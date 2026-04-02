@@ -5,6 +5,7 @@ import * as tasksClaimQ from '../queries/tasks-claim.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
 import * as taskFilesQ from '../queries/task-files.js';
 import * as agentsQ from '../queries/agents.js';
+import * as projectsQ from '../queries/projects.js';
 import { existsInBareRepo } from '../git-utils.js';
 import { getProject } from '../config.js';
 import type { TaskRow } from './tasks-types.js';
@@ -29,20 +30,22 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     if (!sp) return { valid: true };
     const taskProjectId = task.projectId ?? task.project_id ?? 'default';
 
+    const db = getDb();
+    const dbRow = await projectsQ.getById(db, taskProjectId);
+
     let bareRepo: string;
     try {
-      const project = getProject(config, taskProjectId);
+      const project = getProject(config, taskProjectId, dbRow ?? undefined);
       bareRepo = project.bareRepoPath;
     } catch {
       bareRepo = config.server.bareRepoPath;
     }
     if (!bareRepo) return { valid: true };
 
-    const db = getDb();
     const agentRow = await agentsQ.getWorktreeInfo(db, agent);
     let planBranch: string;
     try {
-      const project = getProject(config, taskProjectId);
+      const project = getProject(config, taskProjectId, dbRow ?? undefined);
       planBranch = project.planBranch ?? config.tasks?.planBranch ?? 'docker/current-root';
     } catch {
       planBranch = config.tasks?.planBranch ?? 'docker/current-root';

@@ -4,6 +4,7 @@ import { getProject } from '../config.js';
 import { syncExteriorToBareRepo, mergeIntoBranch } from '../git-utils.js';
 import { getDb } from '../drizzle-instance.js';
 import * as agentsQ from '../queries/agents.js';
+import * as projectsQ from '../queries/projects.js';
 
 interface SyncOpts {
   config: ScaffoldConfig;
@@ -22,7 +23,8 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
     const projectId = request.projectId;
     let project;
     try {
-      project = getProject(config, projectId);
+      const dbRow = await projectsQ.getById(getDb(), projectId);
+      project = getProject(config, projectId, dbRow ?? undefined);
     } catch {
       return reply.code(400).send({
         statusCode: 400,

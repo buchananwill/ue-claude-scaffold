@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { getDb } from '../drizzle-instance.js';
 import * as projectsQ from '../queries/projects.js';
 
-const projectsPlugin: FastifyPluginAsync<Record<never, never>> = async (fastify) => {
+const projectsPlugin: FastifyPluginAsync = async (fastify) => {
   // GET /projects - list all projects
   fastify.get('/projects', async () => {
     const db = getDb();
@@ -46,6 +46,31 @@ const projectsPlugin: FastifyPluginAsync<Record<never, never>> = async (fastify)
       return reply.badRequest(`Invalid project ID: must match [a-zA-Z0-9_-]{1,64}`);
     }
 
+    // Validate body field constraints
+    if (typeof name !== 'string' || name.length === 0 || name.length > 256) {
+      return reply.badRequest('name must be a non-empty string (max 256 chars)');
+    }
+    if (seedBranch !== undefined && seedBranch !== null) {
+      if (typeof seedBranch !== 'string' || !/^[a-zA-Z0-9/_.-]{1,200}$/.test(seedBranch)) {
+        return reply.badRequest('seedBranch must match ^[a-zA-Z0-9/_.-]{1,200}$');
+      }
+    }
+    if (engineVersion !== undefined && engineVersion !== null) {
+      if (typeof engineVersion !== 'string' || engineVersion.length > 64) {
+        return reply.badRequest('engineVersion must be a string (max 64 chars)');
+      }
+    }
+    if (buildTimeoutMs !== undefined && buildTimeoutMs !== null) {
+      if (!Number.isInteger(buildTimeoutMs) || buildTimeoutMs <= 0 || buildTimeoutMs > 3600000) {
+        return reply.badRequest('buildTimeoutMs must be a positive integer up to 3600000');
+      }
+    }
+    if (testTimeoutMs !== undefined && testTimeoutMs !== null) {
+      if (!Number.isInteger(testTimeoutMs) || testTimeoutMs <= 0 || testTimeoutMs > 3600000) {
+        return reply.badRequest('testTimeoutMs must be a positive integer up to 3600000');
+      }
+    }
+
     const existing = await projectsQ.getById(db, id);
     if (existing) {
       throw fastify.httpErrors.conflict(`Project already exists: ${id}`);
@@ -80,7 +105,7 @@ const projectsPlugin: FastifyPluginAsync<Record<never, never>> = async (fastify)
       return reply.badRequest('Invalid project ID format');
     }
 
-    // Validate body fields (item 10)
+    // Validate PATCH body field constraints
     const { name, seedBranch, buildTimeoutMs, testTimeoutMs } = request.body;
     if (name !== undefined) {
       if (typeof name !== 'string' || name.length === 0 || name.length > 256) {
