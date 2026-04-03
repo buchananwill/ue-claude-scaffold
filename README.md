@@ -181,7 +181,7 @@ build scripts) lives in `scaffold.config.json`.
 | `CLAUDE_CREDENTIALS_PATH` | Yes*     | —                        | Path to `.credentials.json` for OAuth auth |
 | `ANTHROPIC_API_KEY`       | Yes*     | —                        | API key for token-based auth               |
 | `AGENT_NAME`              | No       | `agent-1`                | Agent identifier                           |
-| `WORK_BRANCH`             | No       | `main`                   | Git branch for the agent to work on        |
+| `WORK_BRANCH`             | No       | (computed)               | Git branch for the agent -- normally set automatically by launch.sh |
 | `AGENT_TYPE`              | No       | `container-orchestrator` | Agent definition to use                    |
 | `MAX_TURNS`               | No       | `200`                    | Max Claude Code turns before stopping      |
 
@@ -204,7 +204,7 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 | `plugins.readOnlyMounts`     | Plugin paths to mount read-only in containers |
 | `container.agentType`        | Default agent type for containers             |
 | `container.maxTurns`         | Max turns for the agent                       |
-| `container.seedBranch`       | Seed branch for fresh containers              |
+| `container.seedBranch`       | Seed branch for fresh containers (shell-script convenience; server reads `tasks.seedBranch`) |
 | `server.port`                | Coordination server port                      |
 | `server.ubtLockTimeoutMs`    | Timeout for UBT lock acquisition              |
 | `server.stagingWorktreeRoot` | Path to the host-side staging worktree        |

@@ -15,7 +15,7 @@ You work on a single branch:
 
     docker/{project-id}/{agent-name}
 
-The integration branch is `docker/{project-id}/current-root`, synced from the exterior (host) repo. Your branch was forked from `docker/{project-id}/current-root` at launch.
+The seed branch is `docker/{project-id}/current-root`, synced from the exterior (host) repo. Your branch was forked from `docker/{project-id}/current-root` at launch.
 
 ### How Your Work Is Persisted
 

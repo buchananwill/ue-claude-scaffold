@@ -13,7 +13,7 @@ Each container agent works on its own branch:
 
     docker/{project-id}/{agent-name}
 
-The integration branch is `docker/{project-id}/current-root`, which is synced from the exterior (host) repo. Agent branches fork from `docker/{project-id}/current-root` on first launch.
+The seed branch is `docker/{project-id}/current-root`, which is synced from the exterior (host) repo. Agent branches fork from `docker/{project-id}/current-root` on first launch.
 
 ## Clone
 
