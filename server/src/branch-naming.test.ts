@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { seedBranchFor, agentBranchFor } from './branch-naming.js';
 
@@ -12,7 +12,7 @@ describe('seedBranchFor', () => {
   });
 
   it('returns default when config has undefined seedBranch', () => {
-    assert.equal(seedBranchFor('my-project', { seedBranch: undefined }), 'docker/my-project/current-root');
+    assert.equal(seedBranchFor('my-project', { seedBranch: undefined as unknown as string | null }), 'docker/my-project/current-root');
   });
 
   it('returns default when config has empty string seedBranch', () => {
@@ -27,6 +27,20 @@ describe('seedBranchFor', () => {
     assert.equal(seedBranchFor('alpha'), 'docker/alpha/current-root');
     assert.equal(seedBranchFor('beta-2'), 'docker/beta-2/current-root');
   });
+
+  it('throws on invalid seedBranch with path traversal', () => {
+    assert.throws(
+      () => seedBranchFor('proj', { seedBranch: 'refs/../../../config' }),
+      /Invalid seedBranch/
+    );
+  });
+
+  it('throws on invalid projectId', () => {
+    assert.throws(
+      () => seedBranchFor('../evil'),
+      /Invalid projectId/
+    );
+  });
 });
 
 describe('agentBranchFor', () => {
@@ -37,5 +51,33 @@ describe('agentBranchFor', () => {
   it('handles various project and agent names', () => {
     assert.equal(agentBranchFor('alpha', 'worker-3'), 'docker/alpha/worker-3');
     assert.equal(agentBranchFor('beta_project', 'implementer'), 'docker/beta_project/implementer');
+  });
+
+  it('throws on path-traversal projectId', () => {
+    assert.throws(
+      () => agentBranchFor('../evil', 'agent-1'),
+      /Invalid projectId/
+    );
+  });
+
+  it('throws on path-traversal agentName', () => {
+    assert.throws(
+      () => agentBranchFor('proj', '../other'),
+      /Invalid agentName/
+    );
+  });
+
+  it('throws on empty projectId', () => {
+    assert.throws(
+      () => agentBranchFor('', 'agent-1'),
+      /Invalid projectId/
+    );
+  });
+
+  it('throws on empty agentName', () => {
+    assert.throws(
+      () => agentBranchFor('proj', ''),
+      /Invalid agentName/
+    );
   });
 });
