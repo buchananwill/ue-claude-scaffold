@@ -36,6 +36,8 @@ export function DashboardLayout() {
       </AppShell.Header>
 
       <AppShell.Main>
+        {/* TanStack Router's NavLink+Link composition doesn't infer params types
+           for project-scoped routes; `as any` casts work around this limitation. */}
         <Group gap="xs" mb="md">
           <NavLink
             component={Link}

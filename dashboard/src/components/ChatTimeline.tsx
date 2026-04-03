@@ -70,13 +70,13 @@ export function ChatTimeline({
   };
 
   return (
-    <Box>
+    <Box style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {error && <Text c="red" size="sm" mb="xs">{error}</Text>}
       {loading && messages.length === 0 ? (
         <Text c="dimmed" ta="center">Loading...</Text>
       ) : (
         <>
-          <ScrollArea h="calc(100vh - 250px)" viewportRef={viewportRef}>
+          <ScrollArea style={{ flex: 1, minHeight: 0 }} viewportRef={viewportRef}>
             {hasOlder && (
               <Button variant="subtle" size="xs" onClick={onLoadOlder} loading={loadingOlder} mb="xs">
                 Load older

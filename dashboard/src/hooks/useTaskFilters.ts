@@ -182,8 +182,8 @@ export function useTaskFiltersUrlBacked(tasks: Task[]) {
   const page = search.page ?? 1;
 
   const setPage = (n: number) => {
-    // Cast needed: navigate's search callback types the prev parameter as the
-    // validated search shape, but we spread it generically to preserve all fields.
+    // prev: any — TanStack Router doesn't infer search param types when spreading
+    // generically to preserve all fields across navigate calls.
     navigate({ search: (prev: any) => ({ ...prev, page: n > 1 ? n : undefined }) });
   };
 

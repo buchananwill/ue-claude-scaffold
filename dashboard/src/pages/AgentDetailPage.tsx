@@ -42,6 +42,7 @@ export function AgentDetailPage() {
 
   return (
     <Stack gap="md">
+      {/* prev: any — TanStack Router doesn't infer search param types for cross-route Links */}
       <Text fz="sm"><Link to="/$projectId" params={{ projectId }} search={(prev: any) => prev} style={{ textDecoration: 'none' }}>&larr; Back to overview</Link></Text>
 
       {agent ? (

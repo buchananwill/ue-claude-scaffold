@@ -44,6 +44,7 @@ export function TeamCard({ team }: TeamCardProps) {
           ))}
         </Table.Tbody>
       </Table>
+      {/* as any: TanStack Router type inference limitation with project-scoped routes */}
       <Button
         component={Link}
         to="/$projectId/chat"

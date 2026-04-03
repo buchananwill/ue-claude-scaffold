@@ -3,6 +3,7 @@ import { IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
+import { notifications } from '@mantine/notifications';
 import { apiDelete } from '../api/client.ts';
 import type { Agent } from '../api/types.ts';
 import { StatusBadge } from './StatusBadge.tsx';
@@ -19,9 +20,18 @@ export function AgentsPanel({ agents }: AgentsPanelProps) {
   const { projectId } = useProject();
 
   const handleDelete = async (name: string) => {
-    await apiDelete(`/agents/${encodeURIComponent(name)}`, projectId);
-    setConfirming(null);
-    await queryClient.invalidateQueries({ queryKey: ['agents'] });
+    try {
+      await apiDelete(`/agents/${encodeURIComponent(name)}`, projectId);
+      setConfirming(null);
+      await queryClient.invalidateQueries({ queryKey: ['agents'] });
+    } catch (err) {
+      notifications.show({
+        title: 'Error',
+        message: err instanceof Error ? err.message : String(err),
+        color: 'red',
+      });
+      setConfirming(null);
+    }
   };
 
   if (!agents || agents.length === 0) {
