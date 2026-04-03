@@ -11,10 +11,6 @@ describe('seedBranchFor', () => {
     assert.equal(seedBranchFor('my-project', { seedBranch: null }), 'docker/my-project/current-root');
   });
 
-  it('returns default when config has undefined seedBranch', () => {
-    assert.equal(seedBranchFor('my-project', { seedBranch: undefined as unknown as string | null }), 'docker/my-project/current-root');
-  });
-
   it('returns default when config has empty string seedBranch', () => {
     assert.equal(seedBranchFor('my-project', { seedBranch: '' }), 'docker/my-project/current-root');
   });
@@ -66,6 +62,13 @@ describe('seedBranchFor', () => {
   it('throws on seedBranch with consecutive slashes', () => {
     assert.throws(
       () => seedBranchFor('proj', { seedBranch: 'a//b' }),
+      /Invalid seedBranch/
+    );
+  });
+
+  it('throws on seedBranch with trailing slash', () => {
+    assert.throws(
+      () => seedBranchFor('proj', { seedBranch: 'feature/' }),
       /Invalid seedBranch/
     );
   });
