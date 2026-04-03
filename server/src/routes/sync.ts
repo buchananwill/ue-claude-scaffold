@@ -27,11 +27,7 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
       const dbRow = await projectsQ.getById(getDb(), projectId);
       project = getProject(config, projectId, dbRow ?? undefined);
     } catch {
-      return reply.code(400).send({
-        statusCode: 400,
-        error: 'Bad Request',
-        message: `Unknown project: "${projectId}"`,
-      });
+      return reply.badRequest(`Unknown project: "${projectId}"`);
     }
 
     const bareRepo = project.bareRepoPath;

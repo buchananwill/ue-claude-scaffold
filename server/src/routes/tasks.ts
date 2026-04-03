@@ -73,11 +73,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         const spDbRow = await projectsQ.getById(getDb(), projectId);
         project = getProject(config, projectId, spDbRow ?? undefined);
       } catch {
-        return reply.code(400).send({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: `Unknown project: "${projectId}"`,
-        });
+        return reply.badRequest(`Unknown project: "${projectId}"`);
       }
       const bareRepo = project.bareRepoPath;
       if (bareRepo) {
@@ -276,11 +272,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
           const dbRow = await projectsQ.getById(db, projectId);
           project = getProject(config, projectId, dbRow ?? undefined);
         } catch {
-          return reply.code(400).send({
-            statusCode: 400,
-            error: 'Bad Request',
-            message: `Unknown project: "${projectId}"`,
-          });
+          return reply.badRequest(`Unknown project: "${projectId}"`);
         }
         const bareRepo = project.bareRepoPath;
         if (bareRepo) {
@@ -485,11 +477,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         const dbRow = await projectsQ.getById(db, patchProjectId);
         patchProject = getProject(config, patchProjectId, dbRow ?? undefined);
       } catch {
-        return reply.code(400).send({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: `Unknown project: "${row.projectId ?? (row as any).project_id}"`,
-        });
+        return reply.badRequest(`Unknown project: "${row.projectId ?? (row as any).project_id}"`);
       }
       const bareRepo = patchProject.bareRepoPath;
       if (bareRepo) {
