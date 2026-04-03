@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { apiPost, apiDelete } from '../api/client.ts';
 import { notifications } from '@mantine/notifications';
+import { toErrorMessage } from '../utils/toErrorMessage.ts';
 import type { Task } from '../api/types.ts';
 import { useProject } from '../contexts/ProjectContext.tsx';
 
@@ -27,7 +28,7 @@ export function useTaskActions({
       await queryClient.invalidateQueries({ queryKey: ['tasks'] });
       notifications.show({ title: 'Released', message: `Task #${id} returned to pending`, color: 'green' });
     } catch (err) {
-      notifications.show({ title: 'Error', message: err instanceof Error ? err.message : String(err), color: 'red' });
+      notifications.show({ title: 'Error', message: toErrorMessage(err), color: 'red' });
     }
   };
 
@@ -39,7 +40,7 @@ export function useTaskActions({
       await queryClient.invalidateQueries({ queryKey: ['tasks'] });
       notifications.show({ title: 'Deleted', message: `Task #${id} deleted`, color: 'green' });
     } catch (err) {
-      notifications.show({ title: 'Error', message: err instanceof Error ? err.message : String(err), color: 'red' });
+      notifications.show({ title: 'Error', message: toErrorMessage(err), color: 'red' });
     }
   };
 

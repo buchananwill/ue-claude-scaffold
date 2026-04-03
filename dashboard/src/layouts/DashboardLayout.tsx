@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { AppShell, Group, NavLink } from '@mantine/core';
 import { IconLayoutDashboard, IconMessage, IconList, IconMessageCircle, IconUsersGroup } from '@tabler/icons-react';
 import { Outlet, Link, useMatches } from '@tanstack/react-router';
@@ -6,6 +7,14 @@ import { useHealth } from '../hooks/useHealth.ts';
 import { usePollInterval } from '../hooks/usePollInterval.tsx';
 import { SearchBar } from '../components/SearchBar.tsx';
 import { useProject } from '../contexts/ProjectContext.tsx';
+
+interface NavItem {
+  to: string;
+  params: Record<string, string>;
+  label: string;
+  icon: ReactNode;
+  isActive: (relativePath: string) => boolean;
+}
 
 export function DashboardLayout() {
   const { intervalMs, setIntervalMs } = usePollInterval();
@@ -18,10 +27,14 @@ export function DashboardLayout() {
   const relativePath = currentPath.startsWith(projectPrefix)
     ? currentPath.slice(projectPrefix.length) || '/'
     : currentPath;
-  const isMessages = relativePath.startsWith('/messages');
-  const isLogs = relativePath === '/logs';
-  const isChat = relativePath.startsWith('/chat');
-  const isTeams = relativePath.startsWith('/teams');
+
+  const NAV_ITEMS: NavItem[] = [
+    { to: '/$projectId', params: { projectId }, label: 'Overview', icon: <IconLayoutDashboard size={16} />, isActive: (p) => p === '/' },
+    { to: '/$projectId/messages/$channel', params: { projectId, channel: 'general' }, label: 'Messages', icon: <IconMessage size={16} />, isActive: (p) => p.startsWith('/messages') },
+    { to: '/$projectId/logs', params: { projectId }, label: 'Logs', icon: <IconList size={16} />, isActive: (p) => p === '/logs' },
+    { to: '/$projectId/chat', params: { projectId }, label: 'Chat', icon: <IconMessageCircle size={16} />, isActive: (p) => p.startsWith('/chat') },
+    { to: '/$projectId/teams', params: { projectId }, label: 'Teams', icon: <IconUsersGroup size={16} />, isActive: (p) => p.startsWith('/teams') },
+  ];
 
   return (
     <AppShell header={{ height: 50 }} padding="md">
@@ -39,56 +52,19 @@ export function DashboardLayout() {
         {/* TanStack Router's NavLink+Link composition doesn't infer params types
            for project-scoped routes; `as any` casts work around this limitation. */}
         <Group gap="xs" mb="md">
-          <NavLink
-            component={Link}
-            to="/$projectId"
-            {...{ params: { projectId } } as any}
-            label="Overview"
-            leftSection={<IconLayoutDashboard size={16} />}
-            active={relativePath === '/'}
-            style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
-            px="md"
-          />
-          <NavLink
-            component={Link}
-            to="/$projectId/messages/$channel"
-            {...{ params: { projectId, channel: 'general' } } as any}
-            label="Messages"
-            leftSection={<IconMessage size={16} />}
-            active={isMessages}
-            style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
-            px="md"
-          />
-          <NavLink
-            component={Link}
-            to="/$projectId/logs"
-            {...{ params: { projectId } } as any}
-            label="Logs"
-            leftSection={<IconList size={16} />}
-            active={isLogs}
-            style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
-            px="md"
-          />
-          <NavLink
-            component={Link}
-            to="/$projectId/chat"
-            {...{ params: { projectId } } as any}
-            label="Chat"
-            leftSection={<IconMessageCircle size={16} />}
-            active={isChat}
-            style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
-            px="md"
-          />
-          <NavLink
-            component={Link}
-            to="/$projectId/teams"
-            {...{ params: { projectId } } as any}
-            label="Teams"
-            leftSection={<IconUsersGroup size={16} />}
-            active={isTeams}
-            style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
-            px="md"
-          />
+          {NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.to}
+              component={Link}
+              to={item.to}
+              {...{ params: item.params } as any}
+              label={item.label}
+              leftSection={item.icon}
+              active={item.isActive(relativePath)}
+              style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
+              px="md"
+            />
+          ))}
         </Group>
         <Outlet />
       </AppShell.Main>

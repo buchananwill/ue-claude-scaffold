@@ -5,6 +5,7 @@ import { Link } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { notifications } from '@mantine/notifications';
 import { apiDelete } from '../api/client.ts';
+import { toErrorMessage } from '../utils/toErrorMessage.ts';
 import type { Agent } from '../api/types.ts';
 import { StatusBadge } from './StatusBadge.tsx';
 import { RelativeTime } from './RelativeTime.tsx';
@@ -27,7 +28,7 @@ export function AgentsPanel({ agents }: AgentsPanelProps) {
     } catch (err) {
       notifications.show({
         title: 'Error',
-        message: err instanceof Error ? err.message : String(err),
+        message: toErrorMessage(err),
         color: 'red',
       });
       setConfirming(null);

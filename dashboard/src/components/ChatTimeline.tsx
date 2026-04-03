@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { ScrollArea, Box, Group, Text, TextInput, ActionIcon, Button, Paper, Transition, Stack } from '@mantine/core';
+import { ScrollArea, Box, Group, Text, TextInput, ActionIcon, Button, Transition, Stack } from '@mantine/core';
 import { IconSend, IconArrowDown } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import { apiPost } from '../api/client.ts';
+import { toErrorMessage } from '../utils/toErrorMessage.ts';
 import { useProject } from '../contexts/ProjectContext.tsx';
 import { RelativeTime } from './RelativeTime.tsx';
 import { MarkdownContent } from './MarkdownContent.tsx';
-import { agentColor } from '../utils/agentColor.ts';
+import { AgentMessageCard } from './AgentMessageCard.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import type { ChatMessage } from '../api/types.ts';
 
@@ -58,7 +59,7 @@ export function ChatTimeline({
       notifications.show({
         color: 'red',
         title: 'Send failed',
-        message: err instanceof Error ? err.message : String(err),
+        message: toErrorMessage(err),
       });
     }
   };
@@ -85,30 +86,18 @@ export function ChatTimeline({
                 </Button>
               )}
               <Stack gap="xs">
-                {messages.map((msg) => {
-                  const color = agentColor(msg.sender);
-                  return (
-                    <Paper
-                      key={msg.id}
-                      p="sm"
-                      withBorder
-                      shadow="xs"
-                      style={{
-                        borderLeftWidth: 3,
-                        borderLeftColor: `var(--mantine-color-${color}-6)`,
-                      }}
-                    >
-                      <Group gap="xs" mb={4}>
-                        <Text size="sm" fw={700} c={`${color}.4`} style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg.sender}</Text>
-                        <RelativeTime date={msg.createdAt} />
-                      </Group>
-                      {msg.replyTo != null && (
-                        <Text size="xs" c="dimmed">reply to #{msg.replyTo}</Text>
-                      )}
-                      <MarkdownContent content={msg.content} />
-                    </Paper>
-                  );
-                })}
+                {messages.map((msg) => (
+                  <AgentMessageCard
+                    key={msg.id}
+                    agentName={msg.sender}
+                    timestamp={<RelativeTime date={msg.createdAt} />}
+                  >
+                    {msg.replyTo != null && (
+                      <Text size="xs" c="dimmed">reply to #{msg.replyTo}</Text>
+                    )}
+                    <MarkdownContent content={msg.content} />
+                  </AgentMessageCard>
+                ))}
               </Stack>
               <div ref={sentinelRef} />
             </ScrollArea>

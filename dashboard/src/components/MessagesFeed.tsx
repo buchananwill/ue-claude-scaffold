@@ -1,11 +1,11 @@
-import { Stack, Select, ScrollArea, Group, Text, Code, Box, Badge, Button, Paper, Transition } from '@mantine/core';
+import { Stack, Select, ScrollArea, Group, Text, Code, Box, Badge, Button, Transition } from '@mantine/core';
 import { useRef, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { IconArrowDown } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import type { Agent, Message } from '../api/types.ts';
 import { StatusBadge } from './StatusBadge.tsx';
 import { MarkdownContent } from './MarkdownContent.tsx';
-import { agentColor } from '../utils/agentColor.ts';
+import { AgentMessageCard } from './AgentMessageCard.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 
 interface MessagesFeedProps {
@@ -207,27 +207,19 @@ export function MessagesFeed({
               const isStringPayload = typeof m.payload === 'string' || (isObject && typeof (m.payload as Record<string, unknown>).message === 'string');
 
               const isHighlighted = flashId === m.id;
-              const color = agentColor(m.fromAgent);
 
               return (
-                <Paper
+                <AgentMessageCard
                   key={m.id}
-                  ref={isHighlighted ? highlightRef : undefined}
-                  p="sm"
-                  withBorder
-                  shadow="xs"
+                  agentName={m.fromAgent}
+                  timestamp={<Text size="xs" c="dimmed" ff="monospace">{ts.format('HH:mm:ss')}</Text>}
+                  headerExtra={<StatusBadge value={m.type} size="xs" />}
+                  paperRef={isHighlighted ? highlightRef : undefined}
                   style={{
-                    borderLeftWidth: 3,
-                    borderLeftColor: `var(--mantine-color-${color}-6)`,
                     backgroundColor: isHighlighted ? 'var(--mantine-color-blue-light)' : undefined,
                     transition: 'background-color 2s ease-out',
                   }}
                 >
-                  <Group gap="xs" mb={4}>
-                    <Text size="sm" fw={700} c={`${color}.4`} style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.fromAgent}</Text>
-                    <Text size="xs" c="dimmed" ff="monospace">{ts.format('HH:mm:ss')}</Text>
-                    <StatusBadge value={m.type} size="xs" />
-                  </Group>
                   {isStringPayload ? (
                     <MarkdownContent
                       content={
@@ -241,7 +233,7 @@ export function MessagesFeed({
                   ) : (
                     <Text size="sm">{payloadStr}</Text>
                   )}
-                </Paper>
+                </AgentMessageCard>
               );
             })}
             <div ref={sentinelRef} />

@@ -5,7 +5,7 @@ import type { Task } from '../api/types.ts';
 export type SortDir = 'asc' | 'desc' | null;
 export type SortColumn = 'id' | 'priority' | 'status' | 'title' | 'claimedBy' | 'createdAt' | null;
 
-const VALID_SORT_COLUMNS = new Set<string>(['id', 'priority', 'status', 'title', 'claimedBy', 'createdAt']);
+export const VALID_SORT_COLUMNS = new Set<string>(['id', 'priority', 'status', 'title', 'claimedBy', 'createdAt']);
 
 const UNASSIGNED = '__unassigned__';
 

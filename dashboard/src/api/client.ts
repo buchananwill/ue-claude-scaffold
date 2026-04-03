@@ -41,34 +41,33 @@ export async function apiFetch<T>(path: string, signal?: AbortSignal, projectId?
   return res.json();
 }
 
-export async function apiPost<T = unknown>(path: string, body?: unknown, projectId?: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...projectHeaders(projectId) },
-    body: JSON.stringify(body ?? {}),
-  });
+async function apiMutate<T = unknown>(
+  method: string,
+  path: string,
+  body?: unknown,
+  projectId?: string,
+): Promise<T> {
+  const headers: Record<string, string> = { ...projectHeaders(projectId) };
+  const init: RequestInit = { method, headers };
+  if (body !== undefined || method === 'POST' || method === 'PATCH') {
+    headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body ?? {});
+  }
+  const res = await fetch(`${BASE}${path}`, init);
   if (!res.ok) {
     throw new ApiError(await extractError(res), res.status);
   }
   return res.json();
+}
+
+export async function apiPost<T = unknown>(path: string, body?: unknown, projectId?: string): Promise<T> {
+  return apiMutate<T>('POST', path, body, projectId);
 }
 
 export async function apiPatch<T = unknown>(path: string, body?: unknown, projectId?: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...projectHeaders(projectId) },
-    body: JSON.stringify(body ?? {}),
-  });
-  if (!res.ok) {
-    throw new ApiError(await extractError(res), res.status);
-  }
-  return res.json();
+  return apiMutate<T>('PATCH', path, body, projectId);
 }
 
 export async function apiDelete<T = unknown>(path: string, projectId?: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: 'DELETE', headers: { ...projectHeaders(projectId) } });
-  if (!res.ok) {
-    throw new ApiError(await extractError(res), res.status);
-  }
-  return res.json();
+  return apiMutate<T>('DELETE', path, undefined, projectId);
 }

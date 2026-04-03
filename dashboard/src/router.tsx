@@ -13,6 +13,7 @@ import { BuildLogPage } from './pages/BuildLogPage.tsx';
 import { ChatPage } from './pages/ChatPage.tsx';
 import { TeamsPage } from './pages/TeamsPage.tsx';
 import { SearchPage } from './pages/SearchPage.tsx';
+import { TASK_STATUSES, VALID_SORT_COLUMNS } from './hooks/useTaskFilters.ts';
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -30,8 +31,7 @@ function boundedString(val: unknown, maxLen = 100): string | undefined {
   return val;
 }
 
-const VALID_TASK_STATUSES = new Set(['pending', 'claimed', 'in_progress', 'completed', 'failed']);
-const VALID_SORT_COLUMNS = new Set(['id', 'priority', 'status', 'title', 'claimedBy', 'createdAt']);
+const VALID_TASK_STATUSES = new Set<string>(TASK_STATUSES);
 const VALID_DIR_VALUES = new Set(['asc', 'desc']);
 const VALID_BUILD_TYPES = new Set(['build', 'test']);
 const VALID_RESULT_VALUES = new Set(['pass', 'fail']);

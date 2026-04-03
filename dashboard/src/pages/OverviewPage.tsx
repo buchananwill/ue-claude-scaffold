@@ -11,6 +11,7 @@ import { useTaskFiltersUrlBacked } from '../hooks/useTaskFilters.ts';
 import { useUbtStatus } from '../hooks/useUbtStatus.ts';
 import { apiPost } from '../api/client.ts';
 import { useProject } from '../contexts/ProjectContext.tsx';
+import { toErrorMessage } from '../utils/toErrorMessage.ts';
 
 const PAGE_SIZE = 20;
 
@@ -60,7 +61,7 @@ export function OverviewPage() {
     } catch (err) {
       notifications.show({
         title: 'Sync failed',
-        message: err instanceof Error ? err.message : String(err),
+        message: toErrorMessage(err),
         color: 'red',
       });
     } finally {
