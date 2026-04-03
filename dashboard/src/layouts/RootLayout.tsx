@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate, Outlet } from '@tanstack/react-router';
-import { useEffect } from 'react';
+import { Navigate } from '@tanstack/react-router';
 import {
   Center,
   Loader,
@@ -16,29 +15,13 @@ import { apiFetch } from '../api/client.ts';
 import type { Project } from '../api/types.ts';
 
 export function RootLayout() {
-  const navigate = useNavigate();
-
+  // The /projects endpoint does not require x-project-id header -- it lists
+  // all projects and is called before any project context is established.
   const { data: projects, isLoading, error } = useQuery({
     queryKey: ['projects'],
     queryFn: ({ signal }) => apiFetch<Project[]>('/projects', signal),
     staleTime: 30_000,
   });
-
-  const shouldRedirect = projects && projects.length === 1;
-
-  useEffect(() => {
-    if (shouldRedirect) {
-      // Navigate to project overview — cast needed because child route's
-      // validateSearch makes search params required at the type level, but
-      // the router will apply defaults from validateSearch at runtime.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (navigate as any)({
-        to: '/$projectId',
-        params: { projectId: projects[0].id },
-        replace: true,
-      });
-    }
-  }, [shouldRedirect, projects, navigate]);
 
   if (isLoading) {
     return (
@@ -72,10 +55,17 @@ export function RootLayout() {
     );
   }
 
-  // Single project: the useEffect above handles the redirect.
-  // Render Outlet so the redirect target can mount.
+  // Single project: redirect immediately without a blank flash.
+  // Cast needed because Navigate is typed against the root route's params,
+  // but we are navigating to a child route (/$projectId). The router resolves
+  // the params correctly at runtime.
   if (projects.length === 1) {
-    return <Outlet />;
+    const navProps = {
+      to: '/$projectId',
+      params: { projectId: projects[0].id },
+      replace: true,
+    };
+    return <Navigate {...navProps as any} />;
   }
 
   // Multiple projects: show picker
@@ -89,14 +79,9 @@ export function RootLayout() {
               key={project.id}
               withBorder
               padding="lg"
-              style={{ cursor: 'pointer' }}
-              onClick={() =>
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                (navigate as any)({
-                  to: '/$projectId',
-                  params: { projectId: project.id },
-                })
-              }
+              component="a"
+              href={`/${project.id}`}
+              style={{ cursor: 'pointer', textDecoration: 'none', color: 'inherit' }}
             >
               <Group gap="sm" mb="xs">
                 <IconFolder size={20} />

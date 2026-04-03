@@ -2,11 +2,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../api/client.ts';
 import type { Message } from '../api/types.ts';
 import { usePollInterval } from './usePollInterval.tsx';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 const LIMIT = 20;
 
 export function useMessages(channel: string, typeFilter = '', agentFilter = '') {
   const { intervalMs } = usePollInterval();
+  const { projectId } = useProject();
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -40,14 +42,14 @@ export function useMessages(channel: string, typeFilter = '', agentFilter = '') 
 
       const fetchCount = () => {
         const countUrl = `/messages/${encodeURIComponent(channel)}/count${typeFilter || agentFilter ? '?' : ''}${typeFilter ? `type=${encodeURIComponent(typeFilter)}` : ''}${typeFilter && agentFilter ? '&' : ''}${agentFilter ? `from_agent=${encodeURIComponent(agentFilter)}` : ''}`;
-        apiFetch<{ count: number }>(countUrl, ac.signal)
+        apiFetch<{ count: number }>(countUrl, ac.signal, projectId)
           .then((data) => {
             if (!ac.signal.aborted) setTotalCount(data.count);
           })
           .catch(() => {});
       };
 
-      apiFetch<Message[]>(url, ac.signal)
+      apiFetch<Message[]>(url, ac.signal, projectId)
         .then((newMsgs) => {
           if (ac.signal.aborted) return;
           if (since === 0 && cursorRef.current === 0) {
@@ -81,7 +83,7 @@ export function useMessages(channel: string, typeFilter = '', agentFilter = '') 
       ac.abort();
       clearInterval(id);
     };
-  }, [channel, intervalMs, typeFilter, agentFilter]);
+  }, [channel, intervalMs, typeFilter, agentFilter, projectId]);
 
   const loadOlder = useCallback(() => {
     const oldest = oldestIdRef.current;
@@ -96,7 +98,7 @@ export function useMessages(channel: string, typeFilter = '', agentFilter = '') 
       url += `&from_agent=${encodeURIComponent(agentFilter)}`;
     }
 
-    apiFetch<Message[]>(url)
+    apiFetch<Message[]>(url, undefined, projectId)
       .then((olderMsgs) => {
         if (olderMsgs.length > 0) {
           setMessages((prev) => [...olderMsgs, ...prev]);
@@ -110,7 +112,7 @@ export function useMessages(channel: string, typeFilter = '', agentFilter = '') 
       .catch(() => {
         setLoadingOlder(false);
       });
-  }, [channel, typeFilter, agentFilter, loadingOlder]);
+  }, [channel, typeFilter, agentFilter, loadingOlder, projectId]);
 
   return { messages, error, loading, hasOlder, loadingOlder, loadOlder, totalCount };
 }

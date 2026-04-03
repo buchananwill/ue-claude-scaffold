@@ -147,6 +147,10 @@ export function useTaskFilters(tasks: Task[]) {
   };
 }
 
+/**
+ * URL-backed variant of useTaskFilters. Must only be used in components rendered
+ * under the `/$projectId/` route, as it reads/writes search params via that route.
+ */
 export function useTaskFiltersUrlBacked(tasks: Task[]) {
   const search = useSearch({ from: '/$projectId/' });
   const navigate = useNavigate({ from: '/$projectId/' });
@@ -178,6 +182,8 @@ export function useTaskFiltersUrlBacked(tasks: Task[]) {
   const page = search.page ?? 1;
 
   const setPage = (n: number) => {
+    // Cast needed: navigate's search callback types the prev parameter as the
+    // validated search shape, but we spread it generically to preserve all fields.
     navigate({ search: (prev: any) => ({ ...prev, page: n > 1 ? n : undefined }) });
   };
 

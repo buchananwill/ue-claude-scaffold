@@ -2,51 +2,57 @@
 
 ## Task Summary
 
-Implement Phase 1 of the dashboard multi-tenancy UI plan. This is a dashboard-only change that restructures the route tree to insert `$projectId` as a layout route, adds a ProjectProvider context, modifies the API client to send `x-project-id` headers, and updates all nav links and navigate calls to include the project ID.
+Phase 1 implementation of dashboard multi-tenancy routing, plus review cycle 1 fixes addressing 6 BLOCKING and 10 WARNING issues identified across three code reviews.
 
-## Changes Made
+## Changes Made (Review Cycle 1 Fixes)
 
-- **dashboard/src/api/types.ts** - Added `Project` interface with id, name, engineVersion, seedBranch, buildTimeoutMs, testTimeoutMs, createdAt fields.
-- **dashboard/src/api/client.ts** - Added module-level `currentProjectId` state with `setCurrentProjectId`/`getCurrentProjectId` exports. All API functions (`apiFetch`, `apiPost`, `apiPatch`, `apiDelete`) now include `x-project-id` header when set.
-- **dashboard/src/contexts/ProjectContext.tsx** (new) - React context providing `{ projectId, projectName }`. Fetches project details from `GET /projects/:id`. Calls `setCurrentProjectId` on mount/change. Exports `useProject()` hook.
-- **dashboard/src/layouts/RootLayout.tsx** (new) - Root layout that fetches `GET /projects`, auto-redirects to `/$id/` for single project, shows project picker cards for multiple projects, or "No projects configured" message.
-- **dashboard/src/layouts/ProjectLayout.tsx** (new) - Intermediate layout that reads `$projectId` from route params, wraps children in `ProjectProvider` + `DashboardLayout`.
-- **dashboard/src/router.tsx** - Restructured route tree: rootRoute -> RootLayout, projectRoute (`/$projectId`) -> ProjectLayout, all child routes parent to projectRoute. All validateSearch preserved.
-- **dashboard/src/layouts/DashboardLayout.tsx** - Updated all NavLink `to` props to include `/$projectId` prefix with `params: { projectId }`. Uses `useProject()` for projectId. Active-path detection now strips project prefix.
-- **dashboard/src/pages/MessagesPage.tsx** - All navigate calls updated to include `/$projectId` prefix and projectId param.
-- **dashboard/src/pages/SearchPage.tsx** - Changed `useSearch({ from: '/search' })` to `useSearch({ strict: false })`. All navigate calls updated with projectId.
-- **dashboard/src/pages/AgentDetailPage.tsx** - Back link and all navigate calls updated with projectId.
-- **dashboard/src/pages/TaskDetailPage.tsx** - Back link, dependency links, and claimed-by link updated with projectId.
-- **dashboard/src/components/AgentsPanel.tsx** - Agent name links updated with projectId.
-- **dashboard/src/components/SearchBar.tsx** - All navigate calls (tasks, messages, agents, full search) updated with projectId.
-- **dashboard/src/components/TaskDetailRow.tsx** - Blocked-by dependency links updated with projectId.
-- **dashboard/src/components/TasksPanel.tsx** - Task title and agent links updated with projectId.
-- **dashboard/src/components/TeamCard.tsx** - Chat room button link updated with projectId.
+### BLOCKING Fixes
+
+- **dashboard/src/api/types.ts** - Renamed `requested_at` to `requestedAt` in `UbtQueueEntry` interface (STYLE B1).
+- **dashboard/src/api/client.ts** - Removed global mutable `currentProjectId` variable, `setCurrentProjectId`, and `getCurrentProjectId`. Added optional `projectId` parameter to `apiFetch`, `apiPost`, `apiPatch`, `apiDelete`. When provided, includes `x-project-id` header. Also: `extractError` now returns generic "Server error" for 5xx responses (SAFETY B1 + CORRECTNESS B1 + SAFETY W2).
+- **dashboard/src/contexts/ProjectContext.tsx** - Removed `useEffect` that set/cleared global state. Added `projectId` format validation (`/^[a-zA-Z0-9_-]{1,64}$/`) with error UI for invalid IDs. Pass `projectId` to `apiFetch` call (SAFETY B2).
+- **dashboard/src/layouts/RootLayout.tsx** - Replaced `useEffect` + `navigate()` redirect with `<Navigate>` component for single-project case, eliminating blank flash. Removed unused `Outlet` import. Added comment documenting that `/projects` endpoint does not require `x-project-id` header (CORRECTNESS B2 + CORRECTNESS W3 + STYLE W1).
+- **dashboard/src/layouts/ProjectLayout.tsx** - Changed `useParams({ strict: false }) as { projectId: string }` to `useParams({ from: '/$projectId' })`, removing manual cast (CORRECTNESS B3).
+
+### WARNING Fixes
+
+- **dashboard/src/hooks/useTaskFilters.ts** - Added explanatory comment for `prev: any` cast in `setPage`. Added JSDoc on `useTaskFiltersUrlBacked` stating route constraint (STYLE W1 + CORRECTNESS W4).
+- **dashboard/src/pages/TaskDetailPage.tsx** - Replaced three `fontSize: '0.875rem'` instances with `<Text fz="sm">` wrappers around Link components. Used strict params via `useParams({ from: '/$projectId/tasks/$taskId' })` (STYLE W2).
+- **dashboard/src/pages/AgentDetailPage.tsx** - Replaced `fontSize: '0.875rem'` with `<Text fz="sm">` wrapper. Used strict params. Added guard for empty `agentName` (STYLE W2 + CORRECTNESS W1).
+- **dashboard/src/components/TeamCard.tsx** - Replaced `background: 'var(--mantine-color-dark-6)'` with `bg="var(--mantine-color-default)"` and `fontSize: 'var(--mantine-font-size-sm)'` with `fz="sm"` prop (STYLE W3).
+- **dashboard/src/hooks/useTask.ts** - Changed `!isNaN(id)` to `Number.isInteger(id) && id > 0` (SAFETY W1).
+- **dashboard/src/hooks/useTaskActions.ts** - Added `Number.isInteger(id) && id > 0` guards to `handleRelease` and `handleDelete` (SAFETY W1).
+- **dashboard/src/router.tsx** - Validated `highlight` search param as positive integer in `messagesChannelRoute` (SAFETY W3).
+- **dashboard/src/components/TaskDetailRow.tsx** - Changed `colSpan={7}` to `colSpan={8}` (CORRECTNESS W2).
+
+### Hook Updates (projectId plumbing)
+
+All hooks that call API functions were updated to get `projectId` from `useProject()` and pass it through:
+- useAgents.ts, useAgent.ts, useTasks.ts, useTask.ts, useTaskActions.ts
+- useMessages.ts, useHealth.ts, useUbtStatus.ts, useBuildHistory.ts
+- useSearch.ts, useRooms.ts, useRoomDetail.ts, useChatMessages.ts
+- useTeams.ts, useTeamDetail.ts
+
+Components that call API functions directly were also updated:
+- AgentsPanel.tsx, ChatTimeline.tsx, OverviewPage.tsx
 
 ## Design Decisions
 
-1. **ProjectLayout as separate file** - Rather than inlining the ProjectProvider into DashboardLayout, created a dedicated `ProjectLayout.tsx` that composes ProjectProvider around DashboardLayout. This keeps DashboardLayout focused on rendering the shell and avoids coupling it to route params directly.
-2. **setCurrentProjectId via useEffect** - The ProjectProvider sets/clears the global project ID via useEffect with cleanup, ensuring the header is always in sync with the current project context.
-3. **SearchPage strict: false** - Changed from `{ from: '/search' }` to `{ strict: false }` because the route path changed from `/search` to `/$projectId/search`. Using strict:false avoids hardcoding the full path.
-4. **Active path detection** - DashboardLayout strips the project prefix from the current path to determine which nav item is active, making the logic independent of the project ID value.
+1. **Explicit projectId parameter vs hook abstraction** - Chose to add an optional `projectId` parameter to each API function rather than creating a wrapper hook. This is simpler, keeps the API surface flat, and avoids breaking the existing function signatures (the parameter is optional).
+2. **Validation in ProjectProvider** - Format validation on `projectId` is done in `ProjectProvider` rather than `ProjectLayout` because `ProjectProvider` is the single entry point for all project-scoped rendering. Invalid IDs render an error UI immediately.
+3. **Navigate component for redirect** - Using `<Navigate>` instead of `useEffect` + `navigate()` eliminates the flash-of-wrong-content because the redirect happens synchronously in the render phase.
+4. **Text wrapper for font sizes** - Wrapped `<Link>` components in `<Text fz="sm">` rather than using `Anchor component={Link}` because the Mantine Anchor polymorphic component doesn't properly forward TanStack Router Link types, causing TS errors.
 
 ## Build & Test Results
 
-TypeScript type check (`tsc -b --noEmit`) and full Vite production build (`npm run build`) both pass cleanly.
-
-Three categories of errors were fixed:
-1. `useSearch({ from: '/' })` in `useTaskFilters.ts` and `OverviewPage.tsx` changed to `from: '/$projectId/'` to match the restructured route tree.
-2. `navigate()` calls in `RootLayout.tsx` required `search` params because the child overview route defines `validateSearch`. Fixed by casting `navigate as any` since the root layout navigates to the project layout (not the index route directly) and runtime `validateSearch` applies defaults.
-
-No other stale route references (`from: '/'` or `to: '/'`) were found in the codebase.
+TypeScript type check (`npx tsc -b --noEmit`) passes cleanly with no errors.
 
 ## Open Questions / Risks
 
-- The `GET /projects` and `GET /projects/:id` endpoints must exist on the server for the RootLayout and ProjectProvider to work. These are not being created in this phase (dashboard-only change). The dashboard will show loading/error states until the server endpoints are available.
-- TanStack Router type inference may produce warnings with the `as any` casts on params. These were already present in the original code and are preserved.
+- The `as any` cast on the `Navigate` component in `RootLayout.tsx` is required because TanStack Router types the `Navigate` component against the root route's params, but we navigate to a child route. This is a known TanStack Router typing limitation.
+- Query keys now include `projectId` to properly scope caches per project, which means switching projects invalidates all cached data (correct behavior).
 
 ## Suggested Follow-ups
 
-- Server-side: Implement `GET /projects` and `GET /projects/:id` endpoints.
-- Add a "Switch project" link in the DashboardLayout header for multi-project setups.
-- Consider caching the project list to avoid re-fetching on every root navigation.
+- Server-side: Implement `GET /projects` and `GET /projects/:id` endpoints if not already done.
+- Consider adding a project-scoped query client wrapper to automatically scope all query keys.

@@ -2,12 +2,14 @@ import { useQuery } from '@tanstack/react-query';
 import { apiFetch, ApiError } from '../api/client.ts';
 import type { Agent } from '../api/types.ts';
 import { usePollInterval } from './usePollInterval.tsx';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 export function useAgent(name: string) {
   const { intervalMs } = usePollInterval();
+  const { projectId } = useProject();
   return useQuery({
-    queryKey: ['agent', name],
-    queryFn: ({ signal }) => apiFetch<Agent>('/agents/' + encodeURIComponent(name), signal),
+    queryKey: ['agent', name, projectId],
+    queryFn: ({ signal }) => apiFetch<Agent>('/agents/' + encodeURIComponent(name), signal, projectId),
     refetchInterval: (query) => {
       if (query.state.error instanceof ApiError && query.state.error.status === 404) return false;
       return intervalMs;

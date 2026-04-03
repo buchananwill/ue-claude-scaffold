@@ -19,7 +19,7 @@ export function AgentsPanel({ agents }: AgentsPanelProps) {
   const { projectId } = useProject();
 
   const handleDelete = async (name: string) => {
-    await apiDelete(`/agents/${encodeURIComponent(name)}`);
+    await apiDelete(`/agents/${encodeURIComponent(name)}`, projectId);
     setConfirming(null);
     await queryClient.invalidateQueries({ queryKey: ['agents'] });
   };

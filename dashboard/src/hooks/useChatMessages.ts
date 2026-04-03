@@ -2,11 +2,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../api/client.ts';
 import type { ChatMessage } from '../api/types.ts';
 import { usePollInterval } from './usePollInterval.tsx';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 const LIMIT = 50;
 
 export function useChatMessages(roomId: string | null) {
   const { intervalMs } = usePollInterval();
+  const { projectId } = useProject();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,7 +46,7 @@ export function useChatMessages(roomId: string | null) {
         url = `/rooms/${encodeURIComponent(roomId)}/messages?limit=${LIMIT}`;
       }
 
-      apiFetch<ChatMessage[]>(url, ac.signal)
+      apiFetch<ChatMessage[]>(url, ac.signal, projectId)
         .then((newMsgs) => {
           if (ac.signal.aborted) return;
           if (since === 0 && cursorRef.current === 0) {
@@ -79,7 +81,7 @@ export function useChatMessages(roomId: string | null) {
       ac.abort();
       clearInterval(id);
     };
-  }, [roomId, intervalMs]);
+  }, [roomId, intervalMs, projectId]);
 
   const loadOlder = useCallback(() => {
     const oldest = oldestIdRef.current;
@@ -88,7 +90,7 @@ export function useChatMessages(roomId: string | null) {
     setLoadingOlder(true);
     const url = `/rooms/${encodeURIComponent(roomId)}/messages?before=${oldest}&limit=${LIMIT}`;
 
-    apiFetch<ChatMessage[]>(url)
+    apiFetch<ChatMessage[]>(url, undefined, projectId)
       .then((olderMsgs) => {
         // Server returns descending for before queries; reverse to ascending
         const sorted = [...olderMsgs].reverse();
@@ -104,7 +106,7 @@ export function useChatMessages(roomId: string | null) {
       .catch(() => {
         setLoadingOlder(false);
       });
-  }, [roomId, loadingOlder]);
+  }, [roomId, loadingOlder, projectId]);
 
   const markRead = useCallback(() => {
     lastReadIdRef.current = cursorRef.current;

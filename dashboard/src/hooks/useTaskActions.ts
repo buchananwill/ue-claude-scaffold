@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { apiPost, apiDelete } from '../api/client.ts';
 import { notifications } from '@mantine/notifications';
 import type { Task } from '../api/types.ts';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 interface UseTaskActionsParams {
   setConfirmingDelete: (id: number | null) => void;
@@ -17,10 +18,12 @@ export function useTaskActions({
   bulkDeleteTargets,
 }: UseTaskActionsParams) {
   const queryClient = useQueryClient();
+  const { projectId } = useProject();
 
   const handleRelease = async (id: number) => {
+    if (!(Number.isInteger(id) && id > 0)) return;
     try {
-      await apiPost(`/tasks/${id}/release`);
+      await apiPost(`/tasks/${id}/release`, undefined, projectId);
       await queryClient.invalidateQueries({ queryKey: ['tasks'] });
       notifications.show({ title: 'Released', message: `Task #${id} returned to pending`, color: 'green' });
     } catch (err) {
@@ -29,8 +32,9 @@ export function useTaskActions({
   };
 
   const handleDelete = async (id: number) => {
+    if (!(Number.isInteger(id) && id > 0)) return;
     try {
-      await apiDelete(`/tasks/${id}`);
+      await apiDelete(`/tasks/${id}`, projectId);
       setConfirmingDelete(null);
       await queryClient.invalidateQueries({ queryKey: ['tasks'] });
       notifications.show({ title: 'Deleted', message: `Task #${id} deleted`, color: 'green' });
@@ -41,7 +45,7 @@ export function useTaskActions({
 
   const handleBulkDelete = async () => {
     const results = await Promise.allSettled(
-      bulkDeleteTargets.map((t) => apiDelete(`/tasks/${t.id}`)),
+      bulkDeleteTargets.map((t) => apiDelete(`/tasks/${t.id}`, projectId)),
     );
     setBulkDeleteTargets([]);
     setConfirmingBulk(false);

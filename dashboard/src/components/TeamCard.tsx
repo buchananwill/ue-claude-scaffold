@@ -57,7 +57,7 @@ export function TeamCard({ team }: TeamCardProps) {
       {team.deliverable && (
         <>
           <Text size="sm" fw={600} mt="sm">Deliverable</Text>
-          <Box p="sm" style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--mantine-font-size-sm)', background: 'var(--mantine-color-dark-6)', borderRadius: 'var(--mantine-radius-sm)' }}>
+          <Box p="sm" fz="sm" bg="var(--mantine-color-default)" style={{ whiteSpace: 'pre-wrap', borderRadius: 'var(--mantine-radius-sm)' }}>
             {team.deliverable}
           </Box>
         </>

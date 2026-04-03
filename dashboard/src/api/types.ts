@@ -93,7 +93,7 @@ export interface UbtQueueEntry {
   id: number;
   agent: string;
   priority: number;
-  requested_at: string;
+  requestedAt: string;
 }
 
 export interface Room {

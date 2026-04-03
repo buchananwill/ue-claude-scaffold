@@ -48,11 +48,19 @@ const messagesChannelRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: '/messages/$channel',
   component: MessagesPage,
-  validateSearch: (search: Record<string, unknown>) => ({
-    type: typeof search.type === 'string' && search.type ? search.type : undefined,
-    highlight: typeof search.highlight === 'string' && search.highlight ? search.highlight : undefined,
-    agent: typeof search.agent === 'string' && search.agent ? search.agent : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>) => {
+    // Validate highlight as a positive integer; discard invalid values
+    let highlight: string | undefined;
+    if (typeof search.highlight === 'string' && search.highlight) {
+      const n = Number(search.highlight);
+      highlight = Number.isInteger(n) && n > 0 ? search.highlight : undefined;
+    }
+    return {
+      type: typeof search.type === 'string' && search.type ? search.type : undefined,
+      highlight,
+      agent: typeof search.agent === 'string' && search.agent ? search.agent : undefined,
+    };
+  },
 });
 
 const taskDetailRoute = createRoute({

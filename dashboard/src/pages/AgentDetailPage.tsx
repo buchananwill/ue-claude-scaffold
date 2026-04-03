@@ -15,7 +15,7 @@ import { MessagesFeed } from '../components/MessagesFeed.tsx';
 import { useProject } from '../contexts/ProjectContext.tsx';
 
 export function AgentDetailPage() {
-  const params = useParams({ strict: false }) as { agentName?: string };
+  const params = useParams({ from: '/$projectId/agents/$agentName' });
   const agentName = params.agentName ?? '';
   const { projectId } = useProject();
   const { data: agent, isLoading, error, isError } = useAgent(agentName);
@@ -36,12 +36,13 @@ export function AgentDetailPage() {
   const excludeStatuses = new Set(['pending']);
   const taskFilters = useTaskFilters(agentTasks);
 
+  if (!agentName) return <Text c="red" ta="center" py="xl">No agent name provided</Text>;
   if (isLoading) return <Loader display="block" mx="auto" my="xl" />;
   if (isRealError) return <Text c="red" ta="center" py="xl">{error instanceof Error ? error.message : String(error)}</Text>;
 
   return (
     <Stack gap="md">
-      <Link to="/$projectId" params={{ projectId }} search={(prev: any) => prev} style={{ textDecoration: 'none', fontSize: '0.875rem' }}>&larr; Back to overview</Link>
+      <Text fz="sm"><Link to="/$projectId" params={{ projectId }} search={(prev: any) => prev} style={{ textDecoration: 'none' }}>&larr; Back to overview</Link></Text>
 
       {agent ? (
         <>

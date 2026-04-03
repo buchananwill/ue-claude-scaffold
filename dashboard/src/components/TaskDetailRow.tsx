@@ -13,7 +13,7 @@ export function TaskDetailRow({ task, expanded }: TaskDetailRowProps) {
   const { projectId } = useProject();
   return (
     <Table.Tr>
-      <Table.Td colSpan={7}>
+      <Table.Td colSpan={8}>
         <Collapse in={expanded}>
           <Stack gap="xs" p="sm">
             {task.description && (

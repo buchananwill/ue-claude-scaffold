@@ -3,6 +3,7 @@ import { ScrollArea, Box, Group, Text, TextInput, ActionIcon, Button } from '@ma
 import { IconSend } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import { apiPost } from '../api/client.ts';
+import { useProject } from '../contexts/ProjectContext.tsx';
 import { RelativeTime } from './RelativeTime.tsx';
 import type { ChatMessage } from '../api/types.ts';
 
@@ -27,6 +28,7 @@ export function ChatTimeline({
   onLoadOlder,
   onMarkRead,
 }: ChatTimelineProps) {
+  const { projectId } = useProject();
   const [inputValue, setInputValue] = useState('');
   const sentinelRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -49,7 +51,7 @@ export function ChatTimeline({
     const content = inputValue.trim();
     if (!content) return;
     try {
-      await apiPost(`/rooms/${encodeURIComponent(roomId)}/messages`, { content });
+      await apiPost(`/rooms/${encodeURIComponent(roomId)}/messages`, { content }, projectId);
       setInputValue('');
     } catch (err) {
       notifications.show({

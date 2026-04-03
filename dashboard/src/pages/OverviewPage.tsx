@@ -10,10 +10,12 @@ import { useTasks } from '../hooks/useTasks.ts';
 import { useTaskFiltersUrlBacked } from '../hooks/useTaskFilters.ts';
 import { useUbtStatus } from '../hooks/useUbtStatus.ts';
 import { apiPost } from '../api/client.ts';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 const PAGE_SIZE = 20;
 
 export function OverviewPage() {
+  const { projectId } = useProject();
   const agents = useAgents();
   // Read URL search params directly to derive server-side query params.
   // This avoids a circular dependency: useTaskFiltersUrlBacked needs the
@@ -43,7 +45,7 @@ export function OverviewPage() {
         commitSha?: string;
         upToDate?: boolean;
         reason?: string;
-      }>('/sync/plans');
+      }>('/sync/plans', undefined, projectId);
       if (res.ok) {
         const detail = res.upToDate
           ? 'Already up to date'

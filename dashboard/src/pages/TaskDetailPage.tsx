@@ -8,7 +8,7 @@ import { TaskDuration } from '../components/TaskDuration.tsx';
 import { useProject } from '../contexts/ProjectContext.tsx';
 
 export function TaskDetailPage() {
-  const params = useParams({ strict: false }) as { taskId?: string };
+  const params = useParams({ from: '/$projectId/tasks/$taskId' });
   const { projectId } = useProject();
   const taskId = Number(params.taskId);
   const { data: task, isLoading, error } = useTask(taskId);
@@ -20,7 +20,7 @@ export function TaskDetailPage() {
 
   return (
     <Stack gap="md">
-      <Link to="/$projectId" params={{ projectId }} search={(prev: any) => prev} style={{ textDecoration: 'none', fontSize: '0.875rem' }}>&larr; Back to overview</Link>
+      <Text fz="sm"><Link to="/$projectId" params={{ projectId }} search={(prev: any) => prev} style={{ textDecoration: 'none' }}>&larr; Back to overview</Link></Text>
 
       <Card withBorder p="md">
         <Group gap="sm" mb="md">
@@ -75,13 +75,15 @@ export function TaskDetailPage() {
               ? <Group gap="xs">
                   {task.dependsOn.map((depId) => (
                     <Group key={depId} gap={4}>
-                      <Link
-                        to="/$projectId/tasks/$taskId"
-                        params={{ projectId, taskId: String(depId) }}
-                        style={{ textDecoration: 'none', fontSize: '0.875rem' }}
-                      >
-                        #{depId}
-                      </Link>
+                      <Text fz="sm" span>
+                        <Link
+                          to="/$projectId/tasks/$taskId"
+                          params={{ projectId, taskId: String(depId) }}
+                          style={{ textDecoration: 'none' }}
+                        >
+                          #{depId}
+                        </Link>
+                      </Text>
                       {task.blockedBy?.includes(depId) && (
                         <Badge size="xs" color="orange" variant="light">blocking</Badge>
                       )}
@@ -123,9 +125,11 @@ export function TaskDetailPage() {
           <div>
             <Text size="xs" fw={600} c="dimmed">Claimed By</Text>
             {task.claimedBy
-              ? <Link to="/$projectId/agents/$agentName" params={{ projectId, agentName: task.claimedBy }} style={{ fontSize: '0.875rem' }}>
-                  {task.claimedBy}
-                </Link>
+              ? <Text fz="sm" span>
+                  <Link to="/$projectId/agents/$agentName" params={{ projectId, agentName: task.claimedBy }}>
+                    {task.claimedBy}
+                  </Link>
+                </Text>
               : <Text size="sm" c="dimmed" fs="italic">&mdash;</Text>}
           </div>
         </Stack>

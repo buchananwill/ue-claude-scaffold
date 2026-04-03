@@ -3,7 +3,7 @@ import { ProjectProvider } from '../contexts/ProjectContext.tsx';
 import { DashboardLayout } from './DashboardLayout.tsx';
 
 export function ProjectLayout() {
-  const { projectId } = useParams({ strict: false }) as { projectId: string };
+  const { projectId } = useParams({ from: '/$projectId' });
   return (
     <ProjectProvider projectId={projectId}>
       <DashboardLayout />
