@@ -205,7 +205,7 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 | `container.agentType`        | Default agent type for containers             |
 | `container.maxTurns`         | Max turns for the agent                       |
 | `container.seedBranch`       | Seed branch reference (informational; `launch.sh` computes branch from project ID) |
-| `tasks.seedBranch`           | Seed branch used by the coordination server for task operations |
+| `tasks.seedBranch`           | Seed branch for legacy single-project mode (no `projects` block). In multi-project mode, set `seedBranch` per-project inside the `projects` map |
 | `server.port`                | Coordination server port                      |
 | `server.ubtLockTimeoutMs`    | Timeout for UBT lock acquisition              |
 | `server.stagingWorktreeRoot` | Path to the host-side staging worktree        |
