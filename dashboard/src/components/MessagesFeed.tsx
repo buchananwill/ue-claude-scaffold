@@ -195,7 +195,7 @@ export function MessagesFeed({
       </Group>
 
       <Box pos="relative" style={{ flex: 1, minHeight: 0 }}>
-        <ScrollArea h="calc(100vh - 260px)" viewportRef={combinedViewportRef}>
+        <ScrollArea style={{ flex: 1, minHeight: 0 }} viewportRef={combinedViewportRef}>
           <Stack gap="xs">
             {messages.length === 0 && !loading && (
               <Text c="dimmed" ta="center" py="xl" size="sm">No messages in #{channel}</Text>
@@ -219,12 +219,12 @@ export function MessagesFeed({
                   style={{
                     borderLeftWidth: 3,
                     borderLeftColor: `var(--mantine-color-${color}-6)`,
-                    backgroundColor: isHighlighted ? 'rgba(59, 130, 246, 0.25)' : undefined,
+                    backgroundColor: isHighlighted ? 'var(--mantine-color-blue-light)' : undefined,
                     transition: 'background-color 2s ease-out',
                   }}
                 >
                   <Group gap="xs" mb={4}>
-                    <Text size="sm" fw={700} c={`${color}.4`}>{m.fromAgent}</Text>
+                    <Text size="sm" fw={700} c={`${color}.4`} style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.fromAgent}</Text>
                     <Text size="xs" c="dimmed" ff="monospace">{ts.format('HH:mm:ss')}</Text>
                     <StatusBadge value={m.type} size="xs" />
                   </Group>

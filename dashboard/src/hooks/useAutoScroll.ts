@@ -9,7 +9,12 @@ interface UseAutoScrollResult {
   sentinelRef: React.RefObject<HTMLDivElement | null>;
   /** Whether the user is currently scrolled near the bottom */
   isAtBottom: boolean;
-  /** Whether to show a "jump to latest" indicator */
+  /**
+   * Whether to show a "jump to latest" indicator.
+   * This becomes true only when new content arrives (via onNewContent) while
+   * the user is scrolled away from the bottom. It does NOT activate on
+   * scroll-up alone -- it requires new content to trigger.
+   */
   showJumpToLatest: boolean;
   /** Scroll to the bottom */
   jumpToLatest: () => void;

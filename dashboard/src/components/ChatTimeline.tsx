@@ -99,7 +99,7 @@ export function ChatTimeline({
                       }}
                     >
                       <Group gap="xs" mb={4}>
-                        <Text size="sm" fw={700} c={`${color}.4`}>{msg.sender}</Text>
+                        <Text size="sm" fw={700} c={`${color}.4`} style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg.sender}</Text>
                         <RelativeTime date={msg.createdAt} />
                       </Group>
                       {msg.replyTo != null && (
@@ -135,7 +135,7 @@ export function ChatTimeline({
               onKeyDown={handleKeyDown}
               style={{ flex: 1 }}
             />
-            <ActionIcon onClick={handleSend} variant="filled">
+            <ActionIcon onClick={() => void handleSend()} variant="filled">
               <IconSend size={16} />
             </ActionIcon>
           </Group>

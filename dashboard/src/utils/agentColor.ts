@@ -26,5 +26,7 @@ function hashString(str: string): number {
 }
 
 export function agentColor(name: string): string {
+  // Empty or missing name gets a neutral color rather than a hash-based one
+  if (!name) return 'gray';
   return MANTINE_COLORS[hashString(name) % MANTINE_COLORS.length];
 }
