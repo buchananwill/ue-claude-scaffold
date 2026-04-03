@@ -33,7 +33,7 @@ Options:
   --no-hooks          Force all hooks disabled
   --help              Show this help message and exit
 
-Branch is docker/{agent-name}, forked from docker/current-root.
+Branch is docker/{project-id}/{agent-name}, forked from docker/{project-id}/current-root.
 
 Examples:
   ./launch.sh --agent-name agent-2 --worker
@@ -252,8 +252,8 @@ WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
 LOG_VERBOSITY="${_CLI_VERBOSITY:-${LOG_VERBOSITY:-normal}}"
 
 # ── Compute branch names ─────────────────────────────────────────────────────
-AGENT_BRANCH="docker/${AGENT_NAME}"
-ROOT_BRANCH="${ROOT_BRANCH:-docker/current-root}"
+AGENT_BRANCH="docker/${PROJECT_ID}/${AGENT_NAME}"
+ROOT_BRANCH="${ROOT_BRANCH:-docker/${PROJECT_ID}/current-root}"
 WORK_BRANCH="$AGENT_BRANCH"
 
 # Validate verbosity
@@ -403,7 +403,7 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
     echo ""
     echo "Parallel agent branches:"
     for i in $(seq 1 "$_CLI_PARALLEL"); do
-      echo "  agent-${i} → docker/agent-${i}"
+      echo "  agent-${i} → docker/${PROJECT_ID}/agent-${i}"
     done
   fi
   echo ""
@@ -514,7 +514,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
       echo "Warning: Team member '$_MEMBER_NAME' uses agent type '$_MEMBER_TYPE' which was not compiled. Container may fall back to static agent definitions." >&2
     fi
     _IS_LEADER=$(echo "$1" | jq -r '.isLeader // false')
-    _MEMBER_BRANCH="docker/${_MEMBER_NAME}"
+    _MEMBER_BRANCH="docker/${PROJECT_ID}/${_MEMBER_NAME}"
 
     # Resolve hook configuration via cascade
     resolve_hooks "$1"
@@ -582,6 +582,14 @@ fi
 if ! curl -sf "http://localhost:${SERVER_PORT:-9100}/health" >/dev/null 2>&1; then
   echo "Error: Coordination server is not running on port ${SERVER_PORT:-9100}." >&2
   echo "Start the coordination server first: cd server && npm run dev" >&2
+  exit 1
+fi
+
+# ── Agent collision guard ───────────────────────────────────────────────────
+if curl -sf "http://localhost:${SERVER_PORT}/agents/${AGENT_NAME}" \
+    -H "x-project-id: ${PROJECT_ID}" 2>/dev/null | grep -q '"status":"active"'; then
+  echo "ERROR: agent '${AGENT_NAME}' is already active for project '${PROJECT_ID}'." >&2
+  echo "Use a different --agent-name, or stop the existing container first." >&2
   exit 1
 fi
 
@@ -711,7 +719,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
 
   for i in $(seq 1 "$_CLI_PARALLEL"); do
     _AGENT="agent-${i}"
-    _BRANCH="docker/${_AGENT}"
+    _BRANCH="docker/${PROJECT_ID}/${_AGENT}"
 
     _setup_branch "$_BRANCH" "$_CLI_FRESH"
 

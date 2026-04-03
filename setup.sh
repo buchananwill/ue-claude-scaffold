@@ -90,13 +90,14 @@ echo ""
 
 # ── Bare repo initialization ────────────────────────────────────────────────
 
-# Helper: clone a bare repo and create docker/current-root branch.
-# Usage: _create_bare_and_root <bare_repo_path> <project_path> [<label>]
+# Helper: clone a bare repo and create docker/{project-id}/current-root branch.
+# Usage: _create_bare_and_root <bare_repo_path> <project_path> <project_id> [<label>]
 # Returns 0 always; errors are printed to stderr (caller continues under set -e).
 _create_bare_and_root() {
   local bare="$1"
   local proj="$2"
-  local label="${3:-}"
+  local pid="$3"
+  local label="${4:-}"
 
   if ! git clone --bare "$proj" "$bare"; then
     echo "  Error: Failed to create bare repo at $bare${label:+ ($label)}" >&2
@@ -109,19 +110,20 @@ _create_bare_and_root() {
       return 0
     fi
   fi
-  if ! git -C "$bare" update-ref refs/heads/docker/current-root "$head"; then
-    echo "  Error: Failed to create docker/current-root in $bare${label:+ ($label)}" >&2
+  if ! git -C "$bare" update-ref "refs/heads/docker/${pid}/current-root" "$head"; then
+    echo "  Error: Failed to create docker/${pid}/current-root in $bare${label:+ ($label)}" >&2
     return 0
   fi
-  echo "  Created docker/current-root branch in bare repo."
+  echo "  Created docker/${pid}/current-root branch in bare repo."
 }
 
 # Helper: create or verify a bare repo for a given project path and bare repo path.
-# Usage: _init_bare_repo <bare_repo_path> <project_path> [<label>]
+# Usage: _init_bare_repo <bare_repo_path> <project_path> <project_id> [<label>]
 _init_bare_repo() {
   local bare="$1"
   local proj="$2"
-  local label="${3:-}"
+  local pid="$3"
+  local label="${4:-}"
 
   if [[ -z "$bare" || -z "$proj" ]]; then
     return
@@ -135,20 +137,31 @@ _init_bare_repo() {
   if [[ ! -d "$bare" ]]; then
     if [[ "$NON_INTERACTIVE" == true ]]; then
       echo "Creating bare repo at $bare${label:+ ($label)} ..."
-      _create_bare_and_root "$bare" "$proj" "${label:-}"
+      _create_bare_and_root "$bare" "$proj" "$pid" "${label:-}"
     else
       read -rp "Create bare repo at $bare${label:+ ($label)} from $proj? [y/N] " _answer
       if [[ "${_answer,,}" == "y" ]]; then
-        _create_bare_and_root "$bare" "$proj" "${label:-}"
+        _create_bare_and_root "$bare" "$proj" "$pid" "${label:-}"
       else
         echo "  Skipped bare repo creation. You can create it later or launch.sh will create it."
       fi
     fi
   else
     echo "Bare repo already exists at $bare${label:+ ($label)}."
-    if ! git -C "$bare" rev-parse --verify refs/heads/docker/current-root &>/dev/null; then
-      echo "  Warning: docker/current-root branch missing. Create it:"
-      echo "    git -C $bare branch docker/current-root HEAD"
+
+    # Migration: detect old-style docker/current-root and copy to docker/{pid}/current-root
+    if git -C "$bare" rev-parse --verify refs/heads/docker/current-root &>/dev/null; then
+      if ! git -C "$bare" rev-parse --verify "refs/heads/docker/${pid}/current-root" &>/dev/null; then
+        local old_sha
+        old_sha=$(git -C "$bare" rev-parse refs/heads/docker/current-root)
+        git -C "$bare" update-ref "refs/heads/docker/${pid}/current-root" "$old_sha"
+        echo "  Migrated: copied docker/current-root to docker/${pid}/current-root (old branch preserved for in-flight containers)."
+      fi
+    fi
+
+    if ! git -C "$bare" rev-parse --verify "refs/heads/docker/${pid}/current-root" &>/dev/null; then
+      echo "  Warning: docker/${pid}/current-root branch missing. Create it:"
+      echo "    git -C $bare branch docker/${pid}/current-root HEAD"
     fi
   fi
 }
@@ -162,7 +175,7 @@ if [[ -f "$_config" ]] && jq -e '.projects' "$_config" &>/dev/null; then
   while IFS= read -r _key; do
     _bare="$(jq -r --arg k "$_key" '.projects[$k].bareRepoPath // empty' "$_config")"
     _proj="$(jq -r --arg k "$_key" '.projects[$k].path // empty' "$_config")"
-    _init_bare_repo "$_bare" "$_proj" "$_key"
+    _init_bare_repo "$_bare" "$_proj" "$_key" "$_key"
     echo ""
   done < <(jq -r '.projects | keys[]' "$_config")
 else
@@ -173,7 +186,7 @@ else
     _bare="$(jq -r '.server.bareRepoPath // empty' "$_config")"
     _proj="$(jq -r '.project.path // empty' "$_config")"
   fi
-  _init_bare_repo "${_bare:-}" "${_proj:-}"
+  _init_bare_repo "${_bare:-}" "${_proj:-}" "default"
 fi
 
 echo ""
