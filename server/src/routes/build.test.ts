@@ -4,7 +4,7 @@ import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, rmdirSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import buildPlugin, { isUbtContentionResult } from './build.js';
@@ -51,7 +51,7 @@ process.exit(0);
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    try { rmdirSync(tmpDir, { recursive: true } as any); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   });
 
   it('POST /build returns the correct response shape', async () => {
@@ -143,7 +143,7 @@ process.exit(0);
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    try { rmdirSync(tmpDir, { recursive: true } as any); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   });
 
   it('defaults to docker/default/current-root when no agent is registered', async () => {
@@ -189,7 +189,7 @@ process.exit(0);
     // Register agent directly via Drizzle
     await ctx.db.insert(agents).values({
       name: 'test-agent',
-      worktree: 'docker/test-agent',
+      worktree: 'docker/default/test-agent',
       projectId: 'default',
     });
 
@@ -203,8 +203,8 @@ process.exit(0);
     const body = res.json();
     assert.equal(body.success, false, 'build should fail since the branch does not exist');
     assert.ok(
-      body.stderr.includes('docker/test-agent'),
-      `expected stderr to reference agent branch "docker/test-agent", got: ${body.stderr}`,
+      body.stderr.includes('docker/default/test-agent'),
+      `expected stderr to reference agent branch "docker/default/test-agent", got: ${body.stderr}`,
     );
   });
 
@@ -215,7 +215,7 @@ process.exit(0);
 
     await ctx.db.insert(agents).values({
       name: 'test-agent',
-      worktree: 'docker/test-agent',
+      worktree: 'docker/default/test-agent',
       projectId: 'default',
     });
 
@@ -229,8 +229,8 @@ process.exit(0);
     const body = res.json();
     assert.equal(body.success, false, 'test should fail since the branch does not exist');
     assert.ok(
-      body.stderr.includes('docker/test-agent'),
-      `expected stderr to reference agent branch "docker/test-agent", got: ${body.stderr}`,
+      body.stderr.includes('docker/default/test-agent'),
+      `expected stderr to reference agent branch "docker/default/test-agent", got: ${body.stderr}`,
     );
   });
 });

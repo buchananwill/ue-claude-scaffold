@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
-import { mkdtempSync, rmdirSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
@@ -535,7 +535,7 @@ describe('tasks with bare repo and agents', () => {
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    try { rmdirSync(tmpDir, { recursive: true } as any); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   });
 
   // ── Task Dependencies ────────────────────────────────────────────────

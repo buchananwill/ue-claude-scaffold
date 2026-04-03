@@ -6,7 +6,6 @@
  *   agent branch: docker/{projectId}/{agentName}
  */
 
-
 // Note: git-illegal sequences @{, ~, ^, *, ?, [, \, space, and control chars
 // are excluded by the character class [a-zA-Z0-9/_.-] — no explicit lookahead needed.
 const BRANCH_RE = /^(?![.\/])(?!.*\/\/)(?!.*\.\.)(?!.*\.$)(?!.*\/$)(?!.*\.lock(?:\/|$))(?!.*\/\.)(?!.*\.\/)[a-zA-Z0-9/_.-]{1,200}$/;

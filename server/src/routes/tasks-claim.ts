@@ -63,8 +63,11 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     return { valid: false, branch };
   }
 
-  fastify.post('/tasks/claim-next', async (request) => {
+  fastify.post('/tasks/claim-next', async (request, reply) => {
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
+    if (agent !== 'unknown' && !/^[a-zA-Z0-9_-]{1,64}$/.test(agent)) {
+      return reply.badRequest('Invalid X-Agent-Name header format');
+    }
     const db = getDb();
     const agentProjectId = await agentsQ.getProjectId(db, agent);
     const projectId = agentProjectId ?? 'default';

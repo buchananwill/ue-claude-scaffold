@@ -245,6 +245,14 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     // network-isolated deployment (containers on the same host). If the server
     // is exposed to untrusted networks, agent identity must be authenticated.
     const agentName = request.headers['x-agent-name'] as string | undefined;
+    if (agentName && !/^[a-zA-Z0-9_-]{1,64}$/.test(agentName)) {
+      return {
+        success: false,
+        exit_code: -1,
+        output: '',
+        stderr: 'Invalid X-Agent-Name header format',
+      };
+    }
     const project = await resolveProjectForAgent(agentName);
     const projectId = await resolveProjectIdForAgent(agentName);
     const holder = await checkLock(agentName, projectId);
@@ -296,6 +304,14 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     Body: { filters?: string[] };
   }>('/test', async (request) => {
     const agentName = request.headers['x-agent-name'] as string | undefined;
+    if (agentName && !/^[a-zA-Z0-9_-]{1,64}$/.test(agentName)) {
+      return {
+        success: false,
+        exit_code: -1,
+        output: '',
+        stderr: 'Invalid X-Agent-Name header format',
+      };
+    }
     const project = await resolveProjectForAgent(agentName);
     const projectId = await resolveProjectIdForAgent(agentName);
     const holder = await checkLock(agentName, projectId);

@@ -168,6 +168,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         const seedBranch = seedBranchFor(projectId, mergeProject);
 
         for (const agentName of agentNames) {
+          if (typeof agentName !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(agentName)) {
+            return reply.badRequest(`Invalid agent name in targetAgents: "${String(agentName).slice(0, 64)}"`);
+          }
           const targetBranch = agentBranchFor(projectId, agentName);
           const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
           if (result.ok) {
