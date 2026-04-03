@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import type { ProjectRow } from './queries/projects.js';
+import { PROJECT_ID_RE } from './branch-naming.js';
 
 export interface ProjectConfig {
   name: string;
@@ -128,9 +129,8 @@ export function loadConfig(): ScaffoldConfig {
   // When an explicit `projects` block is present, legacy top-level fields (project, engine, build)
   // are ignored — only the projects block is used to populate resolvedProjects.
   if (raw.projects && typeof raw.projects === 'object') {
-    const projectIdPattern = /^[a-zA-Z0-9_-]{1,64}$/;
     for (const [id, p] of Object.entries(raw.projects as Record<string, Record<string, unknown>>)) {
-      if (!projectIdPattern.test(id)) {
+      if (!PROJECT_ID_RE.test(id)) {
         throw new Error(
           `Invalid project ID "${id}": must be 1-64 characters matching [a-zA-Z0-9_-].`
         );

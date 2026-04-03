@@ -2,10 +2,9 @@ import type { FastifyPluginAsync } from 'fastify';
 import { getDb } from '../drizzle-instance.js';
 import * as tasksCore from '../queries/tasks-core.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
-import * as projectsQ from '../queries/projects.js';
 import { existsInBareRepo, isCommittedInRepo } from '../git-utils.js';
-import { getProject } from '../config.js';
 import { seedBranchFor } from '../branch-naming.js';
+import { resolveProject } from './resolve-project.js';
 import type { TaskRow } from './tasks-types.js';
 import type { TasksOpts } from './tasks-files.js';
 
@@ -64,8 +63,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
       const taskProjectId = row.projectId ?? (row as any).project_id ?? 'default';
       let project;
       try {
-        const dbRow = await projectsQ.getById(db, taskProjectId);
-        project = getProject(config, taskProjectId, dbRow ?? undefined);
+        project = await resolveProject(config, db, taskProjectId);
       } catch {
         // Unknown project — skip sourcePath validation rather than crashing
         project = null;

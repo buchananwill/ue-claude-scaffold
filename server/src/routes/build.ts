@@ -9,7 +9,8 @@ import { getDb } from '../drizzle-instance.js';
 import * as agentsQ from '../queries/agents.js';
 import * as projectsQ from '../queries/projects.js';
 import * as ubtQ from '../queries/ubt.js';
-import { seedBranchFor } from '../branch-naming.js';
+import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
+import { resolveProject } from './resolve-project.js';
 
 interface BuildOpts {
   config: ScaffoldConfig;
@@ -123,8 +124,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   async function resolveProjectForAgent(agentName: string | undefined): Promise<ProjectConfig> {
     const projectId = await resolveProjectIdForAgent(agentName);
     try {
-      const dbRow = await projectsQ.getById(getDb(), projectId);
-      return getProject(config, projectId, dbRow ?? undefined);
+      return await resolveProject(config, getDb(), projectId);
     } catch {
       throw Object.assign(new Error(`Unknown project: "${projectId}"`), { statusCode: 400 });
     }
@@ -238,30 +238,34 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     return 'changed';
   }
 
-  fastify.post<{
-    Body: { clean?: boolean };
-  }>('/build', async (request) => {
-    // NOTE: x-agent-name is trusted without authentication. This relies on
-    // network-isolated deployment (containers on the same host). If the server
-    // is exposed to untrusted networks, agent identity must be authenticated.
-    const agentName = request.headers['x-agent-name'] as string | undefined;
-    if (agentName && !/^[a-zA-Z0-9_-]{1,64}$/.test(agentName)) {
+  /**
+   * Shared preamble for /build and /test: validate agent name, resolve project,
+   * check UBT lock, sync worktree, ensure staging plugins.
+   * Returns the resolved context or a SpawnResult error to return early.
+   */
+  async function prepareBuildOrTest(
+    agentName: string | undefined,
+  ): Promise<
+    | { ok: true; project: ProjectConfig; projectId: string; cwd: string }
+    | { ok: false; result: SpawnResult }
+  > {
+    if (agentName && !AGENT_NAME_RE.test(agentName)) {
       return {
-        success: false,
-        exit_code: -1,
-        output: '',
-        stderr: 'Invalid X-Agent-Name header format',
+        ok: false,
+        result: { success: false, exit_code: -1, output: '', stderr: 'Invalid X-Agent-Name header format' },
       };
     }
+
     const project = await resolveProjectForAgent(agentName);
     const projectId = await resolveProjectIdForAgent(agentName);
     const holder = await checkLock(agentName, projectId);
     if (holder) {
       return {
-        success: false,
-        exit_code: -1,
-        output: '',
-        stderr: `UBT lock held by '${holder}'. The build hook should have acquired the lock first — this is unexpected.`,
+        ok: false,
+        result: {
+          success: false, exit_code: -1, output: '',
+          stderr: `UBT lock held by '${holder}'. The build hook should have acquired the lock first — this is unexpected.`,
+        },
       };
     }
 
@@ -269,14 +273,30 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       await syncWorktree(agentName, project);
     } catch (err) {
       return {
-        success: false,
-        exit_code: -1,
-        output: '',
-        stderr: `Infrastructure error: ${(err as Error).message}. Agent should shut down.`,
+        ok: false,
+        result: {
+          success: false, exit_code: -1, output: '',
+          stderr: `Infrastructure error: ${(err as Error).message}. Agent should shut down.`,
+        },
       };
     }
 
-    await ensureStagingPlugins(getStagingWorktree(agentName, project), config);
+    const cwd = getStagingWorktree(agentName, project);
+    await ensureStagingPlugins(cwd, config);
+
+    return { ok: true, project, projectId, cwd };
+  }
+
+  fastify.post<{
+    Body: { clean?: boolean };
+  }>('/build', async (request) => {
+    // NOTE: x-agent-name is trusted without authentication. This relies on
+    // network-isolated deployment (containers on the same host). If the server
+    // is exposed to untrusted networks, agent identity must be authenticated.
+    const agentName = request.headers['x-agent-name'] as string | undefined;
+    const prep = await prepareBuildOrTest(agentName);
+    if (!prep.ok) return prep.result;
+    const { project, projectId, cwd } = prep;
 
     const args = ['--summary'];
     if (request.body.clean) {
@@ -284,7 +304,6 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     }
 
     const scriptPath = project.build?.scriptPath ?? config.build.scriptPath;
-    const cwd = getStagingWorktree(agentName, project);
     const { command, scriptArgs } = resolveScript(scriptPath, args);
 
     const buildTimeoutMs = project.build?.buildTimeoutMs ?? config.build.buildTimeoutMs;
@@ -304,45 +323,15 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     Body: { filters?: string[] };
   }>('/test', async (request) => {
     const agentName = request.headers['x-agent-name'] as string | undefined;
-    if (agentName && !/^[a-zA-Z0-9_-]{1,64}$/.test(agentName)) {
-      return {
-        success: false,
-        exit_code: -1,
-        output: '',
-        stderr: 'Invalid X-Agent-Name header format',
-      };
-    }
-    const project = await resolveProjectForAgent(agentName);
-    const projectId = await resolveProjectIdForAgent(agentName);
-    const holder = await checkLock(agentName, projectId);
-    if (holder) {
-      return {
-        success: false,
-        exit_code: -1,
-        output: '',
-        stderr: `UBT lock held by '${holder}'. The build hook should have acquired the lock first — this is unexpected.`,
-      };
-    }
-
-    try {
-      await syncWorktree(agentName, project);
-    } catch (err) {
-      return {
-        success: false,
-        exit_code: -1,
-        output: '',
-        stderr: `Infrastructure error: ${(err as Error).message}. Agent should shut down.`,
-      };
-    }
-
-    await ensureStagingPlugins(getStagingWorktree(agentName, project), config);
+    const prep = await prepareBuildOrTest(agentName);
+    if (!prep.ok) return prep.result;
+    const { project, projectId, cwd } = prep;
 
     const filters = request.body.filters?.length
       ? request.body.filters
       : config.build.defaultTestFilters;
 
     const scriptPath = project.build?.testScriptPath ?? config.build.testScriptPath;
-    const cwd = getStagingWorktree(agentName, project);
     const { command, scriptArgs } = resolveScript(scriptPath, filters);
 
     const testTimeoutMs = project.build?.testTimeoutMs ?? config.build.testTimeoutMs;

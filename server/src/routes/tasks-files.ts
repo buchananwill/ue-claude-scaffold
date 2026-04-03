@@ -1,5 +1,4 @@
 import type { ScaffoldConfig } from '../config.js';
-import { getProject } from '../config.js';
 import { existsInBareRepo } from '../git-utils.js';
 import { seedBranchFor } from '../branch-naming.js';
 import { getDb } from '../drizzle-instance.js';
@@ -7,8 +6,8 @@ import * as tasksCore from '../queries/tasks-core.js';
 import * as taskFilesQ from '../queries/task-files.js';
 import * as taskDepsQ from '../queries/task-deps.js';
 import * as compositionQ from '../queries/composition.js';
-import * as projectsQ from '../queries/projects.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
+import { resolveProject } from './resolve-project.js';
 
 export interface ConflictInfo {
   file: string;
@@ -117,8 +116,7 @@ export async function blockReasonsForTask(row: TaskRow, agent: string, config: S
   // Missing sourcePath check
   if (sp) {
     try {
-      const dbRow = await projectsQ.getById(db, projectId);
-      const project = getProject(config, projectId, dbRow ?? undefined);
+      const project = await resolveProject(config, db, projectId);
       const bareRepo = project.bareRepoPath;
       if (bareRepo) {
         const seedBranch = seedBranchFor(projectId, project);

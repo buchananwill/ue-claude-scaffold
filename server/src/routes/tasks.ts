@@ -7,9 +7,10 @@ import * as compositionQ from '../queries/composition.js';
 import * as agentsQ from '../queries/agents.js';
 import * as projectsQ from '../queries/projects.js';
 import type { ScaffoldConfig } from '../config.js';
-import { getProject } from '../config.js';
-import { mergeIntoBranch, isCommittedInRepo, existsInBareRepo, syncExteriorToBareRepo } from '../git-utils.js';
-import { seedBranchFor, agentBranchFor } from '../branch-naming.js';
+import { mergeIntoAgentBranches } from '../git-utils.js';
+import { AGENT_NAME_RE } from '../branch-naming.js';
+import { resolveProject } from './resolve-project.js';
+import { validateSourcePath } from './tasks-validation.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
 import {
   type TasksOpts, type TaskBody, type PatchBody,
@@ -68,38 +69,11 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     // Validate sourcePath exists — auto-sync from exterior repo if not found in bare repo
     if (sourcePath) {
-      let project;
-      try {
-        const spDbRow = await projectsQ.getById(getDb(), projectId);
-        project = getProject(config, projectId, spDbRow ?? undefined);
-      } catch {
-        return reply.badRequest(`Unknown project: "${projectId}"`);
-      }
-      const bareRepo = project.bareRepoPath;
-      if (bareRepo) {
-        const seedBranch = seedBranchFor(projectId, project);
-        if (!existsInBareRepo(bareRepo, seedBranch, sourcePath)) {
-          // Auto-sync from exterior repo before rejecting
-          const exteriorRepo = project.path;
-          if (exteriorRepo) {
-            syncExteriorToBareRepo(exteriorRepo, bareRepo, seedBranch, fastify.log);
-          }
-          // Re-check after sync
-          if (!existsInBareRepo(bareRepo, seedBranch, sourcePath)) {
-            return reply.unprocessableEntity(
-              `sourcePath '${sourcePath}' not found on branch '${seedBranch}' in bare repo. ` +
-                `Commit the plan in the exterior repo and retry.`,
-            );
-          }
-        }
-      } else {
-        const worktree = project.path;
-        if (!isCommittedInRepo(worktree, sourcePath)) {
-          return reply.unprocessableEntity(
-            `sourcePath '${sourcePath}' is not committed in the project worktree (${worktree}). ` +
-            `Commit it first: git add ${sourcePath} && git commit`
-          );
-        }
+      const spCheck = await validateSourcePath({
+        sourcePath, projectId, config, db: getDb(), log: fastify.log, autoSync: true,
+      });
+      if (!spCheck.valid) {
+        return reply.unprocessableEntity(spCheck.message);
       }
     }
 
@@ -129,28 +103,23 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     // Merge seed branch into agent branches if requested
-    const mergedAgents: string[] = [];
-    const failedMerges: Array<{ agent: string; reason: string }> = [];
+    let mergedAgents: string[] = [];
+    let failedMerges: Array<{ agent: string; reason: string }> = [];
 
     if (targetAgents) {
-      let agentNames: string[];
-      if (targetAgents === '*') {
-        agentNames = await agentsQ.getActiveNames(db);
-      } else {
-        agentNames = targetAgents as string[];
-      }
-
-      // Validate agent names unconditionally (before any git operations)
-      for (const agentName of agentNames) {
-        if (typeof agentName !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(agentName)) {
-          return reply.badRequest(`Invalid agent name in targetAgents: "${String(agentName).slice(0, 64)}"`);
+      // Validate agent names before resolving
+      const agentList = targetAgents === '*' ? targetAgents : targetAgents as string[];
+      if (Array.isArray(agentList)) {
+        for (const agentName of agentList) {
+          if (typeof agentName !== 'string' || !AGENT_NAME_RE.test(agentName)) {
+            return reply.badRequest(`Invalid agent name in targetAgents: "${String(agentName).slice(0, 64)}"`);
+          }
         }
       }
 
       let mergeProject;
       try {
-        const dbRow = await projectsQ.getById(db, projectId);
-        mergeProject = getProject(config, projectId, dbRow ?? undefined);
+        mergeProject = await resolveProject(config, db, projectId);
       } catch {
         return reply.badRequest(`Unknown project: "${projectId}"`);
       }
@@ -158,18 +127,12 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       if (!bareRepo) {
         fastify.log.warn('targetAgents requested but bareRepoPath is not configured');
       } else {
-        const seedBranch = seedBranchFor(projectId, mergeProject);
-
-        for (const agentName of agentNames) {
-          const targetBranch = agentBranchFor(projectId, agentName);
-          const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
-          if (result.ok) {
-            mergedAgents.push(agentName);
-          } else {
-            failedMerges.push({ agent: agentName, reason: result.reason });
-            fastify.log.warn(`Failed to merge ${seedBranch} into ${targetBranch}: ${result.reason}`);
-          }
-        }
+        const mergeResult = await mergeIntoAgentBranches({
+          bareRepo, projectId, project: mergeProject,
+          targetAgents: agentList, db, log: fastify.log,
+        });
+        mergedAgents = mergeResult.mergedAgents;
+        failedMerges = mergeResult.failedMerges;
       }
     }
 
@@ -265,41 +228,16 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         }
       }
       if (t.sourcePath) {
-        let project;
-        try {
-          const dbRow = await projectsQ.getById(db, projectId);
-          project = getProject(config, projectId, dbRow ?? undefined);
-        } catch {
-          return reply.badRequest(`Unknown project: "${projectId}"`);
+        // Auto-sync on first miss in the batch (once per batch)
+        const spCheck = await validateSourcePath({
+          sourcePath: t.sourcePath, projectId, config, db, log: fastify.log,
+          autoSync: !batchSynced, label: `Task ${i}`,
+        });
+        if (!spCheck.valid) {
+          batchSynced = true; // prevent repeated sync attempts
+          return reply.unprocessableEntity(spCheck.message);
         }
-        const bareRepo = project.bareRepoPath;
-        if (bareRepo) {
-          const seedBranch = seedBranchFor(projectId, project);
-          if (!existsInBareRepo(bareRepo, seedBranch, t.sourcePath)) {
-            // Auto-sync from exterior repo on first miss (once per batch)
-            if (!batchSynced) {
-              const exteriorRepo = project.path;
-              if (exteriorRepo) {
-                syncExteriorToBareRepo(exteriorRepo, bareRepo, seedBranch, fastify.log);
-              }
-              batchSynced = true;
-            }
-            // Re-check after sync
-            if (!existsInBareRepo(bareRepo, seedBranch, t.sourcePath)) {
-              return reply.unprocessableEntity(
-                `Task ${i}: sourcePath '${t.sourcePath}' not found on branch '${seedBranch}' in bare repo. ` +
-                  `Commit the plan in the exterior repo and retry.`,
-              );
-            }
-          }
-        } else {
-          const worktree = project.path;
-          if (!isCommittedInRepo(worktree, t.sourcePath)) {
-            return reply.unprocessableEntity(
-              `Task ${i}: sourcePath '${t.sourcePath}' is not committed in the project worktree (${worktree}).`
-            );
-          }
-        }
+        batchSynced = true;
       }
     }
 
@@ -467,30 +405,12 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     if ('sourcePath' in body && typeof body.sourcePath === 'string') {
-      let patchProject;
-      try {
-        const patchProjectId = row.projectId ?? (row as any).project_id;
-        const dbRow = await projectsQ.getById(db, patchProjectId);
-        patchProject = getProject(config, patchProjectId, dbRow ?? undefined);
-      } catch {
-        return reply.badRequest(`Unknown project: "${row.projectId ?? (row as any).project_id}"`);
-      }
-      const bareRepo = patchProject.bareRepoPath;
-      if (bareRepo) {
-        const seedBranch = seedBranchFor(row.projectId ?? (row as any).project_id, patchProject);
-        if (!existsInBareRepo(bareRepo, seedBranch, body.sourcePath)) {
-          return reply.unprocessableEntity(
-            `sourcePath '${body.sourcePath}' not found on branch '${seedBranch}' in bare repo`
-          );
-        }
-      } else {
-        const worktree = patchProject.path;
-        if (!isCommittedInRepo(worktree, body.sourcePath)) {
-          return reply.unprocessableEntity(
-            `sourcePath '${body.sourcePath}' is not committed in the staging worktree (${worktree}). ` +
-            `Commit it first: git add ${body.sourcePath} && git commit`
-          );
-        }
+      const patchProjectId = row.projectId ?? (row as any).project_id;
+      const spCheck = await validateSourcePath({
+        sourcePath: body.sourcePath, projectId: patchProjectId, config, db,
+      });
+      if (!spCheck.valid) {
+        return reply.unprocessableEntity(spCheck.message);
       }
     }
 

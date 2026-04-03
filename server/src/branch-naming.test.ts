@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { seedBranchFor, agentBranchFor } from './branch-naming.js';
+import { seedBranchFor, agentBranchFor, isValidProjectId, isValidAgentName, PROJECT_ID_RE, AGENT_NAME_RE } from './branch-naming.js';
 
 describe('seedBranchFor', () => {
   it('returns default docker/{projectId}/current-root when no config provided', () => {
@@ -106,6 +106,45 @@ describe('seedBranchFor', () => {
       () => seedBranchFor('proj', { seedBranch: 'foo./bar' }),
       /Invalid seedBranch/
     );
+  });
+});
+
+describe('isValidProjectId', () => {
+  it('accepts valid project IDs', () => {
+    assert.equal(isValidProjectId('default'), true);
+    assert.equal(isValidProjectId('my-project_1'), true);
+  });
+
+  it('rejects invalid project IDs', () => {
+    assert.equal(isValidProjectId('../evil'), false);
+    assert.equal(isValidProjectId(''), false);
+    assert.equal(isValidProjectId('a'.repeat(65)), false);
+    assert.equal(isValidProjectId('has space'), false);
+  });
+});
+
+describe('isValidAgentName', () => {
+  it('accepts valid agent names', () => {
+    assert.equal(isValidAgentName('agent-1'), true);
+    assert.equal(isValidAgentName('worker_3'), true);
+  });
+
+  it('rejects invalid agent names', () => {
+    assert.equal(isValidAgentName('../other'), false);
+    assert.equal(isValidAgentName(''), false);
+    assert.equal(isValidAgentName('has space'), false);
+  });
+});
+
+describe('PROJECT_ID_RE and AGENT_NAME_RE exports', () => {
+  it('PROJECT_ID_RE matches the same pattern as isValidProjectId', () => {
+    assert.equal(PROJECT_ID_RE.test('valid-id'), true);
+    assert.equal(PROJECT_ID_RE.test('../bad'), false);
+  });
+
+  it('AGENT_NAME_RE matches the same pattern as isValidAgentName', () => {
+    assert.equal(AGENT_NAME_RE.test('agent-1'), true);
+    assert.equal(AGENT_NAME_RE.test('../bad'), false);
   });
 });
 

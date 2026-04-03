@@ -356,6 +356,24 @@ resolve_hooks() {
     HOOK_CPP_LINT=$(_resolve_hook_value "$sys_lint" "$PROJECT_HOOK_LINT" "$team_lint" "$member_lint" "${_CLI_HOOK_LINT:-}")
 }
 
+# ── Container launch helper ─────────────────────────────────────────────────
+# Usage: _launch_container <agent_name> [ENV_OVERRIDES...]
+# All env overrides are passed as VAR=VALUE arguments after the agent name.
+# The function handles the docker compose invocation with the project name.
+_launch_container() {
+  local _lc_agent="$1"; shift
+  local _lc_project_name="claude-${PROJECT_ID}-${_lc_agent}"
+
+  # Build env array from remaining arguments
+  local _lc_env=()
+  for _lc_arg in "$@"; do
+    _lc_env+=("$_lc_arg")
+  done
+
+  (cd "$SCRIPT_DIR/container" && env "${_lc_env[@]}" \
+    $COMPOSE_CMD --project-name "$_lc_project_name" up --build --detach)
+}
+
 # ── Dry run ──────────────────────────────────────────────────────────────────
 if [[ "$_CLI_DRY_RUN" == true ]]; then
   if [[ -n "$_CLI_TEAM" ]]; then
@@ -567,7 +585,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
       $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${_MEMBER_NAME}" down 2>/dev/null) || true
 
     # Launch container
-    (cd "$SCRIPT_DIR/container" && \
+    _launch_container "$_MEMBER_NAME" \
       AGENT_NAME="$_MEMBER_NAME" \
       WORK_BRANCH="$_MEMBER_BRANCH" \
       AGENT_TYPE="$_MEMBER_TYPE" \
@@ -584,8 +602,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
       LOG_VERBOSITY="$LOG_VERBOSITY" \
       WORKER_MODE=false \
       HOOK_BUILD_INTERCEPT="$HOOK_BUILD_INTERCEPT" \
-      HOOK_CPP_LINT="$HOOK_CPP_LINT" \
-      $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${_MEMBER_NAME}" up --build --detach)
+      HOOK_CPP_LINT="$HOOK_CPP_LINT"
 
     echo "  Launched $_MEMBER_NAME (role: $_MEMBER_ROLE, type: $_MEMBER_TYPE, hooks: build=$HOOK_BUILD_INTERCEPT lint=$HOOK_CPP_LINT)"
   }
@@ -765,7 +782,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
 
     _setup_branch "$_BRANCH" "$_CLI_FRESH"
 
-    (cd "$SCRIPT_DIR/container" && \
+    _launch_container "$_AGENT" \
       AGENT_NAME="$_AGENT" \
       WORK_BRANCH="$_BRANCH" \
       PROJECT_ID="$PROJECT_ID" \
@@ -775,8 +792,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
       HOOK_CPP_LINT="$HOOK_CPP_LINT" \
       WORKER_MODE=true \
       WORKER_SINGLE_TASK=false \
-      AGENT_MODE=pump \
-      $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${_AGENT}" up --build --detach)
+      AGENT_MODE=pump
 
     echo "  Launched $_AGENT on branch $_BRANCH"
   done
@@ -794,11 +810,11 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
   echo "Graceful drain:"
   echo "  ./stop.sh --drain"
 else
-  cd "$SCRIPT_DIR/container"
   if [ "$_CLI_FRESH" = "true" ]; then
-      $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${AGENT_NAME}" build --no-cache
+    (cd "$SCRIPT_DIR/container" && \
+      $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${AGENT_NAME}" build --no-cache)
   fi
-  $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${AGENT_NAME}" up --build --detach
+  _launch_container "$AGENT_NAME"
 
   echo ""
   echo "=== Agent Launched ==="

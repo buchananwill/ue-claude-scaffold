@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
+import { PROJECT_ID_RE } from '../branch-naming.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -14,7 +15,7 @@ const projectIdPluginInner: FastifyPluginAsync = async (fastify) => {
     const raw = Array.isArray(rawHeader) ? rawHeader[0] : (rawHeader ?? 'default');
     // Format-only validation; DB existence is checked at the route level, not here,
     // to avoid per-request DB queries for endpoints that may not need it.
-    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(raw)) {
+    if (!PROJECT_ID_RE.test(raw)) {
       throw fastify.httpErrors.badRequest(`Invalid project ID: "${raw}"`);
     }
     request.projectId = raw;

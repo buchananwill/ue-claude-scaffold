@@ -2,6 +2,46 @@ import type { FastifyPluginAsync } from 'fastify';
 import { getDb } from '../drizzle-instance.js';
 import * as projectsQ from '../queries/projects.js';
 
+/** Validate portable project fields (shared between POST and PATCH). Returns an error message or null. */
+function validateProjectFields(opts: {
+  name?: string;
+  engineVersion?: string | null;
+  seedBranch?: string | null;
+  buildTimeoutMs?: number | null;
+  testTimeoutMs?: number | null;
+}): string | null {
+  const { name, engineVersion, seedBranch, buildTimeoutMs, testTimeoutMs } = opts;
+  if (name !== undefined) {
+    if (typeof name !== 'string' || name.length === 0 || name.length > 256) {
+      return 'name must be a non-empty string (max 256 chars)';
+    }
+  }
+  if (seedBranch !== undefined && seedBranch !== null) {
+    if (typeof seedBranch !== 'string' || !/^[a-zA-Z0-9/_.-]{1,200}$/.test(seedBranch)) {
+      return 'seedBranch must match ^[a-zA-Z0-9/_.-]{1,200}$';
+    }
+  }
+  if (engineVersion !== undefined && engineVersion !== null) {
+    if (typeof engineVersion !== 'string' || engineVersion.length > 64) {
+      return 'engineVersion must be a string (max 64 chars)';
+    }
+    if (!/^[a-zA-Z0-9._+-]+$/.test(engineVersion)) {
+      return 'engineVersion contains invalid characters';
+    }
+  }
+  if (buildTimeoutMs !== undefined && buildTimeoutMs !== null) {
+    if (!Number.isInteger(buildTimeoutMs) || buildTimeoutMs <= 0 || buildTimeoutMs > 3600000) {
+      return 'buildTimeoutMs must be a positive integer up to 3600000';
+    }
+  }
+  if (testTimeoutMs !== undefined && testTimeoutMs !== null) {
+    if (!Number.isInteger(testTimeoutMs) || testTimeoutMs <= 0 || testTimeoutMs > 3600000) {
+      return 'testTimeoutMs must be a positive integer up to 3600000';
+    }
+  }
+  return null;
+}
+
 // No opts needed — DB access is via getDb() singleton, not injected through opts.
 const projectsPlugin: FastifyPluginAsync = async (fastify) => {
   // GET /projects - list all projects
@@ -48,32 +88,8 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     // Validate body field constraints
-    if (typeof name !== 'string' || name.length === 0 || name.length > 256) {
-      return reply.badRequest('name must be a non-empty string (max 256 chars)');
-    }
-    if (seedBranch !== undefined && seedBranch !== null) {
-      if (typeof seedBranch !== 'string' || !/^[a-zA-Z0-9/_.-]{1,200}$/.test(seedBranch)) {
-        return reply.badRequest('seedBranch must match ^[a-zA-Z0-9/_.-]{1,200}$');
-      }
-    }
-    if (engineVersion !== undefined && engineVersion !== null) {
-      if (typeof engineVersion !== 'string' || engineVersion.length > 64) {
-        return reply.badRequest('engineVersion must be a string (max 64 chars)');
-      }
-      if (!/^[a-zA-Z0-9._+-]+$/.test(engineVersion)) {
-        return reply.badRequest('engineVersion contains invalid characters');
-      }
-    }
-    if (buildTimeoutMs !== undefined && buildTimeoutMs !== null) {
-      if (!Number.isInteger(buildTimeoutMs) || buildTimeoutMs <= 0 || buildTimeoutMs > 3600000) {
-        return reply.badRequest('buildTimeoutMs must be a positive integer up to 3600000');
-      }
-    }
-    if (testTimeoutMs !== undefined && testTimeoutMs !== null) {
-      if (!Number.isInteger(testTimeoutMs) || testTimeoutMs <= 0 || testTimeoutMs > 3600000) {
-        return reply.badRequest('testTimeoutMs must be a positive integer up to 3600000');
-      }
-    }
+    const fieldErr = validateProjectFields({ name, engineVersion, seedBranch, buildTimeoutMs, testTimeoutMs });
+    if (fieldErr) return reply.badRequest(fieldErr);
 
     const existing = await projectsQ.getById(db, id);
     if (existing) {
@@ -111,34 +127,8 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
 
     // Validate PATCH body field constraints
     const { name, engineVersion, seedBranch, buildTimeoutMs, testTimeoutMs } = request.body;
-    if (engineVersion !== undefined && engineVersion !== null) {
-      if (typeof engineVersion !== 'string' || engineVersion.length > 64) {
-        return reply.badRequest('engineVersion must be a string (max 64 chars)');
-      }
-      if (!/^[a-zA-Z0-9._+-]+$/.test(engineVersion)) {
-        return reply.badRequest('engineVersion contains invalid characters');
-      }
-    }
-    if (name !== undefined) {
-      if (typeof name !== 'string' || name.length === 0 || name.length > 256) {
-        return reply.badRequest('name must be a non-empty string (max 256 chars)');
-      }
-    }
-    if (seedBranch !== undefined && seedBranch !== null) {
-      if (typeof seedBranch !== 'string' || !/^[a-zA-Z0-9/_.-]{1,200}$/.test(seedBranch)) {
-        return reply.badRequest('seedBranch must match ^[a-zA-Z0-9/_.-]{1,200}$');
-      }
-    }
-    if (buildTimeoutMs !== undefined && buildTimeoutMs !== null) {
-      if (!Number.isInteger(buildTimeoutMs) || buildTimeoutMs <= 0 || buildTimeoutMs > 3600000) {
-        return reply.badRequest('buildTimeoutMs must be a positive integer up to 3600000');
-      }
-    }
-    if (testTimeoutMs !== undefined && testTimeoutMs !== null) {
-      if (!Number.isInteger(testTimeoutMs) || testTimeoutMs <= 0 || testTimeoutMs > 3600000) {
-        return reply.badRequest('testTimeoutMs must be a positive integer up to 3600000');
-      }
-    }
+    const patchErr = validateProjectFields({ name, engineVersion, seedBranch, buildTimeoutMs, testTimeoutMs });
+    if (patchErr) return reply.badRequest(patchErr);
 
     const db = getDb();
     const existing = await projectsQ.getById(db, id);

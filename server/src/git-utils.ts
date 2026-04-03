@@ -1,5 +1,9 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import type { FastifyBaseLogger } from 'fastify';
+import { agentBranchFor, seedBranchFor, AGENT_NAME_RE } from './branch-naming.js';
+import type { ScaffoldConfig, MergedProjectConfig } from './config.js';
+import type { DrizzleDb } from './drizzle-instance.js';
+import * as agentsQ from './queries/agents.js';
 
 /**
  * Check whether a file path is committed (tracked in HEAD) at a given repo path.
@@ -158,4 +162,48 @@ export function mergeIntoBranch(
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, reason: message };
   }
+}
+
+/**
+ * Resolve a list of target agents and merge the seed branch into each
+ * agent's branch in the bare repo.
+ *
+ * `targetAgents` may be an explicit array of agent names or `'*'` to
+ * target all active agents.
+ *
+ * Returns lists of successfully merged and failed agents.
+ */
+export async function mergeIntoAgentBranches(opts: {
+  bareRepo: string;
+  projectId: string;
+  project: MergedProjectConfig;
+  targetAgents: string[] | '*';
+  db: DrizzleDb;
+  log?: FastifyBaseLogger;
+}): Promise<{ mergedAgents: string[]; failedMerges: Array<{ agent: string; reason: string }> }> {
+  const { bareRepo, projectId, project, targetAgents, db, log } = opts;
+
+  let agentNames: string[];
+  if (targetAgents === '*') {
+    agentNames = await agentsQ.getActiveNames(db);
+  } else {
+    agentNames = targetAgents;
+  }
+
+  const seedBranch = seedBranchFor(projectId, project);
+  const mergedAgents: string[] = [];
+  const failedMerges: Array<{ agent: string; reason: string }> = [];
+
+  for (const agentName of agentNames) {
+    const targetBranch = agentBranchFor(projectId, agentName);
+    const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
+    if (result.ok) {
+      mergedAgents.push(agentName);
+    } else {
+      failedMerges.push({ agent: agentName, reason: result.reason });
+      log?.warn(`Failed to merge ${seedBranch} into ${targetBranch}: ${result.reason}`);
+    }
+  }
+
+  return { mergedAgents, failedMerges };
 }

@@ -5,10 +5,9 @@ import * as tasksClaimQ from '../queries/tasks-claim.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
 import * as taskFilesQ from '../queries/task-files.js';
 import * as agentsQ from '../queries/agents.js';
-import * as projectsQ from '../queries/projects.js';
 import { existsInBareRepo } from '../git-utils.js';
-import { getProject } from '../config.js';
-import { seedBranchFor } from '../branch-naming.js';
+import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
+import { resolveProject } from './resolve-project.js';
 import type { TaskRow } from './tasks-types.js';
 import {
   type TasksOpts,
@@ -32,25 +31,20 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     const taskProjectId = task.projectId ?? task.project_id ?? 'default';
 
     const db = getDb();
-    const dbRow = await projectsQ.getById(db, taskProjectId);
 
     let bareRepo: string;
+    let seedBranch: string;
     try {
-      const project = getProject(config, taskProjectId, dbRow ?? undefined);
+      const project = await resolveProject(config, db, taskProjectId);
       bareRepo = project.bareRepoPath;
+      seedBranch = seedBranchFor(taskProjectId, project);
     } catch {
       bareRepo = config.server.bareRepoPath;
+      seedBranch = seedBranchFor(taskProjectId);
     }
     if (!bareRepo) return { valid: true };
 
     const agentRow = await agentsQ.getWorktreeInfo(db, agent);
-    let seedBranch: string;
-    try {
-      const project = getProject(config, taskProjectId, dbRow ?? undefined);
-      seedBranch = seedBranchFor(taskProjectId, project);
-    } catch {
-      seedBranch = seedBranchFor(taskProjectId);
-    }
     const branch = agentRow?.worktree ?? seedBranch;
 
     if (existsInBareRepo(bareRepo, branch, sp)) {
@@ -65,7 +59,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
 
   fastify.post('/tasks/claim-next', async (request, reply) => {
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
-    if (agent !== 'unknown' && !/^[a-zA-Z0-9_-]{1,64}$/.test(agent)) {
+    if (agent !== 'unknown' && !AGENT_NAME_RE.test(agent)) {
       return reply.badRequest('Invalid X-Agent-Name header format');
     }
     const db = getDb();
@@ -132,7 +126,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
   }>('/tasks/:id/claim', async (request, reply) => {
     const id = Number(request.params.id);
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
-    if (agent !== 'unknown' && !/^[a-zA-Z0-9_-]{1,64}$/.test(agent)) {
+    if (agent !== 'unknown' && !AGENT_NAME_RE.test(agent)) {
       return reply.badRequest('Invalid X-Agent-Name header format');
     }
     const db = getDb();

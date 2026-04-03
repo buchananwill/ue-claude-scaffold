@@ -9,8 +9,16 @@
 // Note: git-illegal sequences @{, ~, ^, *, ?, [, \, space, and control chars
 // are excluded by the character class [a-zA-Z0-9/_.-] — no explicit lookahead needed.
 const BRANCH_RE = /^(?![.\/])(?!.*\/\/)(?!.*\.\.)(?!.*\.$)(?!.*\/$)(?!.*\.lock(?:\/|$))(?!.*\/\.)(?!.*\.\/)[a-zA-Z0-9/_.-]{1,200}$/;
-const PROJECT_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
-const AGENT_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+export const PROJECT_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+export const AGENT_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+export function isValidProjectId(id: string): boolean {
+  return PROJECT_ID_RE.test(id);
+}
+
+export function isValidAgentName(name: string): boolean {
+  return AGENT_NAME_RE.test(name);
+}
 
 /**
  * Returns the seed (integration) branch name for a project.

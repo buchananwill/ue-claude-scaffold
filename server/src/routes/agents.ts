@@ -5,11 +5,10 @@ import * as agentsQ from '../queries/agents.js';
 import * as roomsQ from '../queries/rooms.js';
 import * as filesQ from '../queries/files.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
-import * as projectsQ from '../queries/projects.js';
 import type { ScaffoldConfig } from '../config.js';
-import { getProject } from '../config.js';
 import { mergeIntoBranch } from '../git-utils.js';
 import { seedBranchFor, agentBranchFor } from '../branch-naming.js';
+import { resolveProject } from './resolve-project.js';
 
 interface AgentsOpts { config: ScaffoldConfig }
 
@@ -166,8 +165,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
 
     let project;
     try {
-      const dbRow = await projectsQ.getById(db, agent.projectId);
-      project = getProject(config, agent.projectId, dbRow ?? undefined);
+      project = await resolveProject(config, db, agent.projectId);
     } catch {
       return reply.code(400).send({
         statusCode: 400,

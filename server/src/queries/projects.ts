@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { projects, agents, buildHistory, messages, tasks, files, ubtLock, ubtQueue, rooms, teams } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
+import { isValidProjectId as _isValidProjectId } from '../branch-naming.js';
 
 export interface ProjectRow {
   id: string;
@@ -29,11 +30,7 @@ export interface UpdateProjectOpts {
   testTimeoutMs?: number | null;
 }
 
-const PROJECT_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
-
-export function isValidProjectId(id: string): boolean {
-  return PROJECT_ID_PATTERN.test(id);
-}
+export const isValidProjectId = _isValidProjectId;
 
 export async function getAll(db: DrizzleDb): Promise<ProjectRow[]> {
   return db.select().from(projects) as Promise<ProjectRow[]>;

@@ -1,11 +1,9 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { ScaffoldConfig } from '../config.js';
-import { getProject } from '../config.js';
-import { syncExteriorToBareRepo, mergeIntoBranch } from '../git-utils.js';
+import { syncExteriorToBareRepo, mergeIntoAgentBranches } from '../git-utils.js';
 import { getDb } from '../drizzle-instance.js';
-import * as agentsQ from '../queries/agents.js';
-import * as projectsQ from '../queries/projects.js';
-import { seedBranchFor, agentBranchFor } from '../branch-naming.js';
+import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
+import { resolveProject } from './resolve-project.js';
 
 interface SyncOpts {
   config: ScaffoldConfig;
@@ -24,8 +22,7 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
     const projectId = request.projectId;
     let project;
     try {
-      const dbRow = await projectsQ.getById(getDb(), projectId);
-      project = getProject(config, projectId, dbRow ?? undefined);
+      project = await resolveProject(config, getDb(), projectId);
     } catch {
       return reply.badRequest(`Unknown project: "${projectId}"`);
     }
@@ -55,31 +52,29 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
 
     // Optionally merge seed branch into agent branches
     const { targetAgents } = request.body ?? {};
-    const mergedAgents: string[] = [];
-    const failedMerges: Array<{ agent: string; reason: string }> = [];
+    let mergedAgents: string[] = [];
+    let failedMerges: Array<{ agent: string; reason: string }> = [];
 
     if (targetAgents) {
-      let agentNames: string[];
-      if (targetAgents === '*') {
-        agentNames = await agentsQ.getActiveNames(getDb());
-      } else if (Array.isArray(targetAgents)) {
-        agentNames = targetAgents;
-      } else {
+      if (targetAgents !== '*' && !Array.isArray(targetAgents)) {
         return reply.badRequest('targetAgents must be an array of agent names or "*"');
       }
 
-      for (const agentName of agentNames) {
-        if (typeof agentName !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(agentName)) {
-          return reply.badRequest(`Invalid agent name in targetAgents: "${String(agentName).slice(0, 64)}"`);
-        }
-        const targetBranch = agentBranchFor(projectId, agentName);
-        const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
-        if (result.ok) {
-          mergedAgents.push(agentName);
-        } else {
-          failedMerges.push({ agent: agentName, reason: result.reason });
+      // Validate names if explicit array
+      if (Array.isArray(targetAgents)) {
+        for (const agentName of targetAgents) {
+          if (typeof agentName !== 'string' || !AGENT_NAME_RE.test(agentName)) {
+            return reply.badRequest(`Invalid agent name in targetAgents: "${String(agentName).slice(0, 64)}"`);
+          }
         }
       }
+
+      const db = getDb();
+      const mergeResult = await mergeIntoAgentBranches({
+        bareRepo, projectId, project, targetAgents, db, log: fastify.log,
+      });
+      mergedAgents = mergeResult.mergedAgents;
+      failedMerges = mergeResult.failedMerges;
     }
 
     return {
