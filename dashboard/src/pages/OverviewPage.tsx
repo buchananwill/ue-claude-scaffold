@@ -22,14 +22,17 @@ export function OverviewPage() {
   // fetched tasks, but useTasks needs page/status from URL params.
   const search = useSearch({ from: '/$projectId/' });
   const page = search.page ?? 1;
-  const statusFilter = useMemo(() => {
-    if (!search.status) return new Set<string>();
-    return new Set(search.status.split(',').filter(Boolean));
+  // Parse status from URL for the server-side query. The same parsing happens
+  // inside useTaskFiltersUrlBacked for client-side filtering; we duplicate it
+  // here because useTasks must be called before useTaskFiltersUrlBacked (which
+  // depends on the fetched tasks).
+  const statusParam = useMemo(() => {
+    if (!search.status) return undefined;
+    const parts = search.status.split(',').filter(Boolean);
+    // Server accepts a single status filter. When the user selects exactly one
+    // status chip, push it to the server for a tighter result set.
+    return parts.length === 1 ? parts[0] : undefined;
   }, [search.status]);
-  // Server accepts a single status filter. When the user selects exactly one status chip,
-  // push it to the server for a tighter result set. When zero or multiple are selected,
-  // omit the server-side filter and let client-side filtering handle it.
-  const statusParam = statusFilter.size === 1 ? [...statusFilter][0] : undefined;
   const offset = (page - 1) * PAGE_SIZE;
   const tasks = useTasks({ limit: PAGE_SIZE, offset, status: statusParam });
   const taskFilters = useTaskFiltersUrlBacked(tasks.data?.tasks ?? []);

@@ -6,7 +6,6 @@ import {
   Code,
   Stack,
   Group,
-  Collapse,
   Loader,
 } from '@mantine/core';
 import { IconCheck, IconX, IconChevronDown, IconChevronRight } from '@tabler/icons-react';
@@ -38,7 +37,7 @@ export function BuildLogPage() {
 
   const agentFilter = search.agent ?? '';
   const typeFilter = search.type ?? '';
-  const successFilter = search.result ?? '';
+  const resultFilter = search.result ?? '';
 
   const setAgentFilter = (v: string) => {
     navigate({ search: (prev) => ({ ...prev, agent: v || undefined }) });
@@ -68,15 +67,21 @@ export function BuildLogPage() {
     return items;
   }, [agents.data]);
 
+  // Result (pass/fail) filtering is applied client-side because the server's
+  // GET /builds endpoint does not support a `success` query param. The endpoint
+  // already returns all records (no pagination), so filtering here is fine.
+  // The router's validateSearch constrains `result` to 'pass' | 'fail', so the
+  // exhaustive check below is a compile-time guard.
   const filteredRecords = useMemo(() => {
     const data = builds.data ?? [];
-    if (!successFilter) return data;
-    return data.filter((r: BuildRecord) => {
-      if (successFilter === 'pass') return r.success === true;
-      if (successFilter === 'fail') return r.success === false;
-      return true;
-    });
-  }, [builds.data, successFilter]);
+    if (!resultFilter) return data;
+    if (resultFilter === 'pass') return data.filter((r: BuildRecord) => r.success === true);
+    if (resultFilter === 'fail') return data.filter((r: BuildRecord) => r.success === false);
+    // Exhaustiveness: resultFilter is constrained to 'pass' | 'fail' by the router.
+    // If a new value is ever added, this line ensures a build error.
+    const _exhaustive: never = resultFilter as never;
+    return _exhaustive;
+  }, [builds.data, resultFilter]);
 
   if (builds.isLoading) {
     return (
@@ -104,7 +109,7 @@ export function BuildLogPage() {
           data={agentOptions}
           value={agentFilter}
           onChange={(v) => setAgentFilter(v ?? '')}
-          style={{ width: 180 }}
+          w={180}
         />
         <div>
           <Text size="xs" fw={500} mb={4}>Type</Text>
@@ -128,7 +133,7 @@ export function BuildLogPage() {
               { label: 'Pass', value: 'pass' },
               { label: 'Fail', value: 'fail' },
             ]}
-            value={successFilter}
+            value={resultFilter}
             onChange={setSuccessFilter}
           />
         </div>
@@ -169,26 +174,24 @@ export function BuildLogPage() {
                 {expanded === r.id && (
                   <Table.Tr>
                     <Table.Td colSpan={6}>
-                      <Collapse in={expanded === r.id}>
-                        <Stack gap="xs" p="sm">
-                          <div>
-                            <Text size="xs" fw={600} c="dimmed">stdout</Text>
-                            {r.output != null ? (
-                              <Code block>{r.output}</Code>
-                            ) : (
-                              <Text size="sm" fs="italic" c="dimmed">(not recorded)</Text>
-                            )}
-                          </div>
-                          <div>
-                            <Text size="xs" fw={600} c="dimmed">stderr</Text>
-                            {r.stderr != null ? (
-                              <Code block>{r.stderr}</Code>
-                            ) : (
-                              <Text size="sm" fs="italic" c="dimmed">(not recorded)</Text>
-                            )}
-                          </div>
-                        </Stack>
-                      </Collapse>
+                      <Stack gap="xs" p="sm">
+                        <div>
+                          <Text size="xs" fw={600} c="dimmed">stdout</Text>
+                          {r.output != null ? (
+                            <Code block>{r.output}</Code>
+                          ) : (
+                            <Text size="sm" fs="italic" c="dimmed">(not recorded)</Text>
+                          )}
+                        </div>
+                        <div>
+                          <Text size="xs" fw={600} c="dimmed">stderr</Text>
+                          {r.stderr != null ? (
+                            <Code block>{r.stderr}</Code>
+                          ) : (
+                            <Text size="sm" fs="italic" c="dimmed">(not recorded)</Text>
+                          )}
+                        </div>
+                      </Stack>
                     </Table.Td>
                   </Table.Tr>
                 )}

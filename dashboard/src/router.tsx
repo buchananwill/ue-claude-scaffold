@@ -6,7 +6,7 @@ import {
 import { RootLayout } from './layouts/RootLayout.tsx';
 import { ProjectLayout } from './layouts/ProjectLayout.tsx';
 import { OverviewPage } from './pages/OverviewPage.tsx';
-import { MessagesPage } from './pages/MessagesPage.tsx';
+import { MessagesIndexPage, MessagesChannelPage } from './pages/MessagesPage.tsx';
 import { TaskDetailPage } from './pages/TaskDetailPage.tsx';
 import { AgentDetailPage } from './pages/AgentDetailPage.tsx';
 import { BuildLogPage } from './pages/BuildLogPage.tsx';
@@ -24,16 +24,29 @@ const projectRoute = createRoute({
   component: ProjectLayout,
 });
 
+/** Clamp a string search param to a max length, returning undefined if empty or over limit. */
+function boundedString(val: unknown, maxLen = 100): string | undefined {
+  if (typeof val !== 'string' || !val || val.length > maxLen) return undefined;
+  return val;
+}
+
+const VALID_BUILD_TYPES = new Set(['build', 'test']);
+const VALID_RESULT_VALUES = new Set(['pass', 'fail']);
+const VALID_MESSAGE_TYPES = new Set([
+  'phase_start', 'phase_complete', 'phase_failed',
+  'build_result', 'status_update', 'summary',
+]);
+
 const overviewRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: '/',
   component: OverviewPage,
   validateSearch: (search: Record<string, unknown>) => ({
-    status: typeof search.status === 'string' && search.status ? search.status : undefined,
-    agent: typeof search.agent === 'string' && search.agent ? search.agent : undefined,
-    priority: typeof search.priority === 'string' && search.priority ? search.priority : undefined,
-    sort: typeof search.sort === 'string' && search.sort ? search.sort : undefined,
-    dir: typeof search.dir === 'string' && search.dir ? search.dir : undefined,
+    status: boundedString(search.status, 200),
+    agent: boundedString(search.agent),
+    priority: boundedString(search.priority, 200),
+    sort: boundedString(search.sort, 50),
+    dir: boundedString(search.dir, 10),
     page: Number(search.page) > 0 ? Math.floor(Number(search.page)) : undefined,
   }),
 });
@@ -41,17 +54,21 @@ const overviewRoute = createRoute({
 const messagesIndexRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: '/messages',
-  component: MessagesPage,
-  validateSearch: (search: Record<string, unknown>) => ({
-    type: typeof search.type === 'string' && search.type ? search.type : undefined,
-    agent: typeof search.agent === 'string' && search.agent ? search.agent : undefined,
-  }),
+  component: MessagesIndexPage,
+  validateSearch: (search: Record<string, unknown>) => {
+    const rawType = boundedString(search.type, 50);
+    const type = rawType && VALID_MESSAGE_TYPES.has(rawType) ? rawType : undefined;
+    return {
+      type,
+      agent: boundedString(search.agent),
+    };
+  },
 });
 
 const messagesChannelRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: '/messages/$channel',
-  component: MessagesPage,
+  component: MessagesChannelPage,
   validateSearch: (search: Record<string, unknown>) => {
     // Validate highlight as a positive integer; discard invalid values
     let highlight: string | undefined;
@@ -59,10 +76,12 @@ const messagesChannelRoute = createRoute({
       const n = Number(search.highlight);
       highlight = Number.isInteger(n) && n > 0 ? search.highlight : undefined;
     }
+    const rawType = boundedString(search.type, 50);
+    const type = rawType && VALID_MESSAGE_TYPES.has(rawType) ? rawType : undefined;
     return {
-      type: typeof search.type === 'string' && search.type ? search.type : undefined,
+      type,
       highlight,
-      agent: typeof search.agent === 'string' && search.agent ? search.agent : undefined,
+      agent: boundedString(search.agent),
     };
   },
 });
@@ -83,11 +102,15 @@ const logsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: '/logs',
   component: BuildLogPage,
-  validateSearch: (search: Record<string, unknown>) => ({
-    agent: typeof search.agent === 'string' && search.agent ? search.agent : undefined,
-    type: typeof search.type === 'string' && search.type ? search.type : undefined,
-    result: typeof search.result === 'string' && search.result ? search.result : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>) => {
+    const rawType = boundedString(search.type, 10);
+    const rawResult = boundedString(search.result, 10);
+    return {
+      agent: boundedString(search.agent),
+      type: rawType && VALID_BUILD_TYPES.has(rawType) ? rawType : undefined,
+      result: rawResult && VALID_RESULT_VALUES.has(rawResult) ? rawResult : undefined,
+    };
+  },
 });
 
 const chatRoute = createRoute({
