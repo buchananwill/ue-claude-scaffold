@@ -1,8 +1,12 @@
-import { Stack, Select, ScrollArea, Group, Text, Code, Box, Badge, Button } from '@mantine/core';
+import { Stack, Select, ScrollArea, Group, Text, Code, Box, Badge, Button, Paper, Transition } from '@mantine/core';
 import { useRef, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { IconArrowDown } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import type { Agent, Message } from '../api/types.ts';
 import { StatusBadge } from './StatusBadge.tsx';
+import { MarkdownContent } from './MarkdownContent.tsx';
+import { agentColor } from '../utils/agentColor.ts';
+import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 
 interface MessagesFeedProps {
   messages: Message[];
@@ -56,15 +60,20 @@ export function MessagesFeed({
   highlightMessageId,
   onHighlightConsumed,
 }: MessagesFeedProps) {
-  const viewport = useRef<HTMLDivElement>(null);
-  const sentinel = useRef<HTMLDivElement>(null);
-  const lastMessageIdRef = useRef<number | null>(null);
   const prevScrollHeightRef = useRef<number>(0);
   const isPrependRef = useRef(false);
   const highlightRef = useRef<HTMLDivElement>(null);
   const [flashId, setFlashId] = useState<number | undefined>(highlightMessageId);
   const onHighlightConsumedRef = useRef(onHighlightConsumed);
   onHighlightConsumedRef.current = onHighlightConsumed;
+
+  const { viewportRef, sentinelRef, showJumpToLatest, jumpToLatest, onNewContent } = useAutoScroll();
+  // Keep a local ref to the viewport element for prepend scroll restoration
+  const viewportElRef = useRef<HTMLDivElement | null>(null);
+  const combinedViewportRef = (node: HTMLDivElement | null) => {
+    viewportElRef.current = node;
+    viewportRef(node);
+  };
 
   // Sync flashId when highlightMessageId changes from outside
   useEffect(() => {
@@ -102,8 +111,8 @@ export function MessagesFeed({
 
   // Before load-older, capture scroll height
   const handleLoadOlder = () => {
-    if (viewport.current) {
-      prevScrollHeightRef.current = viewport.current.scrollHeight;
+    if (viewportElRef.current) {
+      prevScrollHeightRef.current = viewportElRef.current.scrollHeight;
       isPrependRef.current = true;
     }
     onLoadOlder?.();
@@ -111,21 +120,22 @@ export function MessagesFeed({
 
   // Restore scroll position after prepend
   useLayoutEffect(() => {
-    if (isPrependRef.current && viewport.current) {
-      const newScrollHeight = viewport.current.scrollHeight;
+    if (isPrependRef.current && viewportElRef.current) {
+      const newScrollHeight = viewportElRef.current.scrollHeight;
       const diff = newScrollHeight - prevScrollHeightRef.current;
-      viewport.current.scrollTop += diff;
+      viewportElRef.current.scrollTop += diff;
       isPrependRef.current = false;
     }
   }, [currentFirstId]);
 
   // Auto-scroll to bottom only when new messages arrive at the tail
+  const lastSeenIdRef = useRef<number | null>(null);
   useEffect(() => {
-    if (currentLastId !== null && currentLastId !== lastMessageIdRef.current) {
-      lastMessageIdRef.current = currentLastId;
-      sentinel.current?.scrollIntoView({ behavior: 'smooth' });
+    if (currentLastId !== null && currentLastId !== lastSeenIdRef.current) {
+      lastSeenIdRef.current = currentLastId;
+      onNewContent();
     }
-  }, [currentLastId]);
+  }, [currentLastId, onNewContent]);
 
   const formatPayload = (payload: unknown): string => {
     if (typeof payload === 'string') return payload;
@@ -184,46 +194,74 @@ export function MessagesFeed({
         )}
       </Group>
 
-      <ScrollArea h="calc(100vh - 260px)" viewportRef={viewport}>
-        <Stack gap={4}>
-          {messages.length === 0 && !loading && (
-            <Text c="dimmed" ta="center" py="xl" size="sm">No messages in #{channel}</Text>
+      <Box pos="relative" style={{ flex: 1, minHeight: 0 }}>
+        <ScrollArea h="calc(100vh - 260px)" viewportRef={combinedViewportRef}>
+          <Stack gap="xs">
+            {messages.length === 0 && !loading && (
+              <Text c="dimmed" ta="center" py="xl" size="sm">No messages in #{channel}</Text>
+            )}
+            {messages.map((m) => {
+              const ts = m.createdAt.endsWith('Z') ? dayjs(m.createdAt) : dayjs(m.createdAt + 'Z');
+              const payloadStr = formatPayload(m.payload);
+              const isObject = typeof m.payload === 'object' && m.payload !== null;
+              const isStringPayload = typeof m.payload === 'string' || (isObject && typeof (m.payload as Record<string, unknown>).message === 'string');
+
+              const isHighlighted = flashId === m.id;
+              const color = agentColor(m.fromAgent);
+
+              return (
+                <Paper
+                  key={m.id}
+                  ref={isHighlighted ? highlightRef : undefined}
+                  p="sm"
+                  withBorder
+                  shadow="xs"
+                  style={{
+                    borderLeftWidth: 3,
+                    borderLeftColor: `var(--mantine-color-${color}-6)`,
+                    backgroundColor: isHighlighted ? 'rgba(59, 130, 246, 0.25)' : undefined,
+                    transition: 'background-color 2s ease-out',
+                  }}
+                >
+                  <Group gap="xs" mb={4}>
+                    <Text size="sm" fw={700} c={`${color}.4`}>{m.fromAgent}</Text>
+                    <Text size="xs" c="dimmed" ff="monospace">{ts.format('HH:mm:ss')}</Text>
+                    <StatusBadge value={m.type} size="xs" />
+                  </Group>
+                  {isStringPayload ? (
+                    <MarkdownContent
+                      content={
+                        typeof m.payload === 'string'
+                          ? m.payload
+                          : String((m.payload as Record<string, unknown>).message)
+                      }
+                    />
+                  ) : isObject ? (
+                    <Code block fz="xs">{payloadStr}</Code>
+                  ) : (
+                    <Text size="sm">{payloadStr}</Text>
+                  )}
+                </Paper>
+              );
+            })}
+            <div ref={sentinelRef} />
+          </Stack>
+        </ScrollArea>
+
+        <Transition mounted={showJumpToLatest} transition="slide-up" duration={200}>
+          {(styles) => (
+            <Button
+              style={{ ...styles, position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}
+              size="compact-sm"
+              variant="filled"
+              leftSection={<IconArrowDown size={14} />}
+              onClick={jumpToLatest}
+            >
+              Jump to latest
+            </Button>
           )}
-          {messages.map((m) => {
-            const ts = m.createdAt.endsWith('Z') ? dayjs(m.createdAt) : dayjs(m.createdAt + 'Z');
-            const payloadStr = formatPayload(m.payload);
-            const isObject = typeof m.payload === 'object' && m.payload !== null;
-
-            const isHighlighted = flashId === m.id;
-
-            return (
-              <Box
-                key={m.id}
-                ref={isHighlighted ? highlightRef : undefined}
-                py={4}
-                px="xs"
-                style={{
-                  borderBottom: '1px solid var(--mantine-color-dark-5)',
-                  backgroundColor: isHighlighted ? 'rgba(59, 130, 246, 0.25)' : 'transparent',
-                  transition: 'background-color 2s ease-out',
-                }}
-              >
-                <Group gap="xs" mb={2}>
-                  <Text size="xs" c="dimmed" ff="monospace">{ts.format('HH:mm:ss')}</Text>
-                  <Text size="sm" fw={700}>{m.fromAgent}</Text>
-                  <StatusBadge value={m.type} size="xs" />
-                </Group>
-                {isObject ? (
-                  <Code block fz="xs">{payloadStr}</Code>
-                ) : (
-                  <Text size="sm" pl="xs">{payloadStr}</Text>
-                )}
-              </Box>
-            );
-          })}
-          <div ref={sentinel} />
-        </Stack>
-      </ScrollArea>
+        </Transition>
+      </Box>
     </Stack>
   );
 }

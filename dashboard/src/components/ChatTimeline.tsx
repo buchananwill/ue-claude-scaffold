@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { ScrollArea, Box, Group, Text, TextInput, ActionIcon, Button } from '@mantine/core';
-import { IconSend } from '@tabler/icons-react';
+import { ScrollArea, Box, Group, Text, TextInput, ActionIcon, Button, Paper, Transition, Stack } from '@mantine/core';
+import { IconSend, IconArrowDown } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import { apiPost } from '../api/client.ts';
 import { useProject } from '../contexts/ProjectContext.tsx';
 import { RelativeTime } from './RelativeTime.tsx';
+import { MarkdownContent } from './MarkdownContent.tsx';
+import { agentColor } from '../utils/agentColor.ts';
+import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import type { ChatMessage } from '../api/types.ts';
 
 interface ChatTimelineProps {
@@ -30,22 +33,20 @@ export function ChatTimeline({
 }: ChatTimelineProps) {
   const { projectId } = useProject();
   const [inputValue, setInputValue] = useState('');
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
+  const { viewportRef, sentinelRef, showJumpToLatest, jumpToLatest, onNewContent } = useAutoScroll();
   const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
+  const lastSeenIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     onMarkRead();
   }, [roomId, onMarkRead]);
 
   useEffect(() => {
-    if (!sentinelRef.current || !viewportRef.current) return;
-    const viewport = viewportRef.current;
-    const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    if (distanceFromBottom < 100) {
-      sentinelRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (lastMessageId !== null && lastMessageId !== lastSeenIdRef.current) {
+      lastSeenIdRef.current = lastMessageId;
+      onNewContent();
     }
-  }, [lastMessageId]);
+  }, [lastMessageId, onNewContent]);
 
   const handleSend = async () => {
     const content = inputValue.trim();
@@ -76,26 +77,56 @@ export function ChatTimeline({
         <Text c="dimmed" ta="center">Loading...</Text>
       ) : (
         <>
-          <ScrollArea style={{ flex: 1, minHeight: 0 }} viewportRef={viewportRef}>
-            {hasOlder && (
-              <Button variant="subtle" size="xs" onClick={onLoadOlder} loading={loadingOlder} mb="xs">
-                Load older
-              </Button>
-            )}
-            {messages.map((msg) => (
-              <Box key={msg.id} mb="xs">
-                <Group gap="xs">
-                  <Text size="sm" fw={700}>{msg.sender}</Text>
-                  <RelativeTime date={msg.createdAt} />
-                </Group>
-                {msg.replyTo != null && (
-                  <Text size="xs" c="dimmed">↩ reply to #{msg.replyTo}</Text>
-                )}
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</Text>
-              </Box>
-            ))}
-            <div ref={sentinelRef} />
-          </ScrollArea>
+          <Box pos="relative" style={{ flex: 1, minHeight: 0 }}>
+            <ScrollArea style={{ flex: 1, minHeight: 0 }} viewportRef={viewportRef}>
+              {hasOlder && (
+                <Button variant="subtle" size="xs" onClick={onLoadOlder} loading={loadingOlder} mb="xs">
+                  Load older
+                </Button>
+              )}
+              <Stack gap="xs">
+                {messages.map((msg) => {
+                  const color = agentColor(msg.sender);
+                  return (
+                    <Paper
+                      key={msg.id}
+                      p="sm"
+                      withBorder
+                      shadow="xs"
+                      style={{
+                        borderLeftWidth: 3,
+                        borderLeftColor: `var(--mantine-color-${color}-6)`,
+                      }}
+                    >
+                      <Group gap="xs" mb={4}>
+                        <Text size="sm" fw={700} c={`${color}.4`}>{msg.sender}</Text>
+                        <RelativeTime date={msg.createdAt} />
+                      </Group>
+                      {msg.replyTo != null && (
+                        <Text size="xs" c="dimmed">reply to #{msg.replyTo}</Text>
+                      )}
+                      <MarkdownContent content={msg.content} />
+                    </Paper>
+                  );
+                })}
+              </Stack>
+              <div ref={sentinelRef} />
+            </ScrollArea>
+
+            <Transition mounted={showJumpToLatest} transition="slide-up" duration={200}>
+              {(styles) => (
+                <Button
+                  style={{ ...styles, position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}
+                  size="compact-sm"
+                  variant="filled"
+                  leftSection={<IconArrowDown size={14} />}
+                  onClick={jumpToLatest}
+                >
+                  Jump to latest
+                </Button>
+              )}
+            </Transition>
+          </Box>
           <Group mt="sm">
             <TextInput
               placeholder="Type a message..."
