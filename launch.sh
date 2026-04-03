@@ -156,6 +156,7 @@ _validate_hook_values() {
 # ── Resolve project config from scaffold.config.json ───────────────────────
 PROJECT_HOOK_BUILD=""
 PROJECT_HOOK_LINT=""
+PROJECT_AGENT_TYPE=""
 
 if jq -e --arg id "$PROJECT_ID" '.projects[$id]' "$_cfg" >/dev/null 2>&1; then
   # Multi-project mode: read from projects map
@@ -471,8 +472,14 @@ if [[ -n "$_CLI_TEAM" ]]; then
     exit 1
   fi
 
-  TEAM_ID=$(jq -r '.id' "$TEAM_DEF")
-  TEAM_NAME=$(jq -r '.name' "$TEAM_DEF")
+  TEAM_ID=$(jq -r '.id // empty' "$TEAM_DEF")
+  TEAM_NAME=$(jq -r '.name // empty' "$TEAM_DEF")
+  if [[ -z "$TEAM_ID" ]]; then
+    echo "Error: team definition missing required field 'id'" >&2; exit 1
+  fi
+  if [[ -z "$TEAM_NAME" ]]; then
+    echo "Error: team definition missing required field 'name'" >&2; exit 1
+  fi
   echo "=== Launching Team: $TEAM_NAME ==="
   echo "  Team ID: $TEAM_ID"
   echo "  Brief:   $_CLI_BRIEF"
@@ -513,7 +520,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
   launch_team_member() {
     local _MEMBER_NAME _MEMBER_ROLE _MEMBER_TYPE _MEMBER_BRANCH _IS_LEADER
     _MEMBER_NAME=$(echo "$1" | jq -r '.agentName // empty')
-    _MEMBER_ROLE=$(echo "$1" | jq -r '.role')
+    _MEMBER_ROLE=$(echo "$1" | jq -r '.role // empty')
     _MEMBER_TYPE=$(echo "$1" | jq -r '.agentType // empty')
 
     if [[ -z "$_MEMBER_NAME" ]]; then
