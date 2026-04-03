@@ -5,7 +5,6 @@ model: sonnet
 color: gray
 tools: [Read, Glob, Grep]
 skills:
-  - design-member-protocol
   - chat-etiquette
   - channel-isolation
 ---
