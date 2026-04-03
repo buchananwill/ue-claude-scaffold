@@ -143,11 +143,12 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     const spCheck = await validateSourcePathForClaim(task, agent);
     if (!spCheck.valid) {
       const sp = task.sourcePath ?? (task as any).source_path;
+      const displayPath = sp.length > 256 ? sp.slice(0, 256) + '\u2026' : sp;
       return reply.code(409).send({
         statusCode: 409,
         error: 'Conflict',
         message:
-          `sourcePath '${sp}' not found on branch '${spCheck.branch}' in bare repo. ` +
+          `sourcePath '${displayPath}' not found on branch '${spCheck.branch}' in bare repo. ` +
           `The file may not be committed or pushed. ` +
           `Commit and re-run launch.sh to refresh the bare repo.`,
       });

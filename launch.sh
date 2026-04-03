@@ -264,8 +264,13 @@ ROOT_BRANCH="${ROOT_BRANCH:-$_default_root}"
 WORK_BRANCH="$AGENT_BRANCH"
 
 _expected_root="docker/${PROJECT_ID}/current-root"
-if [[ "$ROOT_BRANCH" != "$_expected_root" ]]; then
-  echo "Warning: ROOT_BRANCH overridden to '$ROOT_BRANCH' (expected '$_expected_root')" >&2
+if [[ "$ROOT_BRANCH" != "$_default_root" ]]; then
+  echo "Warning: ROOT_BRANCH overridden via environment to '$ROOT_BRANCH' (config default: '$_default_root')" >&2
+fi
+
+if [[ -n "$ROOT_BRANCH" ]] && [[ ! "$ROOT_BRANCH" =~ ^[a-zA-Z0-9/_.-]{1,200}$ ]]; then
+  echo "Error: ROOT_BRANCH value '$ROOT_BRANCH' is not a valid git branch name" >&2
+  exit 1
 fi
 
 # Validate verbosity
@@ -371,10 +376,7 @@ _launch_container() {
   local _lc_project_name="claude-${PROJECT_ID}-${_lc_agent}"
 
   # Build env array from remaining arguments
-  local _lc_env=()
-  for _lc_arg in "$@"; do
-    _lc_env+=("$_lc_arg")
-  done
+  local _lc_env=("$@")
 
   (cd "$SCRIPT_DIR/container" && env "${_lc_env[@]}" \
     $COMPOSE_CMD --project-name "$_lc_project_name" up --build --detach)
@@ -561,6 +563,10 @@ if [[ -n "$_CLI_TEAM" ]]; then
     fi
     if [[ ! "$_MEMBER_TYPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
       echo "Error: team member agentType contains invalid characters: $_MEMBER_TYPE" >&2
+      return 1
+    fi
+    if [[ -n "$_MEMBER_ROLE" && ! "$_MEMBER_ROLE" =~ ^[a-zA-Z0-9\ _-]{0,64}$ ]]; then
+      echo "Error: Invalid role format for member '$_MEMBER_NAME': '$_MEMBER_ROLE'" >&2
       return 1
     fi
 

@@ -48,9 +48,6 @@ export async function validateSourcePath(opts: {
         const exteriorRepo = project.path;
         if (exteriorRepo) {
           const syncResult = syncExteriorToBareRepo(exteriorRepo, bareRepo, seedBranch, log);
-          if (syncResult.ok) {
-            synced = true;
-          }
           if (!syncResult.ok) {
             log?.warn({ reason: syncResult.reason }, 'Auto-sync from exterior repo failed');
           }
@@ -62,9 +59,11 @@ export async function validateSourcePath(opts: {
           valid: false,
           message: `${prefix}sourcePath '${sourcePath}' not found on branch '${seedBranch}' in bare repo. Commit the plan in the exterior repo and retry.`,
           code: 422,
-          synced,
+          synced: false,
         };
       }
+      // Sync was attempted and the file is now available
+      synced = true;
     }
   } else {
     const worktree = project.path;

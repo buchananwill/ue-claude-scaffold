@@ -7,7 +7,7 @@ import * as filesQ from '../queries/files.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
 import type { ScaffoldConfig } from '../config.js';
 import { mergeIntoBranch } from '../git-utils.js';
-import { seedBranchFor, agentBranchFor } from '../branch-naming.js';
+import { seedBranchFor, agentBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
 
 interface AgentsOpts { config: ScaffoldConfig }
@@ -41,8 +41,11 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
 
   fastify.post<{
     Body: { name: string; worktree: string; planDoc?: string; mode?: 'single' | 'pump'; containerHost?: string };
-  }>('/agents/register', async (request) => {
+  }>('/agents/register', async (request, reply) => {
     const { name, worktree, planDoc, mode, containerHost } = request.body;
+    if (!AGENT_NAME_RE.test(name)) {
+      return reply.badRequest('Invalid agent name format');
+    }
     const projectId = request.projectId;
     const sessionToken = randomBytes(16).toString('hex');
     const db = getDb();

@@ -3,7 +3,7 @@ import { getDb } from '../drizzle-instance.js';
 import * as tasksCore from '../queries/tasks-core.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
 import { existsInBareRepo, isCommittedInRepo } from '../git-utils.js';
-import { seedBranchFor } from '../branch-naming.js';
+import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
 import type { TaskRow } from './tasks-types.js';
 import type { TasksOpts } from './tasks-files.js';
@@ -124,6 +124,9 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
     const { agent } = request.body ?? {};
     if (!agent || typeof agent !== 'string') {
       return reply.badRequest('agent must be a string');
+    }
+    if (!AGENT_NAME_RE.test(agent)) {
+      return reply.badRequest('Invalid agent name format');
     }
 
     const db = getDb();

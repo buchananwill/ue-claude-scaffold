@@ -121,10 +121,11 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     return 'default';
   }
 
-  async function resolveProjectForAgent(agentName: string | undefined): Promise<ProjectConfig> {
+  async function resolveProjectForAgent(agentName: string | undefined): Promise<{ project: ProjectConfig; projectId: string }> {
     const projectId = await resolveProjectIdForAgent(agentName);
     try {
-      return await resolveProject(config, getDb(), projectId);
+      const project = await resolveProject(config, getDb(), projectId);
+      return { project, projectId };
     } catch {
       throw Object.assign(new Error(`Unknown project: "${projectId}"`), { statusCode: 400 });
     }
@@ -256,8 +257,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       };
     }
 
-    const project = await resolveProjectForAgent(agentName);
-    const projectId = await resolveProjectIdForAgent(agentName);
+    const { project, projectId } = await resolveProjectForAgent(agentName);
     const holder = await checkLock(agentName, projectId);
     if (holder) {
       return {
