@@ -72,6 +72,20 @@ describe('seedBranchFor', () => {
       /Invalid seedBranch/
     );
   });
+
+  it('throws on seedBranch ending with .lock', () => {
+    assert.throws(
+      () => seedBranchFor('proj', { seedBranch: 'feature/work.lock' }),
+      /Invalid seedBranch/
+    );
+  });
+
+  it('throws on empty-string projectId', () => {
+    assert.throws(
+      () => seedBranchFor(''),
+      /Invalid projectId/
+    );
+  });
 });
 
 describe('agentBranchFor', () => {
