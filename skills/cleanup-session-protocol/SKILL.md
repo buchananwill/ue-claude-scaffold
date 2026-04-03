@@ -38,7 +38,7 @@ After completing all fixes from the current surfacing round:
 1. Post: "All fixes from this round are pushed. Fetch and review with:"
 2. Post the exact commands (substitute your actual agent name):
    ```
-   git fetch origin docker/{your-agent-name}
+   git fetch origin docker/{project-id}/{your-agent-name}
    git diff HEAD FETCH_HEAD
    ```
 3. Wait for participants to review and respond.

@@ -204,7 +204,7 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 | `plugins.readOnlyMounts`     | Plugin paths to mount read-only in containers |
 | `container.agentType`        | Default agent type for containers             |
 | `container.maxTurns`         | Max turns for the agent                       |
-| `container.defaultBranch`    | Default branch for new agents                 |
+| `container.seedBranch`       | Seed branch for fresh containers              |
 | `server.port`                | Coordination server port                      |
 | `server.ubtLockTimeoutMs`    | Timeout for UBT lock acquisition              |
 | `server.stagingWorktreeRoot` | Path to the host-side staging worktree        |

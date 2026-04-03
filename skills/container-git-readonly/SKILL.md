@@ -11,14 +11,14 @@ You are running inside a Docker container. Your working directory is a git check
 
 ## Your Branch
 
-You start on `docker/{agent-name}`, which contains the code you are reviewing or analysing. You can freely navigate git history and read any branch.
+You start on `docker/{project-id}/{agent-name}`, which contains the code you are reviewing or analysing. You can freely navigate git history and read any branch.
 
 ## Reading Any Branch
 
 ```
-git show docker/agent-2:path/to/file.ts
-git log docker/current-root --oneline -10
-git diff docker/current-root..docker/agent-1 -- src/
+git show docker/{project-id}/agent-2:path/to/file.ts
+git log docker/{project-id}/current-root --oneline -10
+git diff docker/{project-id}/current-root..docker/{project-id}/agent-1 -- src/
 ```
 
 ## What You Cannot Do

@@ -41,7 +41,7 @@ The dashboard talks to the coordination server (default `http://localhost:9100`)
 ```bash
 ./setup.sh               # First-time setup (prereqs, config files, deps)
 ./launch.sh              # Launch container agent (resumes existing branch by default)
-./launch.sh --fresh      # Reset agent branch to docker/current-root before launch
+./launch.sh --fresh      # Reset agent branch to docker/{project-id}/current-root before launch
 ./launch.sh --dry-run    # Preview resolved config and branch names without launching
 ./stop.sh                # Stop all running agent containers
 ./stop.sh --agent agent-1  # Stop a specific agent
@@ -63,11 +63,11 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `POST /build`, `POST /test` — sync worktree from bare repo, run host-side build/test scripts, return structured `{success, exit_code, output, stderr}`
    - `GET /builds` — query build history with filtering
    - `POST /agents/register`, `GET /agents`, `GET /agents/{name}`, `POST /agents/{name}/status`, `DELETE /agents/{name}`, `DELETE /agents` — agent lifecycle
-   - `POST /agents/{name}/sync` — merge `docker/current-root` into `docker/{name}`; propagates plans to running containers
+   - `POST /agents/{name}/sync` — merge `docker/{project-id}/current-root` into `docker/{project-id}/{name}`; propagates plans to running containers
    - `GET /messages`, `POST /messages`, `GET /messages/{channel}`, `POST /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve` — SQLite-backed message board for agent progress
    - UBT lock (`GET /ubt/status`, `POST /ubt/acquire`, `POST /ubt/release`) — singleton mutex with priority queue and stale-lock sweeping (60s interval)
    - `/tasks/*` — task queue with claim/complete/fail/release lifecycle for worker mode
-   - `POST /sync/plans` — merge committed state from the exterior repo into the bare repo's `docker/current-root` branch; optionally propagates to agent branches via `targetAgents` body param
+   - `POST /sync/plans` — merge committed state from the exterior repo into the bare repo's `docker/{project-id}/current-root` branch; optionally propagates to agent branches via `targetAgents` body param
    - `GET /search` — full-text search across tasks, messages, agents
    - `GET /files` — file ownership registry (tracks which agent owns which files)
    - `/coalesce/*` — system-wide coordination: pause pump agents, wait for in-flight tasks, release file ownership
@@ -81,17 +81,17 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
 ```
 Host Project (exterior repo) → POST /sync/plans → [bare repo] ← Container (clone/push)
                                                        │
-                                          docker/current-root   ← integration branch; synced from exterior repo
-                                          docker/agent-1        ← agent-1's working branch
-                                          docker/agent-2        ← agent-2's working branch
+                                docker/{project-id}/current-root   ← seed branch; synced from exterior repo
+                                docker/{project-id}/agent-1        ← agent-1's working branch
+                                docker/{project-id}/agent-2        ← agent-2's working branch
                                                        │
-                                          Server fetches agent branch → Staging Worktree → Build/Test
+                                Server fetches agent branch → Staging Worktree → Build/Test
 ```
 
-Containers clone from `docker/{agent-name}` and push back to it. The bare repo is
+Containers clone from `docker/{project-id}/{agent-name}` and push back to it. The bare repo is
 persistent — created once by `setup.sh`, never recreated on launch. The exterior repo
 (where interactive sessions and planning happen) is synced into the bare repo's
-`docker/current-root` branch via `POST /sync/plans`.
+`docker/{project-id}/current-root` branch via `POST /sync/plans`.
 
 ### Build Hook Interception
 
@@ -108,22 +108,22 @@ Containers get work from the task queue. The workflow is:
 2. Launch a container with `./launch.sh` (no plan file needed)
 3. The container polls `POST /tasks/claim-next` to claim and execute tasks
 
-By default the container resumes its existing branch; `--fresh` resets it to `docker/current-root` HEAD first. Use `--worker` for single-task mode or `--pump` for continuous multi-task mode.
+By default the container resumes its existing branch; `--fresh` resets it to `docker/{project-id}/current-root` HEAD first. Use `--worker` for single-task mode or `--pump` for continuous multi-task mode.
 
 ### Branch Model
 
 ```
-docker/current-root    ← integration branch (user-controlled)
-docker/agent-1         ← agent-1's working branch
-docker/agent-2         ← agent-2's working branch
+docker/{project-id}/current-root    ← seed branch (fresh containers start here)
+docker/{project-id}/agent-1         ← agent-1's working branch
+docker/{project-id}/agent-2         ← agent-2's working branch
 ```
 
-- The exterior repo is the source of truth for plans and design work. `POST /sync/plans` merges its committed state into `docker/current-root` in the bare repo.
-- Containers fork from `docker/current-root` on first launch and push to `docker/{agent-name}`.
-- `--fresh` resets the agent branch to `docker/current-root` HEAD.
+- The exterior repo is the source of truth for plans and design work. `POST /sync/plans` merges its committed state into `docker/{project-id}/current-root` in the bare repo.
+- Containers fork from `docker/{project-id}/current-root` on first launch and push to `docker/{project-id}/{agent-name}`.
+- `--fresh` resets the agent branch to `docker/{project-id}/current-root` HEAD.
 - Default (no `--fresh`) resumes from the agent's existing branch.
-- Plans must be committed in the exterior repo, then synced to the bare repo via `POST /sync/plans` (or the dashboard's "Sync Bare Repo" button) before tasks can reference them. The server validates plan `sourcePath` references against `docker/current-root` in the bare repo.
-- Plans on `docker/current-root` can be merged into agent branches via `POST /agents/{name}/sync`, `targetAgents` on `POST /tasks`, or `targetAgents` on `POST /sync/plans`.
+- Plans must be committed in the exterior repo, then synced to the bare repo via `POST /sync/plans` (or the dashboard's "Sync Bare Repo" button) before tasks can reference them. The server validates plan `sourcePath` references against `docker/{project-id}/current-root` in the bare repo.
+- Plans on `docker/{project-id}/current-root` can be merged into agent branches via `POST /agents/{name}/sync`, `targetAgents` on `POST /tasks`, or `targetAgents` on `POST /sync/plans`.
 
 ### Agent Definitions
 

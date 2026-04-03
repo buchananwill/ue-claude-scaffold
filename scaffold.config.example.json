@@ -8,7 +8,7 @@
   },
 
   "tasks": {
-    "seedBranch": "docker/current-root"
+    "seedBranch": "docker/{project-id}/current-root"
   },
 
   "engine": {
@@ -44,7 +44,7 @@
   "container": {
     "agentType": "container-orchestrator",
     "maxTurns": 200,
-    "defaultBranch": "docker/current-root"
+    "seedBranch": "docker/{project-id}/current-root"
   },
 
   "server": {

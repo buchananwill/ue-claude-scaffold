@@ -11,9 +11,9 @@ Containers interact with a bare git repository on the host. This skill describes
 
 Each container agent works on its own branch:
 
-    docker/{agent-name}
+    docker/{project-id}/{agent-name}
 
-The integration branch is `docker/current-root`, which is synced from the exterior (host) repo. Agent branches fork from `docker/current-root` on first launch.
+The integration branch is `docker/{project-id}/current-root`, which is synced from the exterior (host) repo. Agent branches fork from `docker/{project-id}/current-root` on first launch.
 
 ## Clone
 
@@ -23,7 +23,7 @@ The container's entrypoint clones from the bare repo at startup. Your working di
 
 Your access scope determines how commits reach the bare repo:
 
-- **Write agents**: Every `git commit` is automatically pushed to `docker/{agent-name}` on the bare repo. You never need to run `git push` — a PostToolUse hook handles it. Branch switching is blocked — you stay on your assigned branch.
+- **Write agents**: Every `git commit` is automatically pushed to `docker/{project-id}/{agent-name}` on the bare repo. You never need to run `git push` — a PostToolUse hook handles it. Branch switching is blocked — you stay on your assigned branch.
 
 - **Build intercept agents** (UE): The build hook commits and pushes your changes before routing the build to the host. Manual `git push` is blocked. Branch switching is blocked.
 
@@ -34,9 +34,9 @@ Your access scope determines how commits reach the bare repo:
 All agents can read any branch without switching:
 
 ```
-git show docker/agent-2:Source/MyFile.cpp
-git log docker/current-root --oneline -10
-git diff HEAD..docker/current-root -- Source/
+git show docker/{project-id}/agent-2:Source/MyFile.cpp
+git log docker/{project-id}/current-root --oneline -10
+git diff HEAD..docker/{project-id}/current-root -- Source/
 ```
 
 ## Visibility
