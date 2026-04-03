@@ -263,12 +263,11 @@ _default_root="${PROJECT_SEED_BRANCH:-docker/${PROJECT_ID}/current-root}"
 ROOT_BRANCH="${ROOT_BRANCH:-$_default_root}"
 WORK_BRANCH="$AGENT_BRANCH"
 
-_expected_root="docker/${PROJECT_ID}/current-root"
 if [[ "$ROOT_BRANCH" != "$_default_root" ]]; then
   echo "Warning: ROOT_BRANCH overridden via environment to '$ROOT_BRANCH' (config default: '$_default_root')" >&2
 fi
 
-if [[ -n "$ROOT_BRANCH" ]] && [[ ! "$ROOT_BRANCH" =~ ^[a-zA-Z0-9/_.-]{1,200}$ ]]; then
+if [[ -n "$ROOT_BRANCH" ]] && { [[ "$ROOT_BRANCH" =~ \.\. ]] || [[ ! "$ROOT_BRANCH" =~ ^[a-zA-Z0-9/_.-]{1,200}$ ]]; }; then
   echo "Error: ROOT_BRANCH value '$ROOT_BRANCH' is not a valid git branch name" >&2
   exit 1
 fi
