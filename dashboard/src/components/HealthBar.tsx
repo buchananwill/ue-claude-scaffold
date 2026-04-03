@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Anchor, Group, Text, SegmentedControl, Indicator } from '@mantine/core';
 import { Link } from '@tanstack/react-router';
 import type { HealthResponse } from '../api/types.js';
-import { useProject } from '../contexts/ProjectContext.tsx';
+import { useProject } from '../contexts/ProjectContext.js';
 
 interface HealthBarProps {
   health: HealthResponse | null;
