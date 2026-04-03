@@ -10,7 +10,7 @@ import * as agentsQ from '../queries/agents.js';
 import * as projectsQ from '../queries/projects.js';
 import * as ubtQ from '../queries/ubt.js';
 import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
-import { resolveProject } from './resolve-project.js';
+import { resolveProject } from '../resolve-project.js';
 
 interface BuildOpts {
   config: ScaffoldConfig;

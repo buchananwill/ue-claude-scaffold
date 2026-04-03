@@ -3,7 +3,7 @@ import type { ScaffoldConfig } from '../config.js';
 import { syncExteriorToBareRepo, mergeIntoAgentBranches } from '../git-utils.js';
 import { getDb } from '../drizzle-instance.js';
 import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
-import { resolveProject } from './resolve-project.js';
+import { resolveProject } from '../resolve-project.js';
 
 interface SyncOpts {
   config: ScaffoldConfig;

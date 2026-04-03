@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { getDb } from '../drizzle-instance.js';
 import * as projectsQ from '../queries/projects.js';
+import { BRANCH_RE, isValidProjectId } from '../branch-naming.js';
 
 /** Validate portable project fields (shared between POST and PATCH). Returns an error message or null. */
 function validateProjectFields(opts: {
@@ -17,8 +18,8 @@ function validateProjectFields(opts: {
     }
   }
   if (seedBranch !== undefined && seedBranch !== null) {
-    if (typeof seedBranch !== 'string' || !/^[a-zA-Z0-9/_.-]{1,200}$/.test(seedBranch)) {
-      return 'seedBranch must match ^[a-zA-Z0-9/_.-]{1,200}$';
+    if (typeof seedBranch !== 'string' || !BRANCH_RE.test(seedBranch)) {
+      return 'seedBranch must match git ref format (1-200 chars, no path traversal)';
     }
   }
   if (engineVersion !== undefined && engineVersion !== null) {
@@ -54,7 +55,7 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
   // GET /projects/:id - get single project
   fastify.get<{ Params: { id: string } }>('/projects/:id', async (request, reply) => {
     const { id } = request.params;
-    if (!projectsQ.isValidProjectId(id)) {
+    if (!isValidProjectId(id)) {
       return reply.badRequest('Invalid project ID format');
     }
     const db = getDb();
@@ -83,7 +84,7 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.badRequest('id and name are required');
     }
 
-    if (!projectsQ.isValidProjectId(id)) {
+    if (!isValidProjectId(id)) {
       return reply.badRequest(`Invalid project ID: must match [a-zA-Z0-9_-]{1,64}`);
     }
 
@@ -121,7 +122,7 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
     };
   }>('/projects/:id', async (request, reply) => {
     const { id } = request.params;
-    if (!projectsQ.isValidProjectId(id)) {
+    if (!isValidProjectId(id)) {
       return reply.badRequest('Invalid project ID format');
     }
 
@@ -143,7 +144,7 @@ const projectsPlugin: FastifyPluginAsync = async (fastify) => {
   // DELETE /projects/:id - reject with 409 if any data exists
   fastify.delete<{ Params: { id: string } }>('/projects/:id', async (request, reply) => {
     const { id } = request.params;
-    if (!projectsQ.isValidProjectId(id)) {
+    if (!isValidProjectId(id)) {
       return reply.badRequest('Invalid project ID format');
     }
     const db = getDb();

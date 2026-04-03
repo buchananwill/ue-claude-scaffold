@@ -142,6 +142,9 @@ if [[ ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
   echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
   exit 1
 fi
+if [[ ${#PROJECT_ID} -gt 64 ]]; then
+  echo "Error: PROJECT_ID must be at most 64 characters" >&2; exit 1
+fi
 
 _validate_hook_values() {
     local label="$1"; shift

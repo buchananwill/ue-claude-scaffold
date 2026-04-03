@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import type { FastifyBaseLogger } from 'fastify';
-import { agentBranchFor, seedBranchFor, AGENT_NAME_RE } from './branch-naming.js';
+import { agentBranchFor, seedBranchFor, AGENT_NAME_RE, isValidAgentName } from './branch-naming.js';
 import type { ScaffoldConfig, MergedProjectConfig } from './config.js';
 import type { DrizzleDb } from './drizzle-instance.js';
 import * as agentsQ from './queries/agents.js';
@@ -63,8 +63,9 @@ export function syncExteriorToBareRepo(
       encoding: 'utf-8',
       timeout: 5000,
     }).trim();
-  } catch (err: any) {
-    return { ok: false, reason: `Failed to resolve HEAD in exterior repo: ${err.message}` };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: `Failed to resolve HEAD in exterior repo: ${message}` };
   }
 
   // Fetch exterior HEAD into a temp branch in the bare repo
@@ -73,8 +74,9 @@ export function syncExteriorToBareRepo(
       '-C', bareRepo, 'fetch', exteriorRepo,
       `+${exteriorHead}:refs/heads/${tempRef}`,
     ], { timeout: 30_000 });
-  } catch (err: any) {
-    return { ok: false, reason: `Failed to fetch from exterior repo: ${err.message}` };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: `Failed to fetch from exterior repo: ${message}` };
   }
 
   // Merge temp branch into seed branch
@@ -195,6 +197,10 @@ export async function mergeIntoAgentBranches(opts: {
   const failedMerges: Array<{ agent: string; reason: string }> = [];
 
   for (const agentName of agentNames) {
+    if (!isValidAgentName(agentName)) {
+      failedMerges.push({ agent: agentName, reason: 'Invalid agent name' });
+      continue;
+    }
     const targetBranch = agentBranchFor(projectId, agentName);
     const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
     if (result.ok) {

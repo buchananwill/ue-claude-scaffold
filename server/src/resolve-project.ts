@@ -1,7 +1,7 @@
-import type { ScaffoldConfig, MergedProjectConfig } from '../config.js';
-import { getProject } from '../config.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
-import * as projectsQ from '../queries/projects.js';
+import type { ScaffoldConfig, MergedProjectConfig } from './config.js';
+import { getProject } from './config.js';
+import type { DrizzleDb } from './drizzle-instance.js';
+import * as projectsQ from './queries/projects.js';
 
 /**
  * Resolve a project by merging the DB row (if any) with JSON config.

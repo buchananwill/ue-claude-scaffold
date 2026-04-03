@@ -7,7 +7,7 @@ import * as taskFilesQ from '../queries/task-files.js';
 import * as agentsQ from '../queries/agents.js';
 import { existsInBareRepo } from '../git-utils.js';
 import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
-import { resolveProject } from './resolve-project.js';
+import { resolveProject } from '../resolve-project.js';
 import type { TaskRow } from './tasks-types.js';
 import {
   type TasksOpts,

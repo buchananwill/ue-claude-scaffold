@@ -9,8 +9,8 @@ import * as projectsQ from '../queries/projects.js';
 import type { ScaffoldConfig } from '../config.js';
 import { mergeIntoAgentBranches } from '../git-utils.js';
 import { AGENT_NAME_RE } from '../branch-naming.js';
-import { resolveProject } from './resolve-project.js';
-import { validateSourcePath } from './tasks-validation.js';
+import { resolveProject } from '../resolve-project.js';
+import { validateSourcePath } from '../tasks-validation.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
 import {
   type TasksOpts, type TaskBody, type PatchBody,
@@ -46,13 +46,6 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     const { title, description, sourcePath, acceptanceCriteria, priority, files, targetAgents, dependsOn, dependsOnIndex } = request.body;
 
-    // Validate sourcePath for path traversal before any git operations
-    if (sourcePath !== undefined && sourcePath !== null) {
-      if (typeof sourcePath === 'string' && (sourcePath.includes('..') || sourcePath.startsWith('/') || sourcePath === '')) {
-        return reply.badRequest(`Invalid sourcePath: ${sourcePath}`);
-      }
-    }
-
     // Tasks are a union: EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode).
     if (hasValue(sourcePath) && (hasValue(description) || hasValue(acceptanceCriteria))) {
       return reply.badRequest(
@@ -73,7 +66,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         sourcePath, projectId, config, db: getDb(), log: fastify.log, autoSync: true,
       });
       if (!spCheck.valid) {
-        return reply.unprocessableEntity(spCheck.message);
+        return spCheck.code === 400
+          ? reply.badRequest(spCheck.message)
+          : reply.unprocessableEntity(spCheck.message);
       }
     }
 
@@ -192,12 +187,6 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         const err = validateFilePaths(t.files);
         if (err) return reply.badRequest(`Task ${i}: ${err}`);
       }
-      // Validate sourcePath for path traversal
-      if (t.sourcePath !== undefined && t.sourcePath !== null) {
-        if (typeof t.sourcePath === 'string' && (t.sourcePath.includes('..') || t.sourcePath.startsWith('/') || t.sourcePath === '')) {
-          return reply.badRequest(`Task ${i}: Invalid sourcePath: ${t.sourcePath}`);
-        }
-      }
       // Mixed-protocol check
       if (hasValue(t.sourcePath) && (hasValue(t.description) || hasValue(t.acceptanceCriteria))) {
         return reply.badRequest(
@@ -233,11 +222,12 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
           sourcePath: t.sourcePath, projectId, config, db, log: fastify.log,
           autoSync: !batchSynced, label: `Task ${i}`,
         });
+        if (spCheck.synced) batchSynced = true;
         if (!spCheck.valid) {
-          batchSynced = true; // prevent repeated sync attempts
-          return reply.unprocessableEntity(spCheck.message);
+          return spCheck.code === 400
+            ? reply.badRequest(spCheck.message)
+            : reply.unprocessableEntity(spCheck.message);
         }
-        batchSynced = true;
       }
     }
 
@@ -410,7 +400,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         sourcePath: body.sourcePath, projectId: patchProjectId, config, db,
       });
       if (!spCheck.valid) {
-        return reply.unprocessableEntity(spCheck.message);
+        return spCheck.code === 400
+          ? reply.badRequest(spCheck.message)
+          : reply.unprocessableEntity(spCheck.message);
       }
     }
 

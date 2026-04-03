@@ -7,7 +7,7 @@ import * as taskFilesQ from '../queries/task-files.js';
 import * as taskDepsQ from '../queries/task-deps.js';
 import * as compositionQ from '../queries/composition.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
-import { resolveProject } from './resolve-project.js';
+import { resolveProject } from '../resolve-project.js';
 
 export interface ConflictInfo {
   file: string;

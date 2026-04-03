@@ -8,7 +8,7 @@
 
 // Note: git-illegal sequences @{, ~, ^, *, ?, [, \, space, and control chars
 // are excluded by the character class [a-zA-Z0-9/_.-] — no explicit lookahead needed.
-const BRANCH_RE = /^(?![.\/])(?!.*\/\/)(?!.*\.\.)(?!.*\.$)(?!.*\/$)(?!.*\.lock(?:\/|$))(?!.*\/\.)(?!.*\.\/)[a-zA-Z0-9/_.-]{1,200}$/;
+export const BRANCH_RE = /^(?![.\/])(?!.*\/\/)(?!.*\.\.)(?!.*\.$)(?!.*\/$)(?!.*\.lock(?:\/|$))(?!.*\/\.)(?!.*\.\/)[a-zA-Z0-9/_.-]{1,200}$/;
 export const PROJECT_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 export const AGENT_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 

@@ -1,7 +1,8 @@
 import { eq, sql } from 'drizzle-orm';
 import { projects, agents, buildHistory, messages, tasks, files, ubtLock, ubtQueue, rooms, teams } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
-import { isValidProjectId as _isValidProjectId } from '../branch-naming.js';
+import { isValidProjectId } from '../branch-naming.js';
+
 
 export interface ProjectRow {
   id: string;
@@ -30,7 +31,6 @@ export interface UpdateProjectOpts {
   testTimeoutMs?: number | null;
 }
 
-export const isValidProjectId = _isValidProjectId;
 
 export async function getAll(db: DrizzleDb): Promise<ProjectRow[]> {
   return db.select().from(projects) as Promise<ProjectRow[]>;

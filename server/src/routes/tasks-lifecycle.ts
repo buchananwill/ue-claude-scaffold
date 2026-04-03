@@ -4,7 +4,7 @@ import * as tasksCore from '../queries/tasks-core.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
 import { existsInBareRepo, isCommittedInRepo } from '../git-utils.js';
 import { seedBranchFor } from '../branch-naming.js';
-import { resolveProject } from './resolve-project.js';
+import { resolveProject } from '../resolve-project.js';
 import type { TaskRow } from './tasks-types.js';
 import type { TasksOpts } from './tasks-files.js';
 

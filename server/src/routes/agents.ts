@@ -8,7 +8,7 @@ import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
 import type { ScaffoldConfig } from '../config.js';
 import { mergeIntoBranch } from '../git-utils.js';
 import { seedBranchFor, agentBranchFor } from '../branch-naming.js';
-import { resolveProject } from './resolve-project.js';
+import { resolveProject } from '../resolve-project.js';
 
 interface AgentsOpts { config: ScaffoldConfig }
 

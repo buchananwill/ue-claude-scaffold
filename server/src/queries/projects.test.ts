@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createTestDb, type TestDb } from './test-utils.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 import * as projectsQ from './projects.js';
+import { isValidProjectId } from '../branch-naming.js';
 import { agents } from '../schema/tables.js';
 import { eq } from 'drizzle-orm';
 
@@ -20,13 +21,13 @@ describe('projects queries', () => {
   });
 
   it('should validate project IDs', () => {
-    assert.ok(projectsQ.isValidProjectId('my-project'));
-    assert.ok(projectsQ.isValidProjectId('a'));
-    assert.ok(projectsQ.isValidProjectId('a_b-c123'));
-    assert.ok(!projectsQ.isValidProjectId(''));
-    assert.ok(!projectsQ.isValidProjectId('has spaces'));
-    assert.ok(!projectsQ.isValidProjectId('has.dots'));
-    assert.ok(!projectsQ.isValidProjectId('a'.repeat(65)));
+    assert.ok(isValidProjectId('my-project'));
+    assert.ok(isValidProjectId('a'));
+    assert.ok(isValidProjectId('a_b-c123'));
+    assert.ok(!isValidProjectId(''));
+    assert.ok(!isValidProjectId('has spaces'));
+    assert.ok(!isValidProjectId('has.dots'));
+    assert.ok(!isValidProjectId('a'.repeat(65)));
   });
 
   it('should create a project', async () => {
