@@ -16,7 +16,8 @@ export function useChatMessages(roomId: string | null) {
 
   const { items: messages, error, loading, hasOlder, loadingOlder, loadOlder } = useCursorPolling<ChatMessage>({
     buildUrl: (params) => {
-      const base = `/rooms/${encodeURIComponent(roomId!)}`;
+      if (roomId == null) throw new Error('roomId is null');
+      const base = `/rooms/${encodeURIComponent(roomId)}`;
       if (params.before != null) {
         return `${base}/messages?before=${params.before}&limit=${params.limit}`;
       }
@@ -29,7 +30,9 @@ export function useChatMessages(roomId: string | null) {
     limit: LIMIT,
     enabled: roomId != null,
     onInitialLoad: (items) => {
-      lastReadIdRef.current = items[items.length - 1].id;
+      if (items.length > 0) {
+        lastReadIdRef.current = items[items.length - 1].id;
+      }
     },
     onPollAppend: (newItems) => {
       setUnreadCount((prev) => prev + newItems.filter((m) => m.id > lastReadIdRef.current).length);

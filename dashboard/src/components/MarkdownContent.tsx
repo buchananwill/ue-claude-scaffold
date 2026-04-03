@@ -55,10 +55,10 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
           p({ children }) {
             return <Text size="sm" component="p" style={{ margin: 0 }}>{children}</Text>;
           },
-          a({ href, children, ...rest }) {
+          a({ href, children }) {
             const safe = href && /^(https?:|mailto:|#)/i.test(href);
             if (!safe) return <>{children}</>;
-            return <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>{children}</a>;
+            return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
           },
           img({ src, alt, title }) {
             const safe = src && /^https?:/i.test(src);
