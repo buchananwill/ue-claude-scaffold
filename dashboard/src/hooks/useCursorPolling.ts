@@ -130,7 +130,8 @@ export function useCursorPolling<T extends { id: number }>(
         }
         setLoadingOlder(false);
       })
-      .catch(() => {
+      .catch((err) => {
+        setError(toErrorMessage(err));
         setLoadingOlder(false);
       });
   }, [loadingOlder, enabled, projectId, limit, transformOlder]);

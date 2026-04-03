@@ -105,7 +105,7 @@ export function ChatTimeline({
             <Transition mounted={showJumpToLatest} transition="slide-up" duration={200}>
               {(styles) => (
                 <Button
-                  style={{ ...styles, position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}
+                  style={{ ...styles, position: 'absolute', bottom: 'var(--mantine-spacing-md)', left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}
                   size="compact-sm"
                   variant="filled"
                   leftSection={<IconArrowDown size={14} />}

@@ -60,10 +60,10 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
             if (!safe) return <>{children}</>;
             return <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>{children}</a>;
           },
-          img({ src, ...rest }) {
+          img({ src, alt, title }) {
             const safe = src && /^https?:/i.test(src);
             if (!safe) return null;
-            return <img src={src} {...rest} />;
+            return <img src={src} alt={alt} title={title} />;
           },
           code({ className, children, ...rest }: ComponentPropsWithoutRef<'code'> & { className?: string }) {
             const match = /language-(\w+)/.exec(className ?? '');

@@ -55,7 +55,7 @@ export function useMessages(channel: string, typeFilter = '', agentFilter = '') 
         .then((data) => {
           if (!signal?.aborted) setTotalCount(data.count);
         })
-        .catch(() => {});
+        .catch(() => { /* count is non-critical; suppress */ });
     },
   });
 

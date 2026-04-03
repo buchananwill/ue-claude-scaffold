@@ -35,12 +35,13 @@ export function AgentMessageCard({
         ...style,
       }}
     >
-      <Group gap="xs" mb={4}>
+      <Group gap="xs" mb="xs">
         <Text
           size="sm"
           fw={700}
           c={`${color}.4`}
-          style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          maw={200}
+          style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         >
           {agentName}
         </Text>

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import type { ChatMessage } from '../api/types.ts';
 import { useCursorPolling } from './useCursorPolling.ts';
 
@@ -7,6 +7,12 @@ const LIMIT = 50;
 export function useChatMessages(roomId: string | null) {
   const [unreadCount, setUnreadCount] = useState(0);
   const lastReadIdRef = useRef(0);
+
+  // Reset unread state when switching rooms
+  useEffect(() => {
+    setUnreadCount(0);
+    lastReadIdRef.current = 0;
+  }, [roomId]);
 
   const { items: messages, error, loading, hasOlder, loadingOlder, loadOlder } = useCursorPolling<ChatMessage>({
     buildUrl: (params) => {

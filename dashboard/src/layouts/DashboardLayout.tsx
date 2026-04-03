@@ -57,7 +57,7 @@ export function DashboardLayout() {
               key={item.to}
               component={Link}
               to={item.to}
-              {...{ params: item.params } as any}
+              {...({ params: item.params } as unknown as Record<string, string>)}
               label={item.label}
               leftSection={item.icon}
               active={item.isActive(relativePath)}
