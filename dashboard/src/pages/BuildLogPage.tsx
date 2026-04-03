@@ -11,6 +11,7 @@ import {
 } from '@mantine/core';
 import { IconCheck, IconX, IconChevronDown, IconChevronRight } from '@tabler/icons-react';
 import { Fragment, useState, useMemo } from 'react';
+import { useSearch, useNavigate } from '@tanstack/react-router';
 import { useBuildHistory } from '../hooks/useBuildHistory.ts';
 import { useAgents } from '../hooks/useAgents.ts';
 import { RelativeTime } from '../components/RelativeTime.tsx';
@@ -32,9 +33,23 @@ function ResultIcon({ success }: { success: boolean | null }) {
 }
 
 export function BuildLogPage() {
-  const [agentFilter, setAgentFilter] = useState<string>('');
-  const [typeFilter, setTypeFilter] = useState<string>('');
-  const [successFilter, setSuccessFilter] = useState<string>('');
+  const search = useSearch({ from: '/$projectId/logs' });
+  const navigate = useNavigate({ from: '/$projectId/logs' });
+
+  const agentFilter = search.agent ?? '';
+  const typeFilter = search.type ?? '';
+  const successFilter = search.result ?? '';
+
+  const setAgentFilter = (v: string) => {
+    navigate({ search: (prev) => ({ ...prev, agent: v || undefined }) });
+  };
+  const setTypeFilter = (v: string) => {
+    navigate({ search: (prev) => ({ ...prev, type: v || undefined }) });
+  };
+  const setSuccessFilter = (v: string) => {
+    navigate({ search: (prev) => ({ ...prev, result: v || undefined }) });
+  };
+
   const [expanded, setExpanded] = useState<number | null>(null);
 
   const agents = useAgents();

@@ -42,6 +42,10 @@ const messagesIndexRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: '/messages',
   component: MessagesPage,
+  validateSearch: (search: Record<string, unknown>) => ({
+    type: typeof search.type === 'string' && search.type ? search.type : undefined,
+    agent: typeof search.agent === 'string' && search.agent ? search.agent : undefined,
+  }),
 });
 
 const messagesChannelRoute = createRoute({
@@ -79,6 +83,11 @@ const logsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: '/logs',
   component: BuildLogPage,
+  validateSearch: (search: Record<string, unknown>) => ({
+    agent: typeof search.agent === 'string' && search.agent ? search.agent : undefined,
+    type: typeof search.type === 'string' && search.type ? search.type : undefined,
+    result: typeof search.result === 'string' && search.result ? search.result : undefined,
+  }),
 });
 
 const chatRoute = createRoute({
