@@ -31,6 +31,8 @@ function boundedString(val: unknown, maxLen = 100): string | undefined {
 }
 
 const VALID_TASK_STATUSES = new Set(['pending', 'claimed', 'in_progress', 'completed', 'failed']);
+const VALID_SORT_COLUMNS = new Set(['id', 'priority', 'status', 'title', 'claimedBy', 'createdAt']);
+const VALID_DIR_VALUES = new Set(['asc', 'desc']);
 const VALID_BUILD_TYPES = new Set(['build', 'test']);
 const VALID_RESULT_VALUES = new Set(['pass', 'fail']);
 const VALID_MESSAGE_TYPES = new Set([
@@ -50,14 +52,16 @@ const overviewRoute = createRoute({
       const valid = rawStatus.split(',').filter((s) => VALID_TASK_STATUSES.has(s));
       status = valid.length > 0 ? valid.join(',') : undefined;
     }
+    const rawSort = boundedString(search.sort, 50);
+    const rawDir = boundedString(search.dir, 10);
     return {
-    status,
-    agent: boundedString(search.agent),
-    priority: boundedString(search.priority, 200),
-    sort: boundedString(search.sort, 50),
-    dir: boundedString(search.dir, 10),
-    page: Number(search.page) > 0 ? Math.floor(Number(search.page)) : undefined,
-  };
+      status,
+      agent: boundedString(search.agent, 200),
+      priority: boundedString(search.priority, 200),
+      sort: rawSort && VALID_SORT_COLUMNS.has(rawSort) ? rawSort : undefined,
+      dir: rawDir && VALID_DIR_VALUES.has(rawDir) ? rawDir : undefined,
+      page: Number(search.page) > 0 ? Math.floor(Number(search.page)) : undefined,
+    };
   },
 });
 
