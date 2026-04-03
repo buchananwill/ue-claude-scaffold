@@ -12,10 +12,12 @@ import { StatusBadge } from '../components/StatusBadge.tsx';
 import { RelativeTime } from '../components/RelativeTime.tsx';
 import { TasksPanel } from '../components/TasksPanel.tsx';
 import { MessagesFeed } from '../components/MessagesFeed.tsx';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 export function AgentDetailPage() {
   const params = useParams({ strict: false }) as { agentName?: string };
   const agentName = params.agentName ?? '';
+  const { projectId } = useProject();
   const { data: agent, isLoading, error, isError } = useAgent(agentName);
   const tasks = useTasks({ limit: 500 });
   const agents = useAgents();
@@ -39,7 +41,7 @@ export function AgentDetailPage() {
 
   return (
     <Stack gap="md">
-      <Link to="/" search={(prev: any) => prev} style={{ textDecoration: 'none', fontSize: '0.875rem' }}>&larr; Back to overview</Link>
+      <Link to="/$projectId" params={{ projectId }} search={(prev: any) => prev} style={{ textDecoration: 'none', fontSize: '0.875rem' }}>&larr; Back to overview</Link>
 
       {agent ? (
         <>

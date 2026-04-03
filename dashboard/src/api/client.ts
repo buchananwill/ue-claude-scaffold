@@ -1,5 +1,22 @@
 const BASE = '/api';
 
+let currentProjectId: string | null = null;
+
+export function setCurrentProjectId(id: string | null) {
+  currentProjectId = id;
+}
+
+export function getCurrentProjectId(): string | null {
+  return currentProjectId;
+}
+
+function projectHeaders(): Record<string, string> {
+  if (currentProjectId) {
+    return { 'x-project-id': currentProjectId };
+  }
+  return {};
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -23,7 +40,7 @@ async function extractError(res: Response): Promise<string> {
 }
 
 export async function apiFetch<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { signal });
+  const res = await fetch(`${BASE}${path}`, { signal, headers: { ...projectHeaders() } });
   if (!res.ok) {
     throw new ApiError(await extractError(res), res.status);
   }
@@ -33,7 +50,7 @@ export async function apiFetch<T>(path: string, signal?: AbortSignal): Promise<T
 export async function apiPost<T = unknown>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...projectHeaders() },
     body: JSON.stringify(body ?? {}),
   });
   if (!res.ok) {
@@ -45,7 +62,7 @@ export async function apiPost<T = unknown>(path: string, body?: unknown): Promis
 export async function apiPatch<T = unknown>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...projectHeaders() },
     body: JSON.stringify(body ?? {}),
   });
   if (!res.ok) {
@@ -55,7 +72,7 @@ export async function apiPatch<T = unknown>(path: string, body?: unknown): Promi
 }
 
 export async function apiDelete<T = unknown>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: 'DELETE' });
+  const res = await fetch(`${BASE}${path}`, { method: 'DELETE', headers: { ...projectHeaders() } });
   if (!res.ok) {
     throw new ApiError(await extractError(res), res.status);
   }

@@ -3,12 +3,14 @@ import { Popover, TextInput, Text, Loader, Stack, Group, UnstyledButton, Divider
 import { IconSearch, IconSubtask, IconMessage, IconRobot } from '@tabler/icons-react';
 import { useNavigate } from '@tanstack/react-router';
 import { useSearch } from '../hooks/useSearch.ts';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 export function SearchBar() {
   const [term, setTerm] = useState('');
   const [popoverOpen, setPopoverOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+  const { projectId } = useProject();
   const { data, isFetching } = useSearch(term);
 
   useEffect(() => {
@@ -79,7 +81,7 @@ export function SearchBar() {
                       e.preventDefault();
                       setTerm('');
                       setPopoverOpen(false);
-                      navigate({ to: '/tasks/$taskId', params: { taskId: String(task.id) } });
+                      navigate({ to: '/$projectId/tasks/$taskId', params: { projectId, taskId: String(task.id) } });
                     }}
                   >
                     <Group gap="xs" wrap="nowrap">
@@ -113,8 +115,8 @@ export function SearchBar() {
                       setTerm('');
                       setPopoverOpen(false);
                       navigate({
-                        to: '/messages/$channel',
-                        params: { channel: msg.channel },
+                        to: '/$projectId/messages/$channel',
+                        params: { projectId, channel: msg.channel },
                         search: { type: undefined, highlight: String(msg.id), agent: undefined },
                       });
                     }}
@@ -149,7 +151,7 @@ export function SearchBar() {
                       e.preventDefault();
                       setTerm('');
                       setPopoverOpen(false);
-                      navigate({ to: '/agents/$agentName', params: { agentName: agent.name } });
+                      navigate({ to: '/$projectId/agents/$agentName', params: { projectId, agentName: agent.name } });
                     }}
                   >
                     <Group gap="xs" wrap="nowrap">
@@ -176,7 +178,7 @@ export function SearchBar() {
                   onMouseDown={(e: React.MouseEvent) => {
                     e.preventDefault();
                     setPopoverOpen(false);
-                    navigate({ to: '/search', search: { q: term } });
+                    navigate({ to: '/$projectId/search', params: { projectId }, search: { q: term } });
                     setTerm('');
                   }}
                 >

@@ -3,7 +3,8 @@ import {
   createRootRoute,
   createRoute,
 } from '@tanstack/react-router';
-import { DashboardLayout } from './layouts/DashboardLayout.tsx';
+import { RootLayout } from './layouts/RootLayout.tsx';
+import { ProjectLayout } from './layouts/ProjectLayout.tsx';
 import { OverviewPage } from './pages/OverviewPage.tsx';
 import { MessagesPage } from './pages/MessagesPage.tsx';
 import { TaskDetailPage } from './pages/TaskDetailPage.tsx';
@@ -14,11 +15,17 @@ import { TeamsPage } from './pages/TeamsPage.tsx';
 import { SearchPage } from './pages/SearchPage.tsx';
 
 const rootRoute = createRootRoute({
-  component: DashboardLayout,
+  component: RootLayout,
+});
+
+const projectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/$projectId',
+  component: ProjectLayout,
 });
 
 const overviewRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => projectRoute,
   path: '/',
   component: OverviewPage,
   validateSearch: (search: Record<string, unknown>) => ({
@@ -32,13 +39,13 @@ const overviewRoute = createRoute({
 });
 
 const messagesIndexRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => projectRoute,
   path: '/messages',
   component: MessagesPage,
 });
 
 const messagesChannelRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => projectRoute,
   path: '/messages/$channel',
   component: MessagesPage,
   validateSearch: (search: Record<string, unknown>) => ({
@@ -49,25 +56,25 @@ const messagesChannelRoute = createRoute({
 });
 
 const taskDetailRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => projectRoute,
   path: '/tasks/$taskId',
   component: TaskDetailPage,
 });
 
 const agentDetailRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => projectRoute,
   path: '/agents/$agentName',
   component: AgentDetailPage,
 });
 
 const logsRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => projectRoute,
   path: '/logs',
   component: BuildLogPage,
 });
 
 const chatRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => projectRoute,
   path: '/chat',
   component: ChatPage,
   validateSearch: (search: Record<string, unknown>) => ({
@@ -76,13 +83,13 @@ const chatRoute = createRoute({
 });
 
 const teamsRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => projectRoute,
   path: '/teams',
   component: TeamsPage,
 });
 
 const searchRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => projectRoute,
   path: '/search',
   component: SearchPage,
   validateSearch: (search: Record<string, unknown>) => ({
@@ -91,15 +98,17 @@ const searchRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
-  overviewRoute,
-  messagesIndexRoute,
-  messagesChannelRoute,
-  taskDetailRoute,
-  agentDetailRoute,
-  logsRoute,
-  chatRoute,
-  teamsRoute,
-  searchRoute,
+  projectRoute.addChildren([
+    overviewRoute,
+    messagesIndexRoute,
+    messagesChannelRoute,
+    taskDetailRoute,
+    agentDetailRoute,
+    logsRoute,
+    chatRoute,
+    teamsRoute,
+    searchRoute,
+  ]),
 ]);
 
 export const router = createRouter({ routeTree });

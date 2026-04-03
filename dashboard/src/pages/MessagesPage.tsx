@@ -2,24 +2,26 @@ import { useParams, useNavigate, useSearch } from '@tanstack/react-router';
 import { MessagesFeed } from '../components/MessagesFeed.tsx';
 import { useMessages } from '../hooks/useMessages.ts';
 import { useAgents } from '../hooks/useAgents.ts';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 export function MessagesPage() {
   const params = useParams({ strict: false }) as { channel?: string };
   const channel = params.channel ?? 'general';
   const navigate = useNavigate();
   const agents = useAgents();
+  const { projectId } = useProject();
   const { type: typeFilter = '', highlight, agent: agentFilter = '' } = useSearch({ strict: false }) as { type?: string; highlight?: string; agent?: string };
   const messages = useMessages(channel, typeFilter, agentFilter);
   const highlightId = highlight ? Number(highlight) : undefined;
 
   const handleChannelChange = (c: string) => {
-    navigate({ to: '/messages/$channel', params: { channel: c }, search: { type: typeFilter || undefined, highlight: undefined, agent: agentFilter || undefined } });
+    navigate({ to: '/$projectId/messages/$channel', params: { projectId, channel: c }, search: { type: typeFilter || undefined, highlight: undefined, agent: agentFilter || undefined } });
   };
 
   const handleTypeFilterChange = (t: string) => {
     navigate({
-      to: '/messages/$channel',
-      params: { channel },
+      to: '/$projectId/messages/$channel',
+      params: { projectId, channel },
       search: { type: t || undefined, highlight: undefined, agent: agentFilter || undefined },
       replace: true,
     });
@@ -27,8 +29,8 @@ export function MessagesPage() {
 
   const handleAgentFilterChange = (a: string) => {
     navigate({
-      to: '/messages/$channel',
-      params: { channel },
+      to: '/$projectId/messages/$channel',
+      params: { projectId, channel },
       search: { type: typeFilter || undefined, highlight: undefined, agent: a || undefined },
       replace: true,
     });
@@ -36,8 +38,8 @@ export function MessagesPage() {
 
   const handleHighlightConsumed = () => {
     navigate({
-      to: '/messages/$channel',
-      params: { channel },
+      to: '/$projectId/messages/$channel',
+      params: { projectId, channel },
       search: { type: typeFilter || undefined, highlight: undefined, agent: agentFilter || undefined },
       replace: true,
     });

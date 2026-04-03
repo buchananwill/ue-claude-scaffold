@@ -1,3 +1,13 @@
+export interface Project {
+  id: string;
+  name: string;
+  engineVersion: string | null;
+  seedBranch: string | null;
+  buildTimeoutMs: number | null;
+  testTimeoutMs: number | null;
+  createdAt: string;
+}
+
 export interface HealthResponse {
   status: string;
   dbPath: string;

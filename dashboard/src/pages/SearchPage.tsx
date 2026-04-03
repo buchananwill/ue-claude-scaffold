@@ -2,10 +2,12 @@ import { Title, Loader, Text, Stack, Group, UnstyledButton, Paper } from '@manti
 import { IconSubtask, IconMessage, IconRobot } from '@tabler/icons-react';
 import { useSearch, useNavigate } from '@tanstack/react-router';
 import { useSearch as useSearchQuery } from '../hooks/useSearch.ts';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 export function SearchPage() {
-  const { q } = useSearch({ from: '/search' });
+  const { q } = useSearch({ strict: false }) as { q: string };
   const navigate = useNavigate();
+  const { projectId } = useProject();
   const { data, isFetching } = useSearchQuery(q);
 
   const hasResults =
@@ -39,7 +41,7 @@ export function SearchPage() {
                 p="xs"
                 style={{ borderRadius: 'var(--mantine-radius-sm)' }}
                 onClick={() =>
-                  navigate({ to: '/tasks/$taskId', params: { taskId: String(task.id) } })
+                  navigate({ to: '/$projectId/tasks/$taskId', params: { projectId, taskId: String(task.id) } })
                 }
               >
                 <Group gap="xs" wrap="nowrap">
@@ -76,8 +78,8 @@ export function SearchPage() {
                 style={{ borderRadius: 'var(--mantine-radius-sm)' }}
                 onClick={() =>
                   navigate({
-                    to: '/messages/$channel',
-                    params: { channel: msg.channel },
+                    to: '/$projectId/messages/$channel',
+                    params: { projectId, channel: msg.channel },
                     search: { type: undefined, highlight: String(msg.id), agent: undefined },
                   })
                 }
@@ -115,7 +117,7 @@ export function SearchPage() {
                 p="xs"
                 style={{ borderRadius: 'var(--mantine-radius-sm)' }}
                 onClick={() =>
-                  navigate({ to: '/agents/$agentName', params: { agentName: agent.name } })
+                  navigate({ to: '/$projectId/agents/$agentName', params: { projectId, agentName: agent.name } })
                 }
               >
                 <Group gap="xs" wrap="nowrap">

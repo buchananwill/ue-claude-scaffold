@@ -2,6 +2,7 @@ import { Collapse, Text, Code, Stack, Group, Badge, Table } from '@mantine/core'
 import { Link } from '@tanstack/react-router';
 import type { Task } from '../api/types.ts';
 import { RelativeTime } from './RelativeTime.tsx';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 interface TaskDetailRowProps {
   task: Task;
@@ -9,6 +10,7 @@ interface TaskDetailRowProps {
 }
 
 export function TaskDetailRow({ task, expanded }: TaskDetailRowProps) {
+  const { projectId } = useProject();
   return (
     <Table.Tr>
       <Table.Td colSpan={7}>
@@ -45,8 +47,8 @@ export function TaskDetailRow({ task, expanded }: TaskDetailRowProps) {
                   {task.blockedBy.map((depId) => (
                     <Link
                       key={depId}
-                      to="/tasks/$taskId"
-                      params={{ taskId: String(depId) }}
+                      to="/$projectId/tasks/$taskId"
+                      params={{ projectId, taskId: String(depId) }}
                       onClick={(e) => e.stopPropagation()}
                       style={{ textDecoration: 'none' }}
                     >

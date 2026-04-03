@@ -5,17 +5,23 @@ import { HealthBar } from '../components/HealthBar.tsx';
 import { useHealth } from '../hooks/useHealth.ts';
 import { usePollInterval } from '../hooks/usePollInterval.tsx';
 import { SearchBar } from '../components/SearchBar.tsx';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 export function DashboardLayout() {
   const { intervalMs, setIntervalMs } = usePollInterval();
   const health = useHealth();
   const matches = useMatches();
+  const { projectId } = useProject();
 
   const currentPath = matches[matches.length - 1]?.pathname ?? '/';
-  const isMessages = currentPath.startsWith('/messages');
-  const isLogs = currentPath === '/logs';
-  const isChat = currentPath.startsWith('/chat');
-  const isTeams = currentPath.startsWith('/teams');
+  const projectPrefix = `/${projectId}`;
+  const relativePath = currentPath.startsWith(projectPrefix)
+    ? currentPath.slice(projectPrefix.length) || '/'
+    : currentPath;
+  const isMessages = relativePath.startsWith('/messages');
+  const isLogs = relativePath === '/logs';
+  const isChat = relativePath.startsWith('/chat');
+  const isTeams = relativePath.startsWith('/teams');
 
   return (
     <AppShell header={{ height: 50 }} padding="md">
@@ -33,17 +39,18 @@ export function DashboardLayout() {
         <Group gap="xs" mb="md">
           <NavLink
             component={Link}
-            to="/"
+            to="/$projectId"
+            {...{ params: { projectId } } as any}
             label="Overview"
             leftSection={<IconLayoutDashboard size={16} />}
-            active={currentPath === '/'}
+            active={relativePath === '/'}
             style={{ borderRadius: 'var(--mantine-radius-sm)', flex: 'none', width: 'auto' }}
             px="md"
           />
           <NavLink
             component={Link}
-            to="/messages/$channel"
-            {...{ params: { channel: 'general' } } as any}
+            to="/$projectId/messages/$channel"
+            {...{ params: { projectId, channel: 'general' } } as any}
             label="Messages"
             leftSection={<IconMessage size={16} />}
             active={isMessages}
@@ -52,7 +59,8 @@ export function DashboardLayout() {
           />
           <NavLink
             component={Link}
-            to="/logs"
+            to="/$projectId/logs"
+            {...{ params: { projectId } } as any}
             label="Logs"
             leftSection={<IconList size={16} />}
             active={isLogs}
@@ -61,7 +69,8 @@ export function DashboardLayout() {
           />
           <NavLink
             component={Link}
-            to="/chat"
+            to="/$projectId/chat"
+            {...{ params: { projectId } } as any}
             label="Chat"
             leftSection={<IconMessageCircle size={16} />}
             active={isChat}
@@ -70,7 +79,8 @@ export function DashboardLayout() {
           />
           <NavLink
             component={Link}
-            to="/teams"
+            to="/$projectId/teams"
+            {...{ params: { projectId } } as any}
             label="Teams"
             leftSection={<IconUsersGroup size={16} />}
             active={isTeams}

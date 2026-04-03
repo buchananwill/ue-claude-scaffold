@@ -1,0 +1,110 @@
+import { useQuery } from '@tanstack/react-query';
+import { useNavigate, Outlet } from '@tanstack/react-router';
+import { useEffect } from 'react';
+import {
+  Center,
+  Loader,
+  Stack,
+  Title,
+  Text,
+  SimpleGrid,
+  Card,
+  Group,
+} from '@mantine/core';
+import { IconFolder } from '@tabler/icons-react';
+import { apiFetch } from '../api/client.ts';
+import type { Project } from '../api/types.ts';
+
+export function RootLayout() {
+  const navigate = useNavigate();
+
+  const { data: projects, isLoading, error } = useQuery({
+    queryKey: ['projects'],
+    queryFn: ({ signal }) => apiFetch<Project[]>('/projects', signal),
+    staleTime: 30_000,
+  });
+
+  const shouldRedirect = projects && projects.length === 1;
+
+  useEffect(() => {
+    if (shouldRedirect) {
+      navigate({
+        to: '/$projectId',
+        params: { projectId: projects[0].id },
+        replace: true,
+      });
+    }
+  }, [shouldRedirect, projects, navigate]);
+
+  if (isLoading) {
+    return (
+      <Center h="100vh">
+        <Loader size="lg" />
+      </Center>
+    );
+  }
+
+  if (error) {
+    return (
+      <Center h="100vh">
+        <Stack align="center" gap="sm">
+          <Text c="red" size="lg" fw={600}>Failed to load projects</Text>
+          <Text c="dimmed" size="sm">{error instanceof Error ? error.message : String(error)}</Text>
+        </Stack>
+      </Center>
+    );
+  }
+
+  if (!projects || projects.length === 0) {
+    return (
+      <Center h="100vh">
+        <Stack align="center" gap="sm">
+          <Title order={2}>No projects configured</Title>
+          <Text c="dimmed" size="sm">
+            Add a project via the coordination server to get started.
+          </Text>
+        </Stack>
+      </Center>
+    );
+  }
+
+  // Single project: the useEffect above handles the redirect.
+  // Render Outlet so the redirect target can mount.
+  if (projects.length === 1) {
+    return <Outlet />;
+  }
+
+  // Multiple projects: show picker
+  return (
+    <Center h="100vh">
+      <Stack align="center" gap="lg" maw={800} w="100%" p="xl">
+        <Title order={2}>Select a project</Title>
+        <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} w="100%">
+          {projects.map((project) => (
+            <Card
+              key={project.id}
+              withBorder
+              padding="lg"
+              style={{ cursor: 'pointer' }}
+              onClick={() =>
+                navigate({
+                  to: '/$projectId',
+                  params: { projectId: project.id },
+                })
+              }
+            >
+              <Group gap="sm" mb="xs">
+                <IconFolder size={20} />
+                <Title order={4}>{project.name}</Title>
+              </Group>
+              {project.engineVersion && (
+                <Text size="sm" c="dimmed">Engine: {project.engineVersion}</Text>
+              )}
+              <Text size="xs" c="dimmed" mt="xs">ID: {project.id}</Text>
+            </Card>
+          ))}
+        </SimpleGrid>
+      </Stack>
+    </Center>
+  );
+}

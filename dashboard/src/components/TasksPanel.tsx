@@ -20,6 +20,7 @@ import { Fragment, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { Task } from '../api/types.ts';
 import type { TaskFilters } from '../hooks/useTaskFilters.ts';
+import { useProject } from '../contexts/ProjectContext.tsx';
 import { UNASSIGNED, TASK_STATUSES } from '../hooks/useTaskFilters.ts';
 import { useTaskActions } from '../hooks/useTaskActions.ts';
 import { SortHeader } from './SortHeader.tsx';
@@ -44,6 +45,7 @@ interface TasksPanelProps {
 }
 
 export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: TasksPanelProps) {
+  const { projectId } = useProject();
   const [expanded, setExpanded] = useState<number | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<number | null>(null);
   const [confirmingBulk, setConfirmingBulk] = useState(false);
@@ -248,8 +250,8 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: Task
                   </Table.Td>
                   <Table.Td fw={500}>
                     <Link
-                      to="/tasks/$taskId"
-                      params={{ taskId: String(t.id) }}
+                      to="/$projectId/tasks/$taskId"
+                      params={{ projectId, taskId: String(t.id) }}
                       style={{ textDecoration: 'none', color: 'inherit', fontWeight: 500 }}
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -259,8 +261,8 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: Task
                   <Table.Td>
                     {t.claimedBy ? (
                       <Link
-                        to="/agents/$agentName"
-                        params={{ agentName: t.claimedBy }}
+                        to="/$projectId/agents/$agentName"
+                        params={{ projectId, agentName: t.claimedBy }}
                         style={{ textDecoration: 'none' }}
                         onClick={(e) => e.stopPropagation()}
                       >

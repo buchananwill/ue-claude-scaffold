@@ -7,6 +7,7 @@ import { apiDelete } from '../api/client.ts';
 import type { Agent } from '../api/types.ts';
 import { StatusBadge } from './StatusBadge.tsx';
 import { RelativeTime } from './RelativeTime.tsx';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 interface AgentsPanelProps {
   agents: Agent[] | null;
@@ -15,6 +16,7 @@ interface AgentsPanelProps {
 export function AgentsPanel({ agents }: AgentsPanelProps) {
   const [confirming, setConfirming] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const { projectId } = useProject();
 
   const handleDelete = async (name: string) => {
     await apiDelete(`/agents/${encodeURIComponent(name)}`);
@@ -41,7 +43,7 @@ export function AgentsPanel({ agents }: AgentsPanelProps) {
         {agents.map((a) => (
           <Table.Tr key={a.name}>
             <Table.Td fw={600}>
-              <Link to="/agents/$agentName" params={{ agentName: a.name }} style={{ textDecoration: 'none', color: 'inherit' }}>
+              <Link to="/$projectId/agents/$agentName" params={{ projectId, agentName: a.name }} style={{ textDecoration: 'none', color: 'inherit' }}>
                 {a.name}
               </Link>
             </Table.Td>

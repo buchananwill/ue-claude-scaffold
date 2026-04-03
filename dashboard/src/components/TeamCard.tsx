@@ -3,12 +3,14 @@ import { Link } from '@tanstack/react-router';
 import { StatusBadge } from './StatusBadge.tsx';
 import { RelativeTime } from './RelativeTime.tsx';
 import type { TeamDetail } from '../api/types.ts';
+import { useProject } from '../contexts/ProjectContext.tsx';
 
 interface TeamCardProps {
   team: TeamDetail;
 }
 
 export function TeamCard({ team }: TeamCardProps) {
+  const { projectId } = useProject();
   return (
     <Card withBorder p="sm">
       <Group justify="space-between" mb="xs">
@@ -44,8 +46,8 @@ export function TeamCard({ team }: TeamCardProps) {
       </Table>
       <Button
         component={Link}
-        to="/chat"
-        {...{ search: { room: team.id } } as any}
+        to="/$projectId/chat"
+        {...{ params: { projectId }, search: { room: team.id } } as any}
         variant="light"
         size="xs"
         mt="sm"
