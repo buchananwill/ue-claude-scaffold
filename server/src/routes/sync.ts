@@ -32,20 +32,12 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
 
     const bareRepo = project.bareRepoPath;
     if (!bareRepo) {
-      return reply.code(422).send({
-        statusCode: 422,
-        error: 'Unprocessable Entity',
-        message: 'bareRepoPath is not configured',
-      });
+      return reply.unprocessableEntity('bareRepoPath is not configured');
     }
 
     const exteriorRepo = project.path;
     if (!exteriorRepo) {
-      return reply.code(422).send({
-        statusCode: 422,
-        error: 'Unprocessable Entity',
-        message: 'project.path is not configured',
-      });
+      return reply.unprocessableEntity('project.path is not configured');
     }
 
     const seedBranch = seedBranchFor(projectId, project);

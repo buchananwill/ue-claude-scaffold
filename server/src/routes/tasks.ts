@@ -86,12 +86,10 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
           }
           // Re-check after sync
           if (!existsInBareRepo(bareRepo, seedBranch, sourcePath)) {
-            return reply.code(422).send({
-              statusCode: 422,
-              error: 'Unprocessable Entity',
-              message: `sourcePath '${sourcePath}' not found on branch '${seedBranch}' in bare repo. ` +
+            return reply.unprocessableEntity(
+              `sourcePath '${sourcePath}' not found on branch '${seedBranch}' in bare repo. ` +
                 `Commit the plan in the exterior repo and retry.`,
-            });
+            );
           }
         }
       } else {
@@ -288,12 +286,10 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
             }
             // Re-check after sync
             if (!existsInBareRepo(bareRepo, seedBranch, t.sourcePath)) {
-              return reply.code(422).send({
-                statusCode: 422,
-                error: 'Unprocessable Entity',
-                message: `Task ${i}: sourcePath '${t.sourcePath}' not found on branch '${seedBranch}' in bare repo. ` +
+              return reply.unprocessableEntity(
+                `Task ${i}: sourcePath '${t.sourcePath}' not found on branch '${seedBranch}' in bare repo. ` +
                   `Commit the plan in the exterior repo and retry.`,
-              });
+              );
             }
           }
         } else {
