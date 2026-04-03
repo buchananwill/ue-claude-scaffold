@@ -48,7 +48,9 @@ export async function validateSourcePath(opts: {
         const exteriorRepo = project.path;
         if (exteriorRepo) {
           const syncResult = syncExteriorToBareRepo(exteriorRepo, bareRepo, seedBranch, log);
-          synced = true;
+          if (syncResult.ok) {
+            synced = true;
+          }
           if (!syncResult.ok) {
             log?.warn({ reason: syncResult.reason }, 'Auto-sync from exterior repo failed');
           }

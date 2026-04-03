@@ -167,11 +167,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     try {
       project = await resolveProject(config, db, agent.projectId);
     } catch {
-      return reply.code(400).send({
-        statusCode: 400,
-        error: 'Bad Request',
-        message: `Unknown project: "${agent.projectId}"`,
-      });
+      return reply.badRequest(`Unknown project: "${agent.projectId}"`);
     }
     const bareRepo = project.bareRepoPath;
     if (!bareRepo) {

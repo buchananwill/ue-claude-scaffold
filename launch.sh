@@ -176,6 +176,7 @@ if jq -e --arg id "$PROJECT_ID" '.projects[$id]' "$_cfg" >/dev/null 2>&1; then
   PROJECT_HOOK_BUILD=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].hooks.buildIntercept // empty' "$_cfg")
   PROJECT_HOOK_LINT=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].hooks.cppLint // empty' "$_cfg")
   PROJECT_AGENT_TYPE=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].agentType // empty' "$_cfg")
+  PROJECT_SEED_BRANCH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].seedBranch // empty' "$_cfg")
 elif [[ "$PROJECT_ID" == "default" ]]; then
   # Legacy mode: read from top-level fields (existing code)
   UE_ENGINE_PATH="$(jq -r '.engine.path // empty' "$_cfg")"
@@ -190,6 +191,7 @@ elif [[ "$PROJECT_ID" == "default" ]]; then
   LOGS_PATH="$(jq -r '.logs.path // empty' "$_cfg")"
   PROJECT_HOOK_BUILD=$(jq -r '.hooks.buildIntercept // empty' "$_cfg")
   PROJECT_HOOK_LINT=$(jq -r '.hooks.cppLint // empty' "$_cfg")
+  PROJECT_SEED_BRANCH=$(jq -r '.tasks.seedBranch // empty' "$_cfg")
 else
   # --project was specified but ID not found in projects map
   _available=$(jq -r '.projects // {} | keys | join(", ")' "$_cfg")
@@ -257,7 +259,8 @@ LOG_VERBOSITY="${_CLI_VERBOSITY:-${LOG_VERBOSITY:-normal}}"
 
 # ── Compute branch names ─────────────────────────────────────────────────────
 AGENT_BRANCH="docker/${PROJECT_ID}/${AGENT_NAME}"
-ROOT_BRANCH="${ROOT_BRANCH:-docker/${PROJECT_ID}/current-root}"
+_default_root="${PROJECT_SEED_BRANCH:-docker/${PROJECT_ID}/current-root}"
+ROOT_BRANCH="${ROOT_BRANCH:-$_default_root}"
 WORK_BRANCH="$AGENT_BRANCH"
 
 _expected_root="docker/${PROJECT_ID}/current-root"
