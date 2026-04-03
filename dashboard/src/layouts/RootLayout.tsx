@@ -28,7 +28,11 @@ export function RootLayout() {
 
   useEffect(() => {
     if (shouldRedirect) {
-      navigate({
+      // Navigate to project overview — cast needed because child route's
+      // validateSearch makes search params required at the type level, but
+      // the router will apply defaults from validateSearch at runtime.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (navigate as any)({
         to: '/$projectId',
         params: { projectId: projects[0].id },
         replace: true,
@@ -87,7 +91,8 @@ export function RootLayout() {
               padding="lg"
               style={{ cursor: 'pointer' }}
               onClick={() =>
-                navigate({
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (navigate as any)({
                   to: '/$projectId',
                   params: { projectId: project.id },
                 })

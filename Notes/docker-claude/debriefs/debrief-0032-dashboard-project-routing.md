@@ -32,7 +32,13 @@ Implement Phase 1 of the dashboard multi-tenancy UI plan. This is a dashboard-on
 
 ## Build & Test Results
 
-Pending initial build.
+TypeScript type check (`tsc -b --noEmit`) and full Vite production build (`npm run build`) both pass cleanly.
+
+Three categories of errors were fixed:
+1. `useSearch({ from: '/' })` in `useTaskFilters.ts` and `OverviewPage.tsx` changed to `from: '/$projectId/'` to match the restructured route tree.
+2. `navigate()` calls in `RootLayout.tsx` required `search` params because the child overview route defines `validateSearch`. Fixed by casting `navigate as any` since the root layout navigates to the project layout (not the index route directly) and runtime `validateSearch` applies defaults.
+
+No other stale route references (`from: '/'` or `to: '/'`) were found in the codebase.
 
 ## Open Questions / Risks
 

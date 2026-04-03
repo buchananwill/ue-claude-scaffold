@@ -18,7 +18,7 @@ export function OverviewPage() {
   // Read URL search params directly to derive server-side query params.
   // This avoids a circular dependency: useTaskFiltersUrlBacked needs the
   // fetched tasks, but useTasks needs page/status from URL params.
-  const search = useSearch({ from: '/' });
+  const search = useSearch({ from: '/$projectId/' });
   const page = search.page ?? 1;
   const statusFilter = useMemo(() => {
     if (!search.status) return new Set<string>();

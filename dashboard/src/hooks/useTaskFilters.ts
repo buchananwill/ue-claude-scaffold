@@ -148,8 +148,8 @@ export function useTaskFilters(tasks: Task[]) {
 }
 
 export function useTaskFiltersUrlBacked(tasks: Task[]) {
-  const search = useSearch({ from: '/' });
-  const navigate = useNavigate({ from: '/' });
+  const search = useSearch({ from: '/$projectId/' });
+  const navigate = useNavigate({ from: '/$projectId/' });
 
   const statusFilter = useMemo(() => {
     if (!search.status) return new Set<string>();
