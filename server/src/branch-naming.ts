@@ -8,8 +8,7 @@
 
 import type { ProjectRow } from './queries/projects.js';
 
-const BRANCH_RE = /^[a-zA-Z0-9/_.-]{1,200}$/;
-const PATH_TRAVERSAL_RE = /\.\./;
+const BRANCH_RE = /^(?![.\/])(?!.*\/\/)(?!.*\.\.)(?!.*\.$)[a-zA-Z0-9/_.-]{1,200}$/;
 const PROJECT_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const AGENT_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
@@ -25,7 +24,7 @@ export function seedBranchFor(projectId: string, projectConfig?: Pick<ProjectRow
     throw new Error(`Invalid projectId: "${projectId}"`);
   }
   if (projectConfig?.seedBranch) {
-    if (!BRANCH_RE.test(projectConfig.seedBranch) || PATH_TRAVERSAL_RE.test(projectConfig.seedBranch)) {
+    if (!BRANCH_RE.test(projectConfig.seedBranch)) {
       throw new Error(`Invalid seedBranch: "${projectConfig.seedBranch}"`);
     }
     return projectConfig.seedBranch;

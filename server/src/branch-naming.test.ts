@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { seedBranchFor, agentBranchFor } from './branch-naming.js';
 
@@ -39,6 +39,34 @@ describe('seedBranchFor', () => {
     assert.throws(
       () => seedBranchFor('../evil'),
       /Invalid projectId/
+    );
+  });
+
+  it('throws on seedBranch starting with a dot', () => {
+    assert.throws(
+      () => seedBranchFor('proj', { seedBranch: '.hidden' }),
+      /Invalid seedBranch/
+    );
+  });
+
+  it('throws on seedBranch starting with a slash', () => {
+    assert.throws(
+      () => seedBranchFor('proj', { seedBranch: '/starts-with-slash' }),
+      /Invalid seedBranch/
+    );
+  });
+
+  it('throws on seedBranch ending with a dot', () => {
+    assert.throws(
+      () => seedBranchFor('proj', { seedBranch: 'branch.' }),
+      /Invalid seedBranch/
+    );
+  });
+
+  it('throws on seedBranch with consecutive slashes', () => {
+    assert.throws(
+      () => seedBranchFor('proj', { seedBranch: 'a//b' }),
+      /Invalid seedBranch/
     );
   });
 });
