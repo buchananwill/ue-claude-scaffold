@@ -30,6 +30,7 @@ function boundedString(val: unknown, maxLen = 100): string | undefined {
   return val;
 }
 
+const VALID_TASK_STATUSES = new Set(['pending', 'claimed', 'in_progress', 'completed', 'failed']);
 const VALID_BUILD_TYPES = new Set(['build', 'test']);
 const VALID_RESULT_VALUES = new Set(['pass', 'fail']);
 const VALID_MESSAGE_TYPES = new Set([
@@ -41,14 +42,23 @@ const overviewRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: '/',
   component: OverviewPage,
-  validateSearch: (search: Record<string, unknown>) => ({
-    status: boundedString(search.status, 200),
+  validateSearch: (search: Record<string, unknown>) => {
+    // Filter each comma-separated status value against the allowlist
+    const rawStatus = boundedString(search.status, 200);
+    let status: string | undefined;
+    if (rawStatus) {
+      const valid = rawStatus.split(',').filter((s) => VALID_TASK_STATUSES.has(s));
+      status = valid.length > 0 ? valid.join(',') : undefined;
+    }
+    return {
+    status,
     agent: boundedString(search.agent),
     priority: boundedString(search.priority, 200),
     sort: boundedString(search.sort, 50),
     dir: boundedString(search.dir, 10),
     page: Number(search.page) > 0 ? Math.floor(Number(search.page)) : undefined,
-  }),
+  };
+  },
 });
 
 const messagesIndexRoute = createRoute({
@@ -118,7 +128,7 @@ const chatRoute = createRoute({
   path: '/chat',
   component: ChatPage,
   validateSearch: (search: Record<string, unknown>) => ({
-    room: typeof search.room === 'string' ? search.room : undefined,
+    room: boundedString(search.room, 64),
   }),
 });
 
@@ -133,7 +143,7 @@ const searchRoute = createRoute({
   path: '/search',
   component: SearchPage,
   validateSearch: (search: Record<string, unknown>) => ({
-    q: typeof search.q === 'string' ? search.q : '',
+    q: boundedString(search.q, 200) ?? '',
   }),
 });
 

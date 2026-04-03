@@ -45,7 +45,7 @@ export function BuildLogPage() {
   const setTypeFilter = (v: string) => {
     navigate({ search: (prev) => ({ ...prev, type: v || undefined }) });
   };
-  const setSuccessFilter = (v: string) => {
+  const setResultFilter = (v: string) => {
     navigate({ search: (prev) => ({ ...prev, result: v || undefined }) });
   };
 
@@ -134,7 +134,7 @@ export function BuildLogPage() {
               { label: 'Fail', value: 'fail' },
             ]}
             value={resultFilter}
-            onChange={setSuccessFilter}
+            onChange={setResultFilter}
           />
         </div>
       </Group>

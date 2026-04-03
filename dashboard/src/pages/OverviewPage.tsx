@@ -90,7 +90,7 @@ export function OverviewPage() {
           />
         </Card>
         {/* zIndex: 1 layers above scrolled task rows; boxShadow fades into page background */}
-        <Group justify="center" py="xs" mt="xs" style={{ position: 'sticky', bottom: 0, backgroundColor: 'var(--mantine-color-body)', zIndex: 1, boxShadow: '0 -6px 9px 3px var(--mantine-color-body)' }}>
+        <Group justify="center" py="xs" mt="xs" pos="sticky" bottom={0} bg="var(--mantine-color-body)" style={{ zIndex: 1, boxShadow: '0 -6px 9px 3px var(--mantine-color-body)' }}>
           <Pagination
             total={Math.ceil((tasks.data?.total ?? 0) / PAGE_SIZE)}
             value={taskFilters.page ?? 1}
