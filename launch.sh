@@ -512,9 +512,16 @@ if [[ -n "$_CLI_TEAM" ]]; then
   # Launch members — discussion leader first, then others
   launch_team_member() {
     local _MEMBER_NAME _MEMBER_ROLE _MEMBER_TYPE _MEMBER_BRANCH _IS_LEADER
-    _MEMBER_NAME=$(echo "$1" | jq -r '.agentName')
+    _MEMBER_NAME=$(echo "$1" | jq -r '.agentName // empty')
     _MEMBER_ROLE=$(echo "$1" | jq -r '.role')
-    _MEMBER_TYPE=$(echo "$1" | jq -r '.agentType')
+    _MEMBER_TYPE=$(echo "$1" | jq -r '.agentType // empty')
+
+    if [[ -z "$_MEMBER_NAME" ]]; then
+      echo "Error: team member missing required field 'agentName'" >&2; return 1
+    fi
+    if [[ -z "$_MEMBER_TYPE" ]]; then
+      echo "Error: team member missing required field 'agentType'" >&2; return 1
+    fi
 
     # Validate member name and type
     if [[ ! "$_MEMBER_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
@@ -622,7 +629,7 @@ fi
 # ── Stop existing container if running ──────────────────────────────────────
 (
   cd "$SCRIPT_DIR/container"
-  $COMPOSE_CMD --project-name "claude-${AGENT_NAME}" down 2>/dev/null || true
+  $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${AGENT_NAME}" down 2>/dev/null || true
 )
 
 # ── Branch setup in persistent bare repo ────────────────────────────────────
@@ -715,6 +722,7 @@ services:
       - WORKER_MODE=\${WORKER_MODE:-false}
       - WORKER_POLL_INTERVAL=\${WORKER_POLL_INTERVAL:-30}
       - WORKER_SINGLE_TASK=\${WORKER_SINGLE_TASK:-true}
+      - HOOK_BUILD_INTERCEPT=\${HOOK_BUILD_INTERCEPT:-false}
       - HOOK_CPP_LINT=\${HOOK_CPP_LINT:-false}
       - PROJECT_ID=\${PROJECT_ID:-default}
       - CHAT_ROOM=\${CHAT_ROOM:-}
@@ -731,6 +739,7 @@ COMPOSEOF
 _generate_compose
 
 # ── Export vars for docker-compose ───────────────────────────────────────────
+export HOOK_BUILD_INTERCEPT
 export HOOK_CPP_LINT
 export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS LOG_VERBOSITY PROJECT_ID
 export BARE_REPO_PATH UE_ENGINE_PATH PROJECT_PATH LOGS_PATH
@@ -755,6 +764,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
       PROJECT_ID="$PROJECT_ID" \
       BARE_REPO_PATH="$BARE_REPO_PATH" \
       AGENTS_PATH="$AGENTS_PATH" \
+      HOOK_BUILD_INTERCEPT="$HOOK_BUILD_INTERCEPT" \
       HOOK_CPP_LINT="$HOOK_CPP_LINT" \
       WORKER_MODE=true \
       WORKER_SINGLE_TASK=false \

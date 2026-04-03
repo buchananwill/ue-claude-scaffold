@@ -156,9 +156,10 @@ _init_bare_repo() {
         old_sha=$(git -C "$bare" rev-parse refs/heads/docker/current-root)
         if ! git -C "$bare" update-ref "refs/heads/docker/${project_id}/current-root" "$old_sha"; then
           echo "  Error: Failed to migrate docker/current-root to docker/${project_id}/current-root${label:+ ($label)}" >&2
-          return
+          return 1
         fi
         echo "  Migrated: copied docker/current-root to docker/${project_id}/current-root (old branch preserved for in-flight containers)."
+        echo "  Once all old containers have stopped, you may delete it: git -C $bare branch -D docker/current-root"
       fi
     fi
 
