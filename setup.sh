@@ -96,7 +96,7 @@ echo ""
 _create_bare_and_root() {
   local bare="$1"
   local proj="$2"
-  local pid="$3"
+  local project_id="$3"
   local label="${4:-}"
 
   if ! git clone --bare "$proj" "$bare"; then
@@ -110,11 +110,11 @@ _create_bare_and_root() {
       return 0
     fi
   fi
-  if ! git -C "$bare" update-ref "refs/heads/docker/${pid}/current-root" "$head"; then
-    echo "  Error: Failed to create docker/${pid}/current-root in $bare${label:+ ($label)}" >&2
+  if ! git -C "$bare" update-ref "refs/heads/docker/${project_id}/current-root" "$head"; then
+    echo "  Error: Failed to create docker/${project_id}/current-root in $bare${label:+ ($label)}" >&2
     return 0
   fi
-  echo "  Created docker/${pid}/current-root branch in bare repo."
+  echo "  Created docker/${project_id}/current-root branch in bare repo."
 }
 
 # Helper: create or verify a bare repo for a given project path and bare repo path.
@@ -122,7 +122,7 @@ _create_bare_and_root() {
 _init_bare_repo() {
   local bare="$1"
   local proj="$2"
-  local pid="$3"
+  local project_id="$3"
   local label="${4:-}"
 
   if [[ -z "$bare" || -z "$proj" ]]; then
@@ -137,11 +137,11 @@ _init_bare_repo() {
   if [[ ! -d "$bare" ]]; then
     if [[ "$NON_INTERACTIVE" == true ]]; then
       echo "Creating bare repo at $bare${label:+ ($label)} ..."
-      _create_bare_and_root "$bare" "$proj" "$pid" "${label:-}"
+      _create_bare_and_root "$bare" "$proj" "$project_id" "${label:-}"
     else
       read -rp "Create bare repo at $bare${label:+ ($label)} from $proj? [y/N] " _answer
       if [[ "${_answer,,}" == "y" ]]; then
-        _create_bare_and_root "$bare" "$proj" "$pid" "${label:-}"
+        _create_bare_and_root "$bare" "$proj" "$project_id" "${label:-}"
       else
         echo "  Skipped bare repo creation. You can create it later or launch.sh will create it."
       fi
@@ -149,19 +149,22 @@ _init_bare_repo() {
   else
     echo "Bare repo already exists at $bare${label:+ ($label)}."
 
-    # Migration: detect old-style docker/current-root and copy to docker/{pid}/current-root
+    # Migration: detect old-style docker/current-root and copy to docker/{project_id}/current-root
     if git -C "$bare" rev-parse --verify refs/heads/docker/current-root &>/dev/null; then
-      if ! git -C "$bare" rev-parse --verify "refs/heads/docker/${pid}/current-root" &>/dev/null; then
+      if ! git -C "$bare" rev-parse --verify "refs/heads/docker/${project_id}/current-root" &>/dev/null; then
         local old_sha
         old_sha=$(git -C "$bare" rev-parse refs/heads/docker/current-root)
-        git -C "$bare" update-ref "refs/heads/docker/${pid}/current-root" "$old_sha"
-        echo "  Migrated: copied docker/current-root to docker/${pid}/current-root (old branch preserved for in-flight containers)."
+        if ! git -C "$bare" update-ref "refs/heads/docker/${project_id}/current-root" "$old_sha"; then
+          echo "  Error: Failed to migrate docker/current-root to docker/${project_id}/current-root${label:+ ($label)}" >&2
+          return
+        fi
+        echo "  Migrated: copied docker/current-root to docker/${project_id}/current-root (old branch preserved for in-flight containers)."
       fi
     fi
 
-    if ! git -C "$bare" rev-parse --verify "refs/heads/docker/${pid}/current-root" &>/dev/null; then
-      echo "  Warning: docker/${pid}/current-root branch missing. Create it:"
-      echo "    git -C $bare branch docker/${pid}/current-root HEAD"
+    if ! git -C "$bare" rev-parse --verify "refs/heads/docker/${project_id}/current-root" &>/dev/null; then
+      echo "  Warning: docker/${project_id}/current-root branch missing. Create it:"
+      echo "    git -C $bare branch docker/${project_id}/current-root HEAD"
     fi
   fi
 }
@@ -173,13 +176,18 @@ if [[ -f "$_config" ]] && jq -e '.projects' "$_config" &>/dev/null; then
   # to avoid TSV serialization issues with newlines in JSON values.
   echo "Multi-project config detected. Checking bare repos..."
   while IFS= read -r _key; do
+    if [[ ! "$_key" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+      echo "Warning: project key '$_key' contains invalid characters — skipping." >&2
+      continue
+    fi
     _bare="$(jq -r --arg k "$_key" '.projects[$k].bareRepoPath // empty' "$_config")"
     _proj="$(jq -r --arg k "$_key" '.projects[$k].path // empty' "$_config")"
     _init_bare_repo "$_bare" "$_proj" "$_key" "$_key"
     echo ""
   done < <(jq -r '.projects | keys[]' "$_config")
 else
-  # Single-project mode (legacy): read from top-level fields
+  # Single-project mode (legacy): read from top-level fields.
+  # "default" is the canonical sentinel project ID for single-project/legacy mode.
   _bare=""
   _proj=""
   if [[ -f "$_config" ]]; then

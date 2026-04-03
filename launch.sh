@@ -256,6 +256,11 @@ AGENT_BRANCH="docker/${PROJECT_ID}/${AGENT_NAME}"
 ROOT_BRANCH="${ROOT_BRANCH:-docker/${PROJECT_ID}/current-root}"
 WORK_BRANCH="$AGENT_BRANCH"
 
+_expected_root="docker/${PROJECT_ID}/current-root"
+if [[ -n "${ROOT_BRANCH:-}" && "$ROOT_BRANCH" != "$_expected_root" ]]; then
+  echo "Warning: ROOT_BRANCH overridden to '$ROOT_BRANCH' (expected '$_expected_root')" >&2
+fi
+
 # Validate verbosity
 case "$LOG_VERBOSITY" in
   quiet|normal|verbose) ;;
@@ -510,6 +515,25 @@ if [[ -n "$_CLI_TEAM" ]]; then
     _MEMBER_NAME=$(echo "$1" | jq -r '.agentName')
     _MEMBER_ROLE=$(echo "$1" | jq -r '.role')
     _MEMBER_TYPE=$(echo "$1" | jq -r '.agentType')
+
+    # Validate member name and type
+    if [[ ! "$_MEMBER_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+      echo "Error: team member agentName contains invalid characters: $_MEMBER_NAME" >&2
+      return 1
+    fi
+    if [[ ! "$_MEMBER_TYPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+      echo "Error: team member agentType contains invalid characters: $_MEMBER_TYPE" >&2
+      return 1
+    fi
+
+    # Collision guard: skip if this member is already active
+    if curl -sf "http://localhost:${SERVER_PORT}/agents/${_MEMBER_NAME}" \
+        -H "X-Project-Id: ${PROJECT_ID}" 2>/dev/null | jq -r '.status // empty' 2>/dev/null | grep -q '^active$'; then
+      echo "Error: agent '${_MEMBER_NAME}' is already active for project '${PROJECT_ID}'." >&2
+      echo "Skipping this team member. Stop the existing container first." >&2
+      return 1
+    fi
+
     if [[ "$_MEMBER_TYPE" != "$AGENT_TYPE" ]] && [[ ! -f "$COMPILED_AGENTS_DIR/${_MEMBER_TYPE}.md" ]]; then
       echo "Warning: Team member '$_MEMBER_NAME' uses agent type '$_MEMBER_TYPE' which was not compiled. Container may fall back to static agent definitions." >&2
     fi
@@ -526,7 +550,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
 
     # Stop existing container if running
     (cd "$SCRIPT_DIR/container" && \
-      $COMPOSE_CMD --project-name "claude-${_MEMBER_NAME}" down 2>/dev/null) || true
+      $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${_MEMBER_NAME}" down 2>/dev/null) || true
 
     # Launch container
     (cd "$SCRIPT_DIR/container" && \
@@ -545,8 +569,9 @@ if [[ -n "$_CLI_TEAM" ]]; then
       MAX_TURNS="$MAX_TURNS" \
       LOG_VERBOSITY="$LOG_VERBOSITY" \
       WORKER_MODE=false \
+      HOOK_BUILD_INTERCEPT="$HOOK_BUILD_INTERCEPT" \
       HOOK_CPP_LINT="$HOOK_CPP_LINT" \
-      $COMPOSE_CMD --project-name "claude-${_MEMBER_NAME}" up --build --detach)
+      $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${_MEMBER_NAME}" up --build --detach)
 
     echo "  Launched $_MEMBER_NAME (role: $_MEMBER_ROLE, type: $_MEMBER_TYPE, hooks: build=$HOOK_BUILD_INTERCEPT lint=$HOOK_CPP_LINT)"
   }
@@ -586,9 +611,10 @@ if ! curl -sf "http://localhost:${SERVER_PORT:-9100}/health" >/dev/null 2>&1; th
 fi
 
 # ── Agent collision guard ───────────────────────────────────────────────────
-if curl -sf "http://localhost:${SERVER_PORT}/agents/${AGENT_NAME}" \
-    -H "x-project-id: ${PROJECT_ID}" 2>/dev/null | grep -q '"status":"active"'; then
-  echo "ERROR: agent '${AGENT_NAME}' is already active for project '${PROJECT_ID}'." >&2
+_agent_status=$(curl -sf "http://localhost:${SERVER_PORT}/agents/${AGENT_NAME}" \
+    -H "X-Project-Id: ${PROJECT_ID}" 2>/dev/null | jq -r '.status // empty' 2>/dev/null)
+if [[ "$_agent_status" == "active" ]]; then
+  echo "Error: agent '${AGENT_NAME}' is already active for project '${PROJECT_ID}'." >&2
   echo "Use a different --agent-name, or stop the existing container first." >&2
   exit 1
 fi
