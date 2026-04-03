@@ -258,7 +258,7 @@ ROOT_BRANCH="${ROOT_BRANCH:-docker/${PROJECT_ID}/current-root}"
 WORK_BRANCH="$AGENT_BRANCH"
 
 _expected_root="docker/${PROJECT_ID}/current-root"
-if [[ -n "${ROOT_BRANCH:-}" && "$ROOT_BRANCH" != "$_expected_root" ]]; then
+if [[ "$ROOT_BRANCH" != "$_expected_root" ]]; then
   echo "Warning: ROOT_BRANCH overridden to '$ROOT_BRANCH' (expected '$_expected_root')" >&2
 fi
 
@@ -520,7 +520,7 @@ if [[ -n "$_CLI_TEAM" ]]; then
   launch_team_member() {
     local _MEMBER_NAME _MEMBER_ROLE _MEMBER_TYPE _MEMBER_BRANCH _IS_LEADER
     _MEMBER_NAME=$(echo "$1" | jq -r '.agentName // empty')
-    _MEMBER_ROLE=$(echo "$1" | jq -r '.role // empty')
+    _MEMBER_ROLE=$(echo "$1" | jq -r '.role // empty')  # role is optional; empty string is acceptable
     _MEMBER_TYPE=$(echo "$1" | jq -r '.agentType // empty')
 
     if [[ -z "$_MEMBER_NAME" ]]; then
