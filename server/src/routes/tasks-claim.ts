@@ -132,6 +132,9 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
   }>('/tasks/:id/claim', async (request, reply) => {
     const id = Number(request.params.id);
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
+    if (agent !== 'unknown' && !/^[a-zA-Z0-9_-]{1,64}$/.test(agent)) {
+      return reply.badRequest('Invalid X-Agent-Name header format');
+    }
     const db = getDb();
 
     // Re-validate sourcePath against the bare repo before claiming

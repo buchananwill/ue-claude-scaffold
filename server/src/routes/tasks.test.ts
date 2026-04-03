@@ -2082,4 +2082,52 @@ describe('tasks with bare repo and agents', () => {
       assert.equal(body2.total, 3);
     });
   });
+
+  describe('x-agent-name validation', () => {
+    it('POST /tasks/claim-next rejects malformed x-agent-name', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks/claim-next',
+        headers: { 'x-agent-name': '../../evil' },
+      });
+      assert.equal(res.statusCode, 400);
+      const body = res.json();
+      assert.ok(body.message.includes('Invalid X-Agent-Name header format'));
+    });
+
+    it('POST /tasks/:id/claim rejects malformed x-agent-name', async () => {
+      // Create a task first
+      const createRes = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Agent name test task' },
+      });
+      const taskId = createRes.json().id;
+
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${taskId}/claim`,
+        headers: { 'x-agent-name': '../../evil' },
+      });
+      assert.equal(res.statusCode, 400);
+      const body = res.json();
+      assert.ok(body.message.includes('Invalid X-Agent-Name header format'));
+    });
+  });
+
+  describe('targetAgents validation', () => {
+    it('POST /tasks rejects targetAgents with invalid agent names', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: {
+          title: 'Target agents test',
+          targetAgents: ['valid-agent', '../../evil'],
+        },
+      });
+      assert.equal(res.statusCode, 400);
+      const body = res.json();
+      assert.ok(body.message.includes('Invalid agent name in targetAgents'));
+    });
+  });
 });

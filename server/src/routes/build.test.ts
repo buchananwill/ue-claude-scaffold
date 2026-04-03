@@ -235,6 +235,77 @@ process.exit(0);
   });
 });
 
+describe('build route x-agent-name validation', () => {
+  let ctx: DrizzleTestContext;
+  let mockScriptPath: string;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    ctx = await createDrizzleTestApp();
+
+    tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-test-'));
+    mockScriptPath = path.join(tmpDir, 'mock-build.js');
+    writeFileSync(
+      mockScriptPath,
+      `process.stdout.write('build output line\\n');
+process.stderr.write('build warning\\n');
+process.exit(0);
+`
+    );
+
+    const config = createTestConfig({
+      build: {
+        scriptPath: `node ${mockScriptPath}`,
+        testScriptPath: `node ${mockScriptPath}`,
+        defaultTestFilters: ['TestFilter1'],
+        buildTimeoutMs: 660_000,
+        testTimeoutMs: 700_000,
+        ubtRetryCount: 5,
+        ubtRetryDelayMs: 30_000,
+      },
+      server: {
+        port: 9100,
+        ubtLockTimeoutMs: 600000,
+        bareRepoPath: tmpDir,
+      },
+    });
+
+    await ctx.app.register(buildPlugin, { config });
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    await ctx.cleanup();
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  });
+
+  it('POST /build rejects malformed x-agent-name with path traversal', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/build',
+      headers: { 'x-agent-name': '../../evil' },
+      payload: {},
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.success, false);
+    assert.ok(body.stderr.includes('Invalid X-Agent-Name header format'));
+  });
+
+  it('POST /test rejects malformed x-agent-name with path traversal', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/test',
+      headers: { 'x-agent-name': '../../evil' },
+      payload: {},
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.success, false);
+    assert.ok(body.stderr.includes('Invalid X-Agent-Name header format'));
+  });
+});
+
 describe('UBT contention detection and retry', () => {
   describe('isUbtContentionResult', () => {
     it('returns false for a clean success', () => {

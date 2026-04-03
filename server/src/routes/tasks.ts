@@ -63,11 +63,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     // Validate targetAgents shape
     if (targetAgents && targetAgents !== '*' && !Array.isArray(targetAgents)) {
-      return reply.code(400).send({
-        statusCode: 400,
-        error: 'Bad Request',
-        message: 'targetAgents must be an array of agent names or "*"',
-      });
+      return reply.badRequest('targetAgents must be an array of agent names or "*"');
     }
 
     // Validate sourcePath exists — auto-sync from exterior repo if not found in bare repo
@@ -150,16 +146,19 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         agentNames = targetAgents as string[];
       }
 
+      // Validate agent names unconditionally (before any git operations)
+      for (const agentName of agentNames) {
+        if (typeof agentName !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(agentName)) {
+          return reply.badRequest(`Invalid agent name in targetAgents: "${String(agentName).slice(0, 64)}"`);
+        }
+      }
+
       let mergeProject;
       try {
         const dbRow = await projectsQ.getById(db, projectId);
         mergeProject = getProject(config, projectId, dbRow ?? undefined);
       } catch {
-        return reply.code(400).send({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: `Unknown project: "${projectId}"`,
-        });
+        return reply.badRequest(`Unknown project: "${projectId}"`);
       }
       const bareRepo = mergeProject.bareRepoPath;
       if (!bareRepo) {
@@ -168,9 +167,6 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         const seedBranch = seedBranchFor(projectId, mergeProject);
 
         for (const agentName of agentNames) {
-          if (typeof agentName !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(agentName)) {
-            return reply.badRequest(`Invalid agent name in targetAgents: "${String(agentName).slice(0, 64)}"`);
-          }
           const targetBranch = agentBranchFor(projectId, agentName);
           const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
           if (result.ok) {
