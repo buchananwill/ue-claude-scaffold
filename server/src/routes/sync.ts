@@ -5,6 +5,7 @@ import { syncExteriorToBareRepo, mergeIntoBranch } from '../git-utils.js';
 import { getDb } from '../drizzle-instance.js';
 import * as agentsQ from '../queries/agents.js';
 import * as projectsQ from '../queries/projects.js';
+import { seedBranchFor, agentBranchFor } from '../branch-naming.js';
 
 interface SyncOpts {
   config: ScaffoldConfig;
@@ -51,7 +52,7 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
       });
     }
 
-    const seedBranch = project.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
+    const seedBranch = seedBranchFor(projectId, project);
 
     const syncResult = syncExteriorToBareRepo(exteriorRepo, bareRepo, seedBranch, fastify.log);
 
@@ -80,7 +81,7 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
       }
 
       for (const agentName of agentNames) {
-        const targetBranch = `docker/${agentName}`;
+        const targetBranch = agentBranchFor(projectId, agentName);
         const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
         if (result.ok) {
           mergedAgents.push(agentName);

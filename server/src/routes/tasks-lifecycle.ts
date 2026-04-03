@@ -2,7 +2,10 @@ import type { FastifyPluginAsync } from 'fastify';
 import { getDb } from '../drizzle-instance.js';
 import * as tasksCore from '../queries/tasks-core.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
+import * as projectsQ from '../queries/projects.js';
 import { existsInBareRepo, isCommittedInRepo } from '../git-utils.js';
+import { getProject } from '../config.js';
+import { seedBranchFor } from '../branch-naming.js';
 import type { TaskRow } from './tasks-types.js';
 import type { TasksOpts } from './tasks-files.js';
 
@@ -58,20 +61,31 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
 
     const sp = row.sourcePath ?? (row as any).source_path;
     if (sp && row.status !== 'cycle') {
-      const bareRepo = config.server.bareRepoPath;
-      if (bareRepo) {
-        const seedBranch = config.tasks?.seedBranch ?? 'docker/current-root';
-        if (!existsInBareRepo(bareRepo, seedBranch, sp)) {
-          return reply.unprocessableEntity(
-            `sourcePath '${sp}' not found on branch '${seedBranch}' in bare repo`
-          );
-        }
-      } else {
-        const worktree = config.project.path;
-        if (!isCommittedInRepo(worktree, sp)) {
-          return reply.unprocessableEntity(
-            `sourcePath '${sp}' is no longer committed in the staging worktree`
-          );
+      const taskProjectId = row.projectId ?? (row as any).project_id ?? 'default';
+      let project;
+      try {
+        const dbRow = await projectsQ.getById(db, taskProjectId);
+        project = getProject(config, taskProjectId, dbRow ?? undefined);
+      } catch {
+        // Unknown project — skip sourcePath validation rather than crashing
+        project = null;
+      }
+      if (project) {
+        const bareRepo = project.bareRepoPath;
+        if (bareRepo) {
+          const seedBranch = seedBranchFor(taskProjectId, project);
+          if (!existsInBareRepo(bareRepo, seedBranch, sp)) {
+            return reply.unprocessableEntity(
+              `sourcePath '${sp}' not found on branch '${seedBranch}' in bare repo`
+            );
+          }
+        } else {
+          const worktree = project.path;
+          if (!isCommittedInRepo(worktree, sp)) {
+            return reply.unprocessableEntity(
+              `sourcePath '${sp}' is no longer committed in the staging worktree`
+            );
+          }
         }
       }
     }

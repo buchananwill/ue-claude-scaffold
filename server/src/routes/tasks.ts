@@ -9,6 +9,7 @@ import * as projectsQ from '../queries/projects.js';
 import type { ScaffoldConfig } from '../config.js';
 import { getProject } from '../config.js';
 import { mergeIntoBranch, isCommittedInRepo, existsInBareRepo, syncExteriorToBareRepo } from '../git-utils.js';
+import { seedBranchFor, agentBranchFor } from '../branch-naming.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
 import {
   type TasksOpts, type TaskBody, type PatchBody,
@@ -84,7 +85,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
       const bareRepo = project.bareRepoPath;
       if (bareRepo) {
-        const seedBranch = project.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
+        const seedBranch = seedBranchFor(projectId, project);
         if (!existsInBareRepo(bareRepo, seedBranch, sourcePath)) {
           // Auto-sync from exterior repo before rejecting
           const exteriorRepo = project.path;
@@ -164,10 +165,10 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       if (!bareRepo) {
         fastify.log.warn('targetAgents requested but bareRepoPath is not configured');
       } else {
-        const seedBranch = mergeProject.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
+        const seedBranch = seedBranchFor(projectId, mergeProject);
 
         for (const agentName of agentNames) {
-          const targetBranch = `docker/${agentName}`;
+          const targetBranch = agentBranchFor(projectId, agentName);
           const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
           if (result.ok) {
             mergedAgents.push(agentName);
@@ -284,7 +285,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         }
         const bareRepo = project.bareRepoPath;
         if (bareRepo) {
-          const seedBranch = project.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
+          const seedBranch = seedBranchFor(projectId, project);
           if (!existsInBareRepo(bareRepo, seedBranch, t.sourcePath)) {
             // Auto-sync from exterior repo on first miss (once per batch)
             if (!batchSynced) {
@@ -493,7 +494,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
       const bareRepo = patchProject.bareRepoPath;
       if (bareRepo) {
-        const seedBranch = patchProject.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
+        const seedBranch = seedBranchFor(row.projectId ?? (row as any).project_id, patchProject);
         if (!existsInBareRepo(bareRepo, seedBranch, body.sourcePath)) {
           return reply.unprocessableEntity(
             `sourcePath '${body.sourcePath}' not found on branch '${seedBranch}' in bare repo`

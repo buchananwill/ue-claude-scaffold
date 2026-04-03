@@ -146,7 +146,7 @@ process.exit(0);
     try { rmdirSync(tmpDir, { recursive: true } as any); } catch {}
   });
 
-  it('defaults to docker/current-root when no agent is registered', async () => {
+  it('defaults to docker/default/current-root when no agent is registered', async () => {
     const agentDir = path.join(stagingRoot, 'unknown-agent');
     mkdirSync(agentDir);
     execSync('git init', { cwd: agentDir, stdio: 'ignore' });
@@ -161,12 +161,12 @@ process.exit(0);
     const body = res.json();
     assert.equal(body.success, false, 'build should fail since the branch does not exist');
     assert.ok(
-      body.stderr.includes('docker/current-root'),
-      `expected stderr to reference default branch "docker/current-root", got: ${body.stderr}`,
+      body.stderr.includes('docker/default/current-root'),
+      `expected stderr to reference default branch "docker/default/current-root", got: ${body.stderr}`,
     );
   });
 
-  it('defaults to docker/current-root when no X-Agent-Name header is provided', async () => {
+  it('defaults to docker/default/current-root when no X-Agent-Name header is provided', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
@@ -176,8 +176,8 @@ process.exit(0);
     const body = res.json();
     assert.equal(body.success, false, 'build should fail since there is no real git repo');
     assert.ok(
-      body.stderr.includes('docker/current-root'),
-      `expected stderr to reference default branch "docker/current-root", got: ${body.stderr}`,
+      body.stderr.includes('docker/default/current-root'),
+      `expected stderr to reference default branch "docker/default/current-root", got: ${body.stderr}`,
     );
   });
 

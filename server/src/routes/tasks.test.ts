@@ -506,16 +506,15 @@ describe('tasks with bare repo and agents', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-test-'));
-    const { repo, initSha } = initBareRepoWithBranch(tmpDir, 'docker/current-root');
+    const { repo, initSha } = initBareRepoWithBranch(tmpDir, 'docker/default/current-root');
     tmpBareRepo = repo;
 
     // Create agent branches from the same initial commit
-    execSync(`git -C "${tmpBareRepo}" update-ref refs/heads/docker/agent-1 ${initSha}`);
-    execSync(`git -C "${tmpBareRepo}" update-ref refs/heads/docker/agent-2 ${initSha}`);
+    execSync(`git -C "${tmpBareRepo}" update-ref refs/heads/docker/default/agent-1 ${initSha}`);
+    execSync(`git -C "${tmpBareRepo}" update-ref refs/heads/docker/default/agent-2 ${initSha}`);
 
     const config = createTestConfig({
       server: { port: 9100, ubtLockTimeoutMs: 600000, bareRepoPath: tmpBareRepo },
-      tasks: { seedBranch: 'docker/current-root' },
     });
     await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });

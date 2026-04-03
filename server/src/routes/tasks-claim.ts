@@ -8,6 +8,7 @@ import * as agentsQ from '../queries/agents.js';
 import * as projectsQ from '../queries/projects.js';
 import { existsInBareRepo } from '../git-utils.js';
 import { getProject } from '../config.js';
+import { seedBranchFor } from '../branch-naming.js';
 import type { TaskRow } from './tasks-types.js';
 import {
   type TasksOpts,
@@ -46,9 +47,9 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     let seedBranch: string;
     try {
       const project = getProject(config, taskProjectId, dbRow ?? undefined);
-      seedBranch = project.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
+      seedBranch = seedBranchFor(taskProjectId, project);
     } catch {
-      seedBranch = config.tasks?.seedBranch ?? 'docker/current-root';
+      seedBranch = seedBranchFor(taskProjectId);
     }
     const branch = agentRow?.worktree ?? seedBranch;
 

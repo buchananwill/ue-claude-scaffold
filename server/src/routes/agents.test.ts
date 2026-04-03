@@ -251,15 +251,14 @@ describe('POST /agents/:name/sync (drizzle)', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     tmpDir = mkdtempSync(path.join(tmpdir(), 'agent-sync-test-'));
-    const { repo, initSha } = initBareRepoWithBranch(tmpDir, 'docker/current-root');
+    const { repo, initSha } = initBareRepoWithBranch(tmpDir, 'docker/default/current-root');
     tmpBareRepo = repo;
 
     // Create agent branch from the same initial commit
-    execSync(`git -C "${tmpBareRepo}" update-ref refs/heads/docker/test-agent ${initSha}`);
+    execSync(`git -C "${tmpBareRepo}" update-ref refs/heads/docker/default/test-agent ${initSha}`);
 
     const config = createTestConfig({
       server: { port: 9100, ubtLockTimeoutMs: 600000, bareRepoPath: tmpBareRepo },
-      tasks: { seedBranch: 'docker/current-root' },
     });
     await ctx.app.register(agentsPlugin, { config });
   });
@@ -277,7 +276,7 @@ describe('POST /agents/:name/sync (drizzle)', () => {
     assert.equal(res.statusCode, 404);
   });
 
-  it('merges docker/current-root into docker/{name}', async () => {
+  it('merges docker/default/current-root into docker/default/{name}', async () => {
     // Register the agent
     await ctx.app.inject({
       method: 'POST',
@@ -285,8 +284,8 @@ describe('POST /agents/:name/sync (drizzle)', () => {
       payload: { name: 'test-agent', worktree: '/tmp/wt1' },
     });
 
-    // Add a file to docker/current-root so there is something to merge
-    writeFileToBranch(tmpBareRepo, 'docker/current-root', 'plan.md', '# Plan');
+    // Add a file to docker/default/current-root so there is something to merge
+    writeFileToBranch(tmpBareRepo, 'docker/default/current-root', 'plan.md', '# Plan');
 
     const res = await ctx.app.inject({
       method: 'POST',
@@ -297,8 +296,8 @@ describe('POST /agents/:name/sync (drizzle)', () => {
     assert.equal(body.ok, true);
     assert.ok(body.commitSha);
 
-    // Verify the file is now on docker/test-agent
-    const content = execSync(`git -C "${tmpBareRepo}" show docker/test-agent:plan.md`, { encoding: 'utf-8' });
+    // Verify the file is now on docker/default/test-agent
+    const content = execSync(`git -C "${tmpBareRepo}" show docker/default/test-agent:plan.md`, { encoding: 'utf-8' });
     assert.equal(content, '# Plan');
   });
 

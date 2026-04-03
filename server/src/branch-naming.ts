@@ -6,7 +6,6 @@
  *   agent branch: docker/{projectId}/{agentName}
  */
 
-import type { ProjectRow } from './queries/projects.js';
 
 // Note: git-illegal sequences @{, ~, ^, *, ?, [, \, space, and control chars
 // are excluded by the character class [a-zA-Z0-9/_.-] — no explicit lookahead needed.
@@ -21,7 +20,7 @@ const AGENT_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
  * returned verbatim after validation.  An empty string is treated as "not set"
  * and falls back to the default `docker/{projectId}/current-root`.
  */
-export function seedBranchFor(projectId: string, projectConfig?: Pick<ProjectRow, 'seedBranch'>): string {
+export function seedBranchFor(projectId: string, projectConfig?: { seedBranch?: string | null }): string {
   if (!PROJECT_ID_RE.test(projectId)) {
     throw new Error(`Invalid projectId: "${projectId}"`);
   }

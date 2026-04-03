@@ -9,6 +9,7 @@ import { getDb } from '../drizzle-instance.js';
 import * as agentsQ from '../queries/agents.js';
 import * as projectsQ from '../queries/projects.js';
 import * as ubtQ from '../queries/ubt.js';
+import { seedBranchFor } from '../branch-naming.js';
 
 interface BuildOpts {
   config: ScaffoldConfig;
@@ -168,7 +169,10 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const worktreePath = getStagingWorktree(agentName, project);
     const bareRepo = getBareRepoPath(project);
 
-    let branch = 'docker/current-root';
+    const projectId = await resolveProjectIdForAgent(agentName);
+    const dbRow = await projectsQ.getById(getDb(), projectId);
+    const proj = getProject(config, projectId, dbRow ?? undefined);
+    let branch = seedBranchFor(projectId, proj);
     if (agentName) {
       const agentRow = await agentsQ.getWorktreeInfo(getDb(), agentName);
       if (agentRow?.worktree) {

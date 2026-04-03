@@ -1,6 +1,7 @@
 import type { ScaffoldConfig } from '../config.js';
 import { getProject } from '../config.js';
 import { existsInBareRepo } from '../git-utils.js';
+import { seedBranchFor } from '../branch-naming.js';
 import { getDb } from '../drizzle-instance.js';
 import * as tasksCore from '../queries/tasks-core.js';
 import * as taskFilesQ from '../queries/task-files.js';
@@ -120,7 +121,7 @@ export async function blockReasonsForTask(row: TaskRow, agent: string, config: S
       const project = getProject(config, projectId, dbRow ?? undefined);
       const bareRepo = project.bareRepoPath;
       if (bareRepo) {
-        const seedBranch = project.seedBranch ?? config.tasks?.seedBranch ?? 'docker/current-root';
+        const seedBranch = seedBranchFor(projectId, project);
         if (!existsInBareRepo(bareRepo, seedBranch, sp)) {
           reasons.push(`sourcePath '${sp}' not found on ${seedBranch}`);
         }

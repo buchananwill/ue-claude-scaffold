@@ -9,6 +9,7 @@ import * as projectsQ from '../queries/projects.js';
 import type { ScaffoldConfig } from '../config.js';
 import { getProject } from '../config.js';
 import { mergeIntoBranch } from '../git-utils.js';
+import { seedBranchFor, agentBranchFor } from '../branch-naming.js';
 
 interface AgentsOpts { config: ScaffoldConfig }
 
@@ -183,8 +184,8 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
       });
     }
 
-    const seedBranch = project.seedBranch ?? 'docker/current-root';
-    const targetBranch = `docker/${name}`;
+    const seedBranch = seedBranchFor(agent.projectId, project);
+    const targetBranch = agentBranchFor(agent.projectId, name);
 
     const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
     if (result.ok) {
