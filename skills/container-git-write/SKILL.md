@@ -5,11 +5,11 @@ description: Git environment for write-access container agents. Covers the bare 
 
 ***ACCESS SCOPE: write-access***
 
-## Container Git Environment
+# Container Git Environment
 
 You are running inside a Docker container. Your working directory is a git checkout cloned from a bare repo on the host.
 
-### Your Branch
+## Your Branch
 
 You work on a single branch:
 
@@ -17,7 +17,7 @@ You work on a single branch:
 
 The seed branch is `docker/{project-id}/current-root`, synced from the exterior (host) repo. Your branch was forked from `docker/{project-id}/current-root` at launch.
 
-### How Your Work Is Persisted
+## How Your Work Is Persisted
 
 Every `git commit` you make is automatically pushed to `docker/{project-id}/{agent-name}` on the bare repo by a PostToolUse hook. You never need to run `git push`.
 
@@ -27,7 +27,7 @@ Every `git commit` you make is automatically pushed to `docker/{project-id}/{age
 
 If you attempt `git push` or `git checkout` to a different branch, it will be blocked.
 
-### Reading Other Branches
+## Reading Other Branches
 
 You can read any branch without switching:
 
@@ -37,6 +37,6 @@ git log docker/{project-id}/current-root --oneline -10
 git diff HEAD..docker/{project-id}/current-root -- src/
 ```
 
-### Visibility
+## Visibility
 
 Your branch is visible to the coordination server, the operator, and other agents that fetch it. The bare repo is persistent and survives container restarts.

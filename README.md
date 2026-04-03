@@ -204,7 +204,8 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 | `plugins.readOnlyMounts`     | Plugin paths to mount read-only in containers |
 | `container.agentType`        | Default agent type for containers             |
 | `container.maxTurns`         | Max turns for the agent                       |
-| `container.seedBranch`       | Seed branch for fresh containers (shell-script convenience; server reads `tasks.seedBranch`) |
+| `container.seedBranch`       | Seed branch reference (informational; `launch.sh` computes branch from project ID) |
+| `tasks.seedBranch`           | Seed branch used by the coordination server for task operations |
 | `server.port`                | Coordination server port                      |
 | `server.ubtLockTimeoutMs`    | Timeout for UBT lock acquisition              |
 | `server.stagingWorktreeRoot` | Path to the host-side staging worktree        |
