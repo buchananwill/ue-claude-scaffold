@@ -86,6 +86,27 @@ describe('seedBranchFor', () => {
       /Invalid projectId/
     );
   });
+
+  it('throws on seedBranch with .lock at a component boundary', () => {
+    assert.throws(
+      () => seedBranchFor('proj', { seedBranch: 'feature.lock/sub' }),
+      /Invalid seedBranch/
+    );
+  });
+
+  it('throws on seedBranch with component starting with dot', () => {
+    assert.throws(
+      () => seedBranchFor('proj', { seedBranch: 'foo/.hidden' }),
+      /Invalid seedBranch/
+    );
+  });
+
+  it('throws on seedBranch with component ending with dot', () => {
+    assert.throws(
+      () => seedBranchFor('proj', { seedBranch: 'foo./bar' }),
+      /Invalid seedBranch/
+    );
+  });
 });
 
 describe('agentBranchFor', () => {
