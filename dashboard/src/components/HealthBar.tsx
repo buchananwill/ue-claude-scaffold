@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
-import { Group, Text, SegmentedControl, Indicator } from '@mantine/core';
-import type { HealthResponse } from '../api/types';
+import { Anchor, Group, Text, SegmentedControl, Indicator } from '@mantine/core';
+import { Link } from '@tanstack/react-router';
+import type { HealthResponse } from '../api/types.js';
+import { useProject } from '../contexts/ProjectContext.js';
 
 interface HealthBarProps {
   health: HealthResponse | null;
@@ -18,7 +20,7 @@ const intervals = [
 
 export function HealthBar({ health, error, intervalMs, onIntervalChange, middle }: HealthBarProps) {
   const connected = !error && !!health;
-  const projectName = health?.config.projectName ?? 'Coordination Server';
+  const { projectName } = useProject();
 
   return (
     <Group h="100%" px="md" justify="space-between">
@@ -26,7 +28,9 @@ export function HealthBar({ health, error, intervalMs, onIntervalChange, middle 
         <Indicator color={connected ? 'green' : 'red'} size={10} processing={connected}>
           <div />
         </Indicator>
-        <Text fw={700} size="lg">{projectName}</Text>
+        <Anchor component={Link} to="/" underline="never" c="inherit">
+          <Text fw={700} size="lg">{projectName}</Text>
+        </Anchor>
         {error && (
           <Text c="red" size="sm">Disconnected</Text>
         )}
