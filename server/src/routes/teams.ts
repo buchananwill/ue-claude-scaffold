@@ -36,11 +36,11 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
           await teamsQ.deleteTeam(tx as any, id);
         }
 
-        await teamsQ.create(tx as any, { id, name, briefPath: briefPath ?? null });
+        await teamsQ.create(tx as any, { id, name, briefPath: briefPath ?? null, projectId: request.projectId });
         for (const m of members) {
           await teamsQ.addMember(tx as any, id, m.agentName, m.role, m.isLeader);
         }
-        await roomsQ.createRoom(tx as any, { id, name, type: 'group', createdBy: caller });
+        await roomsQ.createRoom(tx as any, { id, name, type: 'group', createdBy: caller, projectId: request.projectId });
         for (const m of members) {
           await roomsQ.addMember(tx as any, id, m.agentName);
         }
@@ -61,7 +61,7 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
     Querystring: { status?: string };
   }>('/teams', async (request) => {
     const db = getDb();
-    const rows = await teamsQ.list(db, { status: request.query.status || undefined });
+    const rows = await teamsQ.list(db, { status: request.query.status || undefined, projectId: request.projectId });
 
     return rows.map((r: any) => ({
       id: r.id,

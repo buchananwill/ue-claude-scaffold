@@ -19,7 +19,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.badRequest('type must be "group" or "direct"');
     }
 
-    await roomsQ.createRoom(db, { id, name, type, createdBy: caller });
+    await roomsQ.createRoom(db, { id, name, type, createdBy: caller, projectId: request.projectId });
     await roomsQ.addMember(db, id, caller);
     if (members) {
       for (const m of members) {
@@ -35,7 +35,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     Querystring: { member?: string };
   }>('/rooms', async (request) => {
     const db = getDb();
-    const rows = await roomsQ.listRooms(db, { member: request.query.member });
+    const rows = await roomsQ.listRooms(db, { member: request.query.member, projectId: request.projectId });
 
     // Compute member counts
     return Promise.all(rows.map(async (r: any) => {

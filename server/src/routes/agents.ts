@@ -81,8 +81,9 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     Querystring: { project?: string };
   }>('/agents', async (request) => {
     const { project } = request.query;
+    const projectId = project || request.projectId;
     const db = getDb();
-    const rows = await agentsQ.getAll(db, project || undefined);
+    const rows = await agentsQ.getAll(db, projectId);
     return rows.map(formatAgent);
   });
 

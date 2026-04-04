@@ -56,6 +56,7 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
       channel,
       type,
       payload,
+      projectId: request.projectId,
     });
     return { id, ok: true };
   });
@@ -73,6 +74,7 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
       channel: isAll ? undefined : channel,
       type: type || undefined,
       fromAgent: from_agent || undefined,
+      projectId: request.projectId,
     });
     return { count: cnt };
   });
@@ -93,6 +95,7 @@ const messagesPlugin: FastifyPluginAsync = async (fastify) => {
       type: type || undefined,
       fromAgent: from_agent || undefined,
       limit: limit ? Number(limit) : undefined,
+      projectId: request.projectId,
     });
 
     return rows.map((r) => formatMessage(r as unknown as MessageRow));

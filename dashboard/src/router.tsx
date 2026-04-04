@@ -2,6 +2,7 @@ import {
   createRouter,
   createRootRoute,
   createRoute,
+  Outlet,
 } from '@tanstack/react-router';
 import { RootLayout } from './layouts/RootLayout.tsx';
 import { ProjectLayout } from './layouts/ProjectLayout.tsx';
@@ -16,6 +17,12 @@ import { SearchPage } from './pages/SearchPage.tsx';
 import { TASK_STATUSES, VALID_SORT_COLUMNS } from './hooks/useTaskFilters.ts';
 
 const rootRoute = createRootRoute({
+  component: Outlet,
+});
+
+const indexRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/',
   component: RootLayout,
 });
 
@@ -152,6 +159,7 @@ const searchRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
+  indexRoute,
   projectRoute.addChildren([
     overviewRoute,
     messagesIndexRoute,

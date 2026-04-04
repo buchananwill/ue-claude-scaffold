@@ -38,7 +38,7 @@ const buildsPlugin: FastifyPluginAsync = async (fastify) => {
       agent: agent || undefined,
       type: type || undefined,
       since: since ? Number(since) : undefined,
-      project: project || undefined,
+      project: project || request.projectId,
       limit: limitVal,
     });
 

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Navigate } from '@tanstack/react-router';
+import { Link, Navigate } from '@tanstack/react-router';
 import {
   Center,
   Loader,
@@ -79,8 +79,9 @@ export function RootLayout() {
               key={project.id}
               withBorder
               padding="lg"
-              component="a"
-              href={`/${project.id}`}
+              component={Link}
+              to="/$projectId"
+              params={{ projectId: project.id }}
               style={{ cursor: 'pointer', textDecoration: 'none', color: 'inherit' }}
             >
               <Group gap="sm" mb="xs">

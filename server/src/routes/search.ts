@@ -87,9 +87,10 @@ const searchPlugin: FastifyPluginAsync = async (fastify) => {
     const limitNum = limit ? Number(limit) : 20;
     const db = getDb();
 
-    const taskRows = await searchQ.searchTasks(db, q, { limit: limitNum });
-    const messageRows = await searchQ.searchMessages(db, q, { limit: limitNum });
-    const agentRows = await searchQ.searchAgents(db, q, { limit: limitNum });
+    const projectId = request.projectId;
+    const taskRows = await searchQ.searchTasks(db, q, { limit: limitNum, projectId });
+    const messageRows = await searchQ.searchMessages(db, q, { limit: limitNum, projectId });
+    const agentRows = await searchQ.searchAgents(db, q, { limit: limitNum, projectId });
 
     return {
       tasks: taskRows.map(formatTaskRow),
