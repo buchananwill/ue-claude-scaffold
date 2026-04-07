@@ -21,6 +21,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --tasks-dir)  TASKS_DIR="$2"; shift 2 ;;
     --server-url) SERVER_URL="$2"; shift 2 ;;
+    # export required: _post_json reads PROJECT_ID from environment
     --project)    export PROJECT_ID="$2"; shift 2 ;;
     --dry-run)    DRY_RUN=true; shift ;;
     --help)

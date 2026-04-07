@@ -38,8 +38,8 @@ const tasksIngestPlugin: FastifyPluginAsync<IngestOpts> = async (fastify, { conf
     // Resolve and validate against configured project paths
     const resolved = path.resolve(tasksDir);
     const allowedRoots = Object.values(config.resolvedProjects)
-      .map((p) => path.resolve(p.path))
-      .filter((r) => r.length > 0);
+      .filter((p) => p.path.length > 0)
+      .map((p) => path.resolve(p.path));
     if (allowedRoots.length === 0) {
       return reply.badRequest('No project paths configured on this server');
     }
@@ -54,6 +54,9 @@ const tasksIngestPlugin: FastifyPluginAsync<IngestOpts> = async (fastify, { conf
     } catch (err) {
       if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
         return reply.badRequest('tasksDir not found or not accessible');
+      }
+      if (err instanceof Error && err.message.startsWith('Too many files:')) {
+        return reply.badRequest(err.message);
       }
       // Sanitize error — do not leak filesystem paths
       request.log.error(err, 'task ingest failed');

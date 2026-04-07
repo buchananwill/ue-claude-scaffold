@@ -129,8 +129,13 @@ export async function ingestTaskDir(
   dirPath: string,
   projectId: string,
 ): Promise<IngestDirResult> {
+  const MAX_INGEST_FILES = 500;
   const entries = await readdir(dirPath);
   const mdFiles = entries.filter((e) => e.endsWith('.md')).sort();
+
+  if (mdFiles.length > MAX_INGEST_FILES) {
+    throw new Error(`Too many files: ${mdFiles.length} exceeds limit of ${MAX_INGEST_FILES}`);
+  }
 
   const results: IngestDirResult['tasks'] = [];
   let ingested = 0;

@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import sensible from '@fastify/sensible';
 import { loadConfig } from './config.js';
-import { initDrizzle, closeDrizzle, getDbStatus } from './drizzle-instance.js';
+import { initDrizzle, closeDrizzle, getDbStatus, getDb } from './drizzle-instance.js';
 import projectIdPlugin from './plugins/project-id.js';
 import {
   healthPlugin,
@@ -25,7 +25,6 @@ import {
   tasksIngestPlugin,
 } from './routes/index.js';
 import { sweepStaleLock } from './routes/ubt.js';
-import { getDb } from './drizzle-instance.js';
 import { seedFromConfig } from './queries/projects.js';
 
 const config = loadConfig();
