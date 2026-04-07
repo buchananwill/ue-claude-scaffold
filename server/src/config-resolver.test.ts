@@ -120,6 +120,24 @@ describe('resolveProjectConfig', () => {
     assert.equal(resolved.serverPort, 8080);
   });
 
+  it('throws for an invalid seedBranch', () => {
+    const config = createTestConfig({
+      resolvedProjects: {
+        'bad-seed': {
+          name: 'BadSeed',
+          path: '/projects/badseed',
+          bareRepoPath: '/repos/badseed.git',
+          seedBranch: 'feature.lock',
+        },
+      },
+    });
+
+    assert.throws(
+      () => resolveProjectConfig('bad-seed', config),
+      /Invalid seedBranch/,
+    );
+  });
+
   it('uses custom defaultTestFilters from config', () => {
     const config = createTestConfig({
       build: {
