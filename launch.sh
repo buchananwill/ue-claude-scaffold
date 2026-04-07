@@ -446,6 +446,10 @@ fi
 # and needs AGENTS_PATH. The rm -rf is safe because containers snapshot agents
 # from /staged-agents into their own filesystem at startup (entrypoint.sh).
 COMPILED_AGENTS_DIR="$SCRIPT_DIR/.compiled-agents"
+[[ -n "$COMPILED_AGENTS_DIR" && "$COMPILED_AGENTS_DIR" == "$SCRIPT_DIR/"* ]] || {
+  echo "Error: unsafe COMPILED_AGENTS_DIR: $COMPILED_AGENTS_DIR" >&2
+  exit 1
+}
 rm -rf "$COMPILED_AGENTS_DIR"
 mkdir -p "$COMPILED_AGENTS_DIR"
 

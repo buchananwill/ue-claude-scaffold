@@ -70,6 +70,12 @@ describe('agent-compiler', () => {
       assert.equal(body, text);
     });
 
+    it('strips all leading dashes and spaces from list items (Python lstrip behavior)', () => {
+      const text = '---\nskills:\n  - - dash-prefixed-value\n  - normal\n---\n\nBody\n';
+      const { meta } = parseFrontmatter(text);
+      assert.deepEqual(meta['skills'], ['dash-prefixed-value', 'normal']);
+    });
+
     it('skips comment and blank lines', () => {
       const text = '---\n# comment\nname: test\n\nmodel: opus\n---\n\nBody\n';
       const { meta } = parseFrontmatter(text);
@@ -97,7 +103,7 @@ describe('agent-compiler', () => {
 
     it('quotes strings with double quotes', () => {
       const result = serializeFrontmatter({ desc: 'has "quotes"' });
-      assert.equal(result, '---\ndesc: "has "quotes""\n---\n');
+      assert.equal(result, '---\ndesc: "has \\"quotes\\""\n---\n');
     });
   });
 
@@ -117,6 +123,22 @@ describe('agent-compiler', () => {
       const { body, accessScope } = resolveSkill('my-skill', skillsDir);
       assert.equal(body, '# My Skill\n\nContent here.');
       assert.equal(accessScope, null);
+    });
+
+    it('throws on missing skill', () => {
+      const skillsDir = makeDir('skills');
+      assert.throws(
+        () => resolveSkill('nonexistent-skill', skillsDir),
+        /not found/
+      );
+    });
+
+    it('throws on invalid skill name (path traversal)', () => {
+      const skillsDir = makeDir('skills');
+      assert.throws(
+        () => resolveSkill('../../etc/passwd', skillsDir),
+        /Invalid skill name/
+      );
     });
 
     it('extracts access scope marker and removes it from body', () => {

@@ -3,19 +3,20 @@
  * CLI entry point for the agent compiler.
  *
  * Accepts the same flags as the Python version:
- *   positional `source`, --all, -o/--output, --skills-dir, --recursive, --clean
+ *   positional `source`, --all, -o/--output, --skills-dir, --dynamic-dir, --recursive, --clean
  *
  * Same console output format and exit codes as the Python version.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { compileAgent, findSubAgents } from '../agent-compiler.js';
 
 // Resolve repo root: this file lives at server/src/bin/compile-agent.ts
 // At runtime (compiled): server/dist/bin/compile-agent.js
 // Repo root is three levels up from the compiled location.
-const SCRIPT_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname));
+const SCRIPT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..', '..', '..');
 const DEFAULT_SKILLS_DIR = path.join(REPO_ROOT, 'skills');
 const DEFAULT_DYNAMIC_DIR = path.join(REPO_ROOT, 'dynamic-agents');
@@ -26,6 +27,7 @@ interface ParsedArgs {
   all: boolean;
   output: string;
   skillsDir: string;
+  dynamicDir: string;
   recursive: boolean;
   clean: boolean;
 }
@@ -36,6 +38,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     all: false,
     output: DEFAULT_OUTPUT_DIR,
     skillsDir: DEFAULT_SKILLS_DIR,
+    dynamicDir: DEFAULT_DYNAMIC_DIR,
     recursive: false,
     clean: false,
   };
@@ -47,10 +50,25 @@ function parseArgs(argv: string[]): ParsedArgs {
       args.all = true;
     } else if (arg === '-o' || arg === '--output') {
       i++;
+      if (i >= argv.length) {
+        process.stderr.write(`Error: ${arg} requires a value\n`);
+        process.exit(1);
+      }
       args.output = argv[i];
     } else if (arg === '--skills-dir') {
       i++;
+      if (i >= argv.length) {
+        process.stderr.write(`Error: ${arg} requires a value\n`);
+        process.exit(1);
+      }
       args.skillsDir = argv[i];
+    } else if (arg === '--dynamic-dir') {
+      i++;
+      if (i >= argv.length) {
+        process.stderr.write(`Error: ${arg} requires a value\n`);
+        process.exit(1);
+      }
+      args.dynamicDir = argv[i];
     } else if (arg === '--recursive') {
       args.recursive = true;
     } else if (arg === '--clean') {
@@ -66,7 +84,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
 function printHelp(): void {
   process.stderr.write(
-    'usage: compile-agent [-h] [source] [--all] [-o OUTPUT] [--skills-dir SKILLS_DIR] [--recursive] [--clean]\n' +
+    'usage: compile-agent [-h] [source] [--all] [-o OUTPUT] [--skills-dir SKILLS_DIR] [--dynamic-dir DIR] [--recursive] [--clean]\n' +
     '\n' +
     'Compile dynamic agent definitions by injecting skill content.\n' +
     '\n' +
@@ -77,6 +95,7 @@ function printHelp(): void {
     '  --all                 Compile all dynamic agents in dynamic-agents/\n' +
     '  -o, --output OUTPUT   Output directory (default: .compiled-agents)\n' +
     '  --skills-dir DIR      Skills directory (default: skills/)\n' +
+    '  --dynamic-dir DIR     Dynamic agents directory (default: dynamic-agents/)\n' +
     '  --recursive           Scan compiled lead agent for sub-agent references and compile those too (one level)\n' +
     '  --clean               Remove the output directory and exit\n',
   );
@@ -97,16 +116,16 @@ function main(): void {
 
   let sources: string[];
   if (args.all) {
-    if (!fs.existsSync(DEFAULT_DYNAMIC_DIR)) {
-      process.stderr.write(`No dynamic agents found in ${DEFAULT_DYNAMIC_DIR}\n`);
+    if (!fs.existsSync(args.dynamicDir)) {
+      process.stderr.write(`No dynamic agents found in ${args.dynamicDir}\n`);
       process.exit(1);
     }
-    sources = fs.readdirSync(DEFAULT_DYNAMIC_DIR)
+    sources = fs.readdirSync(args.dynamicDir)
       .filter(f => f.endsWith('.md'))
       .sort()
-      .map(f => path.join(DEFAULT_DYNAMIC_DIR, f));
+      .map(f => path.join(args.dynamicDir, f));
     if (sources.length === 0) {
-      process.stderr.write(`No dynamic agents found in ${DEFAULT_DYNAMIC_DIR}\n`);
+      process.stderr.write(`No dynamic agents found in ${args.dynamicDir}\n`);
       process.exit(1);
     }
   } else if (args.source) {
@@ -121,39 +140,45 @@ function main(): void {
   const subAgentPaths: string[] = [];
 
   // Phase 1: compile requested agents
-  for (const src of sources) {
-    const { outputPath, compiledBody } = compileAgent(src, args.output, args.skillsDir);
-    const stem = path.basename(src, '.md');
-    compiledNames.add(stem);
-    console.log(`  ${path.basename(src)} -> ${outputPath}`);
+  try {
+    for (const src of sources) {
+      const { outputPath, compiledBody } = compileAgent(src, args.output, args.skillsDir);
+      const stem = path.basename(src, '.md');
+      compiledNames.add(stem);
+      console.log(`  ${path.basename(src)} -> ${outputPath}`);
 
-    if (args.recursive) {
-      const subs = findSubAgents(compiledBody, DEFAULT_DYNAMIC_DIR, compiledNames);
-      subAgentPaths.push(...subs);
-      for (const s of subs) {
-        compiledNames.add(path.basename(s, '.md'));
+      if (args.recursive) {
+        const subs = findSubAgents(compiledBody, args.dynamicDir, compiledNames);
+        subAgentPaths.push(...subs);
+        for (const s of subs) {
+          compiledNames.add(path.basename(s, '.md'));
+        }
       }
     }
-  }
 
-  // Phase 2: compile discovered sub-agents (one level, no further recursion)
-  if (subAgentPaths.length > 0) {
-    console.log(`\n  Sub-agents referenced in skills:`);
-    for (const subSrc of subAgentPaths) {
-      const { outputPath, compiledBody: subBody } = compileAgent(subSrc, args.output, args.skillsDir);
-      console.log(`    ${path.basename(subSrc)} -> ${outputPath}`);
+    // Phase 2: compile discovered sub-agents (one level, no further recursion)
+    if (subAgentPaths.length > 0) {
+      console.log(`\n  Sub-agents referenced in skills:`);
+      for (const subSrc of subAgentPaths) {
+        const { outputPath, compiledBody: subBody } = compileAgent(subSrc, args.output, args.skillsDir);
+        console.log(`    ${path.basename(subSrc)} -> ${outputPath}`);
 
-      // Warn if sub-agent's skills reference further agents (config bug)
-      const further = findSubAgents(subBody, DEFAULT_DYNAMIC_DIR, compiledNames);
-      for (const f of further) {
-        const subStem = path.basename(subSrc, '.md');
-        const fStem = path.basename(f, '.md');
-        process.stderr.write(
-          `  WARNING: sub-agent ${subStem} references ${fStem} ` +
-          `— sub-agents cannot launch sub-agents. Skipping.\n`,
-        );
+        // Warn if sub-agent's skills reference further agents (config bug)
+        const further = findSubAgents(subBody, args.dynamicDir, compiledNames);
+        for (const f of further) {
+          const subStem = path.basename(subSrc, '.md');
+          const fStem = path.basename(f, '.md');
+          process.stderr.write(
+            `  WARNING: sub-agent ${subStem} references ${fStem} ` +
+            `— sub-agents cannot launch sub-agents. Skipping.\n`,
+          );
+        }
       }
     }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`Error: ${message}\n`);
+    process.exit(1);
   }
 
   const total = sources.length + subAgentPaths.length;

@@ -52,7 +52,7 @@ export function parseFrontmatter(text: string): { meta: Record<string, string | 
 
     // Continuation of a multi-line list
     if (line.startsWith('  - ') && currentKey !== null) {
-      const val = line.trim().replace(/^- /, '').trim();
+      const val = line.trim().replace(/^[-\s]+/, '').trim();
       const existing = meta[currentKey];
       if (Array.isArray(existing)) {
         existing.push(val);
@@ -105,7 +105,8 @@ export function serializeFrontmatter(meta: Record<string, string | string[]>): s
       const quoted = val.join(', ');
       lines.push(`${key}: [${quoted}]`);
     } else if (typeof val === 'string' && (val.includes('\n') || val.includes(':') || val.includes('"'))) {
-      lines.push(`${key}: "${val}"`);
+      const escaped = val.replace(/"/g, '\\"');
+      lines.push(`${key}: "${escaped}"`);
     } else {
       lines.push(`${key}: ${val}`);
     }
@@ -122,10 +123,14 @@ export function serializeFrontmatter(meta: Record<string, string | string[]>): s
  * The marker line is stripped from the returned body.
  */
 export function resolveSkill(name: string, skillsDir: string): { body: string; accessScope: string | null } {
+  // Validate skill name to prevent path traversal
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    throw new Error(`Invalid skill name '${name}': must match [a-zA-Z0-9_-]+`);
+  }
+
   const skillPath = path.join(skillsDir, name, 'SKILL.md');
   if (!fs.existsSync(skillPath)) {
-    process.stderr.write(`ERROR: Skill '${name}' not found at ${skillPath}\n`);
-    process.exit(1);
+    throw new Error(`Skill '${name}' not found at ${skillPath}`);
   }
 
   const text = fs.readFileSync(skillPath, 'utf-8');
