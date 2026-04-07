@@ -2,7 +2,7 @@
 # container/lib/pump-loop.sh — Task polling, claiming, and pump iteration.
 # Sourced by entrypoint.sh; do not execute directly.
 
-poll_and_claim_task() {
+_poll_and_claim_task() {
     local max_attempts=60
     local attempt=0
 
@@ -73,13 +73,13 @@ poll_and_claim_task() {
 }
 
 # _pump_iteration runs one task cycle and returns a status enum.
-# Returns via PUMP_STATUS variable: continue | paused | stop | circuit_break
+# Returns via PUMP_STATUS variable: continue | stop | circuit_break
 _pump_iteration() {
     PUMP_STATUS="continue"
     ABNORMAL_SHUTDOWN=""  # Reset per-task
 
     echo "Polling for tasks..."
-    if ! poll_and_claim_task; then
+    if ! _poll_and_claim_task; then
         PUMP_STATUS="stop"
         return
     fi

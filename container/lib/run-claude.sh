@@ -111,7 +111,7 @@ _run_claude() {
     _post_status "working"
 
     # Build the claude command arguments
-    CLAUDE_ARGS=(
+    local CLAUDE_ARGS=(
         -p "$full_prompt"
         --dangerously-skip-permissions
         --output-format text
@@ -128,6 +128,7 @@ _run_claude() {
 
     # Capture output for abnormal exit detection
     rm -f "$CLAUDE_OUTPUT_LOG"
+    local CLAUDE_START_TS CLAUDE_END_TS CLAUDE_ELAPSED CLAUDE_PID WATCHDOG_PID EXIT_CODE
     CLAUDE_START_TS=$(date +%s)
 
     set +e
@@ -158,6 +159,7 @@ _run_claude() {
     # If stopped externally, skip post-run flow and let the EXIT trap handle cleanup
     if [ -f /tmp/.stop_requested ]; then
         echo "Stopped by operator — skipping post-run status update"
+        ABNORMAL_SHUTDOWN="stop_requested"
         exit 0
     fi
 
@@ -189,21 +191,27 @@ _run_claude() {
     fi
 
     # ── Normal exit path ────────────────────────────────────────────────────
-    if [ "$mode" != "direct" ]; then
+    if [ "$mode" = "task" ]; then
         _finalize_workspace
     fi
 
     # Report task completion (task mode only)
     if [ "$mode" = "task" ] && [ -n "${CURRENT_TASK_ID:-}" ]; then
         if [ $EXIT_CODE -eq 0 ]; then
+            local complete_payload
+            complete_payload=$(jq -n --arg agent "$AGENT_NAME" --argjson exitCode 0 \
+                '{"result": {"agent": $agent, "exitCode": $exitCode}}')
             _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/complete" \
                 -H "Content-Type: application/json" \
-                -d "{\"result\": {\"agent\": \"${AGENT_NAME}\", \"exitCode\": 0}}" \
+                -d "$complete_payload" \
                 --max-time 10 >/dev/null 2>&1 || true
         else
+            local fail_payload
+            fail_payload=$(jq -n --arg error "Claude exited with code ${EXIT_CODE}" \
+                '{"error": $error}')
             _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/fail" \
                 -H "Content-Type: application/json" \
-                -d "{\"error\": \"Claude exited with code ${EXIT_CODE}\"}" \
+                -d "$fail_payload" \
                 --max-time 10 >/dev/null 2>&1 || true
         fi
     fi

@@ -19,6 +19,9 @@ source "${SCRIPT_DIR}/lib/finalize.sh"
 # shellcheck source=lib/run-claude.sh
 source "${SCRIPT_DIR}/lib/run-claude.sh"
 
+# shellcheck source=lib/post-setup.sh
+source "${SCRIPT_DIR}/lib/post-setup.sh"
+
 # shellcheck source=lib/pump-loop.sh
 source "${SCRIPT_DIR}/lib/pump-loop.sh"
 
@@ -63,15 +66,15 @@ if [ "$WORKER_SINGLE_TASK" = "false" ]; then
         _pump_iteration
         case "$PUMP_STATUS" in
             continue) ;;
-            paused)   ;; # _pump_iteration handles pause internally
             stop)     exit 0 ;;
             circuit_break) exit 1 ;;
+            *) echo "ERROR: Unknown PUMP_STATUS='${PUMP_STATUS}'" >&2; exit 1 ;;
         esac
     done
 else
     # Single task mode
     echo "Polling for tasks..."
-    if ! poll_and_claim_task; then
+    if ! _poll_and_claim_task; then
         exit 1
     fi
     task_prompt="$(_build_task_prompt)"

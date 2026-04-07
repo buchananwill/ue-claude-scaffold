@@ -7,9 +7,11 @@ _curl_server() {
 }
 
 _post_status() {
+    local payload
+    payload=$(jq -n --arg s "$1" '{"status": $s}')
     _curl_server -s -X POST "${SERVER_URL}/agents/${AGENT_NAME}/status" \
         -H "Content-Type: application/json" \
-        -d "{\"status\": \"$1\"}" \
+        -d "$payload" \
         --max-time 5 >/dev/null 2>&1 || true
 }
 
@@ -138,10 +140,17 @@ _watch_for_stop() {
 }
 
 _register_agent() {
+    local CONTAINER_IP REG_RESPONSE REG_STATUS REG_BODY reg_payload
     CONTAINER_IP=$(hostname -i 2>/dev/null | awk '{print $1}') || CONTAINER_IP=""
+    reg_payload=$(jq -n \
+        --arg name "$AGENT_NAME" \
+        --arg worktree "$WORK_BRANCH" \
+        --arg mode "$AGENT_MODE" \
+        --arg containerHost "$CONTAINER_IP" \
+        '{"name": $name, "worktree": $worktree, "mode": $mode, "containerHost": $containerHost}')
     REG_RESPONSE=$(_curl_server -s -w "\n%{http_code}" -X POST "${SERVER_URL}/agents/register" \
         -H "Content-Type: application/json" \
-        -d "{\"name\": \"${AGENT_NAME}\", \"worktree\": \"${WORK_BRANCH}\", \"mode\": \"${AGENT_MODE}\", \"containerHost\": \"${CONTAINER_IP}\"}" \
+        -d "$reg_payload" \
         --max-time 10 2>/dev/null) || REG_RESPONSE=$'\n000'
     REG_STATUS="${REG_RESPONSE##*$'\n'}"
     REG_BODY="${REG_RESPONSE%$'\n'*}"

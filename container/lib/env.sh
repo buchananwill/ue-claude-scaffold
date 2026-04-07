@@ -9,6 +9,10 @@ if [ -z "$AGENT_TYPE" ]; then
     exit 1
 fi
 AGENT_NAME="${AGENT_NAME:-agent-1}"
+if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "ERROR: AGENT_NAME contains invalid characters: $AGENT_NAME" >&2
+    exit 1
+fi
 MAX_TURNS="${MAX_TURNS:-200}"
 SERVER_URL="${SERVER_URL:-http://host.docker.internal:9100}"
 WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
@@ -19,7 +23,17 @@ LOG_VERBOSITY="${LOG_VERBOSITY:-verbose}"
 CLAUDE_OUTPUT_LOG="/tmp/claude-output.log"
 HOST_LOG_DIR="/logs"
 ABNORMAL_SHUTDOWN=""
+ABNORMAL_REASON=""
 CONSECUTIVE_ABNORMAL=0
+CURRENT_TASK_ID=""
+CURRENT_TASK_TITLE=""
+CURRENT_TASK_DESC=""
+CURRENT_TASK_AC=""
+CURRENT_TASK_SOURCE=""
+CURRENT_TASK_FILES=""
+PUMP_STATUS=""
+SESSION_TOKEN=""
+AGENTS_DIR="/home/claude/.claude/agents"
 
 # ── Persistent logging ─────────────────────────────────────────────────────
 # Mirror ALL terminal output to a host-mounted log file (if /logs is mounted).

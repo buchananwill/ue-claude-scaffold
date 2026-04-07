@@ -34,7 +34,6 @@ EXCL
 
 _snapshot_agents() {
     # ── Snapshot staged agents into container-local directory ────────────────
-    AGENTS_DIR="/home/claude/.claude/agents"
     mkdir -p "$AGENTS_DIR"
     if [ -d /staged-agents ] && ls /staged-agents/*.md &>/dev/null; then
         cp /staged-agents/* "$AGENTS_DIR/"
@@ -58,8 +57,8 @@ _snapshot_agents() {
 
 _setup_hooks() {
     # ── Read access scope from compiler sidecar metadata ────────────────────
-    ACCESS_SCOPE="read-only"
-    META_FILE="${AGENTS_DIR}/${AGENT_TYPE}.meta.json"
+    local ACCESS_SCOPE="read-only"
+    local META_FILE="${AGENTS_DIR}/${AGENT_TYPE}.meta.json"
     if [ -f "$META_FILE" ]; then
         ACCESS_SCOPE=$(jq -r '.["access-scope"] // "read-only"' "$META_FILE")
     fi
@@ -108,6 +107,7 @@ _setup_hooks() {
     echo "Access scope: ${ACCESS_SCOPE} (buildIntercept=${HOOK_BUILD_INTERCEPT}, gitSync=${HOOK_GIT_SYNC}, readonly=${WORKSPACE_READONLY})"
 
     # Build the PreToolUse Bash matcher hooks array
+    local PRE_BASH PRE_MATCHERS POST_MATCHERS
     PRE_BASH=$(jq -n '[{"type":"command","command":"bash /claude-hooks/inject-agent-header.sh"}]')
     if [ "${HOOK_BUILD_INTERCEPT}" = "true" ]; then
         PRE_BASH=$(jq -n --argjson base "$PRE_BASH" \
@@ -142,40 +142,6 @@ _setup_hooks() {
     echo ""
 }
 
-_setup_mcp_config() {
-    # MCP config (written after registration so SESSION_TOKEN is available)
-    if [ -n "${CHAT_ROOM:-}" ]; then
-        cat > /home/claude/.claude/mcp.json <<MCPEOF
-{
-  "mcpServers": {
-    "chat": {
-      "command": "node",
-      "args": ["/mcp-servers/chat-channel.mjs"],
-      "env": {
-        "SERVER_URL": "${SERVER_URL}",
-        "AGENT_NAME": "${AGENT_NAME}",
-        "SESSION_TOKEN": "${SESSION_TOKEN}"
-      }
-    }
-  }
-}
-MCPEOF
-        echo ""
-        echo "── Resolved MCP config (chat mode) ──"
-        cat /home/claude/.claude/mcp.json
-        echo ""
-    else
-        cat > /home/claude/.claude/mcp.json <<MCPEOF
-{
-  "mcpServers": {}
-}
-MCPEOF
-        echo ""
-        echo "── MCP config: no chat channel (solo agent mode) ──"
-        echo ""
-    fi
-}
-
 _symlink_plugins() {
     # ── Symlink read-only plugin mounts ─────────────────────────────────────
     if [ -d /plugins-ro ]; then
@@ -197,44 +163,3 @@ _symlink_plugins() {
     fi
 }
 
-_apply_readonly_lockdown() {
-    # ── Read-only Source/ for non-leader design agents ──────────────────────
-    if [ "${WORKSPACE_READONLY:-false}" = "true" ]; then
-        if [ -d /workspace/Source ]; then
-            echo "Locking down /workspace/Source/ (read-only design agent)"
-            chmod -R a-w /workspace/Source 2>/dev/null || true
-        fi
-    fi
-}
-
-_print_diagnostics() {
-    echo ""
-    echo "── Pre-launch diagnostics ──"
-    echo "Claude CLI version: $(claude --version 2>&1 || echo 'unknown')"
-    echo "Container hostname: $(hostname)"
-    echo "Working directory:  $(pwd)"
-    echo "Git HEAD:           $(git -C /workspace log --oneline -1 2>/dev/null || echo 'N/A')"
-    echo "Git branch:         $(git -C /workspace branch --show-current 2>/dev/null || echo 'N/A')"
-    echo "Git commit count:   $(git -C /workspace rev-list --count HEAD 2>/dev/null || echo 'N/A')"
-    echo ""
-    echo "── Environment snapshot ──"
-    echo "  AGENT_NAME=$AGENT_NAME"
-    echo "  AGENT_TYPE=$AGENT_TYPE"
-    echo "  AGENT_MODE=$AGENT_MODE"
-    echo "  WORK_BRANCH=$WORK_BRANCH"
-    echo "  MAX_TURNS=$MAX_TURNS"
-    echo "  SERVER_URL=$SERVER_URL"
-    echo "  PROJECT_ID=$PROJECT_ID"
-    echo "  LOG_VERBOSITY=$LOG_VERBOSITY"
-    echo "  WORKER_MODE=${WORKER_MODE:-false}"
-    echo "  WORKER_SINGLE_TASK=$WORKER_SINGLE_TASK"
-    echo "  WORKER_POLL_INTERVAL=$WORKER_POLL_INTERVAL"
-    echo "  HOOK_BUILD_INTERCEPT=$HOOK_BUILD_INTERCEPT"
-    echo "  HOOK_GIT_SYNC=$HOOK_GIT_SYNC"
-    echo "  HOOK_CPP_LINT=$HOOK_CPP_LINT"
-    echo "  WORKSPACE_READONLY=$WORKSPACE_READONLY"
-    echo "  CHAT_ROOM=${CHAT_ROOM:-}"
-    echo "  TEAM_ROLE=${TEAM_ROLE:-}"
-    echo "  HOOK_OVERRIDE=${HOOK_OVERRIDE:-}"
-    echo ""
-}
