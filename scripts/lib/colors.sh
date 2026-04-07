@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # scripts/lib/colors.sh — Terminal color support and status colorization.
 #
 # Sets color variables based on terminal capability and NO_COLOR env var.
-# Provides status_color() for colorizing agent status strings.
+# Provides _status_color() for colorizing agent status strings.
 # Source this file; do not execute it directly.
 
 # Guard against double-sourcing
@@ -27,9 +27,9 @@ else
   C_RED=''
 fi
 
-# status_color <status>
+# _status_color <status>
 #   Prints the status string with appropriate color escapes.
-status_color() {
+_status_color() {
   case "$1" in
     working)  echo -e "${C_YELLOW}$1${C_RESET}" ;;
     done)     echo -e "${C_GREEN}$1${C_RESET}" ;;

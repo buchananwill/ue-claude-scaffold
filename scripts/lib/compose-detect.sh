@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # scripts/lib/compose-detect.sh — Docker Compose command detection.
 #
 # Detects whether "docker compose" (V2 plugin) or "docker-compose" (standalone)

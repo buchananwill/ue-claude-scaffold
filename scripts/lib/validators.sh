@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # scripts/lib/validators.sh — Input validation helpers.
 #
 # Provides identifier and branch name validation used across all shell scripts.
@@ -28,7 +28,8 @@ _validate_identifier() {
 _validate_branch_name() {
   local value="$1"
 
-  # Length check: 1..200 characters, only allowed characters
+  # Length check: 1..200 characters, only allowed characters.
+  # Character class must match BRANCH_RE in server/src/branch-naming.ts: [a-zA-Z0-9/_.-]
   if [[ ! "$value" =~ ^[a-zA-Z0-9/_.-]{1,200}$ ]]; then
     echo "Error: branch name contains invalid characters or exceeds 200 chars: ${value}" >&2
     return 1
