@@ -1,10 +1,11 @@
 import { useMemo, useState, useCallback } from 'react';
 import { useSearch, useNavigate } from '@tanstack/react-router';
-import type { Task } from '../api/types.ts';
+import type { Task } from '../api/types.js';
 
 export type SortDir = 'asc' | 'desc' | null;
 export type SortColumn = 'id' | 'priority' | 'status' | 'title' | 'claimedBy' | 'createdAt' | null;
 
+// Must match server/src/queries/tasks-core.ts VALID_SORT_COLUMNS
 export const VALID_SORT_COLUMNS = new Set<string>(['id', 'priority', 'status', 'title', 'claimedBy', 'createdAt']);
 
 const UNASSIGNED = '__unassigned__';
@@ -172,7 +173,7 @@ export function useTaskFiltersUrlBacked() {
   const priorityFilter = useMemo(() => {
     if (!search.priority) return new Set<number>();
     return new Set(
-      search.priority.split(',').map(Number).filter((n) => !Number.isNaN(n))
+      search.priority.split(',').filter(Boolean).map(Number).filter((n) => !Number.isNaN(n))
     );
   }, [search.priority]);
 
@@ -185,23 +186,23 @@ export function useTaskFiltersUrlBacked() {
 
   const page = search.page ?? 1;
 
-  const setPage = (n: number) => {
+  const setPage = useCallback((n: number) => {
     navigate({ search: (prev) => ({ ...prev, page: n > 1 ? n : undefined }) });
-  };
+  }, [navigate]);
 
-  const setStatusFilter = (val: Set<string>) => {
+  const setStatusFilter = useCallback((val: Set<string>) => {
     navigate({ search: (prev) => ({ ...prev, status: val.size ? [...val].join(',') : undefined, page: undefined }) });
-  };
+  }, [navigate]);
 
-  const setAgentFilter = (val: Set<string>) => {
+  const setAgentFilter = useCallback((val: Set<string>) => {
     navigate({ search: (prev) => ({ ...prev, agent: val.size ? [...val].join(',') : undefined, page: undefined }) });
-  };
+  }, [navigate]);
 
-  const setPriorityFilter = (val: Set<number>) => {
+  const setPriorityFilter = useCallback((val: Set<number>) => {
     navigate({ search: (prev) => ({ ...prev, priority: val.size ? [...val].join(',') : undefined, page: undefined }) });
-  };
+  }, [navigate]);
 
-  const cycleSort = (col: NonNullable<SortColumn>) => {
+  const cycleSort = useCallback((col: NonNullable<SortColumn>) => {
     if (sortColumn !== col) {
       navigate({ search: (prev) => ({ ...prev, sort: col, dir: 'asc', page: undefined }) });
     } else if (sortDir === 'asc') {
@@ -209,11 +210,11 @@ export function useTaskFiltersUrlBacked() {
     } else {
       navigate({ search: (prev) => ({ ...prev, sort: undefined, dir: undefined, page: undefined }) });
     }
-  };
+  }, [navigate, sortColumn, sortDir]);
 
-  const clearAllFilters = () => {
+  const clearAllFilters = useCallback(() => {
     navigate({ search: (prev) => ({ ...prev, status: undefined, agent: undefined, priority: undefined, sort: undefined, dir: undefined, page: undefined }) });
-  };
+  }, [navigate]);
 
   const hasActiveFilters = agentFilter.size > 0 || priorityFilter.size > 0 || statusFilter.size > 0 || sortColumn !== null;
 

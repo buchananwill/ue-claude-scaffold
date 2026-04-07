@@ -80,8 +80,8 @@ export function RootLayout() {
               withBorder
               padding="lg"
               component={Link}
-              to="/$projectId"
-              params={{ projectId: project.id }}
+              to={'/$projectId' as any}
+              params={{ projectId: project.id } as any}
               style={{ cursor: 'pointer', textDecoration: 'none', color: 'inherit' }}
             >
               <Group gap="sm" mb="xs">

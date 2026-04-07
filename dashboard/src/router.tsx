@@ -4,17 +4,17 @@ import {
   createRoute,
   Outlet,
 } from '@tanstack/react-router';
-import { RootLayout } from './layouts/RootLayout.tsx';
-import { ProjectLayout } from './layouts/ProjectLayout.tsx';
-import { OverviewPage } from './pages/OverviewPage.tsx';
-import { MessagesIndexPage, MessagesChannelPage } from './pages/MessagesPage.tsx';
-import { TaskDetailPage } from './pages/TaskDetailPage.tsx';
-import { AgentDetailPage } from './pages/AgentDetailPage.tsx';
-import { BuildLogPage } from './pages/BuildLogPage.tsx';
-import { ChatPage } from './pages/ChatPage.tsx';
-import { TeamsPage } from './pages/TeamsPage.tsx';
-import { SearchPage } from './pages/SearchPage.tsx';
-import { TASK_STATUSES, VALID_SORT_COLUMNS } from './hooks/useTaskFilters.ts';
+import { RootLayout } from './layouts/RootLayout.js';
+import { ProjectLayout } from './layouts/ProjectLayout.js';
+import { OverviewPage } from './pages/OverviewPage.js';
+import { MessagesIndexPage, MessagesChannelPage } from './pages/MessagesPage.js';
+import { TaskDetailPage } from './pages/TaskDetailPage.js';
+import { AgentDetailPage } from './pages/AgentDetailPage.js';
+import { BuildLogPage } from './pages/BuildLogPage.js';
+import { ChatPage } from './pages/ChatPage.js';
+import { TeamsPage } from './pages/TeamsPage.js';
+import { SearchPage } from './pages/SearchPage.js';
+import { TASK_STATUSES, VALID_SORT_COLUMNS } from './hooks/useTaskFilters.js';
 
 const rootRoute = createRootRoute({
   component: Outlet,
@@ -38,6 +38,7 @@ function boundedString(val: unknown, maxLen = 100): string | undefined {
   return val;
 }
 
+const VALID_AGENT_SEGMENT = /^[a-zA-Z0-9_-]+$/;
 const VALID_TASK_STATUSES = new Set<string>(TASK_STATUSES);
 const VALID_DIR_VALUES = new Set(['asc', 'desc']);
 const VALID_BUILD_TYPES = new Set(['build', 'test']);
@@ -61,10 +62,24 @@ const overviewRoute = createRoute({
     }
     const rawSort = boundedString(search.sort, 50);
     const rawDir = boundedString(search.dir, 10);
+    // Validate agent: each comma-separated segment must match safe identifier pattern or __unassigned__
+    const rawAgent = boundedString(search.agent, 200);
+    let agent: string | undefined;
+    if (rawAgent) {
+      const valid = rawAgent.split(',').filter((s) => s === '__unassigned__' || VALID_AGENT_SEGMENT.test(s));
+      agent = valid.length > 0 ? valid.join(',') : undefined;
+    }
+    // Validate priority: each comma-separated segment must be an integer
+    const rawPriority = boundedString(search.priority, 200);
+    let priority: string | undefined;
+    if (rawPriority) {
+      const valid = rawPriority.split(',').filter(Boolean).map(Number).filter(Number.isInteger);
+      priority = valid.length > 0 ? valid.join(',') : undefined;
+    }
     return {
       status,
-      agent: boundedString(search.agent, 200),
-      priority: boundedString(search.priority, 200),
+      agent,
+      priority,
       sort: rawSort && VALID_SORT_COLUMNS.has(rawSort) ? rawSort : undefined,
       dir: rawDir && VALID_DIR_VALUES.has(rawDir) ? rawDir : undefined,
       page: Number(search.page) > 0 ? Math.floor(Number(search.page)) : undefined,

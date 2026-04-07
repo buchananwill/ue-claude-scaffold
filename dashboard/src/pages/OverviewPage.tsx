@@ -1,16 +1,16 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Grid, Card, Title, Stack, Button, Group, Pagination } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { TasksPanel } from '../components/TasksPanel.tsx';
-import { AgentsPanel } from '../components/AgentsPanel.tsx';
-import { UbtLockCard } from '../components/UbtLockCard.tsx';
-import { useAgents } from '../hooks/useAgents.ts';
-import { useTasks } from '../hooks/useTasks.ts';
-import { useTaskFiltersUrlBacked } from '../hooks/useTaskFilters.ts';
-import { useUbtStatus } from '../hooks/useUbtStatus.ts';
-import { apiPost } from '../api/client.ts';
-import { useProject } from '../contexts/ProjectContext.tsx';
-import { toErrorMessage } from '../utils/toErrorMessage.ts';
+import { TasksPanel } from '../components/TasksPanel.js';
+import { AgentsPanel } from '../components/AgentsPanel.js';
+import { UbtLockCard } from '../components/UbtLockCard.js';
+import { useAgents } from '../hooks/useAgents.js';
+import { useTasks } from '../hooks/useTasks.js';
+import { useTaskFiltersUrlBacked, UNASSIGNED } from '../hooks/useTaskFilters.js';
+import { useUbtStatus } from '../hooks/useUbtStatus.js';
+import { apiPost } from '../api/client.js';
+import { useProject } from '../contexts/ProjectContext.js';
+import { toErrorMessage } from '../utils/toErrorMessage.js';
 
 const PAGE_SIZE = 20;
 
@@ -31,6 +31,33 @@ export function OverviewPage() {
   });
   const ubt = useUbtStatus();
   const [syncing, setSyncing] = useState(false);
+
+  const availableAgents = useMemo(() => {
+    const taskList = tasks.data?.tasks;
+    if (!taskList) return [];
+    const agents: string[] = [];
+    const seen = new Set<string>();
+    let hasNull = false;
+    for (const t of taskList) {
+      if (t.claimedBy === null) {
+        hasNull = true;
+      } else if (!seen.has(t.claimedBy)) {
+        seen.add(t.claimedBy);
+        agents.push(t.claimedBy);
+      }
+    }
+    agents.sort((a, b) => a.localeCompare(b));
+    if (hasNull) agents.unshift(UNASSIGNED);
+    return agents;
+  }, [tasks.data?.tasks]);
+
+  const availablePriorities = useMemo(() => {
+    const taskList = tasks.data?.tasks;
+    if (!taskList) return [];
+    const set = new Set<number>();
+    for (const t of taskList) set.add(t.priority);
+    return Array.from(set).sort((a, b) => b - a);
+  }, [tasks.data?.tasks]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -80,6 +107,8 @@ export function OverviewPage() {
             tasks={tasks.data?.tasks ?? null}
             isFetching={tasks.isFetching}
             filters={taskFilters}
+            availableAgents={availableAgents}
+            availablePriorities={availablePriorities}
           />
         </Card>
         {/* zIndex: 1 layers above scrolled task rows; boxShadow fades into page background */}

@@ -1,8 +1,8 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { apiFetch } from '../api/client.ts';
-import type { TasksPage } from '../api/types.ts';
-import { usePollInterval } from './usePollInterval.tsx';
-import { useProject } from '../contexts/ProjectContext.tsx';
+import { apiFetch } from '../api/client.js';
+import type { TasksPage } from '../api/types.js';
+import { usePollInterval } from './usePollInterval.js';
+import { useProject } from '../contexts/ProjectContext.js';
 
 export interface UseTasksParams {
   limit?: number;
