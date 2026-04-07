@@ -654,7 +654,7 @@ fi
 
 # ── Agent collision guard ───────────────────────────────────────────────────
 _agent_status=$(curl -sf "http://localhost:${SERVER_PORT}/agents/${AGENT_NAME}" \
-    -H "X-Project-Id: ${PROJECT_ID}" 2>/dev/null | jq -r '.status // empty' 2>/dev/null)
+    -H "X-Project-Id: ${PROJECT_ID}" 2>/dev/null | jq -r '.status // empty' 2>/dev/null || true)
 if [[ "$_agent_status" == "active" ]]; then
   echo "Error: agent '${AGENT_NAME}' is already active for project '${PROJECT_ID}'." >&2
   echo "Use a different --agent-name, or stop the existing container first." >&2
