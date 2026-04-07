@@ -36,10 +36,10 @@ _post_json() {
   fi
 
   local -a headers=(-H "Content-Type: application/json")
-  if [[ -n "${PROJECT_ID:-}" ]] && _validate_identifier "PROJECT_ID" "$PROJECT_ID" 2>/dev/null; then
+  if [[ -n "${PROJECT_ID:-}" ]] && _validate_identifier "PROJECT_ID" "$PROJECT_ID"; then
     headers+=(-H "X-Project-Id: ${PROJECT_ID}")
   fi
-  if [[ -n "${AGENT_NAME:-}" ]] && _validate_identifier "AGENT_NAME" "$AGENT_NAME" 2>/dev/null; then
+  if [[ -n "${AGENT_NAME:-}" ]] && _validate_identifier "AGENT_NAME" "$AGENT_NAME"; then
     headers+=(-H "X-Agent-Name: ${AGENT_NAME}")
   fi
 
@@ -60,8 +60,16 @@ _get_json() {
   local tmpfile
   tmpfile="$(mktemp)"
 
+  local -a headers=()
+  if [[ -n "${PROJECT_ID:-}" ]] && _validate_identifier "PROJECT_ID" "$PROJECT_ID"; then
+    headers+=(-H "X-Project-Id: ${PROJECT_ID}")
+  fi
+  if [[ -n "${AGENT_NAME:-}" ]] && _validate_identifier "AGENT_NAME" "$AGENT_NAME"; then
+    headers+=(-H "X-Agent-Name: ${AGENT_NAME}")
+  fi
+
   local rc=0
-  curl -sf "$url" > "$tmpfile" || rc=$?
+  curl -sf "${headers[@]}" "$url" > "$tmpfile" || rc=$?
 
   if [[ "$rc" -ne 0 ]]; then
     rm -f "$tmpfile"
@@ -69,7 +77,7 @@ _get_json() {
   fi
 
   # Validate response is well-formed JSON
-  if ! jq '.' "$tmpfile" 2>/dev/null; then
+  if ! jq -c '.' "$tmpfile" 2>/dev/null; then
     echo "Error: _get_json response is not valid JSON" >&2
     rm -f "$tmpfile"
     return 1

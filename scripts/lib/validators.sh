@@ -35,6 +35,12 @@ _validate_branch_name() {
     return 1
   fi
 
+  # Must not start with -
+  if [[ "$value" =~ ^- ]]; then
+    echo "Error: branch name must not start with '-': ${value}" >&2
+    return 1
+  fi
+
   # Must not start with . or /
   if [[ "$value" =~ ^[./] ]]; then
     echo "Error: branch name must not start with '.' or '/': ${value}" >&2
