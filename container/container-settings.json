@@ -23,7 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /claude-hooks/lint-cpp-diff.py"
+            "command": "node /claude-hooks/lint-cpp-diff.mjs"
           }
         ]
       },
@@ -32,7 +32,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /claude-hooks/lint-cpp-diff.py"
+            "command": "node /claude-hooks/lint-cpp-diff.mjs"
           }
         ]
       }
