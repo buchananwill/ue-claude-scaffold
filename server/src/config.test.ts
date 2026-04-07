@@ -4,6 +4,7 @@ import { writeFileSync, mkdtempSync, unlinkSync, rmdirSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadConfig, getProject } from './config.js';
+import { writeFileSync as rawWriteFileSync } from 'node:fs';
 
 /**
  * loadConfig() searches for scaffold.config.json in cwd and parent.
@@ -96,6 +97,28 @@ describe('loadConfig() validation', () => {
         return true;
       },
     );
+  });
+
+  it('throws for malformed JSON in scaffold.config.json', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'config-test-'));
+    const configPath = path.join(dir, 'scaffold.config.json');
+    rawWriteFileSync(configPath, '{ not valid json!!!');
+
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(dir);
+      assert.throws(
+        () => loadConfig(),
+        (err: Error) => {
+          assert.match(err.message, /not valid JSON/);
+          return true;
+        },
+      );
+    } finally {
+      process.chdir(originalCwd);
+      try { unlinkSync(configPath); } catch {}
+      try { rmdirSync(dir); } catch {}
+    }
   });
 
   it('stagingWorktreePath in raw input is not surfaced on the returned config', () => {

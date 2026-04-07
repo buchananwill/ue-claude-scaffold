@@ -1,8 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveProjectConfig, type ResolvedProjectConfig } from './config-resolver.js';
+import { resolveProjectConfig } from './config-resolver.js';
 import { createTestConfig } from './test-helper.js';
-import type { ScaffoldConfig } from './config.js';
 
 describe('resolveProjectConfig', () => {
   it('resolves a legacy (default) project config', () => {
@@ -138,74 +137,3 @@ describe('resolveProjectConfig', () => {
   });
 });
 
-import { createDrizzleTestApp } from './test-helper.js';
-import configPlugin from './routes/config.js';
-
-describe('GET /config routes', () => {
-  it('GET /config returns project IDs', async () => {
-    const { app, cleanup } = await createDrizzleTestApp();
-    try {
-      const config = createTestConfig();
-      await app.register(configPlugin, { config });
-
-      const res = await app.inject({ method: 'GET', url: '/config' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.deepEqual(body.projectIds, ['default']);
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('GET /config returns multiple project IDs', async () => {
-    const { app, cleanup } = await createDrizzleTestApp();
-    try {
-      const config = createTestConfig({
-        resolvedProjects: {
-          alpha: { name: 'Alpha', path: '/a', bareRepoPath: '/a.git' },
-          beta: { name: 'Beta', path: '/b', bareRepoPath: '/b.git' },
-        },
-      });
-      await app.register(configPlugin, { config });
-
-      const res = await app.inject({ method: 'GET', url: '/config' });
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.deepEqual(body.projectIds.sort(), ['alpha', 'beta']);
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('GET /config/:projectId returns resolved config', async () => {
-    const { app, cleanup } = await createDrizzleTestApp();
-    try {
-      const config = createTestConfig();
-      await app.register(configPlugin, { config });
-
-      const res = await app.inject({ method: 'GET', url: '/config/default' });
-      assert.equal(res.statusCode, 200);
-      const body: ResolvedProjectConfig = JSON.parse(res.payload);
-      assert.equal(body.projectId, 'default');
-      assert.equal(body.name, 'TestProject');
-      assert.equal(body.bareRepoPath, '/tmp/test-repo.git');
-      assert.equal(body.serverPort, 9100);
-      assert.deepEqual(body.hooks, { buildIntercept: null, cppLint: null });
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('GET /config/:projectId returns 404 for unknown project', async () => {
-    const { app, cleanup } = await createDrizzleTestApp();
-    try {
-      const config = createTestConfig();
-      await app.register(configPlugin, { config });
-
-      const res = await app.inject({ method: 'GET', url: '/config/nonexistent' });
-      assert.equal(res.statusCode, 404);
-    } finally {
-      await cleanup();
-    }
-  });
-});

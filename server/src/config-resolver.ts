@@ -62,8 +62,10 @@ export function resolveProjectConfig(
     engineVersion: merged.engine?.version ?? null,
     buildScriptPath: merged.build?.scriptPath ?? null,
     testScriptPath: merged.build?.testScriptPath ?? null,
-    buildTimeoutMs: merged.build?.buildTimeoutMs ?? config.build.buildTimeoutMs,
-    testTimeoutMs: merged.build?.testTimeoutMs ?? config.build.testTimeoutMs,
+    buildTimeoutMs: merged.build?.buildTimeoutMs ?? 660_000,
+    testTimeoutMs: merged.build?.testTimeoutMs ?? 700_000,
+    // defaultTestFilters is taken from the global config only because
+    // ProjectConfig does not have a per-project defaultTestFilters field.
     defaultTestFilters: config.build.defaultTestFilters,
     stagingWorktreeRoot: merged.stagingWorktreeRoot ?? null,
     logsPath: null, // No logsPath in current config schema; placeholder for future

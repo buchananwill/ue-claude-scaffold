@@ -6,27 +6,40 @@ interface ConfigOpts {
   config: ScaffoldConfig;
 }
 
-const configPlugin: FastifyPluginAsync<ConfigOpts> = async (fastify, opts) => {
+const configPlugin: FastifyPluginAsync<ConfigOpts> = async (app, { config }) => {
   /**
    * GET /config — list all project IDs known to the config.
    */
-  fastify.get('/config', async () => {
+  app.get('/config', async () => {
     return {
-      projectIds: Object.keys(opts.config.resolvedProjects),
+      projectIds: Object.keys(config.resolvedProjects),
     };
   });
 
   /**
    * GET /config/:projectId — return the fully resolved config for a project.
    */
-  fastify.get<{ Params: { projectId: string } }>('/config/:projectId', async (request, reply) => {
+  app.get<{ Params: { projectId: string } }>('/config/:projectId', {
+    schema: {
+      params: {
+        type: 'object',
+        properties: { projectId: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,64}$' } },
+        required: ['projectId'],
+      },
+    },
+  }, async (request, reply) => {
     const { projectId } = request.params;
     try {
-      const resolved = resolveProjectConfig(projectId, opts.config);
+      const resolved = resolveProjectConfig(projectId, config);
       return resolved;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return reply.notFound(message);
+      request.log.warn(err, 'resolveProjectConfig failed');
+      // If the error is not about an unknown project, let Fastify's default
+      // error handler return 500 instead of masking it as 404.
+      if (err instanceof Error && /Unknown project/.test(err.message)) {
+        return reply.notFound('Project not found');
+      }
+      throw err;
     }
   });
 };
