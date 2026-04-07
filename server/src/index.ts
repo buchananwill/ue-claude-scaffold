@@ -22,6 +22,7 @@ import {
   branchOpsPlugin,
   hooksPlugin,
   containerSettingsPlugin,
+  tasksIngestPlugin,
 } from './routes/index.js';
 import { sweepStaleLock } from './routes/ubt.js';
 import { getDb } from './drizzle-instance.js';
@@ -75,6 +76,7 @@ await server.register(configPlugin, { config });
 await server.register(branchOpsPlugin, { config });
 await server.register(hooksPlugin);
 await server.register(containerSettingsPlugin);
+await server.register(tasksIngestPlugin);
 
 try {
   const address = await server.listen({
