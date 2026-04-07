@@ -1,24 +1,24 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildSettingsJson, buildMcpJson } from './container-settings.js';
-import type { SettingsOpts, McpOpts } from './container-settings.js';
+import type { SettingsOpts, McpOpts, SettingsJson, McpJson, MatcherEntry } from './container-settings.js';
 
 // Helper to extract matchers from settings
-function getPreMatchers(settings: any) {
-  return settings.hooks.PreToolUse as any[];
+function getPreMatchers(settings: SettingsJson): MatcherEntry[] {
+  return settings.hooks.PreToolUse;
 }
 
-function getPostMatchers(settings: any) {
-  return settings.hooks.PostToolUse as any[] | undefined;
+function getPostMatchers(settings: SettingsJson): MatcherEntry[] | undefined {
+  return settings.hooks.PostToolUse;
 }
 
-function getBashHookCommands(settings: any): string[] {
-  const bash = getPreMatchers(settings).find((m: any) => m.matcher === 'Bash');
-  return bash ? bash.hooks.map((h: any) => h.command) : [];
+function getBashHookCommands(settings: SettingsJson): string[] {
+  const bash = getPreMatchers(settings).find((m) => m.matcher === 'Bash');
+  return bash ? bash.hooks.map((h) => h.command) : [];
 }
 
 describe('buildSettingsJson', () => {
-  it('all flags false: only inject-agent-header in Bash hooks, no PostToolUse', () => {
+  it('workspaceReadonly=false, all other flags false: guard-branch + inject-agent-header, no PostToolUse', () => {
     const opts: SettingsOpts = { buildIntercept: false, cppLint: false, gitSync: false, workspaceReadonly: false };
     const result = buildSettingsJson(opts);
     const cmds = getBashHookCommands(result);
@@ -26,6 +26,17 @@ describe('buildSettingsJson', () => {
     assert.equal(cmds.length, 2); // guard-branch + inject-agent-header
     assert.ok(cmds[0].includes('guard-branch.sh'));
     assert.ok(cmds[1].includes('inject-agent-header.sh'));
+    assert.equal(getPreMatchers(result).length, 1); // only Bash matcher
+    assert.equal(getPostMatchers(result), undefined);
+  });
+
+  it('workspaceReadonly=true, all other flags false: only inject-agent-header (1 hook)', () => {
+    const opts: SettingsOpts = { buildIntercept: false, cppLint: false, gitSync: false, workspaceReadonly: true };
+    const result = buildSettingsJson(opts);
+    const cmds = getBashHookCommands(result);
+
+    assert.equal(cmds.length, 1); // only inject-agent-header, no guard-branch
+    assert.ok(cmds[0].includes('inject-agent-header.sh'));
     assert.equal(getPreMatchers(result).length, 1); // only Bash matcher
     assert.equal(getPostMatchers(result), undefined);
   });
@@ -126,7 +137,7 @@ describe('buildMcpJson', () => {
       agentName: 'agent-1',
       sessionToken: 'tok-123',
     };
-    const result = buildMcpJson(opts) as any;
+    const result: McpJson = buildMcpJson(opts);
 
     assert.ok(result.mcpServers.chat);
     assert.equal(result.mcpServers.chat.command, 'node');
@@ -143,7 +154,7 @@ describe('buildMcpJson', () => {
       agentName: 'agent-1',
       sessionToken: 'tok-123',
     };
-    const result = buildMcpJson(opts) as any;
+    const result: McpJson = buildMcpJson(opts);
 
     assert.deepEqual(result.mcpServers, {});
   });
@@ -154,7 +165,7 @@ describe('buildMcpJson', () => {
       agentName: 'agent-1',
       sessionToken: 'tok-123',
     };
-    const result = buildMcpJson(opts) as any;
+    const result: McpJson = buildMcpJson(opts);
 
     assert.deepEqual(result.mcpServers, {});
   });

@@ -19,6 +19,38 @@ export interface McpOpts {
   sessionToken: string;
 }
 
+/** A single hook entry in container-settings.json */
+export interface HookEntry {
+  type: string;
+  command: string;
+}
+
+/** A matcher + hooks pair used in PreToolUse / PostToolUse arrays */
+export interface MatcherEntry {
+  matcher: string;
+  hooks: HookEntry[];
+}
+
+/** Top-level shape returned by buildSettingsJson */
+export interface SettingsJson {
+  hooks: {
+    PreToolUse: MatcherEntry[];
+    PostToolUse?: MatcherEntry[];
+  };
+}
+
+/** A single MCP server entry */
+export interface McpServerEntry {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+/** Top-level shape returned by buildMcpJson */
+export interface McpJson {
+  mcpServers: Record<string, McpServerEntry>;
+}
+
 const HOOKS_PREFIX = '/claude-hooks/';
 
 interface Hook {
@@ -39,7 +71,7 @@ function pythonHook(script: string): Hook {
   return { type: 'command', command: `python3 ${HOOKS_PREFIX}${script}` };
 }
 
-export function buildSettingsJson(opts: SettingsOpts): object {
+export function buildSettingsJson(opts: SettingsOpts): SettingsJson {
   // Build PreToolUse Bash hooks array.
   // inject-agent-header is always present; others are prepended when enabled.
   const bashHooks: Hook[] = [];
@@ -73,15 +105,15 @@ export function buildSettingsJson(opts: SettingsOpts): object {
     postMatchers.push({ matcher: 'Bash', hooks: [hook('push-after-commit.sh')] });
   }
 
-  const hooks: Record<string, Matcher[]> = { PreToolUse: preMatchers };
+  const result: SettingsJson = { hooks: { PreToolUse: preMatchers } };
   if (postMatchers.length > 0) {
-    hooks.PostToolUse = postMatchers;
+    result.hooks.PostToolUse = postMatchers;
   }
 
-  return { hooks };
+  return result;
 }
 
-export function buildMcpJson(opts: McpOpts): object {
+export function buildMcpJson(opts: McpOpts): McpJson {
   if (opts.chatRoom) {
     return {
       mcpServers: {
