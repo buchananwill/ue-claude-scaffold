@@ -88,6 +88,9 @@ export function validateBriefOnSeedBranch(
  * Load and validate a team definition JSON file from the teams directory.
  */
 export function loadTeamDef(teamsDir: string, teamId: string): TeamDef {
+  if (!AGENT_NAME_RE.test(teamId)) {
+    throw new Error(`Invalid teamId '${teamId}' — must match ^[a-zA-Z0-9_-]{1,64}$`);
+  }
   const defPath = path.join(teamsDir, `${teamId}.json`);
   if (!existsSync(defPath)) {
     throw new Error(`Team definition not found: ${defPath}`);
@@ -126,6 +129,9 @@ export function loadTeamDef(teamsDir: string, teamId: string): TeamDef {
       throw new Error(`Team member agentName '${m.agentName}' contains invalid characters`);
     }
     if (!m.agentType) throw new Error(`Team member '${m.agentName}' missing required field: agentType`);
+    if (!AGENT_NAME_RE.test(m.agentType)) {
+      throw new Error(`Team member '${m.agentName}' has invalid agentType '${m.agentType}' — must match ^[a-zA-Z0-9_-]{1,64}$`);
+    }
     if (!m.role) throw new Error(`Team member '${m.agentName}' missing required field: role`);
   }
 

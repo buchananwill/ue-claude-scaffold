@@ -86,7 +86,13 @@ while IFS= read -r member; do
     exit 1
   fi
   _TYPE=$(echo "$member" | jq -r '.agentType')
+  if [[ ! "$_TYPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: server returned invalid agentType: $_TYPE" >&2; exit 1
+  fi
   _BRANCH=$(echo "$member" | jq -r '.branch')
+  if [[ ! "$_BRANCH" =~ ^docker/[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: server returned invalid branch: $_BRANCH" >&2; exit 1
+  fi
   _ROLE=$(echo "$member" | jq -r '.role')
   _IS_LEADER=$(echo "$member" | jq -r '.isLeader')
   _HOOK_BUILD=$(echo "$member" | jq -r '.hooks.buildIntercept')

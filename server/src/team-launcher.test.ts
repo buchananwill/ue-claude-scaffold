@@ -304,6 +304,58 @@ describe('launchTeam', () => {
     rmSync(teamsDir, { recursive: true, force: true });
   });
 
+  it('re-launches a dissolved team successfully', async () => {
+    const teamsDir = createTeamsDir('relaunch-team', {
+      id: 'relaunch-team',
+      name: 'Relaunch Team',
+      members: [
+        { agentName: 'leader-r', role: 'lead', agentType: 'orchestrator', isLeader: true },
+        { agentName: 'worker-r', role: 'impl', agentType: 'implementer', isLeader: false },
+      ],
+    });
+
+    const project: MergedProjectConfig = {
+      name: 'Test',
+      path: '/tmp/test',
+      bareRepoPath: bareDir,
+    };
+
+    // First launch
+    const result1 = await launchTeam({
+      projectId: 'test-proj',
+      teamId: 'relaunch-team',
+      briefPath: 'plans/brief.md',
+      teamsDir,
+      project,
+      db: testDb.db,
+    });
+    assert.equal(result1.roomId, 'relaunch-team');
+
+    // Dissolve the team
+    await teamsQ.dissolve(testDb.db, 'relaunch-team');
+    const dissolved = await teamsQ.getById(testDb.db, 'relaunch-team');
+    assert.equal(dissolved!.status, 'dissolved');
+
+    // Re-launch the same team
+    const result2 = await launchTeam({
+      projectId: 'test-proj',
+      teamId: 'relaunch-team',
+      briefPath: 'plans/brief.md',
+      teamsDir,
+      project,
+      db: testDb.db,
+    });
+    assert.equal(result2.roomId, 'relaunch-team');
+    assert.equal(result2.members.length, 2);
+
+    // Verify team is active again
+    const team = await teamsQ.getById(testDb.db, 'relaunch-team');
+    assert.ok(team);
+    assert.equal(team.status, 'active');
+
+    rmSync(teamsDir, { recursive: true, force: true });
+  });
+
   it('resolves hooks with team-level defaults and member overrides', async () => {
     const teamsDir = createTeamsDir('hook-team', {
       id: 'hook-team',

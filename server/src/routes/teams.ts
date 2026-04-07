@@ -161,7 +161,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     const { status, deliverable } = request.body;
 
     if (status !== undefined) {
-      if (!VALID_STATUSES.includes(status as typeof VALID_STATUSES[number])) {
+      if (!(VALID_STATUSES as readonly string[]).includes(status)) {
         return reply.badRequest(`Invalid status '${status}'. Must be one of: ${VALID_STATUSES.join(', ')}`);
       }
     }
@@ -189,7 +189,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       params: {
         type: 'object',
         properties: {
-          id: { type: 'string', pattern: '^[a-zA-Z0-9_-]+$' },
+          id: { type: 'string', pattern: '^[a-zA-Z0-9_-]+$', maxLength: 64 },
         },
         required: ['id'],
       },
@@ -208,8 +208,9 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     if (briefPath.startsWith('/')) {
       return reply.badRequest('briefPath must be a relative path');
     }
-    if (briefPath.includes('..')) {
-      return reply.badRequest('briefPath must not contain ".." components');
+    const segments = briefPath.split('/');
+    if (segments.some(s => s === '.' || s === '..')) {
+      return reply.badRequest('briefPath must not contain . or .. segments');
     }
     if (!BRIEF_PATH_RE.test(briefPath)) {
       return reply.badRequest('briefPath contains invalid characters');
