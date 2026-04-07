@@ -224,35 +224,58 @@ _post_status() {
 }
 
 _detect_abnormal_exit() {
-    # Scan captured Claude output for known failure signatures.
-    # Returns 0 (true) if an abnormal pattern is found, 1 (false) if clean.
+    # Delegates exit classification to the coordination server.
+    # Returns 0 (true) if abnormal, 1 (false) if clean.
     # Sets ABNORMAL_REASON to a human-readable description.
     local log_file="$1"
     [ -f "$log_file" ] || return 1
 
-    # Auth failure: "Failed to authenticate. API Error: 401 ..."
-    if grep -qi 'authentication_error\|Invalid authentication credentials\|Failed to authenticate' "$log_file"; then
-        ABNORMAL_REASON="authentication failure (API credentials invalid or expired)"
-        return 0
-    fi
+    local log_tail elapsed output_lines response
+    log_tail="$(tail -200 "$log_file")"
+    output_lines="$(wc -l < "$log_file")"
 
-    # Token/session exhaustion: Claude CLI reports hitting limits
-    if grep -qi 'token.*limit\|token.*exhaust\|session.*limit\|context.*limit\|max.*token.*reached\|rate.*limit.*exceeded\|quota.*exceeded\|billing.*error\|overloaded_error' "$log_file"; then
-        ABNORMAL_REASON="token or rate limit exhaustion"
-        return 0
-    fi
-
-    # Rapid exit heuristic: if Claude ran for <10 seconds and produced minimal
-    # output, something is wrong even without a pattern match
     if [ -n "${CLAUDE_START_TS:-}" ]; then
-        local now elapsed output_lines
+        local now
         now=$(date +%s)
         elapsed=$((now - CLAUDE_START_TS))
-        output_lines=$(wc -l < "$log_file")
-        if [ "$elapsed" -lt 10 ] && [ "$output_lines" -lt 5 ]; then
-            ABNORMAL_REASON="rapid exit (${elapsed}s, ${output_lines} lines of output)"
-            return 0
-        fi
+    else
+        elapsed=9999
+    fi
+
+    # Build JSON payload using a tmpfile to avoid shell escaping issues
+    local tmpfile
+    tmpfile="$(mktemp)"
+    python3 -c "
+import json, sys
+payload = {
+    'logTail': sys.stdin.read(),
+    'elapsedSeconds': int(sys.argv[1]),
+    'outputLineCount': int(sys.argv[2]),
+}
+json.dump(payload, sys.stdout)
+" "$elapsed" "$output_lines" < <(printf '%s' "$log_tail") > "$tmpfile" 2>/dev/null
+
+    # If JSON encoding failed, fall back to not-abnormal
+    if [ ! -s "$tmpfile" ]; then
+        rm -f "$tmpfile"
+        return 1
+    fi
+
+    response="$(_curl_server -s -X POST "${SERVER_URL}/agents/${AGENT_NAME}/exit:classify" \
+        -H "Content-Type: application/json" \
+        -d @"$tmpfile" \
+        --max-time 10 2>/dev/null)" || {
+        rm -f "$tmpfile"
+        return 1
+    }
+    rm -f "$tmpfile"
+
+    local is_abnormal
+    is_abnormal="$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('abnormal','false'))" 2>/dev/null)" || return 1
+
+    if [ "$is_abnormal" = "True" ] || [ "$is_abnormal" = "true" ]; then
+        ABNORMAL_REASON="$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reason','unknown'))" 2>/dev/null)" || ABNORMAL_REASON="unknown"
+        return 0
     fi
 
     return 1
