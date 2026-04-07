@@ -239,6 +239,7 @@ When a `projects` block is present it takes precedence over the legacy top-level
 | Field                        | Description                                   |
 |------------------------------|-----------------------------------------------|
 | `projects`                   | Optional map of project ID -> per-project config. When present, takes precedence over the legacy top-level fields |
+| `projects.<id>.agentType`    | Default agent definition for containers launched against this project (e.g. `container-orchestrator-ue`, `scaffold-orchestrator`). Overridden by `--agent-type` on the launch CLI |
 | `project.name`               | Your UE project name                          |
 | `project.path`               | Absolute path to the project                  |
 | `project.uprojectFile`       | The `.uproject` filename                      |

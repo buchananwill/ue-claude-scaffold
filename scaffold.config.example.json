@@ -59,6 +59,7 @@
   "projects": {
     "my-ue-game": {
       "name": "MyUEGame",
+      "agentType": "container-orchestrator-ue",
       "path": "D:\\Projects\\MyUEGame",
       "uprojectFile": "MyUEGame.uproject",
       "bareRepoPath": "D:\\Repos\\my-ue-game.git",

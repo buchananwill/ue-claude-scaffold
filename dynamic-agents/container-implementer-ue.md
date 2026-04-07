@@ -1,5 +1,5 @@
 ---
-name: container-implementer
+name: container-implementer-ue
 description: Implements Unreal Engine C++ code changes inside a Docker container. Builds via host-routed hook. Enforces ue-cpp-style conventions.
 model: opus
 color: green
