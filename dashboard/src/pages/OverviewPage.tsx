@@ -1,5 +1,4 @@
-import { useMemo, useState } from 'react';
-import { useSearch } from '@tanstack/react-router';
+import { useState } from 'react';
 import { Grid, Card, Title, Stack, Button, Group, Pagination } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { TasksPanel } from '../components/TasksPanel.tsx';
@@ -18,25 +17,18 @@ const PAGE_SIZE = 20;
 export function OverviewPage() {
   const { projectId } = useProject();
   const agents = useAgents();
-  // Read URL search params directly to derive server-side query params.
-  // This avoids a circular dependency: useTaskFiltersUrlBacked needs the
-  // fetched tasks, but useTasks needs page/status from URL params.
-  const search = useSearch({ from: '/$projectId/' });
-  const page = search.page ?? 1;
-  // Parse status from URL for the server-side query. The same parsing happens
-  // inside useTaskFiltersUrlBacked for client-side filtering; we duplicate it
-  // here because useTasks must be called before useTaskFiltersUrlBacked (which
-  // depends on the fetched tasks).
-  const statusParam = useMemo(() => {
-    if (!search.status) return undefined;
-    const parts = search.status.split(',').filter(Boolean);
-    // Server accepts a single status filter. When the user selects exactly one
-    // status chip, push it to the server for a tighter result set.
-    return parts.length === 1 ? parts[0] : undefined;
-  }, [search.status]);
+  const taskFilters = useTaskFiltersUrlBacked();
+  const { page, statusFilter, agentFilter, priorityFilter, sortColumn, sortDir } = taskFilters;
   const offset = (page - 1) * PAGE_SIZE;
-  const tasks = useTasks({ limit: PAGE_SIZE, offset, status: statusParam });
-  const taskFilters = useTaskFiltersUrlBacked(tasks.data?.tasks ?? []);
+  const tasks = useTasks({
+    limit: PAGE_SIZE,
+    offset,
+    status: statusFilter.size > 0 ? [...statusFilter] : undefined,
+    agent: agentFilter.size > 0 ? [...agentFilter] : undefined,
+    priority: priorityFilter.size > 0 ? [...priorityFilter] : undefined,
+    sort: sortColumn ?? undefined,
+    dir: sortDir ?? undefined,
+  });
   const ubt = useUbtStatus();
   const [syncing, setSyncing] = useState(false);
 

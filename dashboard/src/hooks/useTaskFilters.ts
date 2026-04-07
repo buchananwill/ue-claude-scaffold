@@ -150,8 +150,12 @@ export function useTaskFilters(tasks: Task[]) {
 /**
  * URL-backed variant of useTaskFilters. Must only be used in components rendered
  * under the `/$projectId/` route, as it reads/writes search params via that route.
+ *
+ * Unlike useTaskFilters, this variant does NOT do client-side filtering or sorting.
+ * It only manages filter/sort state (backed by URL search params). The caller is
+ * responsible for forwarding filter values to useTasks() for server-side filtering.
  */
-export function useTaskFiltersUrlBacked(tasks: Task[]) {
+export function useTaskFiltersUrlBacked() {
   const search = useSearch({ from: '/$projectId/' });
   const navigate = useNavigate({ from: '/$projectId/' });
 
@@ -211,15 +215,24 @@ export function useTaskFiltersUrlBacked(tasks: Task[]) {
     navigate({ search: (prev) => ({ ...prev, status: undefined, agent: undefined, priority: undefined, sort: undefined, dir: undefined, page: undefined }) });
   };
 
-  const filters: FilterState = { statusFilter, agentFilter, priorityFilter, sortColumn, sortDir, setStatusFilter, setAgentFilter, setPriorityFilter, cycleSort, clearAllFilters };
-  const derived = useFilteredTasks(tasks, filters);
+  const hasActiveFilters = agentFilter.size > 0 || priorityFilter.size > 0 || statusFilter.size > 0 || sortColumn !== null;
 
   return {
-    ...filters,
-    ...derived,
+    statusFilter,
+    agentFilter,
+    priorityFilter,
+    sortColumn,
+    sortDir,
+    setStatusFilter,
+    setAgentFilter,
+    setPriorityFilter,
+    cycleSort,
+    clearAllFilters,
+    hasActiveFilters,
     page,
     setPage,
   };
 }
 
 export type TaskFilters = ReturnType<typeof useTaskFilters>;
+export type TaskFiltersUrlBacked = ReturnType<typeof useTaskFiltersUrlBacked>;
