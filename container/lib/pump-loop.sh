@@ -42,7 +42,7 @@ _poll_and_claim_task() {
             if [[ ! "$CURRENT_TASK_ID" =~ ^[0-9a-zA-Z_-]+$ ]]; then
                 echo "ERROR: Received malformed task ID from server: $CURRENT_TASK_ID" >&2
                 PUMP_STATUS="circuit_break"
-                return
+                return 1
             fi
             CURRENT_TASK_TITLE=$(echo "$body" | jq -r '.task.title // "Untitled"')
             CURRENT_TASK_DESC=$(echo "$body" | jq -r '.task.description // ""')

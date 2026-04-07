@@ -24,8 +24,7 @@ _setup_mcp_config() {
                 }
             }' > /home/claude/.claude/mcp.json
         echo ""
-        echo "── Resolved MCP config (chat mode) ──"
-        cat /home/claude/.claude/mcp.json
+        echo "MCP config written to /home/claude/.claude/mcp.json"
         echo ""
     else
         jq -n '{"mcpServers": {}}' > /home/claude/.claude/mcp.json
