@@ -116,6 +116,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
 
     return {
       id: team.id,
+      projectId: team.projectId,
       name: team.name,
       briefPath: team.briefPath,
       status: team.status,

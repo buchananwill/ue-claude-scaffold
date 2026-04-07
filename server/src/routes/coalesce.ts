@@ -66,6 +66,72 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     return { paused: pausedAgents, inFlightTasks };
   });
 
+  // POST /coalesce/drain — run the full drain state machine:
+  //   1. Pause pump agents
+  //   2. Poll until canCoalesce or timeout
+  //   3. Return final status
+  fastify.post<{
+    Body: { timeout?: number; projectId?: string };
+  }>('/coalesce/drain', async (request, reply) => {
+    const body = (request.body ?? {}) as { timeout?: number; projectId?: string };
+    const projectId = body.projectId ?? request.projectId;
+    const timeout = Math.min(Math.max(body.timeout ?? 600, 1), 3600);
+    const db = getDb();
+
+    // 1. Pause pump agents
+    await coalesceQ.pausePumpAgents(db, projectId);
+    const pausedAgents = await coalesceQ.getPausedAgentNames(db, projectId);
+    const inFlightRows = await coalesceQ.getInFlightTasks(db, projectId);
+
+    // 2. Poll until canCoalesce or timeout
+    const pollIntervalMs = 2000;
+    const deadline = Date.now() + timeout * 1000;
+    let timedOut = false;
+
+    while (Date.now() < deadline) {
+      const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
+      const agentRows = await agentsQ.getAll(db, projectId);
+      const pumpAgents = agentRows.filter(a => a.mode === 'pump');
+      const allPumpIdle = pumpAgents.every(a =>
+        ['idle', 'done', 'paused'].includes(a.status));
+
+      if (activeTaskCount === 0 && allPumpIdle) {
+        break;
+      }
+
+      if (Date.now() + pollIntervalMs >= deadline) {
+        timedOut = true;
+        break;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+    }
+
+    // 3. Return final status
+    const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
+    const pendingCount = await coalesceQ.countPendingTasks(db, projectId);
+    const claimedFileCount = await coalesceQ.countClaimedFiles(db, projectId);
+    const agentRows = await agentsQ.getAll(db, projectId);
+    const pumpAgents = agentRows.filter(a => a.mode === 'pump');
+    const allPumpIdle = pumpAgents.every(a =>
+      ['idle', 'done', 'paused'].includes(a.status));
+    const canCoalesce = activeTaskCount === 0 && allPumpIdle;
+
+    return {
+      drained: canCoalesce,
+      timedOut: timedOut ?? false,
+      paused: pausedAgents,
+      inFlightAtStart: inFlightRows.map(r => ({
+        agent: r.claimedBy,
+        taskId: r.id,
+        title: r.title,
+      })),
+      activeTasks: activeTaskCount,
+      pendingTasks: pendingCount,
+      totalClaimedFiles: claimedFileCount,
+    };
+  });
+
   fastify.post('/coalesce/release', async (request) => {
     const projectId = request.projectId;
     const db = getDb();
