@@ -154,6 +154,7 @@ describe('GET /status', () => {
       channel: 'general',
       type: 'status_update',
       payload: { message: 'msg 1 for since=0 test' },
+      projectId: 'default',
     });
 
     const id2 = await msgQ.insert(db, {
@@ -161,11 +162,13 @@ describe('GET /status', () => {
       channel: 'general',
       type: 'status_update',
       payload: { message: 'msg 2 for since=0 test' },
+      projectId: 'default',
     });
 
     const resSince0 = await ctx.app.inject({
       method: 'GET',
       url: '/status?since=0',
+      headers: { 'x-project-id': 'default' },
     });
 
     assert.equal(resSince0.statusCode, 200);

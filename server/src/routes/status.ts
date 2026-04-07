@@ -26,9 +26,15 @@ const statusPlugin: FastifyPluginAsync = async (fastify) => {
       sinceNum = parsed;
     }
 
-    // Clamp taskLimit to [1, 200]
-    const parsedLimit = Number(taskLimit);
-    const taskLimitNum = Math.min(Math.max(1, Math.floor(Number.isFinite(parsedLimit) ? parsedLimit : 20)), 200);
+    // Validate and clamp taskLimit to [1, 200]
+    let taskLimitNum = 20;
+    if (taskLimit != null && taskLimit !== '') {
+      const parsedLimit = Number(taskLimit);
+      if (!Number.isFinite(parsedLimit) || parsedLimit < 1 || parsedLimit !== Math.floor(parsedLimit)) {
+        return reply.badRequest('taskLimit must be a positive integer');
+      }
+      taskLimitNum = Math.min(parsedLimit, 200);
+    }
 
     const db = getDb();
     const projectFilter = projectId;

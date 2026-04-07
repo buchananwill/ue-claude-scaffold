@@ -47,6 +47,10 @@ while [[ $# -gt 0 ]]; do
       fi
       CURSOR="$2"; shift 2 ;;
     --project)
+      if [[ -z "${2:-}" ]]; then
+        echo "Error: --project requires an argument" >&2
+        exit 1
+      fi
       PROJECT_ID="$2"; shift 2 ;;
     --help)
       usage; exit 0 ;;
@@ -225,11 +229,11 @@ print_status() {
       # summary is not declared local here — we are inside a piped subshell
       # where local is redundant
       if [[ "$type" == "summary" ]]; then
-        summary=$(echo "$payload" | jq -r '.summary // .' 2>/dev/null || echo "$payload")
+        summary=$(printf '%s' "$payload" | jq -r '.summary // .' 2>/dev/null || printf '%s' "$payload")
         printf '  [%b] %b  %s\n' "${C_DIM}${timestamp}${C_RESET}" "${C_BOLD}${agent}${C_RESET}" "$type"
-        echo "$summary" | sed 's/^/    /'
+        printf '%s\n' "$summary" | sed 's/^/    /'
       else
-        summary=$(echo "$payload" | jq -r 'if type == "object" then (to_entries | map("\(.key)=\(.value)") | join(", ")) else . end' 2>/dev/null || echo "$payload")
+        summary=$(printf '%s' "$payload" | jq -r 'if type == "object" then (to_entries | map("\(.key)=\(.value)") | join(", ")) else . end' 2>/dev/null || printf '%s' "$payload")
         printf '  [%b] %b  %s  %s\n' "${C_DIM}${timestamp}${C_RESET}" "${C_BOLD}${agent}${C_RESET}" "$type" "$summary"
       fi
     done
@@ -238,7 +242,7 @@ print_status() {
     # subsequent iterations in --follow mode only fetch newer messages.
     local max_id
     max_id=$(echo "$status_json" | jq '[.messages[].id] | max')
-    if [[ "$max_id" != "null" && -n "$max_id" ]]; then
+    if [[ "$max_id" =~ ^[0-9]+$ ]]; then
       CURSOR="$max_id"
     fi
   fi

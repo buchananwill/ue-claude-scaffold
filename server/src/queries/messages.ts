@@ -56,7 +56,7 @@ export async function list(db: DrizzleDb, opts: ListOpts = {}) {
     const query = db
       .select()
       .from(messages)
-      .where(and(...conditions))
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(asc(messages.id));
     if (opts.limit != null) {
       return query.limit(opts.limit);
