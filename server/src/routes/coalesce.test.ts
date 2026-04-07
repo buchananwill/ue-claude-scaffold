@@ -335,11 +335,12 @@ describe('coalesce routes (drizzle)', () => {
     assert.equal(body.activeTasks, 1);
   });
 
-  it('POST /coalesce/drain accepts projectId in body', async () => {
+  it('POST /coalesce/drain uses X-Project-Id header for project scoping', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/coalesce/drain',
-      payload: { timeout: 1, projectId: 'my-project' },
+      headers: { 'x-project-id': 'my-project' },
+      payload: { timeout: 1 },
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();

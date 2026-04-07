@@ -20,17 +20,20 @@ _signal_stop() {
   curl -sf -X DELETE "${base_url}/agents/${agent_name}" --max-time 5 >/dev/null 2>&1 || true
 }
 
-# _signal_and_stop_projects <base_url> <compose_dir> <project_names...>
+# _signal_and_stop_projects <base_url> <compose_dir> [project_id] <project_names...>
 #   For each docker compose project name:
-#     1. Extracts the agent name (everything after the last '-' prefix pair)
+#     1. Extracts the agent name using the known project_id
 #     2. Signals the coordination server to set agent status to 'stopping'
 #     3. Runs docker compose down
 #   Project names must follow the convention: claude-<project_id>-<agent_name>
+#   If project_id is empty, the signal step is skipped (drain mode already
+#   paused agents server-side, and default stop is a hard kill).
 #   Prints a count of stopped containers on completion.
 _signal_and_stop_projects() {
   local base_url="$1"
   local compose_dir="$2"
-  shift 2
+  local project_id="$3"
+  shift 3
 
   if [[ $# -eq 0 ]]; then
     echo "No containers to stop."
@@ -46,11 +49,13 @@ _signal_and_stop_projects() {
   for project in "${projects[@]}"; do
     # Extract agent name: strip "claude-<project_id>-" prefix.
     # The project name format is claude-${PROJECT_ID}-${AGENT_NAME}.
-    # We strip "claude-" first, then strip everything up to and including
-    # the first remaining "-" to get the agent name.
-    local remainder="${project#claude-}"
-    agent_name="${remainder#*-}"
-    if [[ -z "$agent_name" || "$agent_name" == "$remainder" ]]; then
+    if [[ -z "$project_id" ]]; then
+      # No project_id known — skip signal (drain already paused server-side,
+      # default stop is a hard kill).
+      continue
+    fi
+    agent_name="${project#claude-${project_id}-}"
+    if [[ -z "$agent_name" || "$agent_name" == "$project" ]]; then
       echo "Warning: could not extract agent name from project: $project" >&2
       continue
     fi

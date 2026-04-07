@@ -71,10 +71,10 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
   //   2. Poll until canCoalesce or timeout
   //   3. Return final status
   fastify.post<{
-    Body: { timeout?: number; projectId?: string };
+    Body: { timeout?: number };
   }>('/coalesce/drain', async (request, reply) => {
-    const body = (request.body ?? {}) as { timeout?: number; projectId?: string };
-    const projectId = body.projectId ?? request.projectId;
+    const body = (request.body ?? {}) as { timeout?: number };
+    const projectId = request.projectId;
     const timeout = Math.min(Math.max(body.timeout ?? 600, 1), 3600);
     const db = getDb();
 
@@ -86,7 +86,6 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     // 2. Poll until canCoalesce or timeout
     const pollIntervalMs = 2000;
     const deadline = Date.now() + timeout * 1000;
-    let timedOut = false;
 
     while (Date.now() < deadline) {
       const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
@@ -100,14 +99,14 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
       }
 
       if (Date.now() + pollIntervalMs >= deadline) {
-        timedOut = true;
         break;
       }
 
       await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
     }
 
-    // 3. Return final status
+    // 3. Final status check — timedOut is determined by whether we actually drained
+    // (Fastify's default error handler sanitizes any uncaught errors in responses)
     const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
     const pendingCount = await coalesceQ.countPendingTasks(db, projectId);
     const claimedFileCount = await coalesceQ.countClaimedFiles(db, projectId);
@@ -116,10 +115,11 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     const allPumpIdle = pumpAgents.every(a =>
       ['idle', 'done', 'paused'].includes(a.status));
     const canCoalesce = activeTaskCount === 0 && allPumpIdle;
+    const timedOut = !canCoalesce;
 
     return {
       drained: canCoalesce,
-      timedOut: timedOut ?? false,
+      timedOut,
       paused: pausedAgents,
       inFlightAtStart: inFlightRows.map(r => ({
         agent: r.claimedBy,
@@ -137,10 +137,10 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     const db = getDb();
 
     const result = await db.transaction(async (tx) => {
-      const fileCount = await coalesceQ.countClaimedFiles(tx as any, projectId);
-      const agentNames = await coalesceQ.getPausedAgentNames(tx as any, projectId);
-      await coalesceQ.releaseAllFiles(tx as any, projectId);
-      await coalesceQ.resumePausedAgents(tx as any, projectId);
+      const fileCount = await coalesceQ.countClaimedFiles(tx, projectId);
+      const agentNames = await coalesceQ.getPausedAgentNames(tx, projectId);
+      await coalesceQ.releaseAllFiles(tx, projectId);
+      await coalesceQ.resumePausedAgents(tx, projectId);
       return { releasedFiles: fileCount, resumedAgents: agentNames };
     });
 

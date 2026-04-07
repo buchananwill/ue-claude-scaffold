@@ -122,7 +122,7 @@ COMPOSE_DIR="$SCRIPT_DIR/container"
 _find_claude_projects() {
   local -a projects=()
   mapfile -t projects < <(docker ps --filter "label=com.docker.compose.project" --format '{{index .Labels "com.docker.compose.project"}}' 2>/dev/null | \
-    grep -oP 'claude-[^,]+' | sort -u)
+    grep -o 'claude-[^ ,]*' | sort -u)
 
   # When --project is set, filter to only agents registered under that project
   if [[ -n "$PROJECT_ID" && ${#projects[@]} -gt 0 ]]; then
@@ -159,7 +159,7 @@ if [[ "$MODE" == "default" ]]; then
     echo "No running claude-* containers found."
     exit 0
   fi
-  _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "${_projects[@]}"
+  _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "$PROJECT_ID" "${_projects[@]}"
   exit 0
 fi
 
@@ -169,7 +169,7 @@ if [[ "$MODE" == "agent" ]]; then
   compose_project_name="claude-${project_prefix}-${AGENT_NAME}"
 
   echo "Stopping agent: $AGENT_NAME (project: $project_prefix)..."
-  _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "$compose_project_name"
+  _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "$project_prefix" "$compose_project_name"
   exit 0
 fi
 
@@ -186,6 +186,11 @@ if [[ "$MODE" == "team" ]]; then
   # Extract projectId from team response; fall back to --project flag or 'default'
   team_project_id=$(echo "$TEAM_RESPONSE" | jq -r '.projectId // empty' 2>/dev/null)
   team_project_id="${team_project_id:-${PROJECT_ID:-default}}"
+
+  if [[ ! "$team_project_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: team_project_id contains invalid characters: $team_project_id" >&2
+    exit 1
+  fi
 
   mapfile -t _members < <(echo "$TEAM_RESPONSE" | jq -r '.members[].agentName' 2>/dev/null) || {
     echo "Error: Could not parse member list from team response" >&2
@@ -207,7 +212,7 @@ if [[ "$MODE" == "team" ]]; then
   done
 
   if [[ ${#local_projects[@]} -gt 0 ]]; then
-    _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "${local_projects[@]}"
+    _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "$team_project_id" "${local_projects[@]}"
   fi
 
   # Dissolve team
@@ -227,11 +232,8 @@ fi
 if [[ "$MODE" == "drain" ]]; then
   echo "=== Drain Mode ==="
 
-  # Build the drain request body
-  drain_body="{\"timeout\":${TIMEOUT}}"
-  if [[ -n "$PROJECT_ID" ]]; then
-    drain_body="{\"timeout\":${TIMEOUT},\"projectId\":\"${PROJECT_ID}\"}"
-  fi
+  # Build the drain request body (project scoping via X-Project-Id header only)
+  drain_body=$(jq -n --argjson timeout "$TIMEOUT" '{timeout: $timeout}')
 
   # Call the server-side drain endpoint which runs the full state machine
   echo "Requesting drain from coordination server (timeout: ${TIMEOUT}s)..."
@@ -267,7 +269,7 @@ if [[ "$MODE" == "drain" ]]; then
   if [[ ${#_projects[@]} -eq 0 ]]; then
     echo "No running claude-* containers found."
   else
-    _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "${_projects[@]}"
+    _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "$PROJECT_ID" "${_projects[@]}"
   fi
 
   # Print summary with next steps

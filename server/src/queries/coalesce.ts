@@ -1,6 +1,8 @@
 import { eq, and, sql, isNotNull, count as countFn, inArray } from 'drizzle-orm';
 import { tasks, files, agents } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
+import type { DrizzleDb, DrizzleTx } from '../drizzle-instance.js';
+
+type DbOrTx = DrizzleDb | DrizzleTx;
 
 const ACTIVE_STATUSES = ['claimed', 'in_progress'];
 
@@ -41,7 +43,7 @@ export async function countPendingTasks(db: DrizzleDb, projectId?: string): Prom
   return Number(rows[0].count);
 }
 
-export async function countClaimedFiles(db: DrizzleDb, projectId?: string): Promise<number> {
+export async function countClaimedFiles(db: DbOrTx, projectId?: string): Promise<number> {
   const conditions = [isNotNull(files.claimant)];
   if (projectId) {
     conditions.push(eq(files.projectId, projectId));
@@ -94,7 +96,7 @@ export async function getInFlightTasks(db: DrizzleDb, projectId?: string) {
     .where(and(...conditions));
 }
 
-export async function releaseAllFiles(db: DrizzleDb, projectId?: string) {
+export async function releaseAllFiles(db: DbOrTx, projectId?: string) {
   const conditions = [isNotNull(files.claimant)];
   if (projectId) {
     conditions.push(eq(files.projectId, projectId));
@@ -105,7 +107,7 @@ export async function releaseAllFiles(db: DrizzleDb, projectId?: string) {
     .where(and(...conditions));
 }
 
-export async function resumePausedAgents(db: DrizzleDb, projectId?: string) {
+export async function resumePausedAgents(db: DbOrTx, projectId?: string) {
   const conditions = [eq(agents.status, 'paused')];
   if (projectId) {
     conditions.push(eq(agents.projectId, projectId));
@@ -116,7 +118,7 @@ export async function resumePausedAgents(db: DrizzleDb, projectId?: string) {
     .where(and(...conditions));
 }
 
-export async function getPausedAgentNames(db: DrizzleDb, projectId?: string): Promise<string[]> {
+export async function getPausedAgentNames(db: DbOrTx, projectId?: string): Promise<string[]> {
   const conditions = [eq(agents.status, 'paused')];
   if (projectId) {
     conditions.push(eq(agents.projectId, projectId));
