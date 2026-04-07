@@ -9,7 +9,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import type { DrizzleDb } from './drizzle-instance.js';
 import type { MergedProjectConfig } from './config.js';
-import { seedBranchFor, agentBranchFor, AGENT_NAME_RE } from './branch-naming.js';
+import { seedBranchFor, AGENT_NAME_RE } from './branch-naming.js';
 import { ensureAgentBranch } from './branch-ops.js';
 import * as teamsQ from './queries/teams.js';
 import * as roomsQ from './queries/rooms.js';

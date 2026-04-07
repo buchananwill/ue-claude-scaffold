@@ -8,9 +8,6 @@ import { AGENT_NAME_RE } from '../branch-naming.js';
 import * as teamsQ from '../queries/teams.js';
 import * as roomsQ from '../queries/rooms.js';
 
-/** Regex for valid team id values. */
-const TEAM_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
-
 const VALID_STATUSES = ['active', 'converging', 'dissolved'] as const;
 
 /** Regex for safe briefPath values — no path traversal, no absolute paths. */
@@ -36,7 +33,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     const db = getDb();
 
     // Validate team id format
-    if (!TEAM_ID_RE.test(id)) {
+    if (!AGENT_NAME_RE.test(id)) {
       return reply.badRequest('Invalid team id — must match ^[a-zA-Z0-9_-]{1,64}$');
     }
 
@@ -219,8 +216,13 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     let project;
     try {
       project = await resolveProject(config, db, projectId);
-    } catch {
-      return reply.badRequest(`Unknown project: "${projectId}"`);
+    } catch (err: unknown) {
+      fastify.log.error(err, 'resolveProject failed for projectId=%s', projectId);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('not found') || msg.includes('unknown') || msg.includes('Unknown')) {
+        return reply.badRequest(`Unknown project: "${projectId}"`);
+      }
+      return reply.badRequest(`Failed to resolve project "${projectId}": ${msg}`);
     }
 
     // Derive teamsDir server-side from config directory

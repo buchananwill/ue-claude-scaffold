@@ -77,7 +77,16 @@ echo "  Members: $MEMBER_COUNT"
 echo ""
 
 # -- Launch containers for each member ----------------------------------------
-# Leader is first in the array (server sorts leader-first)
+# Leader must be first in the array (server sorts leader-first).
+# Extract and verify the leader before launching anyone.
+_LEADER_JSON=$(echo "$LAUNCH_RESPONSE" | jq -c '.members[0]')
+_LEADER_CHECK=$(echo "$_LEADER_JSON" | jq -r '.isLeader')
+if [[ "$_LEADER_CHECK" != "true" ]]; then
+  echo "Error: first member in launch response is not the leader (isLeader=$_LEADER_CHECK)." >&2
+  echo "  The server must return leader-first ordering." >&2
+  exit 1
+fi
+
 FIRST=true
 while IFS= read -r member; do
   _NAME=$(echo "$member" | jq -r '.agentName')
@@ -94,6 +103,9 @@ while IFS= read -r member; do
     echo "Error: server returned invalid branch: $_BRANCH" >&2; exit 1
   fi
   _ROLE=$(echo "$member" | jq -r '.role')
+  if [[ ! "$_ROLE" =~ ^[a-zA-Z0-9\ _-]{1,128}$ ]]; then
+    echo "Error: server returned invalid role: $_ROLE" >&2; exit 1
+  fi
   _IS_LEADER=$(echo "$member" | jq -r '.isLeader')
   _HOOK_BUILD=$(echo "$member" | jq -r '.hooks.buildIntercept')
   _HOOK_LINT=$(echo "$member" | jq -r '.hooks.cppLint')
