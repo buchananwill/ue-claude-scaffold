@@ -190,8 +190,17 @@ echo ""
 # MCP config is written after agent registration (needs SESSION_TOKEN)
 
 # ── Symlink read-only plugin mounts ──────────────────────────────────────────
-if [ -f /patch_workspace.py ] && [ -d /plugins-ro ]; then
-    python3 /patch_workspace.py
+if [ -d /plugins-ro ]; then
+    mkdir -p /workspace/Plugins
+    for plugin_dir in /plugins-ro/*/; do
+        [ -d "$plugin_dir" ] || continue
+        plugin_name="$(basename "$plugin_dir")"
+        link="/workspace/Plugins/$plugin_name"
+        if [ ! -e "$link" ]; then
+            ln -sfn "$plugin_dir" "$link"
+            echo "Symlinked $plugin_dir -> $link"
+        fi
+    done
 fi
 
 # ── Register with coordination server ────────────────────────────────────────
