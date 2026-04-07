@@ -121,9 +121,30 @@ describe('buildSettingsJson', () => {
   it('hook commands use /claude-hooks/ prefix', () => {
     const opts: SettingsOpts = { buildIntercept: true, cppLint: true, gitSync: true, workspaceReadonly: false };
     const result = buildSettingsJson(opts);
-    const cmds = getBashHookCommands(result);
 
-    for (const cmd of cmds) {
+    // Collect all hook commands from all matchers (PreToolUse + PostToolUse)
+    const allCommands: string[] = [];
+    for (const matcher of getPreMatchers(result)) {
+      for (const h of matcher.hooks) {
+        allCommands.push(h.command);
+      }
+    }
+    const post = getPostMatchers(result);
+    if (post) {
+      for (const matcher of post) {
+        for (const h of matcher.hooks) {
+          allCommands.push(h.command);
+        }
+      }
+    }
+
+    // Ensure we actually collected commands from Bash, Edit, and Write matchers
+    assert.ok(allCommands.length > 0, 'Expected at least one hook command');
+    const matcherNames = getPreMatchers(result).map(m => m.matcher);
+    assert.ok(matcherNames.includes('Edit'), 'Expected Edit matcher');
+    assert.ok(matcherNames.includes('Write'), 'Expected Write matcher');
+
+    for (const cmd of allCommands) {
       assert.ok(cmd.includes('/claude-hooks/'), `Expected /claude-hooks/ in: ${cmd}`);
     }
   });

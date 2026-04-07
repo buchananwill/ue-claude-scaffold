@@ -71,11 +71,23 @@ const containerSettingsPlugin: FastifyPluginAsync = async (app) => {
     async (request, reply): Promise<McpJson> => {
       const chatRoom = request.query.chatRoom || null;
       const serverUrl = request.query.serverUrl || '';
-      const sessionToken = (request.headers['x-session-token'] as string) || '';
+      const rawToken = request.headers['x-session-token'];
+      const tokenStr = Array.isArray(rawToken) ? rawToken[0] : (rawToken ?? '');
+      // Handle comma-joined multi-value headers (HTTP spec allows this)
+      const sessionToken = tokenStr.split(',')[0].trim();
 
-      // When chatRoom is set, serverUrl must be non-empty
+      // Validate chatRoom format if provided
+      if (chatRoom && !/^[a-zA-Z0-9_-]+$/.test(chatRoom)) {
+        return reply.badRequest('chatRoom must match ^[a-zA-Z0-9_-]+$');
+      }
+
+      // When chatRoom is set, serverUrl must be a valid URL
       if (chatRoom && !serverUrl) {
         return reply.badRequest('serverUrl query param is required when chatRoom is set');
+      }
+
+      if (serverUrl && !/^https?:\/\//.test(serverUrl)) {
+        return reply.badRequest('serverUrl must start with http:// or https://');
       }
 
       // When chatRoom is set, sessionToken header is required

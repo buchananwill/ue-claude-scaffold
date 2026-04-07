@@ -1,4 +1,4 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import containerSettingsPlugin from './container-settings.js';
@@ -6,12 +6,12 @@ import containerSettingsPlugin from './container-settings.js';
 describe('GET /agents/:name/settings.json', () => {
   let ctx: DrizzleTestContext;
 
-  before(async () => {
+  beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(containerSettingsPlugin);
   });
 
-  after(async () => {
+  afterEach(async () => {
     await ctx?.app.close();
     await ctx?.cleanup();
   });
@@ -60,12 +60,12 @@ describe('GET /agents/:name/settings.json', () => {
 describe('GET /agents/:name/mcp.json', () => {
   let ctx: DrizzleTestContext;
 
-  before(async () => {
+  beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(containerSettingsPlugin);
   });
 
-  after(async () => {
+  afterEach(async () => {
     await ctx?.app.close();
     await ctx?.cleanup();
   });
@@ -128,5 +128,34 @@ describe('GET /agents/:name/mcp.json', () => {
       url: '/agents/bad%20name!!/mcp.json',
     });
     assert.equal(res.statusCode, 400);
+  });
+
+  it('rejects serverUrl without http(s) scheme', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/agents/test-agent/mcp.json?chatRoom=room&serverUrl=ftp://evil.com',
+      headers: { 'x-session-token': 'tok-abc' },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('rejects chatRoom with invalid characters', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/agents/test-agent/mcp.json?chatRoom=bad%20room!&serverUrl=http://localhost:9100',
+      headers: { 'x-session-token': 'tok-abc' },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('handles array x-session-token header gracefully', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/agents/test-agent/mcp.json?chatRoom=room&serverUrl=http://localhost:9100',
+      headers: { 'x-session-token': ['tok-first', 'tok-second'] },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.mcpServers.chat.env.SESSION_TOKEN, 'tok-first');
   });
 });
