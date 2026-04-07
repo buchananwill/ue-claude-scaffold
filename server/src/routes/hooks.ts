@@ -1,7 +1,9 @@
 // Stateless computation endpoint. No auth required — relies on network isolation.
 import type { FastifyPluginAsync } from 'fastify';
+// ajv ships as CJS; under NodeNext module resolution the default import is
+// the namespace object, not the class directly.  Access the class via .default.
 import AjvModule from 'ajv';
-const Ajv = AjvModule.default ?? AjvModule;
+const Ajv = AjvModule.default;
 import { resolveHooks, type HookResolutionInput } from '../hook-resolution.js';
 
 const hookFlagsSchema = {
@@ -15,7 +17,7 @@ const hookFlagsSchema = {
 
 const hooksPlugin: FastifyPluginAsync = async (fastify) => {
   // Disable type coercion so string values like "true" are rejected as non-boolean.
-  const ajv = new (Ajv as any)({ coerceTypes: false, allErrors: true });
+  const ajv = new Ajv({ coerceTypes: false, allErrors: true });
 
   fastify.setValidatorCompiler(({ schema }) => {
     return ajv.compile(schema);

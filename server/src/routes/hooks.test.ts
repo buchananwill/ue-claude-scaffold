@@ -1,24 +1,23 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import Fastify, { type FastifyInstance } from 'fastify';
-import sensible from '@fastify/sensible';
+import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import hooksPlugin from './hooks.js';
 
 describe('POST /hooks/resolve', () => {
-  let app: FastifyInstance;
+  let ctx: DrizzleTestContext;
 
-  before(async () => {
-    app = Fastify({ logger: false });
-    await app.register(sensible);
-    await app.register(hooksPlugin);
+  beforeEach(async () => {
+    ctx = await createDrizzleTestApp();
+    await ctx.app.register(hooksPlugin);
   });
 
-  after(async () => {
-    await app?.close();
+  afterEach(async () => {
+    await ctx.app.close();
+    await ctx.cleanup();
   });
 
   it('valid body returns 200 with correct resolved hooks', async () => {
-    const res = await app.inject({
+    const res = await ctx.app.inject({
       method: 'POST',
       url: '/hooks/resolve',
       payload: { hasBuildScript: true },
@@ -30,7 +29,7 @@ describe('POST /hooks/resolve', () => {
   });
 
   it('missing hasBuildScript returns 400', async () => {
-    const res = await app.inject({
+    const res = await ctx.app.inject({
       method: 'POST',
       url: '/hooks/resolve',
       payload: {},
@@ -39,7 +38,7 @@ describe('POST /hooks/resolve', () => {
   });
 
   it('hasBuildScript as string returns 400', async () => {
-    const res = await app.inject({
+    const res = await ctx.app.inject({
       method: 'POST',
       url: '/hooks/resolve',
       payload: { hasBuildScript: 'true' },
@@ -48,7 +47,7 @@ describe('POST /hooks/resolve', () => {
   });
 
   it('projectHooks.buildIntercept as string returns 400', async () => {
-    const res = await app.inject({
+    const res = await ctx.app.inject({
       method: 'POST',
       url: '/hooks/resolve',
       payload: {
@@ -60,7 +59,7 @@ describe('POST /hooks/resolve', () => {
   });
 
   it('empty body returns 400', async () => {
-    const res = await app.inject({
+    const res = await ctx.app.inject({
       method: 'POST',
       url: '/hooks/resolve',
       headers: { 'content-type': 'application/json' },
@@ -70,7 +69,7 @@ describe('POST /hooks/resolve', () => {
   });
 
   it('valid cascade with all levels set, CLI wins', async () => {
-    const res = await app.inject({
+    const res = await ctx.app.inject({
       method: 'POST',
       url: '/hooks/resolve',
       payload: {
