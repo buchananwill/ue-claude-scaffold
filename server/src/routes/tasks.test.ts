@@ -753,6 +753,11 @@ describe('tasks routes', () => {
       assert.ok(body.message.includes('cannot bulk-delete'));
     });
 
+    it('returns 409 for in_progress status (protected)', async () => {
+      const res = await ctx.app.inject({ method: 'DELETE', url: '/tasks?status=in_progress', headers: { 'x-project-id': 'test' } });
+      assert.equal(res.statusCode, 409);
+    });
+
     it('scopes deletion to the requesting project', async () => {
       // Insert a task in project "alpha"
       await ctx.app.inject({

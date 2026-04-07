@@ -364,7 +364,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if (sort) {
       if (!tasksCore.VALID_SORT_COLUMNS.includes(sort)) {
         return reply.badRequest(
-          `Invalid sort column: "${sort}". Valid columns: ${tasksCore.VALID_SORT_COLUMNS.join(', ')}`
+          `Invalid sort column: "${sort.slice(0, 32)}". Valid columns: ${tasksCore.VALID_SORT_COLUMNS.join(', ')}`
         );
       }
       sortCol = sort as tasksCore.SortColumn;
