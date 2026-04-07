@@ -6,6 +6,7 @@
 export interface ClassifyExitInput {
   logTail: string;
   elapsedSeconds: number;
+  /** Total line count of the full log file, not the length of logTail. */
   outputLineCount: number;
 }
 

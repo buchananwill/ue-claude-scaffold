@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import exitClassifyPlugin from './exit-classify.js';
 
-describe('POST /agents/:name/exit:classify', () => {
+describe('POST /agents/:name/exit-classify', () => {
   let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
@@ -19,7 +19,7 @@ describe('POST /agents/:name/exit:classify', () => {
   it('returns abnormal=true for auth failure log', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/agents/test-agent/exit:classify',
+      url: '/agents/test-agent/exit-classify',
       payload: {
         logTail: 'Failed to authenticate. API Error: 401',
         elapsedSeconds: 30,
@@ -35,7 +35,7 @@ describe('POST /agents/:name/exit:classify', () => {
   it('returns abnormal=true for token exhaustion', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/agents/test-agent/exit:classify',
+      url: '/agents/test-agent/exit-classify',
       payload: {
         logTail: 'token limit exceeded for this session',
         elapsedSeconds: 120,
@@ -51,7 +51,7 @@ describe('POST /agents/:name/exit:classify', () => {
   it('returns abnormal=true for rapid exit', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/agents/test-agent/exit:classify',
+      url: '/agents/test-agent/exit-classify',
       payload: {
         logTail: 'exited',
         elapsedSeconds: 2,
@@ -67,7 +67,7 @@ describe('POST /agents/:name/exit:classify', () => {
   it('returns abnormal=false for clean exit', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/agents/test-agent/exit:classify',
+      url: '/agents/test-agent/exit-classify',
       payload: {
         logTail: 'All tasks completed successfully.',
         elapsedSeconds: 600,
@@ -83,7 +83,7 @@ describe('POST /agents/:name/exit:classify', () => {
   it('returns 400 for missing required fields', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/agents/test-agent/exit:classify',
+      url: '/agents/test-agent/exit-classify',
       payload: { logTail: 'some log' },
     });
     assert.equal(res.statusCode, 400);
@@ -92,7 +92,7 @@ describe('POST /agents/:name/exit:classify', () => {
   it('returns 400 for negative elapsedSeconds', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
-      url: '/agents/test-agent/exit:classify',
+      url: '/agents/test-agent/exit-classify',
       payload: {
         logTail: 'test',
         elapsedSeconds: -1,

@@ -98,6 +98,36 @@ describe('classifyExit', () => {
     assert.match(result.reason!, /token or rate limit/);
   });
 
+  it('detects "session limit reached"', () => {
+    const result = classifyExit({
+      logTail: 'Error: session limit reached, please start a new conversation',
+      elapsedSeconds: 500,
+      outputLineCount: 300,
+    });
+    assert.equal(result.abnormal, true);
+    assert.match(result.reason!, /token or rate limit/);
+  });
+
+  it('detects "token exhausted"', () => {
+    const result = classifyExit({
+      logTail: 'API token exhausted for current billing cycle',
+      elapsedSeconds: 400,
+      outputLineCount: 250,
+    });
+    assert.equal(result.abnormal, true);
+    assert.match(result.reason!, /token or rate limit/);
+  });
+
+  it('detects "max token reached for this request"', () => {
+    const result = classifyExit({
+      logTail: 'Error: max token reached for this request, truncating response',
+      elapsedSeconds: 200,
+      outputLineCount: 150,
+    });
+    assert.equal(result.abnormal, true);
+    assert.match(result.reason!, /token or rate limit/);
+  });
+
   // --- Rapid exit ---
 
   it('detects rapid exit (<10s, <5 lines)', () => {

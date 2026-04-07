@@ -261,7 +261,7 @@ json.dump(payload, sys.stdout)
         return 1
     fi
 
-    response="$(_curl_server -s -X POST "${SERVER_URL}/agents/${AGENT_NAME}/exit:classify" \
+    response="$(_curl_server -s -X POST "${SERVER_URL}/agents/${AGENT_NAME}/exit-classify" \
         -H "Content-Type: application/json" \
         -d @"$tmpfile" \
         --max-time 10 2>/dev/null)" || {
@@ -271,10 +271,11 @@ json.dump(payload, sys.stdout)
     rm -f "$tmpfile"
 
     local is_abnormal
-    is_abnormal="$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('abnormal','false'))" 2>/dev/null)" || return 1
+    # Python prints True/False for bools; normalize to lowercase for shell comparison
+    is_abnormal="$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(str(d.get('abnormal', False)).lower())" 2>/dev/null)" || return 1
 
-    if [ "$is_abnormal" = "True" ] || [ "$is_abnormal" = "true" ]; then
-        ABNORMAL_REASON="$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reason','unknown'))" 2>/dev/null)" || ABNORMAL_REASON="unknown"
+    if [ "$is_abnormal" = "true" ]; then
+        ABNORMAL_REASON="$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reason') or 'unknown')" 2>/dev/null)" || ABNORMAL_REASON="unknown"
         return 0
     fi
 
@@ -286,18 +287,25 @@ _post_abnormal_shutdown_message() {
     local task_id="${2:-}"
     local tmpfile
     tmpfile=$(mktemp)
-    cat > "$tmpfile" <<JSONEOF
-{
-    "channel": "general",
-    "type": "abnormal_shutdown",
-    "payload": {
-        "agent": "${AGENT_NAME}",
-        "reason": "${reason}",
-        "taskId": "${task_id}",
-        "message": "Agent ${AGENT_NAME} shut down abnormally: ${reason}. Claimed task released. Uncommitted work discarded. Manual restart required."
-    }
+    # Use python3 to safely JSON-encode values, avoiding shell injection
+    python3 -c "
+import json, sys
+agent = sys.argv[1]
+reason = sys.argv[2]
+task_id = sys.argv[3]
+msg = f'Agent {agent} shut down abnormally: {reason}. Claimed task released. Uncommitted work discarded. Manual restart required.'
+payload = {
+    'channel': 'general',
+    'type': 'abnormal_shutdown',
+    'payload': {
+        'agent': agent,
+        'reason': reason,
+        'taskId': task_id,
+        'message': msg,
+    },
 }
-JSONEOF
+json.dump(payload, sys.stdout)
+" "${AGENT_NAME}" "${reason}" "${task_id}" > "$tmpfile" 2>/dev/null
     _curl_server -s -X POST "${SERVER_URL}/messages" \
         -H "Content-Type: application/json" \
         -d @"$tmpfile" \
