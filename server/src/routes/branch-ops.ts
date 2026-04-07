@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
-import type { ScaffoldConfig } from '../config.js';
+import type { ScaffoldConfig, MergedProjectConfig } from '../config.js';
 import { resolveProject } from '../resolve-project.js';
 import { getDb } from '../drizzle-instance.js';
 import { AGENT_NAME_RE, PROJECT_ID_RE } from '../branch-naming.js';
@@ -22,12 +22,14 @@ const branchOpsPlugin: FastifyPluginAsync<BranchOpsOpts> = async (fastify, { con
       params: {
         type: 'object',
         required: ['name'],
+        additionalProperties: false,
         properties: {
           name: { type: 'string', pattern: AGENT_NAME_RE.source },
         },
       },
       body: {
         type: 'object',
+        additionalProperties: false,
         properties: {
           fresh: { type: 'boolean' },
         },
@@ -39,7 +41,7 @@ const branchOpsPlugin: FastifyPluginAsync<BranchOpsOpts> = async (fastify, { con
     const projectId = request.projectId;
     const db = getDb();
 
-    let project;
+    let project: MergedProjectConfig;
     try {
       project = await resolveProject(config, db, projectId);
     } catch {
@@ -61,48 +63,40 @@ const branchOpsPlugin: FastifyPluginAsync<BranchOpsOpts> = async (fastify, { con
         projectId,
         agentName: name,
         fresh,
+        seedBranch: project.seedBranch,
       });
       return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return reply.code(500).send({
-        statusCode: 500,
-        error: 'Internal Server Error',
-        message,
-      });
+      request.log.error(err, 'Branch operation failed');
+      return reply.internalServerError('Branch operation failed');
     }
   });
 
   /**
-   * POST /projects/:id/seed:bootstrap
+   * POST /projects/:id/seed/bootstrap
    * Bootstrap a bare repo from a project path and create the seed branch.
+   *
+   * This endpoint is internal to the Docker network. No authentication is
+   * enforced — the server relies on network isolation.
    */
   fastify.post<{
     Params: { id: string };
-    Body: { projectPath: string };
-  }>('/projects/:id/seed:bootstrap', {
+  }>('/projects/:id/seed/bootstrap', {
     schema: {
       params: {
         type: 'object',
         required: ['id'],
+        additionalProperties: false,
         properties: {
           id: { type: 'string', pattern: PROJECT_ID_RE.source },
-        },
-      },
-      body: {
-        type: 'object',
-        required: ['projectPath'],
-        properties: {
-          projectPath: { type: 'string', minLength: 1 },
         },
       },
     },
   }, async (request, reply) => {
     const { id } = request.params;
-    const { projectPath } = request.body;
     const db = getDb();
 
-    let project;
+    let project: MergedProjectConfig;
     try {
       project = await resolveProject(config, db, id);
     } catch {
@@ -118,20 +112,22 @@ const branchOpsPlugin: FastifyPluginAsync<BranchOpsOpts> = async (fastify, { con
       });
     }
 
+    const projectPath = project.path;
+    if (!projectPath) {
+      return reply.badRequest('Project path is not configured');
+    }
+
     try {
       const result = bootstrapBareRepo({
         bareRepoPath,
         projectPath,
         projectId: id,
+        seedBranch: project.seedBranch,
       });
       return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return reply.code(500).send({
-        statusCode: 500,
-        error: 'Internal Server Error',
-        message,
-      });
+      request.log.error(err, 'Branch operation failed');
+      return reply.internalServerError('Branch operation failed');
     }
   });
 };

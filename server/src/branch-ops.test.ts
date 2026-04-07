@@ -10,6 +10,7 @@ import {
   migrateLegacySeedBranch,
   bootstrapBareRepo,
 } from './branch-ops.js';
+import { seedBranchFor } from './branch-naming.js';
 
 /**
  * Helper: create a temporary git repo with one commit, then clone it as bare.
@@ -45,7 +46,7 @@ function createTestRepos(): { sourceDir: string; bareDir: string; headSha: strin
  * Helper: create a seed branch in a bare repo.
  */
 function createSeedBranch(bareDir: string, projectId: string, sha: string): void {
-  const seedBranch = `docker/${projectId}/current-root`;
+  const seedBranch = seedBranchFor(projectId);
   execFileSync('git', ['update-ref', `refs/heads/${seedBranch}`, sha], {
     cwd: bareDir,
     timeout: 5000,
@@ -168,6 +169,27 @@ describe('ensureAgentBranch', () => {
       timeout: 5000,
     }).trim();
     assert.equal(afterSha, repos.headSha);
+  });
+
+  it('creates agent branch when fresh=true and branch does not exist', () => {
+    const result = ensureAgentBranch({
+      bareRepoPath: repos.bareDir,
+      projectId: 'proj1',
+      agentName: 'fresh-new',
+      fresh: true,
+    });
+
+    assert.equal(result.action, 'created');
+    assert.equal(result.branch, 'docker/proj1/fresh-new');
+    assert.equal(result.sha, repos.headSha);
+
+    // Verify the branch actually exists
+    const sha = execFileSync('git', ['rev-parse', '--verify', 'refs/heads/docker/proj1/fresh-new'], {
+      cwd: repos.bareDir,
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+    assert.equal(sha, repos.headSha);
   });
 
   it('throws if seed branch does not exist', () => {

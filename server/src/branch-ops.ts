@@ -12,6 +12,7 @@ export interface EnsureAgentBranchOpts {
   projectId: string;
   agentName: string;
   fresh: boolean;
+  seedBranch?: string | null;
 }
 
 export interface EnsureAgentBranchResult {
@@ -24,6 +25,7 @@ export interface BootstrapBareRepoOpts {
   bareRepoPath: string;
   projectPath: string;
   projectId: string;
+  seedBranch?: string | null;
 }
 
 export interface BootstrapBareRepoResult {
@@ -41,8 +43,8 @@ export interface MigrateLegacySeedBranchResult {
  * Resolve the SHA of the seed branch for a project in a bare repo.
  * Throws if the seed branch does not exist.
  */
-export function seedBranchSha(bareRepoPath: string, projectId: string): string {
-  const branch = seedBranchFor(projectId);
+export function seedBranchSha(bareRepoPath: string, projectId: string, projectConfig?: { seedBranch?: string | null }): string {
+  const branch = seedBranchFor(projectId, projectConfig);
   const ref = `refs/heads/${branch}`;
   try {
     return execFileSync('git', ['rev-parse', '--verify', ref], {
@@ -63,18 +65,26 @@ export function seedBranchSha(bareRepoPath: string, projectId: string): string {
  * - If agent branch exists: resolve its SHA -> action: 'resumed'
  */
 export function ensureAgentBranch(opts: EnsureAgentBranchOpts): EnsureAgentBranchResult {
-  const { bareRepoPath, projectId, agentName, fresh } = opts;
+  const { bareRepoPath, projectId, agentName, fresh, seedBranch } = opts;
   const branch = agentBranchFor(projectId, agentName);
   const agentRef = `refs/heads/${branch}`;
-  const seedSha = seedBranchSha(bareRepoPath, projectId);
+  const seedSha = seedBranchSha(bareRepoPath, projectId, seedBranch != null ? { seedBranch } : undefined);
 
   if (fresh) {
-    // Reset agent branch to seed branch SHA
+    // Check if agent branch already exists before resetting
+    const existsCheck = spawnSync('git', ['rev-parse', '--verify', agentRef], {
+      cwd: bareRepoPath,
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+    const existed = existsCheck.status === 0;
+
+    // Create or reset agent branch to seed branch SHA
     execFileSync('git', ['update-ref', agentRef, seedSha], {
       cwd: bareRepoPath,
       timeout: 5000,
     });
-    return { branch, sha: seedSha, action: 'reset' };
+    return { branch, sha: seedSha, action: existed ? 'reset' : 'created' };
   }
 
   // Check if agent branch exists
@@ -146,7 +156,7 @@ export function migrateLegacySeedBranch(bareRepoPath: string, projectId: string)
  * Clone a project as a bare repo and create the seed branch from HEAD.
  */
 export function bootstrapBareRepo(opts: BootstrapBareRepoOpts): BootstrapBareRepoResult {
-  const { bareRepoPath, projectPath, projectId } = opts;
+  const { bareRepoPath, projectPath, projectId, seedBranch: seedBranchOverride } = opts;
 
   if (existsSync(bareRepoPath)) {
     throw new Error(`Bare repo already exists at ${bareRepoPath}`);
@@ -154,11 +164,12 @@ export function bootstrapBareRepo(opts: BootstrapBareRepoOpts): BootstrapBareRep
 
   // Clone as bare
   execFileSync('git', ['clone', '--bare', projectPath, bareRepoPath], {
+    encoding: 'utf-8',
     timeout: 60_000,
   });
 
   // Create seed branch from HEAD
-  const seedBranch = seedBranchFor(projectId);
+  const seedBranch = seedBranchFor(projectId, seedBranchOverride != null ? { seedBranch: seedBranchOverride } : undefined);
   const headSha = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: bareRepoPath,
     encoding: 'utf-8',
