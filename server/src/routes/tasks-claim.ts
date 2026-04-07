@@ -8,7 +8,7 @@ import * as agentsQ from '../queries/agents.js';
 import { existsInBareRepo } from '../git-utils.js';
 import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
-import type { TaskRow } from './tasks-types.js';
+import { toTaskRow, type TaskRow } from './tasks-types.js';
 import {
   type TasksOpts,
   blockersForTask,
@@ -92,7 +92,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
       }
 
       const row = await tasksCore.getById(db, candidate.id);
-      const response: Record<string, unknown> = { task: await formatTaskWithFiles(row as unknown as TaskRow, agent, config) };
+      const response: Record<string, unknown> = { task: await formatTaskWithFiles(toTaskRow(row!), agent, config) };
       if (skippedSourcePath.length > 0) {
         response.skippedSourcePath = skippedSourcePath;
       }
@@ -156,7 +156,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
 
     const blockers = await blockersForTask(id, agent);
     if (blockers.length > 0) {
-      const blockReasons = (await blockReasonsForTask(task as unknown as TaskRow, agent, config))
+      const blockReasons = (await blockReasonsForTask(toTaskRow(task), agent, config))
         .filter(r => r.startsWith('blocked by'));
       return reply.code(409).send({
         statusCode: 409,

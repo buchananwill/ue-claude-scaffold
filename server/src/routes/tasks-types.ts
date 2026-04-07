@@ -1,3 +1,5 @@
+import type { TaskDbRow } from '../queries/tasks-core.js';
+
 export interface TaskRow {
   id: number;
   project_id: string;
@@ -24,6 +26,37 @@ export interface TaskRow {
   basePriority?: number;
   progressLog?: string | null;
   createdAt?: string | Date | null;
+}
+
+/** Convert a Drizzle TaskDbRow to the TaskRow shape used by formatTask. */
+export function toTaskRow(row: TaskDbRow): TaskRow {
+  return {
+    id: row.id,
+    project_id: row.projectId,
+    title: row.title,
+    description: row.description ?? '',
+    source_path: row.sourcePath,
+    acceptance_criteria: row.acceptanceCriteria,
+    status: row.status,
+    priority: row.priority,
+    claimed_by: row.claimedBy,
+    claimed_at: row.claimedAt ? String(row.claimedAt) : null,
+    completed_at: row.completedAt ? String(row.completedAt) : null,
+    result: row.result as string | null,
+    base_priority: row.basePriority,
+    progress_log: row.progressLog,
+    created_at: row.createdAt ? String(row.createdAt) : '',
+    // Also set camelCase variants for pick() compatibility
+    projectId: row.projectId,
+    sourcePath: row.sourcePath,
+    acceptanceCriteria: row.acceptanceCriteria,
+    claimedBy: row.claimedBy,
+    claimedAt: row.claimedAt,
+    completedAt: row.completedAt,
+    basePriority: row.basePriority,
+    progressLog: row.progressLog,
+    createdAt: row.createdAt,
+  };
 }
 
 function parseResult(raw: unknown): unknown {

@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { getDb } from '../drizzle-instance.js';
 import * as tasksCore from '../queries/tasks-core.js';
+import type { TaskDbRow } from '../queries/tasks-core.js';
 import * as taskFilesQ from '../queries/task-files.js';
 import * as taskDepsQ from '../queries/task-deps.js';
 import type { ScaffoldConfig } from '../config.js';
@@ -8,7 +9,7 @@ import { mergeIntoAgentBranches } from '../git-utils.js';
 import { AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
 import { validateSourcePath } from '../tasks-validation.js';
-import { formatTask, type TaskRow } from './tasks-types.js';
+import { formatTask, toTaskRow, type TaskRow } from './tasks-types.js';
 import {
   type TasksOpts, type TaskBody, type PatchBody,
   taskBodyKeys, patchBodyKeys,
@@ -21,7 +22,7 @@ import tasksReplanPlugin from './tasks-replan.js';
 import tasksClaimPlugin from './tasks-claim.js';
 import tasksLifecyclePlugin from './tasks-lifecycle.js';
 
-export { formatTask, type TaskRow } from './tasks-types.js';
+export { formatTask, toTaskRow, type TaskRow } from './tasks-types.js';
 
 const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   const config = opts.config;
@@ -288,20 +289,33 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       dir?: string;
       limit?: string;
       offset?: string;
-      project?: string;
     };
   }>('/tasks', async (request, reply) => {
-    const { status, agent: agentFilter, priority: priorityFilter, sort, dir, limit, offset, project } = request.query;
-    const projectId = project || request.projectId;
-    const limitNum = Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 20);
+    const { status, agent: agentFilter, priority: priorityFilter, sort, dir, limit, offset } = request.query;
+    const projectId = request.projectId;
+    const limitNum = Math.min(Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : tasksCore.DEFAULT_LIST_LIMIT), 500);
     const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
 
     // Parse multi-value filters
     const statusArr = status ? status.split(',').filter(Boolean) : undefined;
     const agentArr = agentFilter ? agentFilter.split(',').filter(Boolean) : undefined;
-    const priorityArr = priorityFilter
-      ? priorityFilter.split(',').map(Number).filter(v => Number.isFinite(v) && Number.isInteger(v))
+    const priorityRaw = priorityFilter ? priorityFilter.split(',') : undefined;
+    const priorityFiltered = priorityRaw
+      ? priorityRaw.filter(Boolean).map(Number).filter(v => Number.isFinite(v) && Number.isInteger(v))
       : undefined;
+    // If any segments were non-empty but failed numeric parsing, return 400
+    if (priorityRaw) {
+      const nonEmpty = priorityRaw.filter(Boolean);
+      if (nonEmpty.length > (priorityFiltered?.length ?? 0)) {
+        const invalid = nonEmpty.filter(s => { const n = Number(s); return !Number.isFinite(n) || !Number.isInteger(n); });
+        return reply.badRequest(`Invalid priority values: ${invalid.join(', ')}. Priority must be integers.`);
+      }
+      // Empty segments (from leading/trailing/doubled commas) are also invalid
+      if (priorityRaw.length !== nonEmpty.length) {
+        return reply.badRequest('Invalid priority filter: contains empty segments (leading, trailing, or doubled commas).');
+      }
+    }
+    const priorityArr = priorityFiltered;
 
     // Validate sort column
     let sortCol: tasksCore.SortColumn | undefined;
@@ -335,7 +349,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
 
     const formattedTasks = await Promise.all(
-      rows.map(r => formatTaskWithFiles(r as unknown as TaskRow, agent, config))
+      rows.map(r => formatTaskWithFiles(toTaskRow(r), agent, config))
     );
     return { tasks: formattedTasks, total };
   });
@@ -350,7 +364,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       return reply.notFound('task not found');
     }
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
-    return formatTaskWithFiles(row as unknown as TaskRow, agent, config);
+    return formatTaskWithFiles(toTaskRow(row), agent, config);
   });
 
   // PATCH /tasks/:id — edit a pending task

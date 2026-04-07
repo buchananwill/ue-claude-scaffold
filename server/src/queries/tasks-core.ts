@@ -1,6 +1,12 @@
-import { eq, and, desc, asc, sql, count as countFn, inArray, isNull, type SQL } from 'drizzle-orm';
+import { eq, and, or, desc, asc, sql, count as countFn, inArray, isNull, type SQL } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
+
+/** Drizzle inferred row type for the tasks table. */
+export type TaskDbRow = typeof tasks.$inferSelect;
+
+/** Default number of tasks returned by list queries. */
+export const DEFAULT_LIST_LIMIT = 20;
 
 export interface InsertOpts {
   title: string;
@@ -73,7 +79,7 @@ function buildFilterConditions(opts: { status?: string[]; agent?: string[]; prio
     const named = opts.agent.filter(a => a !== '__unassigned__');
     if (unassigned && named.length > 0) {
       // claimedBy IS NULL OR claimedBy IN (...)
-      conditions.push(sql`(${isNull(tasks.claimedBy)} OR ${inArray(tasks.claimedBy, named)})`);
+      conditions.push(or(isNull(tasks.claimedBy), inArray(tasks.claimedBy, named))!);
     } else if (unassigned) {
       conditions.push(isNull(tasks.claimedBy));
     } else {
@@ -101,14 +107,14 @@ function buildFilterConditions(opts: { status?: string[]; agent?: string[]; prio
 export async function list(db: DrizzleDb, opts: ListOpts = {}) {
   const conditions = buildFilterConditions(opts);
 
-  const limitVal = opts.limit ?? 100;
+  const limitVal = opts.limit ?? DEFAULT_LIST_LIMIT;
   const offsetVal = opts.offset ?? 0;
 
   // Build ORDER BY clause
   const orderClauses: SQL[] = [];
   if (opts.sort && opts.sort in SORTABLE_COLUMNS) {
     const col = SORTABLE_COLUMNS[opts.sort];
-    orderClauses.push(opts.dir === 'asc' ? asc(col) : desc(col));
+    orderClauses.push(opts.dir === 'desc' ? desc(col) : asc(col));
     // Tiebreaker: id ASC (unless already sorting by id)
     if (opts.sort !== 'id') {
       orderClauses.push(asc(tasks.id));

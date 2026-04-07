@@ -180,16 +180,28 @@ describe('tasks routes', () => {
     assert.equal(body.total, 2);
   });
 
-  it('GET /tasks priority filter ignores non-numeric values', async () => {
+  it('GET /tasks priority filter returns 400 for non-numeric values', async () => {
     await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,abc' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid priority'));
+  });
+
+  it('GET /tasks priority filter returns 400 for trailing comma (empty segment)', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('empty segments'));
+  });
+
+  it('GET /tasks priority filter returns 400 for leading comma (empty segment)', async () => {
     await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });
 
-    // "abc" is non-numeric and will be filtered out, only 0 remains
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,abc' });
-    const body = res.json() as any;
-    assert.equal(body.tasks.length, 1);
-    assert.equal(body.total, 1);
-    assert.equal(body.tasks[0].priority, 0);
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=,1' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('empty segments'));
   });
 
   it('GET /tasks filtered total matches filtered count, not global count', async () => {
