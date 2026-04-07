@@ -8,11 +8,17 @@ export type SortColumn = 'id' | 'priority' | 'status' | 'title' | 'claimedBy' | 
 // Must match server/src/queries/tasks-core.ts VALID_SORT_COLUMNS
 export const VALID_SORT_COLUMNS = new Set<string>(['id', 'priority', 'status', 'title', 'claimedBy', 'createdAt']);
 
+/**
+ * Sentinel value for filtering tasks with no assigned agent.
+ * Recognized by the server's GET /tasks handler (see server/src/routes/tasks.ts)
+ * which translates it into a `claimed_by IS NULL` condition.
+ */
 const UNASSIGNED = '__unassigned__';
 
 export { UNASSIGNED };
 
-export const TASK_STATUSES = ['pending', 'claimed', 'in_progress', 'completed', 'failed'] as const;
+// Must match server/src/queries/tasks-core.ts VALID_TASK_STATUSES
+export const TASK_STATUSES = ['pending', 'claimed', 'in_progress', 'completed', 'failed', 'integrated', 'cycle'] as const;
 
 interface FilterState {
   statusFilter: Set<string>;
@@ -103,6 +109,17 @@ function useFilteredTasks(tasks: Task[], filters: FilterState) {
   };
 }
 
+/**
+ * Client-side task filtering and sorting hook. Manages filter/sort state in
+ * React state and applies filtering/sorting to the provided `tasks` array
+ * in-memory.
+ *
+ * WARNING: Do NOT use this with paginated server-side responses. When the
+ * server returns a page of tasks, client-side filtering would hide results
+ * that exist on other pages, producing incorrect counts and missing items.
+ * For paginated/server-filtered views, use {@link useTaskFiltersUrlBacked}
+ * instead.
+ */
 export function useTaskFilters(tasks: Task[]) {
   const [statusFilter, setStatusFilterRaw] = useState<Set<string>>(() => new Set());
   const [agentFilter, setAgentFilterRaw] = useState<Set<string>>(() => new Set());
@@ -149,12 +166,17 @@ export function useTaskFilters(tasks: Task[]) {
 }
 
 /**
- * URL-backed variant of useTaskFilters. Must only be used in components rendered
- * under the `/$projectId/` route, as it reads/writes search params via that route.
+ * URL-backed variant of task filter state for server-side filtering. Must only
+ * be used in components rendered under the `/$projectId/` route, as it
+ * reads/writes search params via that route.
  *
- * Unlike useTaskFilters, this variant does NOT do client-side filtering or sorting.
- * It only manages filter/sort state (backed by URL search params). The caller is
- * responsible for forwarding filter values to useTasks() for server-side filtering.
+ * Unlike {@link useTaskFilters}, this variant does NOT do client-side filtering
+ * or sorting. It only manages filter/sort state (backed by URL search params).
+ * The caller is responsible for forwarding filter values to `useTasks()` which
+ * passes them as query parameters for server-side filtering and pagination.
+ *
+ * This is the correct choice for any view that uses server-side pagination
+ * (e.g. OverviewPage).
  */
 export function useTaskFiltersUrlBacked() {
   const search = useSearch({ from: '/$projectId/' });

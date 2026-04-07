@@ -11,8 +11,8 @@ import {
   Group,
 } from '@mantine/core';
 import { IconFolder } from '@tabler/icons-react';
-import { apiFetch } from '../api/client.ts';
-import type { Project } from '../api/types.ts';
+import { apiFetch } from '../api/client.js';
+import type { Project } from '../api/types.js';
 
 export function RootLayout() {
   // The /projects endpoint does not require x-project-id header -- it lists

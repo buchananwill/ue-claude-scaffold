@@ -21,6 +21,9 @@ export function useTasks(params?: UseTasksParams) {
   const offset = params?.offset ?? 0;
   const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (params?.status && params.status.length > 0) qs.set('status', params.status.join(','));
+  // The agent filter may include the UNASSIGNED sentinel ('__unassigned__'),
+  // which the server's GET /tasks handler (see server/src/routes/tasks.ts)
+  // translates into a `claimed_by IS NULL` condition.
   if (params?.agent && params.agent.length > 0) qs.set('agent', params.agent.join(','));
   if (params?.priority && params.priority.length > 0) qs.set('priority', params.priority.join(','));
   if (params?.sort) qs.set('sort', params.sort);

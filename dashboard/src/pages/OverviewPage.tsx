@@ -32,24 +32,18 @@ export function OverviewPage() {
   const ubt = useUbtStatus();
   const [syncing, setSyncing] = useState(false);
 
+  // Derive available agents from the /agents endpoint so that all registered
+  // agents appear in the filter popover, not just those on the current page.
   const availableAgents = useMemo(() => {
-    const taskList = tasks.data?.tasks;
-    if (!taskList) return [];
-    const agents: string[] = [];
-    const seen = new Set<string>();
-    let hasNull = false;
-    for (const t of taskList) {
-      if (t.claimedBy === null) {
-        hasNull = true;
-      } else if (!seen.has(t.claimedBy)) {
-        seen.add(t.claimedBy);
-        agents.push(t.claimedBy);
-      }
-    }
-    agents.sort((a, b) => a.localeCompare(b));
-    if (hasNull) agents.unshift(UNASSIGNED);
-    return agents;
-  }, [tasks.data?.tasks]);
+    const agentList = agents.data;
+    if (!agentList) return [];
+    const names = agentList.map((a) => a.name).sort((a, b) => a.localeCompare(b));
+    // Always include the unassigned sentinel so users can filter for unassigned tasks.
+    // The UNASSIGNED sentinel is recognized by the server's GET /tasks handler
+    // (see server/src/routes/tasks.ts).
+    names.unshift(UNASSIGNED);
+    return names;
+  }, [agents.data]);
 
   const availablePriorities = useMemo(() => {
     const taskList = tasks.data?.tasks;

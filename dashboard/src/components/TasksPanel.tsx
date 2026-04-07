@@ -30,12 +30,15 @@ import { RelativeTime } from './RelativeTime.js';
 import { TaskDetailRow } from './TaskDetailRow.js';
 import { TaskDuration } from './TaskDuration.js';
 
+// Must match server/src/queries/tasks-core.ts VALID_TASK_STATUSES
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
   claimed: 'Claimed',
   in_progress: 'In Progress',
   completed: 'Completed',
   failed: 'Failed',
+  integrated: 'Integrated',
+  cycle: 'Cycle',
 };
 
 interface TasksPanelProps {
@@ -145,7 +148,7 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
         </Group>
       </Group>
 
-      {displayedTasks.length === 0 && tasks === null && isFetching ? (
+      {isFetching && displayedTasks.length === 0 ? (
         <Stack align="center" py="md">
           <Loader size="sm" />
           <Text c="dimmed" size="sm">Loading tasks...</Text>
