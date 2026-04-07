@@ -175,6 +175,9 @@ fi
 
 # ── Mode: team — stop all members and dissolve ──────────────────────────────
 if [[ "$MODE" == "team" ]]; then
+  # Defense-in-depth: re-validate TEAM_ID before use in URLs
+  [[ "$TEAM_ID" =~ ^[a-zA-Z0-9_-]{1,64}$ ]] || { echo "Error: invalid TEAM_ID" >&2; exit 1; }
+
   echo "Stopping team: $TEAM_ID ..."
 
   # Get team detail from coordination server (includes projectId and members)
@@ -251,7 +254,6 @@ if [[ "$MODE" == "drain" ]]; then
     exit 1
   }
 
-  drained=$(echo "$drain_response" | jq -r '.drained')
   timed_out=$(echo "$drain_response" | jq -r '.timedOut')
   paused=$(echo "$drain_response" | jq -r '.paused | join(", ")')
   active=$(echo "$drain_response" | jq -r '.activeTasks')

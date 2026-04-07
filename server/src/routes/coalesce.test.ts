@@ -359,4 +359,16 @@ describe('coalesce routes (drizzle)', () => {
     const body = res.json();
     assert.equal(body.drained, true);
   });
+
+  it('POST /coalesce/drain with absent body (no Content-Type) uses defaults', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/coalesce/drain',
+      // No payload, no Content-Type header — triggers the (request.body ?? {}) guard
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.drained, true);
+    assert.equal(body.timedOut, false);
+  });
 });

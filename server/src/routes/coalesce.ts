@@ -15,7 +15,7 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     const agentRows = await agentsQ.getAll(db, projectId);
     const agents = await Promise.all(agentRows.map(async (row) => {
       const ownedFiles = await coalesceQ.getOwnedFiles(db, row.name, projectId);
-      const activeTasks = await coalesceQ.countActiveTasksForAgent(db, row.name);
+      const activeTasks = await coalesceQ.countActiveTasksForAgent(db, row.name, projectId);
       return {
         name: row.name,
         status: row.status,
@@ -108,7 +108,7 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
       }
     } catch (err) {
       pollError = err instanceof Error ? err.message : String(err);
-      fastify.log.error({ err }, 'Drain polling loop error');
+      request.log.error({ err }, 'Drain polling loop error');
     }
 
     // 3. Final status check — timedOut is determined by whether we actually drained
@@ -126,7 +126,7 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     return {
       drained: canCoalesce,
       timedOut,
-      ...(pollError ? { error: pollError } : {}),
+      ...(pollError ? { error: 'Drain polling interrupted; see server log for details.' } : {}),
       paused: pausedAgents,
       inFlightAtStart: inFlightRows.map(r => ({
         agent: r.claimedBy,
