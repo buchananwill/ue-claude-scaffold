@@ -102,11 +102,11 @@ fi
 
 _status_color() {
   case "$1" in
-    working)  echo -e "${C_YELLOW}$1${C_RESET}" ;;
-    done)     echo -e "${C_GREEN}$1${C_RESET}" ;;
-    error)    echo -e "${C_RED}$1${C_RESET}" ;;
-    idle)     echo -e "${C_DIM}$1${C_RESET}" ;;
-    *)        echo "$1" ;;
+    working)  printf '%b' "${C_YELLOW}$1${C_RESET}" ;;
+    done)     printf '%b' "${C_GREEN}$1${C_RESET}" ;;
+    error)    printf '%b' "${C_RED}$1${C_RESET}" ;;
+    idle)     printf '%b' "${C_DIM}$1${C_RESET}" ;;
+    *)        printf '%s' "$1" ;;
   esac
 }
 _task_status_color() {
@@ -117,17 +117,21 @@ _task_status_color() {
     completed)            color="$C_GREEN" ;;
     failed)               color="$C_RED" ;;
   esac
-  [[ -n "$color" ]] && echo -e "${color}${status}${C_RESET}" || echo "$status"
+  [[ -n "$color" ]] && printf '%b' "${color}${status}${C_RESET}" || printf '%s' "$status"
 }
+
+# Note: agent names and task titles are validated server-side
+# (alphanumeric, hyphens, underscores only), so terminal escape injection
+# is not a concern for these fields.
 
 _print_agent_row() {
   local name="$1" project="$2" worktree="$3" status="$4" registered="$5"
   local colored_status
   colored_status=$(_status_color "$status")
-  if [[ -n "$PROJECT_ID" ]]; then
-    printf "  %-15s %-25s %-10b %s\n" "$name" "$worktree" "$colored_status" "$registered"
+  if [[ -n "$_SHOW_PROJECT" ]]; then
+    printf "  %-15s %-20s %-25s %b %s\n" "$name" "$project" "$worktree" "$colored_status" "$registered"
   else
-    printf "  %-15s %-20s %-25s %-10b %s\n" "$name" "$project" "$worktree" "$colored_status" "$registered"
+    printf "  %-15s %-25s %b %s\n" "$name" "$worktree" "$colored_status" "$registered"
   fi
 }
 
@@ -135,45 +139,45 @@ _print_task_row() {
   local id="$1" pri="$2" status="$3" project="$4" claimed="$5" title="$6"
   local colored_status
   colored_status=$(_task_status_color "$status")
-  if [[ -n "$PROJECT_ID" ]]; then
-    printf "  %-4s  %-4s  %-20b  %-12s  %s\n" "$id" "$pri" "$colored_status" "$claimed" "$title"
+  if [[ -n "$_SHOW_PROJECT" ]]; then
+    printf "  %-4s  %-4s  %-12b  %-15s  %-12s  %s\n" "$id" "$pri" "$colored_status" "$project" "$claimed" "$title"
   else
-    printf "  %-4s  %-4s  %-20b  %-15s  %-12s  %s\n" "$id" "$pri" "$colored_status" "$project" "$claimed" "$title"
+    printf "  %-4s  %-4s  %-12b  %-12s  %s\n" "$id" "$pri" "$colored_status" "$claimed" "$title"
   fi
 }
 
 # ── Print status ─────────────────────────────────────────────────────────────
+# _SHOW_PROJECT is set when no --project filter is active (show project column)
+_SHOW_PROJECT=""
+[[ -z "$PROJECT_ID" ]] && _SHOW_PROJECT="1"
+
 print_status() {
-  # Build status URL with query params via jq
+  # Build status URL — project scoping is via X-Project-Id header only
   local status_url="$BASE_URL/status?since=$CURSOR&taskLimit=20"
-  if [[ -n "$PROJECT_ID" ]]; then
-    status_url="$BASE_URL/status?$(jq -rn --arg p "$PROJECT_ID" --arg s "$CURSOR" \
-      '"project=" + ($p | @uri) + "&since=" + $s + "&taskLimit=20"')"
-  fi
 
   local status_json
   if ! status_json=$(curl -sf "$status_url" \
     -H "X-Project-Id: ${PROJECT_ID:-default}" \
     --max-time 5 2>/dev/null); then
-    echo -e "${C_RED}Server unreachable at $BASE_URL${C_RESET}"
+    printf '%b\n' "${C_RED}Server unreachable at $BASE_URL${C_RESET}"
     echo "Start the coordination server: cd server && npm run dev"
     return
   fi
 
   # ── Agents ──
-  echo -e "${C_BOLD}=== Agents ===${C_RESET}"
+  printf '%b\n' "${C_BOLD}=== Agents ===${C_RESET}"
   local agent_count
   agent_count=$(echo "$status_json" | jq '.agents | length')
 
   if [[ "$agent_count" -eq 0 ]]; then
     echo "  No agents registered."
   else
-    if [[ -n "$PROJECT_ID" ]]; then
-      printf "  %-15s %-25s %-10s %s\n" "NAME" "WORKTREE" "STATUS" "REGISTERED"
-      printf "  %-15s %-25s %-10s %s\n" "----" "--------" "------" "----------"
-    else
+    if [[ -n "$_SHOW_PROJECT" ]]; then
       printf "  %-15s %-20s %-25s %-10s %s\n" "NAME" "PROJECT" "WORKTREE" "STATUS" "REGISTERED"
       printf "  %-15s %-20s %-25s %-10s %s\n" "----" "-------" "--------" "------" "----------"
+    else
+      printf "  %-15s %-25s %-10s %s\n" "NAME" "WORKTREE" "STATUS" "REGISTERED"
+      printf "  %-15s %-25s %-10s %s\n" "----" "--------" "------" "----------"
     fi
     echo "$status_json" | jq -r '.agents[] | "\(.name)\t\(.projectId // "-")\t\(.worktree // "-")\t\(.status // "idle")\t\(.registeredAt // "-")"' | \
     while IFS=$'\t' read -r name project worktree status registered; do
@@ -184,17 +188,17 @@ print_status() {
   echo ""
 
   # ── Tasks ──
-  echo -e "${C_DIM}--- Tasks --------------------------------------------------${C_RESET}"
+  printf '%b\n' "${C_DIM}--- Tasks --------------------------------------------------${C_RESET}"
   local task_count
   task_count=$(echo "$status_json" | jq '.tasks.items | length')
 
   if [[ "$task_count" -eq 0 ]]; then
     echo "  No tasks."
   else
-    if [[ -n "$PROJECT_ID" ]]; then
-      printf "  ${C_DIM}%-4s  %-4s  %-12s  %-12s  %s${C_RESET}\n" "ID" "PRI" "STATUS" "CLAIMED BY" "TITLE"
-    else
+    if [[ -n "$_SHOW_PROJECT" ]]; then
       printf "  ${C_DIM}%-4s  %-4s  %-12s  %-15s  %-12s  %s${C_RESET}\n" "ID" "PRI" "STATUS" "PROJECT" "CLAIMED BY" "TITLE"
+    else
+      printf "  ${C_DIM}%-4s  %-4s  %-12s  %-12s  %s${C_RESET}\n" "ID" "PRI" "STATUS" "CLAIMED BY" "TITLE"
     fi
     echo "$status_json" | jq -r '.tasks.items[] | [.id, .priority, .status, (.projectId // "-"), (.claimedBy // "-"), .title] | @tsv' | \
     while IFS=$'\t' read -r id pri status project claimed title; do
@@ -205,7 +209,7 @@ print_status() {
   echo ""
 
   # ── Messages ──
-  echo -e "${C_BOLD}=== Messages (since #$CURSOR) ===${C_RESET}"
+  printf '%b\n' "${C_BOLD}=== Messages (since #$CURSOR) ===${C_RESET}"
   local msg_count
   msg_count=$(echo "$status_json" | jq '.messages | length')
 
@@ -214,14 +218,15 @@ print_status() {
   else
     echo "$status_json" | jq -r '.messages[] | "\(.id)\t\(.createdAt // "-")\t\(.fromAgent // "-")\t\(.type // "-")\t\(.payload | tostring)"' | \
     while IFS=$'\t' read -r id timestamp agent type payload; do
-      local summary
+      # summary is not declared local here — we are inside a piped subshell
+      # where local is redundant
       if [[ "$type" == "summary" ]]; then
         summary=$(echo "$payload" | jq -r '.summary // .' 2>/dev/null || echo "$payload")
-        echo -e "  [${C_DIM}${timestamp}${C_RESET}] ${C_BOLD}${agent}${C_RESET}  ${type}"
+        printf '%b\n' "  [${C_DIM}${timestamp}${C_RESET}] ${C_BOLD}${agent}${C_RESET}  ${type}"
         echo "$summary" | sed 's/^/    /'
       else
         summary=$(echo "$payload" | jq -r 'if type == "object" then (to_entries | map("\(.key)=\(.value)") | join(", ")) else . end' 2>/dev/null || echo "$payload")
-        echo -e "  [${C_DIM}${timestamp}${C_RESET}] ${C_BOLD}${agent}${C_RESET}  ${type}  ${summary}"
+        printf '%b\n' "  [${C_DIM}${timestamp}${C_RESET}] ${C_BOLD}${agent}${C_RESET}  ${type}  ${summary}"
       fi
     done
 
@@ -234,7 +239,7 @@ print_status() {
   fi
 
   echo ""
-  echo -e "${C_DIM}Last updated: $(date +%H:%M:%S)${C_RESET}"
+  printf '%b\n' "${C_DIM}Last updated: $(date +%H:%M:%S)${C_RESET}"
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────

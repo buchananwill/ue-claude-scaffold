@@ -3,39 +3,55 @@ import { getDb } from '../drizzle-instance.js';
 import * as agentsQ from '../queries/agents.js';
 import * as tasksCore from '../queries/tasks-core.js';
 import * as msgQ from '../queries/messages.js';
-import { formatAgent, type AgentRow } from './agents.js';
+import { formatAgent } from './agents.js';
 import { formatTask, type TaskRow } from './tasks-types.js';
-import { formatMessage, type MessageRow } from './messages.js';
+import { formatMessage } from './messages.js';
+
+const MESSAGE_LIMIT = 200;
 
 const statusPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
-    Querystring: { project?: string; since?: string; taskLimit?: string };
-  }>('/status', async (request) => {
-    const { project, since, taskLimit } = request.query;
-    const projectId = project || request.projectId;
-    const sinceNum = since ? Number(since) : 0;
-    const taskLimitNum = Math.max(1, Number.isFinite(Number(taskLimit)) ? Number(taskLimit) : 20);
+    Querystring: { since?: string; taskLimit?: string };
+  }>('/status', async (request, reply) => {
+    const { since, taskLimit } = request.query;
+    const projectId = request.projectId;
+
+    // Validate since parameter: must be a non-negative integer if provided
+    let sinceNum: number | undefined;
+    if (since != null && since !== '') {
+      const parsed = Number(since);
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed !== Math.floor(parsed)) {
+        return reply.badRequest('since must be a non-negative integer');
+      }
+      sinceNum = parsed || undefined;
+    }
+
+    // Clamp taskLimit to [1, 200]
+    const parsedLimit = Number(taskLimit);
+    const taskLimitNum = Math.min(Math.max(1, Number.isFinite(parsedLimit) ? parsedLimit : 20), 200);
 
     const db = getDb();
+    const projectFilter = projectId !== 'default' ? projectId : undefined;
 
     const [agentRows, taskRows, taskTotal, messageRows] = await Promise.all([
-      agentsQ.getAll(db, projectId !== 'default' ? projectId : undefined),
-      tasksCore.list(db, { projectId: projectId !== 'default' ? projectId : undefined, limit: taskLimitNum }),
-      tasksCore.count(db, { projectId: projectId !== 'default' ? projectId : undefined }),
+      agentsQ.getAll(db, projectFilter),
+      tasksCore.list(db, { projectId: projectFilter, limit: taskLimitNum }),
+      tasksCore.count(db, { projectId: projectFilter }),
       msgQ.list(db, {
         channel: 'general',
-        since: sinceNum || undefined,
-        projectId: projectId !== 'default' ? projectId : undefined,
+        since: sinceNum,
+        limit: MESSAGE_LIMIT,
+        projectId: projectFilter,
       }),
     ]);
 
     return {
-      agents: agentRows.map((r) => formatAgent(r as unknown as AgentRow)),
+      agents: agentRows.map(formatAgent),
       tasks: {
         items: taskRows.map((r) => formatTask(r as unknown as TaskRow)),
         total: taskTotal,
       },
-      messages: messageRows.map((r) => formatMessage(r as unknown as MessageRow)),
+      messages: messageRows.slice(0, MESSAGE_LIMIT).map(formatMessage),
     };
   });
 };
