@@ -3,6 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ── Source shared libraries ─────────────────────────────────────────────────
+# shellcheck source=scripts/lib/validators.sh
+source "$SCRIPT_DIR/scripts/lib/validators.sh"
+
 # ── Usage ────────────────────────────────────────────────────────────────────
 usage() {
   cat <<'USAGE'
@@ -41,8 +45,16 @@ while [[ $# -gt 0 ]]; do
       fi
       ;;
     --since)
+      if [[ -z "${2:-}" || ! "$2" =~ ^[0-9]+$ ]]; then
+        echo "Error: --since requires a non-negative integer argument" >&2
+        exit 1
+      fi
       CURSOR="$2"; shift 2 ;;
     --project)
+      if [[ -z "${2:-}" ]]; then
+        echo "Error: --project requires an argument" >&2
+        exit 1
+      fi
       PROJECT_ID="$2"; shift 2 ;;
     --help)
       usage; exit 0 ;;
@@ -54,17 +66,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Validate PROJECT_ID ─────────────────────────────────────────────────────
-if [[ -n "$PROJECT_ID" && ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-  echo "Error: PROJECT_ID contains invalid characters: $PROJECT_ID" >&2
-  echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
-  exit 1
+if [[ -n "$PROJECT_ID" ]]; then
+  _validate_identifier "--project" "$PROJECT_ID" || exit 1
 fi
 
 # ── Read port from scaffold.config.json ──────────────────────────────────────
-_cfg_port=9100
-if [[ -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
-    _cfg_port="$(jq -r '.server.port // 9100' "$SCRIPT_DIR/scaffold.config.json" 2>/dev/null || echo 9100)"
-fi
+_cfg_port="$(_read_server_port "$SCRIPT_DIR")" || exit 1
 BASE_URL="http://localhost:$_cfg_port"
 
 # ── Check dependencies ──────────────────────────────────────────────────────
@@ -95,143 +102,147 @@ else
   C_RED=''
 fi
 
-status_color() {
+_status_color() {
   case "$1" in
-    working)  echo -e "${C_YELLOW}$1${C_RESET}" ;;
-    done)     echo -e "${C_GREEN}$1${C_RESET}" ;;
-    error)    echo -e "${C_RED}$1${C_RESET}" ;;
-    idle)     echo -e "${C_DIM}$1${C_RESET}" ;;
-    *)        echo "$1" ;;
+    working)  printf '%b' "${C_YELLOW}$1${C_RESET}" ;;
+    done)     printf '%b' "${C_GREEN}$1${C_RESET}" ;;
+    error)    printf '%b' "${C_RED}$1${C_RESET}" ;;
+    idle)     printf '%b' "${C_DIM}$1${C_RESET}" ;;
+    *)        printf '%s' "$1" ;;
   esac
+}
+_task_status_color() {
+  local status="$1" color=""
+  case "$status" in
+    pending)              color="$C_DIM" ;;
+    claimed|in_progress)  color="$C_YELLOW" ;;
+    completed)            color="$C_GREEN" ;;
+    failed)               color="$C_RED" ;;
+  esac
+  [[ -n "$color" ]] && printf '%b' "${color}${status}${C_RESET}" || printf '%s' "$status"
+}
+
+# Safety note: Agent names are validated server-side (alphanumeric, hyphens,
+# underscores only). Task titles and message payloads may contain arbitrary
+# text; printf '%s' quoting prevents terminal escape interpretation.
+
+_print_agent_row() {
+  local name="$1" project="$2" worktree="$3" status="$4" registered="$5"
+  local colored_status
+  colored_status=$(_status_color "$status")
+  if [[ -n "$SHOW_PROJECT" ]]; then
+    printf "  %-15s %-20s %-25s %b %s\n" "$name" "$project" "$worktree" "$colored_status" "$registered"
+  else
+    printf "  %-15s %-25s %b %s\n" "$name" "$worktree" "$colored_status" "$registered"
+  fi
+}
+
+_print_task_row() {
+  local id="$1" pri="$2" status="$3" project="$4" claimed="$5" title="$6"
+  local colored_status
+  colored_status=$(_task_status_color "$status")
+  if [[ -n "$SHOW_PROJECT" ]]; then
+    printf "  %-4s  %-4s  %-12b  %-15s  %-12s  %s\n" "$id" "$pri" "$colored_status" "$project" "$claimed" "$title"
+  else
+    printf "  %-4s  %-4s  %-12b  %-12s  %s\n" "$id" "$pri" "$colored_status" "$claimed" "$title"
+  fi
 }
 
 # ── Print status ─────────────────────────────────────────────────────────────
+# SHOW_PROJECT is set when no --project filter is active (show project column)
+SHOW_PROJECT=""
+[[ -z "$PROJECT_ID" ]] && SHOW_PROJECT="1"
+
 print_status() {
-  # Fetch agents
-  local agents_url="$BASE_URL/agents"
-  if [[ -n "$PROJECT_ID" ]]; then
-    agents_url="$BASE_URL/agents?project=$PROJECT_ID"
-  fi
-  local agents_json
-  if ! agents_json=$(curl -sf "$agents_url" 2>/dev/null); then
-    echo -e "${C_RED}Server unreachable at $BASE_URL${C_RESET}"
+  # Build status URL — project scoping is via X-Project-Id header only
+  local status_url="$BASE_URL/status?since=$CURSOR&taskLimit=20"
+
+  local status_json
+  if ! status_json=$(curl -sf "$status_url" \
+    -H "X-Project-Id: ${PROJECT_ID:-default}" \
+    --max-time 5 2>/dev/null); then
+    printf '%b\n' "${C_RED}Server unreachable at $BASE_URL${C_RESET}"
     echo "Start the coordination server: cd server && npm run dev"
     return
   fi
 
-  # Agent table
-  echo -e "${C_BOLD}=== Agents ===${C_RESET}"
+  # ── Agents ──
+  printf '%b\n' "${C_BOLD}=== Agents ===${C_RESET}"
   local agent_count
-  agent_count=$(echo "$agents_json" | jq 'length')
+  agent_count=$(echo "$status_json" | jq '.agents | length')
 
   if [[ "$agent_count" -eq 0 ]]; then
     echo "  No agents registered."
-  elif [[ -n "$PROJECT_ID" ]]; then
-    printf "  %-15s %-25s %-10s %s\n" "NAME" "WORKTREE" "STATUS" "REGISTERED"
-    printf "  %-15s %-25s %-10s %s\n" "----" "--------" "------" "----------"
-    echo "$agents_json" | jq -r '.[] | "\(.name)\t\(.worktree // "-")\t\(.status // "idle")\t\(.registeredAt // "-")"' | while IFS=$'\t' read -r name branch status registered; do
-      local colored_status
-      colored_status=$(status_color "$status")
-      printf "  %-15s %-25s %-10b %s\n" "$name" "$branch" "$colored_status" "$registered"
-    done
   else
-    printf "  %-15s %-20s %-25s %-10s %s\n" "NAME" "PROJECT" "WORKTREE" "STATUS" "REGISTERED"
-    printf "  %-15s %-20s %-25s %-10s %s\n" "----" "-------" "--------" "------" "----------"
-    echo "$agents_json" | jq -r '.[] | "\(.name)\t\(.projectId // "-")\t\(.worktree // "-")\t\(.status // "idle")\t\(.registeredAt // "-")"' | while IFS=$'\t' read -r name project branch status registered; do
-      local colored_status
-      colored_status=$(status_color "$status")
-      printf "  %-15s %-20s %-25s %-10b %s\n" "$name" "$project" "$branch" "$colored_status" "$registered"
+    if [[ -n "$SHOW_PROJECT" ]]; then
+      printf "  %-15s %-20s %-25s %-10s %s\n" "NAME" "PROJECT" "WORKTREE" "STATUS" "REGISTERED"
+      printf "  %-15s %-20s %-25s %-10s %s\n" "----" "-------" "--------" "------" "----------"
+    else
+      printf "  %-15s %-25s %-10s %s\n" "NAME" "WORKTREE" "STATUS" "REGISTERED"
+      printf "  %-15s %-25s %-10s %s\n" "----" "--------" "------" "----------"
+    fi
+    echo "$status_json" | jq -r '.agents[] | "\(.name)\t\(.projectId // "-")\t\(.worktree // "-")\t\(.status // "idle")\t\(.registeredAt // "-")"' | \
+    while IFS=$'\t' read -r name project worktree status registered; do
+      _print_agent_row "$name" "$project" "$worktree" "$status" "$registered"
     done
   fi
 
   echo ""
 
   # ── Tasks ──
-  echo ""
-  echo -e "${C_DIM}--- Tasks --------------------------------------------------${C_RESET}"
+  printf '%b\n' "${C_DIM}--- Tasks --------------------------------------------------${C_RESET}"
+  local task_count
+  task_count=$(echo "$status_json" | jq '.tasks.items | length')
 
-  local tasks_url="$BASE_URL/tasks?limit=20"
-  if [[ -n "$PROJECT_ID" ]]; then
-    tasks_url="$BASE_URL/tasks?project=$PROJECT_ID&limit=20"
-  fi
-  local tasks_json
-  if tasks_json=$(curl -sf "$tasks_url" --max-time 5 2>/dev/null); then
-    local task_count
-    task_count=$(echo "$tasks_json" | jq '.tasks | length')
-
-    if [[ "$task_count" -eq 0 ]]; then
-      echo "  No tasks."
-    elif [[ -n "$PROJECT_ID" ]]; then
-      printf "  ${C_DIM}%-4s  %-4s  %-12s  %-12s  %s${C_RESET}\n" "ID" "PRI" "STATUS" "CLAIMED BY" "TITLE"
-      echo "$tasks_json" | jq -r '.tasks[] | [.id, .priority, .status, (.claimedBy // "-"), .title] | @tsv' | \
-      while IFS=$'\t' read -r id pri status claimed title; do
-        local color=""
-        case "$status" in
-          pending)     color="$C_DIM" ;;
-          claimed|in_progress) color="$C_YELLOW" ;;
-          completed)   color="$C_GREEN" ;;
-          failed)      color="$C_RED" ;;
-          *)           color="" ;;
-        esac
-        printf "  %-4s  %-4s  ${color}%-12s${C_RESET}  %-12s  %s\n" "$id" "$pri" "$status" "$claimed" "$title"
-      done
-    else
+  if [[ "$task_count" -eq 0 ]]; then
+    echo "  No tasks."
+  else
+    if [[ -n "$SHOW_PROJECT" ]]; then
       printf "  ${C_DIM}%-4s  %-4s  %-12s  %-15s  %-12s  %s${C_RESET}\n" "ID" "PRI" "STATUS" "PROJECT" "CLAIMED BY" "TITLE"
-      echo "$tasks_json" | jq -r '.tasks[] | [.id, .priority, .status, (.projectId // "-"), (.claimedBy // "-"), .title] | @tsv' | \
-      while IFS=$'\t' read -r id pri status project claimed title; do
-        local color=""
-        case "$status" in
-          pending)     color="$C_DIM" ;;
-          claimed|in_progress) color="$C_YELLOW" ;;
-          completed)   color="$C_GREEN" ;;
-          failed)      color="$C_RED" ;;
-          *)           color="" ;;
-        esac
-        printf "  %-4s  %-4s  ${color}%-12s${C_RESET}  %-15s  %-12s  %s\n" "$id" "$pri" "$status" "$project" "$claimed" "$title"
-      done
-    fi
-  else
-    echo "  Could not fetch tasks."
-  fi
-
-  echo ""
-
-  # Fetch messages
-  local messages_json
-  if messages_json=$(curl -sf "$BASE_URL/messages/general?since=$CURSOR" 2>/dev/null); then
-    local msg_count
-    msg_count=$(echo "$messages_json" | jq 'length')
-
-    echo -e "${C_BOLD}=== Messages (since #$CURSOR) ===${C_RESET}"
-
-    if [[ "$msg_count" -eq 0 ]]; then
-      echo "  No new messages."
     else
-      echo "$messages_json" | jq -r '.[] | "\(.id)\t\(.timestamp // .createdAt // "-")\t\(.agent // "-")\t\(.type // "-")\t\(.payload | tostring)"' | while IFS=$'\t' read -r id timestamp agent type payload; do
-        local summary
-        if [[ "$type" == "summary" ]]; then
-          summary=$(echo "$payload" | jq -r '.summary // .' 2>/dev/null || echo "$payload")
-          echo -e "  [${C_DIM}${timestamp}${C_RESET}] ${C_BOLD}${agent}${C_RESET}  ${type}"
-          echo "$summary" | sed 's/^/    /'
-        else
-          summary=$(echo "$payload" | jq -r 'if type == "object" then (to_entries | map("\(.key)=\(.value)") | join(", ")) else . end' 2>/dev/null || echo "$payload")
-          echo -e "  [${C_DIM}${timestamp}${C_RESET}] ${C_BOLD}${agent}${C_RESET}  ${type}  ${summary}"
-        fi
-      done
-
-      # Update cursor to max id
-      local max_id
-      max_id=$(echo "$messages_json" | jq '[.[].id] | max')
-      if [[ "$max_id" != "null" && -n "$max_id" ]]; then
-        CURSOR="$max_id"
-      fi
+      printf "  ${C_DIM}%-4s  %-4s  %-12s  %-12s  %s${C_RESET}\n" "ID" "PRI" "STATUS" "CLAIMED BY" "TITLE"
     fi
-  else
-    echo "  Could not fetch messages."
+    echo "$status_json" | jq -r '.tasks.items[] | [.id, .priority, .status, (.projectId // "-"), (.claimedBy // "-"), .title] | @tsv' | \
+    while IFS=$'\t' read -r id pri status project claimed title; do
+      _print_task_row "$id" "$pri" "$status" "$project" "$claimed" "$title"
+    done
   fi
 
   echo ""
-  echo -e "${C_DIM}Last updated: $(date +%H:%M:%S)${C_RESET}"
+
+  # ── Messages ──
+  printf '%b\n' "${C_BOLD}=== Messages (since #$CURSOR) ===${C_RESET}"
+  local msg_count
+  msg_count=$(echo "$status_json" | jq '.messages | length')
+
+  if [[ "$msg_count" -eq 0 ]]; then
+    echo "  No new messages."
+  else
+    echo "$status_json" | jq -r '.messages[] | "\(.id)\t\(.createdAt // "-")\t\(.fromAgent // "-")\t\(.type // "-")\t\(.payload | tostring)"' | \
+    while IFS=$'\t' read -r id timestamp agent type payload; do
+      # summary is not declared local here — we are inside a piped subshell
+      # where local is redundant
+      if [[ "$type" == "summary" ]]; then
+        summary=$(printf '%s' "$payload" | jq -r '.summary // .' 2>/dev/null || printf '%s' "$payload")
+        printf '  [%b] %b  %s\n' "${C_DIM}${timestamp}${C_RESET}" "${C_BOLD}${agent}${C_RESET}" "$type"
+        printf '%s\n' "$summary" | sed 's/^/    /'
+      else
+        summary=$(printf '%s' "$payload" | jq -r 'if type == "object" then (to_entries | map("\(.key)=\(.value)") | join(", ")) else . end' 2>/dev/null || printf '%s' "$payload")
+        printf '  [%b] %b  %s  %s\n' "${C_DIM}${timestamp}${C_RESET}" "${C_BOLD}${agent}${C_RESET}" "$type" "$summary"
+      fi
+    done
+
+    # Update cursor to max id — intentionally mutates the global CURSOR so
+    # subsequent iterations in --follow mode only fetch newer messages.
+    local max_id
+    max_id=$(echo "$status_json" | jq '[.messages[].id] | max')
+    if [[ "$max_id" =~ ^[0-9]+$ ]]; then
+      CURSOR="$max_id"
+    fi
+  fi
+
+  echo ""
+  printf '%b\n' "${C_DIM}Last updated: $(date +%H:%M:%S)${C_RESET}"
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────

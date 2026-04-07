@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
+import { createTestConfig } from '../test-helper.js';
 import roomsPlugin from './rooms.js';
 import teamsPlugin from './teams.js';
 
@@ -41,7 +42,7 @@ describe('POST /teams', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
-    await ctx.app.register(teamsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
@@ -129,7 +130,7 @@ describe('GET /teams', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
-    await ctx.app.register(teamsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
@@ -182,7 +183,7 @@ describe('GET /teams/:id', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
-    await ctx.app.register(teamsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
@@ -194,7 +195,7 @@ describe('GET /teams/:id', () => {
     await createTeam(ctx, {
       id: 'td1',
       name: 'Detail Team',
-      briefPath: '/plans/brief.md',
+      briefPath: 'plans/brief.md',
       members: [
         { agentName: 'alice', role: 'implementer', isLeader: true },
         { agentName: 'bob', role: 'reviewer' },
@@ -206,7 +207,7 @@ describe('GET /teams/:id', () => {
     const body = res.json();
     assert.equal(body.id, 'td1');
     assert.equal(body.name, 'Detail Team');
-    assert.equal(body.briefPath, '/plans/brief.md');
+    assert.equal(body.briefPath, 'plans/brief.md');
     assert.equal(body.status, 'active');
     assert.equal(body.roomId, 'td1');
     assert.ok(Array.isArray(body.members));
@@ -236,7 +237,7 @@ describe('DELETE /teams/:id', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
-    await ctx.app.register(teamsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
@@ -288,7 +289,7 @@ describe('PATCH /teams/:id', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
-    await ctx.app.register(teamsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
@@ -352,5 +353,164 @@ describe('PATCH /teams/:id', () => {
       payload: { status: 'converging' },
     });
     assert.equal(res.statusCode, 404);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  POST /teams/:id/launch — launch team                               */
+/* ------------------------------------------------------------------ */
+describe('POST /teams/:id/launch', () => {
+  let ctx: DrizzleTestContext;
+
+  beforeEach(async () => {
+    ctx = await createDrizzleTestApp();
+    await ctx.app.register(roomsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    await ctx.cleanup();
+  });
+
+  it('returns 400 when briefPath is missing', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/teams/test-team/launch',
+      payload: {},
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('returns 400 for path-traversal briefPath', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/teams/test-team/launch',
+      payload: { briefPath: '../secret' },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('..'));
+  });
+
+  it('returns 400 for absolute briefPath', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/teams/test-team/launch',
+      payload: { briefPath: '/etc/passwd' },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('relative'));
+  });
+
+  it('route is registered and responds to valid requests', async () => {
+    // The route exists; a valid briefPath will fail at the project resolution
+    // stage (no real project configured), not at the routing stage.
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/teams/test-team/launch',
+      payload: { briefPath: 'plans/brief.md' },
+    });
+    // Should get 400 (bad project) or 404 (team def not found), not 404 from router
+    assert.ok(
+      res.statusCode === 400 || res.statusCode === 404,
+      `Expected 400 or 404, got ${res.statusCode}`,
+    );
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  POST /teams — validation tests                                     */
+/* ------------------------------------------------------------------ */
+describe('POST /teams — input validation', () => {
+  let ctx: DrizzleTestContext;
+
+  beforeEach(async () => {
+    ctx = await createDrizzleTestApp();
+    await ctx.app.register(roomsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    await ctx.cleanup();
+  });
+
+  it('returns 400 for invalid team id', async () => {
+    const res = await createTeam(ctx, {
+      id: '../bad-id',
+      name: 'Bad ID Team',
+      members: [{ agentName: 'alice', role: 'implementer', isLeader: true }],
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid team id'));
+  });
+
+  it('returns 400 for invalid agentName', async () => {
+    const res = await createTeam(ctx, {
+      id: 'valid-team',
+      name: 'Bad Agent Team',
+      members: [{ agentName: 'alice/../hack', role: 'implementer', isLeader: true }],
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid agentName'));
+  });
+
+  it('returns 400 for empty role', async () => {
+    const res = await createTeam(ctx, {
+      id: 'valid-team-2',
+      name: 'Empty Role Team',
+      members: [{ agentName: 'alice', role: '', isLeader: true }],
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('empty role'));
+  });
+
+  it('returns 400 for role with invalid characters (B3)', async () => {
+    const res = await createTeam(ctx, {
+      id: 'valid-team-3',
+      name: 'Bad Role Team',
+      members: [{ agentName: 'alice', role: 'impl<script>', isLeader: true }],
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('invalid role'));
+  });
+
+  it('returns 400 for role exceeding 128 characters (B3)', async () => {
+    const res = await createTeam(ctx, {
+      id: 'valid-team-4',
+      name: 'Long Role Team',
+      members: [{ agentName: 'alice', role: 'a'.repeat(129), isLeader: true }],
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('invalid role'));
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  GET /teams — status filter validation (B2)                         */
+/* ------------------------------------------------------------------ */
+describe('GET /teams — status filter validation', () => {
+  let ctx: DrizzleTestContext;
+
+  beforeEach(async () => {
+    ctx = await createDrizzleTestApp();
+    await ctx.app.register(roomsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    await ctx.cleanup();
+  });
+
+  it('returns 400 for invalid status query param', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/teams?status=bogus' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid status filter'));
+  });
+
+  it('accepts valid status query param', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/teams?status=active' });
+    assert.equal(res.statusCode, 200);
   });
 });

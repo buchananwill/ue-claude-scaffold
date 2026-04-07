@@ -17,7 +17,15 @@ import pg from 'pg';
 import { mkdirSync } from 'node:fs';
 import * as schema from './schema/index.js';
 
-export type DrizzleDb = ReturnType<typeof drizzlePg<typeof schema>> | ReturnType<typeof drizzlePglite<typeof schema>>;
+/** Full database instance (PGlite or node-postgres). */
+export type DrizzlePgDb = ReturnType<typeof drizzlePg<typeof schema>>;
+export type DrizzlePgliteDb = ReturnType<typeof drizzlePglite<typeof schema>>;
+export type DrizzleDb = DrizzlePgDb | DrizzlePgliteDb;
+
+/** Transaction client type — the `tx` passed to `.transaction()` callbacks. */
+export type DrizzleTx =
+  | Parameters<Parameters<DrizzlePgDb['transaction']>[0]>[0]
+  | Parameters<Parameters<DrizzlePgliteDb['transaction']>[0]>[0];
 
 let instance: DrizzleDb | null = null;
 let pgliteClient: PGlite | null = null;
@@ -54,10 +62,11 @@ async function doInit(opts?: InitDrizzleOpts): Promise<DrizzleDb> {
       mkdirSync(dataDir, { recursive: true });
     }
     pgliteClient = new PGlite(dataDir);
-    instance = drizzlePglite(pgliteClient, { schema });
+    const pgliteDb = drizzlePglite(pgliteClient, { schema });
+    instance = pgliteDb;
     // Set timezone to UTC so DEFAULT now() and all timestamps are in UTC
-    await (instance as any).execute('SET timezone TO \'UTC\'');
-    await migratePglite(instance as Parameters<typeof migratePglite>[0], { migrationsFolder: './drizzle' });
+    await pgliteClient.exec("SET timezone TO 'UTC'");
+    await migratePglite(pgliteDb, { migrationsFolder: './drizzle' });
   }
 
   return instance;

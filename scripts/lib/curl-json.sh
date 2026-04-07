@@ -36,10 +36,18 @@ _post_json() {
   fi
 
   local -a headers=(-H "Content-Type: application/json")
-  if [[ -n "${PROJECT_ID:-}" ]] && _validate_identifier "PROJECT_ID" "$PROJECT_ID"; then
+  if [[ -n "${PROJECT_ID:-}" ]]; then
+    if ! _validate_identifier "PROJECT_ID" "$PROJECT_ID"; then
+      rm -f "$tmpfile"
+      return 1
+    fi
     headers+=(-H "X-Project-Id: ${PROJECT_ID}")
   fi
-  if [[ -n "${AGENT_NAME:-}" ]] && _validate_identifier "AGENT_NAME" "$AGENT_NAME"; then
+  if [[ -n "${AGENT_NAME:-}" ]]; then
+    if ! _validate_identifier "AGENT_NAME" "$AGENT_NAME"; then
+      rm -f "$tmpfile"
+      return 1
+    fi
     headers+=(-H "X-Agent-Name: ${AGENT_NAME}")
   fi
 
@@ -61,10 +69,18 @@ _get_json() {
   tmpfile="$(mktemp)"
 
   local -a headers=()
-  if [[ -n "${PROJECT_ID:-}" ]] && _validate_identifier "PROJECT_ID" "$PROJECT_ID"; then
+  if [[ -n "${PROJECT_ID:-}" ]]; then
+    if ! _validate_identifier "PROJECT_ID" "$PROJECT_ID"; then
+      rm -f "$tmpfile"
+      return 1
+    fi
     headers+=(-H "X-Project-Id: ${PROJECT_ID}")
   fi
-  if [[ -n "${AGENT_NAME:-}" ]] && _validate_identifier "AGENT_NAME" "$AGENT_NAME"; then
+  if [[ -n "${AGENT_NAME:-}" ]]; then
+    if ! _validate_identifier "AGENT_NAME" "$AGENT_NAME"; then
+      rm -f "$tmpfile"
+      return 1
+    fi
     headers+=(-H "X-Agent-Name: ${AGENT_NAME}")
   fi
 

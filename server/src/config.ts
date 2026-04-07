@@ -55,6 +55,8 @@ export interface ScaffoldConfig {
     agentSubstitutions: Record<string, string>;
   };
   resolvedProjects: Record<string, ProjectConfig>;
+  /** Directory containing scaffold.config.json (used to derive relative paths like teamsDir). */
+  configDir: string;
 }
 
 export function loadConfig(): ScaffoldConfig {
@@ -123,6 +125,7 @@ export function loadConfig(): ScaffoldConfig {
       seedBranch: raw.tasks?.seedBranch ?? raw.tasks?.planBranch,
     },
     resolvedProjects: {},
+    configDir: path.dirname(configPath),
   };
 
   // Build resolvedProjects from explicit projects block or synthesise from legacy fields.

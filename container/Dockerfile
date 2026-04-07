@@ -10,13 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── Project-specific dependencies ─────────────────────────────────────────
 # Extend the image with packages your build scripts need.
-# Examples:
+# Example:
 #
 # RUN apt-get update && apt-get install -y --no-install-recommends \
-#     python3-pip \
+#     build-essential \
 #     && rm -rf /var/lib/apt/lists/*
-#
-# RUN pip3 install --no-cache-dir <package-name>
 
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
@@ -31,15 +29,20 @@ RUN chmod +x /claude-hooks/*.sh
 
 # Copy and install chat channel MCP server
 COPY mcp-servers/ /mcp-servers/
-RUN cd /mcp-servers && npm install --omit=dev
+RUN npm install --omit=dev --prefix /mcp-servers
 
 # Copy workspace setup scripts
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Smoke-test: verify runtime dependencies and absence of Python
+RUN node --version && npm --version && \
+    node --check /claude-hooks/lint-cpp-diff.mjs && \
+    ! command -v python3
+
 # Create directories owned by claude user
-RUN mkdir -p /workspace /task && chown claude:claude /workspace
-RUN mkdir -p /home/claude/.claude && chown claude:claude /home/claude/.claude
+RUN mkdir -p /workspace /task /home/claude/.claude \
+    && chown claude:claude /workspace /task /home/claude/.claude
 
 USER claude
 WORKDIR /workspace

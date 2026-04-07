@@ -23,6 +23,8 @@ import {
   hooksPlugin,
   containerSettingsPlugin,
   tasksIngestPlugin,
+  exitClassifyPlugin,
+  statusPlugin,
 } from './routes/index.js';
 import { sweepStaleLock } from './routes/ubt.js';
 import { seedFromConfig } from './queries/projects.js';
@@ -69,13 +71,15 @@ await server.register(buildsPlugin);
 await server.register(coalescePlugin);
 await server.register(syncPlugin, { config });
 await server.register(roomsPlugin);
-await server.register(teamsPlugin);
+await server.register(teamsPlugin, { config });
 await server.register(projectsPlugin);
 await server.register(configPlugin, { config });
 await server.register(branchOpsPlugin, { config });
 await server.register(hooksPlugin);
 await server.register(containerSettingsPlugin);
 await server.register(tasksIngestPlugin, { config });
+await server.register(exitClassifyPlugin);
+await server.register(statusPlugin);
 
 try {
   const address = await server.listen({

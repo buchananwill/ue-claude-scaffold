@@ -1,6 +1,10 @@
-import { eq, and, gt, lt, desc, asc, sql, isNull, count as countFn } from 'drizzle-orm';
+import { eq, and, gt, lt, desc, asc, sql, isNull, count as countFn, type SQL } from 'drizzle-orm';
 import { messages } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
+
+function buildWhere(conditions: SQL[]) {
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
 
 export interface InsertOpts {
   fromAgent: string;
@@ -35,7 +39,7 @@ export interface ListOpts {
 }
 
 export async function list(db: DrizzleDb, opts: ListOpts = {}) {
-  const conditions = [];
+  const conditions: SQL[] = [];
 
   if (opts.channel) {
     conditions.push(eq(messages.channel, opts.channel));
@@ -50,14 +54,15 @@ export async function list(db: DrizzleDb, opts: ListOpts = {}) {
     conditions.push(eq(messages.projectId, opts.projectId));
   }
 
-  // Polling mode: since => ORDER BY id ASC, no limit
+  // Polling mode: since => ORDER BY id ASC, capped by limit when provided
   if (opts.since != null) {
     conditions.push(gt(messages.id, opts.since));
-    return db
+    const query = db
       .select()
       .from(messages)
-      .where(and(...conditions))
+      .where(buildWhere(conditions))
       .orderBy(asc(messages.id));
+    return query.limit(opts.limit ?? 500);
   }
 
   // Paging mode: before => ORDER BY id DESC LIMIT n, then reverse
@@ -69,7 +74,7 @@ export async function list(db: DrizzleDb, opts: ListOpts = {}) {
   const rows = await db
     .select()
     .from(messages)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .where(buildWhere(conditions))
     .orderBy(desc(messages.id))
     .limit(pageSize);
 
@@ -85,7 +90,7 @@ export interface CountOpts {
 }
 
 export async function count(db: DrizzleDb, opts: CountOpts = {}): Promise<number> {
-  const conditions = [];
+  const conditions: SQL[] = [];
 
   if (opts.channel) {
     conditions.push(eq(messages.channel, opts.channel));
@@ -103,7 +108,7 @@ export async function count(db: DrizzleDb, opts: CountOpts = {}): Promise<number
   const rows = await db
     .select({ count: countFn() })
     .from(messages)
-    .where(conditions.length > 0 ? and(...conditions) : undefined);
+    .where(buildWhere(conditions));
 
   return Number(rows[0].count);
 }

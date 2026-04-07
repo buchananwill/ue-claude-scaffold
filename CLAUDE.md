@@ -48,25 +48,36 @@ The dashboard talks to the coordination server (default `http://localhost:9100`)
 ./stop.sh --drain        # Graceful shutdown (pause pumps, wait for in-flight tasks, stop)
 ./status.sh --follow     # Monitor agent progress (polls every 5s)
 ./scripts/ingest-tasks.sh --tasks-dir ./tasks  # Ingest task markdown files into task queue
+./scripts/launch-team.sh             # Server-side team launch (called by launch.sh --team)
 ```
 
-Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status.sh && bash -n stop.sh`
+Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status.sh && bash -n stop.sh && bash -n scripts/launch-team.sh`
 
 ## Architecture
 
 ### Four-Layer System
 
-1. **Shell scripts** (`launch.sh`, `setup.sh`, `status.sh`, `stop.sh`) — orchestrate Docker and config. Read structural config from `scaffold.config.json` and secrets from `.env`.
+1. **Shell scripts** (`launch.sh`, `setup.sh`, `status.sh`, `stop.sh`) — focused dispatch scripts that delegate logic to shared libraries in `scripts/lib/`. Source reusable functions from `scripts/lib/` (validators, config resolution, compose detection, branch setup, container launching, agent compilation, hook resolution, curl helpers, colors, arg parsing, stop helpers, resolved-config printing). Read structural config from `scaffold.config.json` and secrets from `.env`.
 
-2. **Coordination server** (`server/`) — Fastify + TypeScript, PGlite (in-process Postgres) accessed via Drizzle ORM. Runs on the host (default port 9100). Requests are scoped by the `X-Project-Id` header (default `default`); every persisted row — agents, tasks, messages, builds, ubt_lock, files, rooms, teams — carries a `project_id` column so a single server serves multiple UE projects in isolation. Provides:
+2. **Coordination server** (`server/`) — Fastify + TypeScript, PGlite (in-process Postgres) accessed via Drizzle ORM. Runs on the host (default port 9100). The server relies on network isolation and is not hardened for internet exposure — it is designed to be accessed only by local Docker containers and the operator's dashboard. Requests are scoped by the `X-Project-Id` header (default `default`); every persisted row — agents, tasks, messages, builds, ubt_lock, files, rooms, teams — carries a `project_id` column so a single server serves multiple UE projects in isolation. The server owns config resolution, branch operations, hook cascade generation, container-settings rendering, exit classification, team launch orchestration, task ingestion, agent definition compilation, and C++ diff linting. Provides:
    - `GET /health` — server health check (returns status, db path, config summary)
-   - `GET /projects`, `POST /projects` — list and register projects (portable config stored in the `projects` table)
+   - `GET /status` — aggregate status overview (agents, tasks, recent messages from the general channel)
+   - `GET /projects`, `POST /projects`, `GET /projects/{id}`, `PATCH /projects/{id}`, `DELETE /projects/{id}` — project CRUD (portable config stored in the `projects` table)
+   - `POST /projects/{id}/seed/bootstrap` — bootstrap a bare repo and create the seed branch for a project
+   - `GET /config` — list all project IDs known to the config
+   - `GET /config/{projectId}` — resolved project configuration for shell scripts and containers
    - `POST /build`, `POST /test` — sync worktree from bare repo, run host-side build/test scripts, return structured `{success, exit_code, output, stderr}`
    - `GET /builds` — query build history with filtering
    - `POST /agents/register`, `GET /agents`, `GET /agents/{name}`, `POST /agents/{name}/status`, `DELETE /agents/{name}`, `DELETE /agents` — agent lifecycle
    - `POST /agents/{name}/sync` — merge `docker/{project-id}/current-root` into `docker/{project-id}/{name}`; propagates plans to running containers
-   - `GET /messages`, `POST /messages`, `GET /messages/{channel}`, `POST /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve` — message board for agent progress
-   - `/rooms/*` — threaded message rooms (alternative to the flat message board)
+   - `POST /agents/{name}/branch` — branch setup operations (create, reset, verify agent branches)
+   - `POST /agents/{name}/exit-classify` — classify agent exit codes and decide retry/stop/report
+   - `POST /hooks/resolve` — stateless hook cascade resolution (intercept, guard, push, lint) from request body
+   - `GET /agents/{name}/settings.json`, `GET /agents/{name}/mcp.json` — render container settings and MCP config for an agent
+   - `POST /tasks/ingest` — ingest task markdown files into the task queue
+   - `POST /teams/{id}/launch` — orchestrate team container launches
+   - `POST /messages`, `GET /messages/{channel}`, `GET /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve`, `DELETE /messages/{param}` — message board for agent progress
+   - `/rooms/*` — threaded message rooms (alternative to the flat message board); includes `GET /transcript` for plain-text human-readable transcripts
    - `/teams/*` — design team registration and lifecycle
    - UBT lock (`GET /ubt/status`, `POST /ubt/acquire`, `POST /ubt/release`) — singleton mutex with priority queue and stale-lock sweeping (60s interval)
    - `/tasks/*` — task queue split across `tasks.ts`, `tasks-claim.ts`, `tasks-lifecycle.ts`, `tasks-files.ts`, `tasks-replan.ts` (claim/complete/fail/release/replan lifecycle for worker mode)
@@ -75,7 +86,7 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `GET /files` — file ownership registry (tracks which agent owns which files)
    - `/coalesce/*` — system-wide coordination: pause pump agents, wait for in-flight tasks, release file ownership
 
-3. **Docker container** (`container/`) — runs a single Claude Code instance in non-interactive mode (`claude -p`). The entrypoint (`entrypoint.sh`) clones from a bare repo, excludes `.claude/` from git tracking via `.git/info/exclude`, registers with the coordination server, and delegates to the specified agent type. The repo's `CLAUDE.md` is environment-agnostic — no patching needed. User-level Claude settings (hooks, agents, credentials) are mounted from outside the repo.
+3. **Docker container** (`container/`) — runs a single Claude Code instance in non-interactive mode (`claude -p`). The entrypoint (`entrypoint.sh`) is a thin dispatcher that sources shared libraries from `container/lib/` (env.sh for environment setup, workspace-setup.sh for git clone/checkout, registration.sh for server registration, finalize.sh for git exclude and settings, run-claude.sh for launching Claude, pump-loop.sh for multi-task mode, post-setup.sh for plugin symlinking). The repo's `CLAUDE.md` is environment-agnostic — no patching needed. User-level Claude settings (hooks, agents, credentials) are mounted from outside the repo.
 
 4. **Dashboard** (`dashboard/`) — React + Vite SPA for real-time monitoring of agents, builds, tasks, and messages. Polls the coordination server. See Commands section above.
 
@@ -104,7 +115,7 @@ Container agents don't run builds directly. Two PreToolUse hooks in `container/h
 
 - **`intercept_build_test.sh`** — intercepts build/test commands, commits+pushes to the bare repo, then calls the coordination server's `/build` or `/test` endpoint. The server syncs to a staging worktree and runs the real UE build scripts.
 - **`block-push-passthrough.sh`** — blocks manual `git push` commands. Pushes are handled automatically by the build/test intercept hook, so direct pushes are an error.
-- Additional hooks in `container/hooks/` cover branch guarding (`guard-branch.sh`), agent header injection (`inject-agent-header.sh`), post-commit auto-push (`push-after-commit.sh`), and C++ diff linting (`lint-cpp-diff.py`).
+- Additional hooks in `container/hooks/` cover branch guarding (`guard-branch.sh`), agent header injection (`inject-agent-header.sh`), post-commit auto-push (`push-after-commit.sh`), and C++ diff linting (`lint-cpp-diff.mjs`). No Python is required — the project uses only bash and Node.js/TypeScript.
 
 ### Task-Queue Execution
 

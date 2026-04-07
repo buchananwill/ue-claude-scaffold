@@ -3,6 +3,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ── Source shared libraries ─────────────────────────────────────────────────
+# shellcheck source=scripts/lib/compose-detect.sh
+source "$SCRIPT_DIR/scripts/lib/compose-detect.sh"
+# shellcheck source=scripts/lib/validators.sh
+source "$SCRIPT_DIR/scripts/lib/validators.sh"
+# shellcheck source=scripts/lib/stop-helpers.sh
+source "$SCRIPT_DIR/scripts/lib/stop-helpers.sh"
+
 # ── Usage ────────────────────────────────────────────────────────────────────
 usage() {
   cat <<'USAGE'
@@ -48,17 +56,31 @@ TIMEOUT=600
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent)
+      if [[ -z "${2:-}" ]]; then
+        echo "Error: --agent requires an argument" >&2; exit 1
+      fi
       MODE="agent"
       AGENT_NAME="$2"; shift 2 ;;
     --team)
+      if [[ -z "${2:-}" ]]; then
+        echo "Error: --team requires an argument" >&2; exit 1
+      fi
       MODE="team"
       TEAM_ID="$2"; shift 2 ;;
     --project)
+      if [[ -z "${2:-}" ]]; then
+        echo "Error: --project requires an argument" >&2; exit 1
+      fi
       PROJECT_ID="$2"; shift 2 ;;
     --drain)
       MODE="drain"; shift ;;
     --timeout)
-      TIMEOUT="$2"; shift 2 ;;
+      TIMEOUT="$2"; shift 2
+      if [[ ! "$TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+        echo "Error: --timeout must be a positive integer" >&2
+        exit 1
+      fi
+      ;;
     --help)
       usage; exit 0 ;;
     *)
@@ -68,18 +90,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ── Validate PROJECT_ID ─────────────────────────────────────────────────────
-if [[ -n "$PROJECT_ID" && ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-  echo "Error: PROJECT_ID contains invalid characters: $PROJECT_ID" >&2
-  echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
-  exit 1
+# ── Validate identifiers ────────────────────────────────────────────────────
+if [[ -n "$AGENT_NAME" ]]; then
+  _validate_identifier "--agent" "$AGENT_NAME" || exit 1
+fi
+
+if [[ -n "$TEAM_ID" ]]; then
+  _validate_identifier "--team" "$TEAM_ID" || exit 1
+fi
+
+if [[ -n "$PROJECT_ID" ]]; then
+  _validate_identifier "--project" "$PROJECT_ID" || exit 1
 fi
 
 # ── Read port from scaffold.config.json ──────────────────────────────────────
-_cfg_port=9100
-if [[ -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
-    _cfg_port="$(jq -r '.server.port // 9100' "$SCRIPT_DIR/scaffold.config.json" 2>/dev/null || echo 9100)"
-fi
+_cfg_port="$(_read_server_port "$SCRIPT_DIR")" || exit 1
 BASE_URL="http://localhost:$_cfg_port"
 
 # ── Check dependencies ──────────────────────────────────────────────────────
@@ -89,41 +114,18 @@ if ! command -v jq &>/dev/null; then
 fi
 
 # ── Detect docker compose ───────────────────────────────────────────────────
-COMPOSE_CMD=""
-if docker compose version &>/dev/null; then
-  COMPOSE_CMD="docker compose"
-elif docker-compose --version &>/dev/null; then
-  COMPOSE_CMD="docker-compose"
-else
-  echo "Error: Neither 'docker compose' nor 'docker-compose' found." >&2
-  exit 1
-fi
+_detect_compose || exit 1
 
-# ── Helper: signal server to set agent status to 'stopping' ──────────────────
-# This must happen BEFORE docker compose down so the container's _shutdown
-# handler sees status='stopping' and can hard-delete on its second DELETE call.
-signal_stop() {
-  local agent_name="$1"
-  curl -sf -X DELETE "$BASE_URL/agents/${agent_name}" --max-time 5 >/dev/null 2>&1 || true
-}
+COMPOSE_DIR="$SCRIPT_DIR/container"
 
-# ── Helper: stop all claude-* projects ───────────────────────────────────────
-stop_all() {
-  local compose_file="$SCRIPT_DIR/container/docker-compose.yml"
-  local stopped=0
-
-  # Find running containers with claude- project prefix
-  local projects
-  projects=$(docker ps --filter "label=com.docker.compose.project" --format '{{.Labels}}' 2>/dev/null | \
-    grep -oP 'com\.docker\.compose\.project=\Kclaude-[^,]+' | sort -u || true)
-
-  if [[ -z "$projects" ]]; then
-    echo "No running claude-* containers found."
-    return
-  fi
+# ── Helper: find all running claude-* projects ──────────────────────────────
+_find_claude_projects() {
+  local -a projects=()
+  mapfile -t projects < <(docker ps --filter "label=com.docker.compose.project" --format '{{index .Labels "com.docker.compose.project"}}' 2>/dev/null | \
+    grep -o 'claude-[^ ,]*' | sort -u)
 
   # When --project is set, filter to only agents registered under that project
-  if [[ -n "$PROJECT_ID" ]]; then
+  if [[ -n "$PROJECT_ID" && ${#projects[@]} -gt 0 ]]; then
     local project_agents
     project_agents=$(curl -sf "$BASE_URL/agents?project=$PROJECT_ID" --max-time 5 2>/dev/null | \
       jq -r '.[].name' 2>/dev/null) || {
@@ -131,94 +133,87 @@ stop_all() {
       return 1
     }
 
-    local filtered=""
+    local -a filtered=()
     local prefix="claude-${PROJECT_ID}-"
-    for project in $projects; do
-      # Extract agent name from docker project (format: claude-${PROJECT_ID}-${AGENT_NAME})
+    local agent_name
+    for project in "${projects[@]}"; do
       if [[ "$project" == "${prefix}"* ]]; then
-        local agent_name="${project#${prefix}}"
+        agent_name="${project#${prefix}}"
         if echo "$project_agents" | grep -qx "$agent_name"; then
-          filtered="$filtered $project"
+          filtered+=("$project")
         fi
       fi
     done
-    projects="${filtered# }"
-
-    if [[ -z "$projects" ]]; then
-      echo "No running containers found for project $PROJECT_ID."
-      return
-    fi
+    projects=("${filtered[@]}")
   fi
 
-  # Signal all agents via server BEFORE killing containers, so the
-  # entrypoint's _shutdown handler can complete the two-call DELETE.
-  for project in $projects; do
-    # Extract agent name from docker project
-    if [[ -n "$PROJECT_ID" ]]; then
-      local agent_name="${project#claude-${PROJECT_ID}-}"
-    else
-      local agent_name="${project#claude-}"
-    fi
-    signal_stop "$agent_name"
-  done
-
-  for project in $projects; do
-    echo "Stopping $project ..."
-    (cd "$SCRIPT_DIR/container" && $COMPOSE_CMD --project-name "$project" down 2>/dev/null) || true
-    stopped=$((stopped + 1))
-  done
-
-  echo "Stopped $stopped container(s)."
+  # Output project names, one per line
+  printf '%s\n' "${projects[@]}"
 }
 
 # ── Mode: default — stop all ─────────────────────────────────────────────────
 if [[ "$MODE" == "default" ]]; then
   echo "Stopping all Claude agent containers..."
-  stop_all
+  mapfile -t _projects < <(_find_claude_projects)
+  if [[ ${#_projects[@]} -eq 0 ]]; then
+    echo "No running claude-* containers found."
+    exit 0
+  fi
+  _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "$PROJECT_ID" "${_projects[@]}"
   exit 0
 fi
 
 # ── Mode: agent — stop specific ──────────────────────────────────────────────
 if [[ "$MODE" == "agent" ]]; then
-  # If --project not specified, default to "default" project for backwards compatibility
-  local project_prefix="${PROJECT_ID:-default}"
-  local compose_project_name="claude-${project_prefix}-${AGENT_NAME}"
+  project_prefix="${PROJECT_ID:-default}"
+  compose_project_name="claude-${project_prefix}-${AGENT_NAME}"
 
   echo "Stopping agent: $AGENT_NAME (project: $project_prefix)..."
-  signal_stop "$AGENT_NAME"
-  (cd "$SCRIPT_DIR/container" && \
-    $COMPOSE_CMD --project-name "$compose_project_name" down 2>/dev/null) || true
-  echo "Stopped $compose_project_name."
+  _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "$project_prefix" "$compose_project_name"
   exit 0
 fi
 
 # ── Mode: team — stop all members and dissolve ──────────────────────────────
 if [[ "$MODE" == "team" ]]; then
+  # Defense-in-depth: re-validate TEAM_ID before use in URLs
+  [[ "$TEAM_ID" =~ ^[a-zA-Z0-9_-]{1,64}$ ]] || { echo "Error: invalid TEAM_ID" >&2; exit 1; }
+
   echo "Stopping team: $TEAM_ID ..."
 
-  # Get team member list from coordination server
+  # Get team detail from coordination server (includes projectId and members)
   TEAM_RESPONSE=$(curl -sf "$BASE_URL/teams/${TEAM_ID}" 2>/dev/null) || {
     echo "Error: Could not fetch team $TEAM_ID from coordination server at $BASE_URL" >&2
     exit 1
   }
 
-  MEMBERS=$(echo "$TEAM_RESPONSE" | jq -r '.members[].agentName' 2>/dev/null) || {
+  # Extract projectId from team response; fall back to --project flag or 'default'
+  team_project_id=$(echo "$TEAM_RESPONSE" | jq -r '.projectId // empty' 2>/dev/null)
+  team_project_id="${team_project_id:-${PROJECT_ID:-default}}"
+
+  _validate_identifier "team_project_id" "$team_project_id" || exit 1
+
+  mapfile -t _members < <(echo "$TEAM_RESPONSE" | jq -r '.members[].agentName' 2>/dev/null) || {
     echo "Error: Could not parse member list from team response" >&2
     exit 1
   }
 
-  # Signal all members before killing containers
-  for member in $MEMBERS; do
-    signal_stop "$member"
+  if [[ ${#_members[@]} -eq 0 ]]; then
+    echo "Warning: No members found in team $TEAM_ID" >&2
+  fi
+
+  # Build compose project names for each member
+  local_projects=()
+  for member in "${_members[@]}"; do
+    if [[ ! "$member" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
+      echo "Warning: skipping member with unexpected name: $member" >&2
+      continue
+    fi
+    local_projects+=("claude-${team_project_id}-${member}")
   done
 
-  stopped=0
-  for member in $MEMBERS; do
-    echo "  Stopping claude-${member} ..."
-    (cd "$SCRIPT_DIR/container" && \
-      $COMPOSE_CMD --project-name "claude-${member}" down 2>/dev/null) || true
-    stopped=$((stopped + 1))
-  done
+  if [[ ${#local_projects[@]} -gt 0 ]]; then
+    _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "$team_project_id" "${local_projects[@]}"
+  fi
 
   # Dissolve team
   curl -sf -X DELETE "$BASE_URL/teams/${TEAM_ID}" >/dev/null 2>&1 || {
@@ -228,7 +223,7 @@ if [[ "$MODE" == "team" ]]; then
   echo ""
   echo "=== Team Stopped ==="
   echo "  Team:     $TEAM_ID"
-  echo "  Stopped:  $stopped member(s)"
+  echo "  Stopped:  ${#local_projects[@]} member(s)"
   echo "  Room and message history are preserved."
   exit 0
 fi
@@ -237,56 +232,46 @@ fi
 if [[ "$MODE" == "drain" ]]; then
   echo "=== Drain Mode ==="
 
-  # 1. Pause pump agents
-  echo "Pausing pump agents..."
+  # Build the drain request body (project scoping via X-Project-Id header only)
+  drain_body=$(jq -n --argjson timeout "$TIMEOUT" '{timeout: $timeout}')
+
+  # Call the server-side drain endpoint which runs the full state machine
+  echo "Requesting drain from coordination server (timeout: ${TIMEOUT}s)..."
   project_header=()
   if [[ -n "$PROJECT_ID" ]]; then
     project_header=(-H "X-Project-Id: $PROJECT_ID")
   fi
-  pause_response=$(curl -sf -X POST "${project_header[@]}" "$BASE_URL/coalesce/pause" 2>/dev/null) || {
-    echo "Error: Could not reach coordination server at $BASE_URL" >&2
+
+  drain_response=$(curl -sf -X POST "${project_header[@]}" \
+    -H "Content-Type: application/json" \
+    -d "$drain_body" \
+    "$BASE_URL/coalesce/drain" \
+    --max-time $((TIMEOUT + 30)) 2>/dev/null) || {
+    echo "Error: Could not reach coordination server at $BASE_URL for drain" >&2
     exit 1
   }
 
-  paused=$(echo "$pause_response" | jq -r '.paused | join(", ")')
-  in_flight=$(echo "$pause_response" | jq '.inFlightTasks | length')
+  timed_out=$(echo "$drain_response" | jq -r '.timedOut')
+  paused=$(echo "$drain_response" | jq -r '.paused | join(", ")')
+  active=$(echo "$drain_response" | jq -r '.activeTasks')
+
   echo "  Paused agents: ${paused:-none}"
-  echo "  In-flight tasks: $in_flight"
-
-  # 2. Poll until canCoalesce or timeout
-  echo "Waiting for in-flight tasks to complete (timeout: ${TIMEOUT}s)..."
-  elapsed=0
-  poll_interval=5
-
-  while [[ $elapsed -lt $TIMEOUT ]]; do
-    status_response=$(curl -sf "${project_header[@]}" "$BASE_URL/coalesce/status" 2>/dev/null) || {
-      echo "Warning: Could not reach server, retrying..." >&2
-      sleep "$poll_interval"
-      elapsed=$((elapsed + poll_interval))
-      continue
-    }
-
-    can_coalesce=$(echo "$status_response" | jq -r '.canCoalesce')
-    if [[ "$can_coalesce" == "true" ]]; then
-      echo "  All tasks complete. Ready to coalesce."
-      break
-    fi
-
-    reason=$(echo "$status_response" | jq -r '.reason // "waiting"')
-    echo "  [$elapsed/${TIMEOUT}s] Not ready: $reason"
-    sleep "$poll_interval"
-    elapsed=$((elapsed + poll_interval))
-  done
-
-  if [[ $elapsed -ge $TIMEOUT ]]; then
-    echo "Warning: Timeout reached. Proceeding with stop anyway." >&2
+  if [[ "$timed_out" == "true" ]]; then
+    echo "  Warning: Timeout reached with $active active task(s). Proceeding with stop anyway." >&2
+  else
+    echo "  All tasks complete. Ready to coalesce."
   fi
 
-  # 3. Stop all containers
+  # Stop all containers
   echo "Stopping all containers..."
-  stop_all
+  mapfile -t _projects < <(_find_claude_projects)
+  if [[ ${#_projects[@]} -eq 0 ]]; then
+    echo "No running claude-* containers found."
+  else
+    _signal_and_stop_projects "$BASE_URL" "$COMPOSE_DIR" "$PROJECT_ID" "${_projects[@]}"
+  fi
 
-  # 4. Print summary with next steps
+  # Print summary with next steps
   echo ""
   echo "=== Drain Complete ==="
   echo ""

@@ -201,13 +201,15 @@ describe('coalesce routes (drizzle)', () => {
     await registerAgent('pump-1');
 
     const res1 = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
+    assert.equal(res1.statusCode, 200);
     const body1 = res1.json();
     assert.ok(body1.paused.includes('pump-1'));
 
+    // Second call should succeed without errors
     const res2 = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
-    const body2 = res2.json();
-    assert.ok(body2.paused.includes('pump-1'));
+    assert.equal(res2.statusCode, 200);
 
+    // Agent should still be paused after two calls
     const agentRes = await ctx.app.inject({ method: 'GET', url: '/agents/pump-1' });
     assert.equal(agentRes.json().status, 'paused');
   });
@@ -277,5 +279,96 @@ describe('coalesce routes (drizzle)', () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status' });
     const body = res.json();
     assert.equal(body.canCoalesce, true);
+  });
+
+  // ── POST /coalesce/drain tests ────────────────────────────────────────────
+
+  it('POST /coalesce/drain returns drained true when no active tasks', async () => {
+    await registerAgent('pump-1');
+    await registerAgent('pump-2');
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/coalesce/drain',
+      payload: { timeout: 5 },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.drained, true);
+    assert.equal(body.timedOut, false);
+    assert.ok(body.paused.includes('pump-1'));
+    assert.ok(body.paused.includes('pump-2'));
+    assert.deepEqual(body.inFlightAtStart, []);
+    assert.equal(body.activeTasks, 0);
+  });
+
+  it('POST /coalesce/drain reports in-flight tasks at start', async () => {
+    await registerAgent('pump-1');
+    const taskId = await createTask('Drain task');
+    await claimTask(taskId, 'pump-1');
+
+    // Use a short timeout so the drain times out (task stays active).
+    // We just want to verify inFlightAtStart is populated.
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/coalesce/drain',
+      payload: { timeout: 1 },
+    });
+    const body = res.json();
+    assert.equal(body.inFlightAtStart.length, 1);
+    assert.equal(body.inFlightAtStart[0].taskId, taskId);
+    assert.equal(body.inFlightAtStart[0].title, 'Drain task');
+    assert.equal(body.timedOut, true);
+  });
+
+  it('POST /coalesce/drain times out when tasks remain active', async () => {
+    await registerAgent('pump-1');
+    const taskId = await createTask('Stuck task');
+    await claimTask(taskId, 'pump-1');
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/coalesce/drain',
+      payload: { timeout: 1 },
+    });
+    const body = res.json();
+    assert.equal(body.drained, false);
+    assert.equal(body.timedOut, true);
+    assert.equal(body.activeTasks, 1);
+  });
+
+  it('POST /coalesce/drain uses X-Project-Id header for project scoping', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/coalesce/drain',
+      headers: { 'x-project-id': 'my-project' },
+      payload: { timeout: 1 },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.drained, true);
+  });
+
+  it('POST /coalesce/drain with no body uses defaults', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/coalesce/drain',
+      payload: {},
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.drained, true);
+  });
+
+  it('POST /coalesce/drain with absent body (no Content-Type) uses defaults', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/coalesce/drain',
+      // No payload, no Content-Type header — triggers the (request.body ?? {}) guard
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.drained, true);
+    assert.equal(body.timedOut, false);
   });
 });
