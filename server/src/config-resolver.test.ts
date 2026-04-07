@@ -100,6 +100,7 @@ describe('resolveProjectConfig', () => {
     const resolved = resolveProjectConfig('no-engine', config);
     assert.equal(resolved.enginePath, null);
     assert.equal(resolved.engineVersion, null);
+    assert.equal(resolved.seedBranch, 'docker/no-engine/current-root');
     // Should still have valid defaults for other fields
     assert.equal(resolved.projectId, 'no-engine');
     assert.equal(resolved.name, 'NoEngine');

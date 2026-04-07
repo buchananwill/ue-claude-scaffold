@@ -43,13 +43,7 @@ export function resolveProjectConfig(
   const merged = getProject(config, projectId);
 
   // Compute the seed branch: use the project-level value or fall back to convention
-  let seedBranch: string | null = null;
-  try {
-    seedBranch = seedBranchFor(projectId, merged);
-  } catch {
-    // If projectId is somehow invalid for branch naming, leave null
-    seedBranch = merged.seedBranch ?? null;
-  }
+  const seedBranch = seedBranchFor(projectId, merged);
 
   return {
     projectId,
