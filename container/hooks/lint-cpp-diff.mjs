@@ -15,6 +15,8 @@
  * Exit 2 + stdout: issues found (tool is BLOCKED, agent sees feedback and must fix)
  */
 
+import { fileURLToPath } from 'node:url';
+
 /**
  * Check lines of C++ code for lint issues.
  * @param {string[]} lines
@@ -195,7 +197,6 @@ function main() {
 }
 
 // Run main when executed directly (not imported)
-import { fileURLToPath } from 'node:url';
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   main();
