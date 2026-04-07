@@ -218,6 +218,9 @@ export BARE_REPO_PATH UE_ENGINE_PATH PROJECT_PATH CLAUDE_CREDENTIALS_PATH SERVER
 AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
 if [ "$_CLI_NO_AGENT" = "true" ]; then
   AGENT_TYPE=""
+elif [[ -n "$_CLI_TEAM" ]]; then
+  # Team mode: AGENT_TYPE is per-member from the server response, not required here
+  AGENT_TYPE="${_CLI_AGENT_TYPE:-${PROJECT_AGENT_TYPE:-${AGENT_TYPE:-}}}"
 else
   AGENT_TYPE="${_CLI_AGENT_TYPE:-${PROJECT_AGENT_TYPE:-${AGENT_TYPE:-}}}"
   if [ -z "$AGENT_TYPE" ]; then
@@ -441,6 +444,13 @@ if [[ "$_CLI_DRY_RUN" == true ]]; then
   exit 0
 fi
 
+# ── Check coordination server ────────────────────────────────────────────────
+if ! curl -sf "http://localhost:${SERVER_PORT:-9100}/health" >/dev/null 2>&1; then
+  echo "Error: Coordination server is not running on port ${SERVER_PORT:-9100}." >&2
+  echo "Start the coordination server first: cd server && npm run dev" >&2
+  exit 1
+fi
+
 # ── Compile dynamic agents ─────────────────────────────────────────────────
 # Compile agents before team-mode/launch checks because team mode exits early
 # and needs AGENTS_PATH. The rm -rf is safe because containers snapshot agents
@@ -459,7 +469,8 @@ if [[ ! -f "$SCRIPT_DIR/server/dist/bin/compile-agent.js" ]]; then
   exit 1
 fi
 
-if [[ -d "$SCRIPT_DIR/dynamic-agents" && -f "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" ]]; then
+# In team mode, AGENT_TYPE may be empty — skip compilation of dynamic agents
+if [[ -n "$AGENT_TYPE" && -d "$SCRIPT_DIR/dynamic-agents" && -f "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" ]]; then
   echo "Compiling dynamic agent: ${AGENT_TYPE}..."
   if ! node "$SCRIPT_DIR/server/dist/bin/compile-agent.js" \
     "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" \
@@ -475,8 +486,8 @@ else
   if [[ -d "$SCRIPT_DIR/agents" ]]; then
     cp "$SCRIPT_DIR/agents/"*.md "$COMPILED_AGENTS_DIR/" 2>/dev/null || true
   fi
-  # Warn if no agent files ended up in the output directory
-  if ! ls "$COMPILED_AGENTS_DIR"/*.md &>/dev/null; then
+  # Warn if no agent files ended up in the output directory (not an error in team mode)
+  if [[ -z "$_CLI_TEAM" ]] && ! ls "$COMPILED_AGENTS_DIR"/*.md &>/dev/null; then
     echo "Warning: No .md agent files found in compiled agents directory." >&2
     echo "  The container may still work if agents are provided from another source." >&2
   fi
@@ -490,17 +501,8 @@ export AGENTS_PATH="$COMPILED_AGENTS_DIR"
 if [[ -n "$_CLI_TEAM" ]]; then
   export _CLI_TEAM _CLI_BRIEF PROJECT_ID SERVER_PORT SCRIPT_DIR
   export BARE_REPO_PATH UE_ENGINE_PATH CLAUDE_CREDENTIALS_PATH AGENTS_PATH
-  export MAX_TURNS LOG_VERBOSITY COMPOSE_CMD
-  export -f _launch_container
-  # shellcheck source=scripts/launch-team.sh
-  source "$SCRIPT_DIR/scripts/launch-team.sh"
-fi
-
-# ── Check coordination server ────────────────────────────────────────────────
-if ! curl -sf "http://localhost:${SERVER_PORT:-9100}/health" >/dev/null 2>&1; then
-  echo "Error: Coordination server is not running on port ${SERVER_PORT:-9100}." >&2
-  echo "Start the coordination server first: cd server && npm run dev" >&2
-  exit 1
+  export MAX_TURNS LOG_VERBOSITY
+  exec "$SCRIPT_DIR/scripts/launch-team.sh"
 fi
 
 # ── Agent collision guard ───────────────────────────────────────────────────

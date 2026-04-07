@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ScaffoldConfig } from '../config.js';
 import { getDb } from '../drizzle-instance.js';
@@ -8,11 +9,14 @@ import * as roomsQ from '../queries/rooms.js';
 
 const VALID_STATUSES = ['active', 'converging', 'dissolved'] as const;
 
-interface TeamsPluginOpts {
-  config?: ScaffoldConfig;
+/** Regex for safe briefPath values — no path traversal, no absolute paths. */
+const BRIEF_PATH_RE = /^[a-zA-Z0-9_./-]+$/;
+
+interface TeamsOpts {
+  config: ScaffoldConfig;
 }
 
-const teamsPlugin: FastifyPluginAsync<TeamsPluginOpts> = async (fastify, opts) => {
+const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
   const config = opts.config;
   // POST /teams — create a team
   fastify.post<{
@@ -71,7 +75,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsPluginOpts> = async (fastify, opts) =
     const db = getDb();
     const rows = await teamsQ.list(db, { status: request.query.status || undefined, projectId: request.projectId });
 
-    return rows.map((r: any) => ({
+    return rows.map((r) => ({
       id: r.id,
       name: r.name,
       briefPath: r.briefPath,
@@ -160,19 +164,36 @@ const teamsPlugin: FastifyPluginAsync<TeamsPluginOpts> = async (fastify, opts) =
   // POST /teams/:id/launch — server-side team launch
   fastify.post<{
     Params: { id: string };
-    Body: { projectId?: string; briefPath: string; teamsDir?: string };
-  }>('/teams/:id/launch', async (request, reply) => {
-    if (!config) {
-      return reply.code(500).send({ error: 'Server config not available for team launch' });
-    }
-
+    Body: { projectId?: string; briefPath: string };
+  }>('/teams/:id/launch', {
+    schema: {
+      params: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', pattern: '^[a-zA-Z0-9_-]+$' },
+        },
+        required: ['id'],
+      },
+    },
+  }, async (request, reply) => {
     const teamId = request.params.id;
-    const { briefPath, teamsDir } = request.body;
+    const { briefPath } = request.body;
     const projectId = request.body.projectId ?? request.projectId;
     const db = getDb();
 
     if (!briefPath) {
       return reply.badRequest('briefPath is required');
+    }
+
+    // Safety B3: Validate briefPath — no path traversal
+    if (briefPath.startsWith('/')) {
+      return reply.badRequest('briefPath must be a relative path');
+    }
+    if (briefPath.includes('..')) {
+      return reply.badRequest('briefPath must not contain ".." components');
+    }
+    if (!BRIEF_PATH_RE.test(briefPath)) {
+      return reply.badRequest('briefPath contains invalid characters');
     }
 
     let project;
@@ -182,30 +203,29 @@ const teamsPlugin: FastifyPluginAsync<TeamsPluginOpts> = async (fastify, opts) =
       return reply.badRequest(`Unknown project: "${projectId}"`);
     }
 
-    // Default teamsDir to a sibling 'teams/' directory relative to config location
-    // In practice, the shell caller will pass the correct teamsDir
-    const resolvedTeamsDir = teamsDir ?? '';
-    if (!resolvedTeamsDir) {
-      return reply.badRequest('teamsDir is required');
-    }
+    // Derive teamsDir server-side from config directory
+    const teamsDir = path.resolve(config.configDir, 'teams');
 
     try {
       const result = await launchTeam({
         projectId,
         teamId,
         briefPath,
-        teamsDir: resolvedTeamsDir,
+        teamsDir,
         project,
         db,
       });
       return { ok: true, ...result };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      // Distinguish "not found" errors from other failures
+      // Log full error server-side
+      fastify.log.error(err, 'Team launch failed for %s', teamId);
+      // Return sanitized message — strip filesystem paths
+      const sanitized = message.replace(/\/[^\s:]+/g, '<path>');
       if (message.includes('not found')) {
-        return reply.notFound(message);
+        return reply.notFound(sanitized);
       }
-      return reply.badRequest(message);
+      return reply.badRequest(sanitized);
     }
   });
 };

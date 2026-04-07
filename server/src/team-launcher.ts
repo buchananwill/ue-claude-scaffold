@@ -9,7 +9,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import type { DrizzleDb } from './drizzle-instance.js';
 import type { MergedProjectConfig } from './config.js';
-import { seedBranchFor, agentBranchFor } from './branch-naming.js';
+import { seedBranchFor, agentBranchFor, AGENT_NAME_RE } from './branch-naming.js';
 import { ensureAgentBranch } from './branch-ops.js';
 import * as teamsQ from './queries/teams.js';
 import * as chatQ from './queries/chat.js';
@@ -118,10 +118,14 @@ export function loadTeamDef(teamsDir: string, teamId: string): TeamDef {
     throw new Error(`Duplicate member agentName: ${[...new Set(dupes)].join(', ')}`);
   }
 
-  // Validate each member has required fields
+  // Validate each member has required fields and valid formats
   for (const m of def.members) {
     if (!m.agentName) throw new Error('Team member missing required field: agentName');
+    if (!AGENT_NAME_RE.test(m.agentName)) {
+      throw new Error(`Team member agentName '${m.agentName}' contains invalid characters`);
+    }
     if (!m.agentType) throw new Error(`Team member '${m.agentName}' missing required field: agentType`);
+    if (!m.role) throw new Error(`Team member '${m.agentName}' missing required field: role`);
   }
 
   return def;
@@ -156,7 +160,16 @@ export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult
   // 2. Load and validate team definition
   const def = loadTeamDef(teamsDir, teamId);
 
-  // 3. Register team + room in DB (uses the createWithRoom helper)
+  // 3. Check for duplicate registration
+  const existing = await teamsQ.getById(db, def.id);
+  if (existing) {
+    if (existing.status !== 'dissolved') {
+      throw new Error(`Team '${def.id}' already exists and is ${existing.status}`);
+    }
+    // Dissolved team — will be replaced by createWithRoom
+  }
+
+  // 4. Register team + room in DB (uses the createWithRoom helper)
   await teamsQ.createWithRoom(db, {
     id: def.id,
     name: def.name,
@@ -172,14 +185,14 @@ export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult
 
   const roomId = def.id;
 
-  // 4. Post brief path as the first room message
+  // 5. Post brief path as the first room message
   await chatQ.sendMessage(db, {
     roomId,
     sender: 'user',
     content: `Brief: \`${briefPath}\` -- read this file from your workspace to begin.`,
   });
 
-  // 5. Set up agent branch refs (fresh reset to seed branch HEAD)
+  // 6. Set up agent branch refs (fresh reset to seed branch HEAD)
   const members: LaunchMember[] = [];
   // Process leader first, then non-leaders
   const sorted = [...def.members].sort((a, b) => {

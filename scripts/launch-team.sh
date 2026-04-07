@@ -1,27 +1,25 @@
 #!/bin/bash
-# scripts/launch-team.sh — Server-side team launch
+# scripts/launch-team.sh -- Server-side team launch
 #
-# Called by launch.sh when --team is set. Delegates team setup (validation,
-# DB registration, branch creation) to the coordination server via
-# POST /teams/:id/launch, then launches one container per member.
+# Called by launch.sh via exec when --team is set. Delegates team setup
+# (validation, DB registration, branch creation) to the coordination server
+# via POST /teams/:id/launch, then launches one container per member.
 #
 # Expected environment (set by launch.sh before exec-ing this script):
-#   _CLI_TEAM          — team definition filename (without .json)
-#   _CLI_BRIEF         — repo-relative path to the brief file
-#   PROJECT_ID         — project identifier
-#   SERVER_PORT        — coordination server port
-#   SCRIPT_DIR         — path to the repo root (where teams/ lives)
-#   BARE_REPO_PATH     — path to the bare repo
-#   UE_ENGINE_PATH     — Unreal Engine path
-#   CLAUDE_CREDENTIALS_PATH — Claude credentials mount path
-#   AGENTS_PATH        — compiled agents directory
-#   MAX_TURNS          — max agent turns
-#   LOG_VERBOSITY      — verbosity level
-#   COMPOSE_CMD        — docker compose command
-#   _launch_container  — function (sourced from launch.sh)
+#   _CLI_TEAM          -- team definition filename (without .json)
+#   _CLI_BRIEF         -- repo-relative path to the brief file
+#   PROJECT_ID         -- project identifier
+#   SERVER_PORT        -- coordination server port
+#   SCRIPT_DIR         -- path to the repo root (where teams/ lives)
+#   BARE_REPO_PATH     -- path to the bare repo
+#   UE_ENGINE_PATH     -- Unreal Engine path
+#   CLAUDE_CREDENTIALS_PATH -- Claude credentials mount path
+#   AGENTS_PATH        -- compiled agents directory
+#   MAX_TURNS          -- max agent turns
+#   LOG_VERBOSITY      -- verbosity level
 set -euo pipefail
 
-# ── Validate required vars ──────────────────────────────────────────────────
+# -- Validate required vars --------------------------------------------------
 if [[ -z "${_CLI_TEAM:-}" ]]; then
   echo "Error: _CLI_TEAM is not set" >&2; exit 1
 fi
@@ -35,32 +33,39 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
   echo "Error: SCRIPT_DIR is not set" >&2; exit 1
 fi
 
-TEAMS_DIR="${SCRIPT_DIR}/teams"
+# -- Detect docker compose ---------------------------------------------------
+COMPOSE_CMD=()
+if docker compose version &>/dev/null; then
+  COMPOSE_CMD=(docker compose)
+elif docker-compose --version &>/dev/null; then
+  COMPOSE_CMD=(docker-compose)
+else
+  echo "Error: Neither 'docker compose' nor 'docker-compose' found." >&2
+  exit 1
+fi
 
 echo "=== Launching Team: $_CLI_TEAM ==="
 echo "  Brief: $_CLI_BRIEF"
 echo ""
 
-# ── Call the server-side launch endpoint ────────────────────────────────────
+# -- Call the server-side launch endpoint ------------------------------------
 LAUNCH_RESPONSE=$(curl -sf -X POST "http://localhost:${SERVER_PORT}/teams/${_CLI_TEAM}/launch" \
   -H "Content-Type: application/json" \
   -H "X-Project-Id: ${PROJECT_ID}" \
   -d "$(jq -n \
     --arg projectId "$PROJECT_ID" \
     --arg briefPath "$_CLI_BRIEF" \
-    --arg teamsDir "$TEAMS_DIR" \
-    '{projectId: $projectId, briefPath: $briefPath, teamsDir: $teamsDir}')" \
+    '{projectId: $projectId, briefPath: $briefPath}')" \
   2>&1) || {
   echo "Error: Team launch request failed." >&2
-  echo "  Response: $LAUNCH_RESPONSE" >&2
   echo "  Ensure the coordination server is running on port ${SERVER_PORT}." >&2
   exit 1
 }
 
 # Validate response
 if ! echo "$LAUNCH_RESPONSE" | jq -e '.ok' >/dev/null 2>&1; then
-  echo "Error: Team launch returned unexpected response:" >&2
-  echo "  $LAUNCH_RESPONSE" >&2
+  _err_msg=$(echo "$LAUNCH_RESPONSE" | jq -r '.message // .error // "unknown error"' 2>/dev/null || echo "unexpected response format")
+  echo "Error: Team launch returned: ${_err_msg}" >&2
   exit 1
 fi
 
@@ -71,10 +76,10 @@ echo "  Room:    $ROOM_ID"
 echo "  Members: $MEMBER_COUNT"
 echo ""
 
-# ── Launch containers for each member ───────────────────────────────────────
+# -- Launch containers for each member ----------------------------------------
 # Leader is first in the array (server sorts leader-first)
 FIRST=true
-echo "$LAUNCH_RESPONSE" | jq -c '.members[]' | while IFS= read -r member; do
+while IFS= read -r member; do
   _NAME=$(echo "$member" | jq -r '.agentName')
   _TYPE=$(echo "$member" | jq -r '.agentType')
   _BRANCH=$(echo "$member" | jq -r '.branch')
@@ -85,10 +90,10 @@ echo "$LAUNCH_RESPONSE" | jq -c '.members[]' | while IFS= read -r member; do
 
   # Stop existing container if running
   (cd "$SCRIPT_DIR/container" && \
-    $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${_NAME}" down 2>/dev/null) || true
+    "${COMPOSE_CMD[@]}" --project-name "claude-${PROJECT_ID}-${_NAME}" down 2>/dev/null) || true
 
-  # Launch container
-  _launch_container "$_NAME" \
+  # Launch container (inline docker compose invocation)
+  (cd "$SCRIPT_DIR/container" && env \
     AGENT_NAME="$_NAME" \
     WORK_BRANCH="$_BRANCH" \
     AGENT_TYPE="$_TYPE" \
@@ -105,7 +110,8 @@ echo "$LAUNCH_RESPONSE" | jq -c '.members[]' | while IFS= read -r member; do
     LOG_VERBOSITY="${LOG_VERBOSITY:-normal}" \
     WORKER_MODE=false \
     HOOK_BUILD_INTERCEPT="$_HOOK_BUILD" \
-    HOOK_CPP_LINT="$_HOOK_LINT"
+    HOOK_CPP_LINT="$_HOOK_LINT" \
+    "${COMPOSE_CMD[@]}" --project-name "claude-${PROJECT_ID}-${_NAME}" up --build --detach)
 
   echo "  Launched $_NAME (role: $_ROLE, type: $_TYPE, leader: $_IS_LEADER)"
 
@@ -115,7 +121,7 @@ echo "$LAUNCH_RESPONSE" | jq -c '.members[]' | while IFS= read -r member; do
     echo "  Waiting 10s before launching other members..."
     sleep 10
   fi
-done
+done < <(echo "$LAUNCH_RESPONSE" | jq -c '.members[]')
 
 echo ""
 echo "=== Team Launched ==="

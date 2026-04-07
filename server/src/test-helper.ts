@@ -28,6 +28,7 @@ export function createTestConfig(overrides?: Partial<ScaffoldConfig>): ScaffoldC
       ubtLockTimeoutMs: 600000,
       bareRepoPath: '/tmp/test-repo.git',
     },
+    configDir: '/tmp',
     resolvedProjects: {
       default: {
         name: 'TestProject',

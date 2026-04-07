@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
+import { createTestConfig } from '../test-helper.js';
 import roomsPlugin from './rooms.js';
 import teamsPlugin from './teams.js';
 
@@ -41,7 +42,7 @@ describe('POST /teams', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
-    await ctx.app.register(teamsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
@@ -129,7 +130,7 @@ describe('GET /teams', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
-    await ctx.app.register(teamsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
@@ -182,7 +183,7 @@ describe('GET /teams/:id', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
-    await ctx.app.register(teamsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
@@ -236,7 +237,7 @@ describe('DELETE /teams/:id', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
-    await ctx.app.register(teamsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
@@ -288,7 +289,7 @@ describe('PATCH /teams/:id', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(roomsPlugin);
-    await ctx.app.register(teamsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
