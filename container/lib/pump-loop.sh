@@ -87,7 +87,9 @@ _pump_iteration() {
 
     echo "Polling for tasks..."
     if ! _poll_and_claim_task; then
-        PUMP_STATUS="stop"
+        if [ "$PUMP_STATUS" != "circuit_break" ]; then
+            PUMP_STATUS="stop"
+        fi
         return
     fi
 

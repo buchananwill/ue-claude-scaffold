@@ -14,14 +14,14 @@ if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
     exit 1
 fi
 MAX_TURNS="${MAX_TURNS:-200}"
-if [[ ! "$MAX_TURNS" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: MAX_TURNS must be a positive integer: $MAX_TURNS" >&2
+if [[ ! "$MAX_TURNS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: MAX_TURNS must be a positive integer (>0): $MAX_TURNS" >&2
     exit 1
 fi
 SERVER_URL="${SERVER_URL:-http://host.docker.internal:9100}"
 WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
-if [[ ! "$WORKER_POLL_INTERVAL" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: WORKER_POLL_INTERVAL must be a positive integer: $WORKER_POLL_INTERVAL" >&2
+if [[ ! "$WORKER_POLL_INTERVAL" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: WORKER_POLL_INTERVAL must be a positive integer (>0): $WORKER_POLL_INTERVAL" >&2
     exit 1
 fi
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
