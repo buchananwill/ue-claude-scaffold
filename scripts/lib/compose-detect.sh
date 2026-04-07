@@ -13,11 +13,11 @@ readonly _LIB_COMPOSE_DETECT_LOADED=1
 #   Sets the global COMPOSE_CMD variable to the available docker compose command.
 #   Returns 1 and prints an error to stderr if neither variant is found.
 _detect_compose() {
-  COMPOSE_CMD=""
+  COMPOSE_CMD=()
   if docker compose version &>/dev/null; then
-    COMPOSE_CMD="docker compose"
+    COMPOSE_CMD=(docker compose)
   elif docker-compose --version &>/dev/null; then
-    COMPOSE_CMD="docker-compose"
+    COMPOSE_CMD=(docker-compose)
   else
     echo "Error: Neither 'docker compose' nor 'docker-compose' found." >&2
     return 1

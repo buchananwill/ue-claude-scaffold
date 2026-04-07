@@ -51,8 +51,8 @@ _resolve_hooks() {
   # Per-member overrides
   local member_build="" member_lint=""
   if [[ -n "$member_json" ]]; then
-    member_build=$(echo "$member_json" | jq -r '.hooks.buildIntercept // empty')
-    member_lint=$(echo "$member_json" | jq -r '.hooks.cppLint // empty')
+    member_build=$(printf '%s' "$member_json" | jq -r '.hooks.buildIntercept // empty')
+    member_lint=$(printf '%s' "$member_json" | jq -r '.hooks.cppLint // empty')
   fi
   _validate_hook_values "member definition" "$member_build" "$member_lint"
 

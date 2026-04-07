@@ -46,5 +46,5 @@ _launch_container() {
   _lc_project_name="$(_compose_project_name "${PROJECT_ID}" "$_lc_agent")"
 
   (cd "$_lc_compose_dir" && env "${_lc_env[@]}" \
-    $COMPOSE_CMD "${_lc_files[@]}" --project-name "$_lc_project_name" up --build --detach)
+    "${COMPOSE_CMD[@]}" "${_lc_files[@]}" --project-name "$_lc_project_name" up --build --detach)
 }

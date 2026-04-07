@@ -27,6 +27,7 @@ Options:
   --team TEAM_ID      Launch a design team (reads teams/<TEAM_ID>.json)
   --brief PATH        Repo-relative path to a brief file (required with --team)
   --prompt TEXT       Pass a direct prompt to the agent (bypasses task queue)
+  --no-agent          Skip agent registration (for debugging/manual runs)
   --dry-run           Print resolved configuration and exit without launching
   --hooks             Force all hooks enabled (build intercept + C++ lint)
   --no-hooks          Force all hooks disabled
@@ -78,7 +79,12 @@ _parse_launch_args() {
       --pump)
         _CLI_PUMP=true; shift ;;
       --parallel)
-        _CLI_PARALLEL="$2"; shift 2 ;;
+        _CLI_PARALLEL="$2"; shift 2
+        if [[ ! "$_CLI_PARALLEL" =~ ^[1-9][0-9]*$ ]] || (( _CLI_PARALLEL > 20 )); then
+          echo "Error: --parallel must be an integer between 1 and 20" >&2
+          exit 1
+        fi
+        ;;
       --fresh)
         _CLI_FRESH=true; shift ;;
       --project)
@@ -92,7 +98,7 @@ _parse_launch_args() {
         ;;
       --brief)
         _CLI_BRIEF="$2"; shift 2
-        if [[ "$_CLI_BRIEF" == /* || "$_CLI_BRIEF" == *..* ]]; then
+        if [[ "$_CLI_BRIEF" == /* || "$_CLI_BRIEF" == *..* || "$_CLI_BRIEF" == .* ]]; then
           echo "Error: --brief must be a relative repo path without '..' components" >&2
           exit 1
         fi

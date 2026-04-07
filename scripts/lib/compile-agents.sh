@@ -9,14 +9,14 @@
 [[ -n "${_LIB_COMPILE_AGENTS_LOADED:-}" ]] && return 0
 readonly _LIB_COMPILE_AGENTS_LOADED=1
 
-# _compile_agents <script_dir> <agent_type> [--team]
+# _compile_agents <script_dir> <agent_type> [team_mode]
 #   Compiles agent definitions into .compiled-agents/.
 #   Sets AGENTS_PATH to the compiled agents directory.
-#   Pass --team if in team mode (suppresses "no agents found" warning).
+#   Pass "true" for team_mode to suppress "no agents found" warning.
 _compile_agents() {
   local script_dir="$1"
   local agent_type="$2"
-  local is_team="${3:-}"
+  local _ca_team_mode="${3:-}"
 
   COMPILED_AGENTS_DIR="$script_dir/.compiled-agents"
   [[ -n "$COMPILED_AGENTS_DIR" && "$COMPILED_AGENTS_DIR" == "$script_dir/"* ]] || {
@@ -48,7 +48,7 @@ _compile_agents() {
     if [[ -d "$script_dir/agents" ]]; then
       cp "$script_dir/agents/"*.md "$COMPILED_AGENTS_DIR/" 2>/dev/null || true
     fi
-    if [[ "$is_team" != "--team" ]] && ! ls "$COMPILED_AGENTS_DIR"/*.md &>/dev/null; then
+    if [[ "$_ca_team_mode" != "true" ]] && ! ls "$COMPILED_AGENTS_DIR"/*.md &>/dev/null; then
       echo "Warning: No .md agent files found in compiled agents directory." >&2
       echo "  The container may still work if agents are provided from another source." >&2
     fi

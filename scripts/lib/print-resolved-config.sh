@@ -28,6 +28,7 @@ _print_resolved_config() {
   if [[ -d "${SCRIPT_DIR:-}/dynamic-agents" && -f "${SCRIPT_DIR:-}/dynamic-agents/${AGENT_TYPE:-}.md" ]]; then
     echo "  AGENT_COMPILED:   yes (dynamic-agents/${AGENT_TYPE}.md)"
     local -a _sub_agents=()
+    shopt -s nullglob
     for _candidate in "${SCRIPT_DIR}"/dynamic-agents/*.md; do
       local _cname
       _cname="$(basename "${_candidate%.md}")"
@@ -35,6 +36,7 @@ _print_resolved_config() {
         _sub_agents+=("$_cname")
       fi
     done
+    shopt -u nullglob
     if [[ ${#_sub_agents[@]} -gt 0 ]]; then
       local _sub_list
       _sub_list=$(IFS=', '; echo "${_sub_agents[*]}")

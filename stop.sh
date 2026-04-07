@@ -89,11 +89,11 @@ if ! command -v jq &>/dev/null; then
 fi
 
 # ── Detect docker compose ───────────────────────────────────────────────────
-COMPOSE_CMD=""
+COMPOSE_CMD=()
 if docker compose version &>/dev/null; then
-  COMPOSE_CMD="docker compose"
+  COMPOSE_CMD=(docker compose)
 elif docker-compose --version &>/dev/null; then
-  COMPOSE_CMD="docker-compose"
+  COMPOSE_CMD=(docker-compose)
 else
   echo "Error: Neither 'docker compose' nor 'docker-compose' found." >&2
   exit 1
@@ -164,7 +164,7 @@ stop_all() {
 
   for project in $projects; do
     echo "Stopping $project ..."
-    (cd "$SCRIPT_DIR/container" && $COMPOSE_CMD --project-name "$project" down 2>/dev/null) || true
+    (cd "$SCRIPT_DIR/container" && "${COMPOSE_CMD[@]}" --project-name "$project" down 2>/dev/null) || true
     stopped=$((stopped + 1))
   done
 
@@ -187,7 +187,7 @@ if [[ "$MODE" == "agent" ]]; then
   echo "Stopping agent: $AGENT_NAME (project: $project_prefix)..."
   signal_stop "$AGENT_NAME"
   (cd "$SCRIPT_DIR/container" && \
-    $COMPOSE_CMD --project-name "$compose_project_name" down 2>/dev/null) || true
+    "${COMPOSE_CMD[@]}" --project-name "$compose_project_name" down 2>/dev/null) || true
   echo "Stopped $compose_project_name."
   exit 0
 fi
@@ -216,7 +216,7 @@ if [[ "$MODE" == "team" ]]; then
   for member in $MEMBERS; do
     echo "  Stopping claude-${member} ..."
     (cd "$SCRIPT_DIR/container" && \
-      $COMPOSE_CMD --project-name "claude-${member}" down 2>/dev/null) || true
+      "${COMPOSE_CMD[@]}" --project-name "claude-${member}" down 2>/dev/null) || true
     stopped=$((stopped + 1))
   done
 

@@ -1,6 +1,6 @@
 # Base docker-compose template for Claude Code agent containers.
 # Used by launch.sh via: docker compose -f docker-compose.template.yml [...]
-# Do not edit — this is the canonical template.
+# Canonical base compose template. Overlays (docker-compose.engine.yml, etc.) extend this file.
 
 services:
   claude-worker:
@@ -25,6 +25,7 @@ services:
       - CHAT_ROOM=${CHAT_ROOM:-}
       - TEAM_ROLE=${TEAM_ROLE:-}
       - BRIEF_PATH=${BRIEF_PATH:-}
+      - AGENT_MODE=${AGENT_MODE:-single}
       - DIRECT_PROMPT=${DIRECT_PROMPT:-}
     volumes:
       # Required: bare repo for git operations

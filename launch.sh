@@ -67,7 +67,7 @@ fi
 
 # ── Compile dynamic agents ──────────────────────────────────────────────────
 _team_flag=""
-[[ -n "$_CLI_TEAM" ]] && _team_flag="--team"
+[[ -n "$_CLI_TEAM" ]] && _team_flag="true"
 _compile_agents "$SCRIPT_DIR" "$AGENT_TYPE" "$_team_flag"
 export AGENTS_PATH
 
@@ -90,7 +90,7 @@ fi
 
 # ── Stop existing container ─────────────────────────────────────────────────
 (cd "$SCRIPT_DIR/container" && \
-  $COMPOSE_CMD --project-name "$(_compose_project_name "$PROJECT_ID" "$AGENT_NAME")" down 2>/dev/null) || true
+  "${COMPOSE_CMD[@]}" --project-name "$(_compose_project_name "$PROJECT_ID" "$AGENT_NAME")" down 2>/dev/null) || true
 
 # ── Branch setup ─────────────────────────────────────────────────────────────
 _validate_bare_repo
@@ -126,19 +126,15 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
       AGENT_NAME="$_AGENT" WORK_BRANCH="$_BRANCH" PROJECT_ID="$PROJECT_ID" \
       BARE_REPO_PATH="$BARE_REPO_PATH" AGENTS_PATH="$AGENTS_PATH" \
       HOOK_BUILD_INTERCEPT="$HOOK_BUILD_INTERCEPT" HOOK_CPP_LINT="$HOOK_CPP_LINT" \
-      WORKER_MODE=true WORKER_SINGLE_TASK=false AGENT_MODE=pump
+      WORKER_MODE=true WORKER_SINGLE_TASK=false
     echo "  Launched $_AGENT on branch $_BRANCH"
   done
   _print_resolved_config
   echo "Monitor: ./status.sh --follow    Stop: ./stop.sh    Drain: ./stop.sh --drain"
 else
-  if [[ "$_CLI_FRESH" == "true" ]]; then
-    (cd "$_compose_dir" && $COMPOSE_CMD \
-      --project-name "$(_compose_project_name "$PROJECT_ID" "$AGENT_NAME")" build --no-cache)
-  fi
   _launch_container "$AGENT_NAME" "$_compose_dir" "${_COMPOSE_FILES[@]}"
   _print_resolved_config
   echo "Monitor: ./status.sh --follow"
-  echo "Logs:    docker compose --project-name $(_compose_project_name "$PROJECT_ID" "$AGENT_NAME") -f $_compose_dir/docker-compose.template.yml logs -f"
-  echo "Stop:    $COMPOSE_CMD --project-name \"$(_compose_project_name "$PROJECT_ID" "$AGENT_NAME")\" down"
+  echo "Logs:    ${COMPOSE_CMD[*]} --project-name $(_compose_project_name "$PROJECT_ID" "$AGENT_NAME") -f $_compose_dir/docker-compose.template.yml logs -f"
+  echo "Stop:    ${COMPOSE_CMD[*]} --project-name \"$(_compose_project_name "$PROJECT_ID" "$AGENT_NAME")\" down"
 fi
