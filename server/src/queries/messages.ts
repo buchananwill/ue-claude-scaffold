@@ -1,6 +1,10 @@
-import { eq, and, gt, lt, desc, asc, sql, isNull, count as countFn } from 'drizzle-orm';
+import { eq, and, gt, lt, desc, asc, sql, isNull, count as countFn, type SQL } from 'drizzle-orm';
 import { messages } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
+
+function buildWhere(conditions: SQL[]) {
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
 
 export interface InsertOpts {
   fromAgent: string;
@@ -56,12 +60,9 @@ export async function list(db: DrizzleDb, opts: ListOpts = {}) {
     const query = db
       .select()
       .from(messages)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .where(buildWhere(conditions))
       .orderBy(asc(messages.id));
-    if (opts.limit != null) {
-      return query.limit(opts.limit);
-    }
-    return query;
+    return query.limit(opts.limit ?? 500);
   }
 
   // Paging mode: before => ORDER BY id DESC LIMIT n, then reverse
@@ -73,7 +74,7 @@ export async function list(db: DrizzleDb, opts: ListOpts = {}) {
   const rows = await db
     .select()
     .from(messages)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .where(buildWhere(conditions))
     .orderBy(desc(messages.id))
     .limit(pageSize);
 
@@ -107,7 +108,7 @@ export async function count(db: DrizzleDb, opts: CountOpts = {}): Promise<number
   const rows = await db
     .select({ count: countFn() })
     .from(messages)
-    .where(conditions.length > 0 ? and(...conditions) : undefined);
+    .where(buildWhere(conditions));
 
   return Number(rows[0].count);
 }

@@ -128,9 +128,9 @@ _task_status_color() {
   [[ -n "$color" ]] && printf '%b' "${color}${status}${C_RESET}" || printf '%s' "$status"
 }
 
-# Note: agent names and task titles are validated server-side
-# (alphanumeric, hyphens, underscores only), so terminal escape injection
-# is not a concern for these fields.
+# Safety note: Agent names are validated server-side (alphanumeric, hyphens,
+# underscores only). Task titles and message payloads may contain arbitrary
+# text; printf '%s' quoting prevents terminal escape interpretation.
 
 _print_agent_row() {
   local name="$1" project="$2" worktree="$3" status="$4" registered="$5"

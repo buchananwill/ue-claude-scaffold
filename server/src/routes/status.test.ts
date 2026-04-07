@@ -228,6 +228,30 @@ describe('GET /status', () => {
     assert.ok(res.json().tasks);
   });
 
+  it('returns 400 for taskLimit=0', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/status?taskLimit=0',
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('returns 400 for taskLimit=1.5 (non-integer)', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/status?taskLimit=1.5',
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('returns 400 for taskLimit=-1 (negative)', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/status?taskLimit=-1',
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
   it('uses X-Project-Id header exclusively (no project query param)', async () => {
     const db = ctx.db;
 
