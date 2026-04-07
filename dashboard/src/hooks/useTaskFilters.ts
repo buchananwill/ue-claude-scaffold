@@ -1,7 +1,6 @@
 import { useMemo, useState, useCallback } from 'react';
 import { useSearch, useNavigate } from '@tanstack/react-router';
 import type { Task } from '../api/types.js';
-export { TASK_STATUSES, STATUS_LABELS } from '../constants/task-statuses.js';
 
 export type SortDir = 'asc' | 'desc' | null;
 export type SortColumn = 'id' | 'priority' | 'status' | 'title' | 'claimedBy' | 'createdAt' | null;

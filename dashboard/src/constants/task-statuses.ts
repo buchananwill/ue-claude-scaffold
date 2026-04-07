@@ -15,4 +15,4 @@ export const STATUS_LABELS: Record<string, string> = {
 };
 
 /** Typed tuple of all task statuses, derived from STATUS_LABELS keys. */
-export const TASK_STATUSES = Object.keys(STATUS_LABELS) as ReadonlyArray<string>;
+export const TASK_STATUSES = Object.keys(STATUS_LABELS);
