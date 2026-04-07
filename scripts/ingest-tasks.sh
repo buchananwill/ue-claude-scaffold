@@ -60,7 +60,7 @@ response="$(_post_json "${SERVER_URL}/tasks/ingest" "$(jq -n --arg tasksDir "$TA
 ingested="$(echo "$response" | jq -r '.ingested')"
 skipped="$(echo "$response" | jq -r '.skipped')"
 replanned="$(echo "$response" | jq -r '.replanned')"
-errors="$(echo "$response" | jq -r '.errors')"
+errors="$(echo "$response" | jq -r '.errors // 0')"
 
 echo "Done. ${ingested} task(s) ingested, ${skipped} skipped, ${replanned} replanned, ${errors} error(s)."
 

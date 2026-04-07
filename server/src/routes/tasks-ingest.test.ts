@@ -89,7 +89,7 @@ describe('POST /tasks/ingest route', () => {
     });
 
     assert.equal(res.statusCode, 400);
-    assert.ok(res.json().message.includes('not found'));
+    assert.ok(res.json().message.includes('not a directory or not accessible'));
   });
 
   it('valid directory with .md files returns ingested result', async () => {

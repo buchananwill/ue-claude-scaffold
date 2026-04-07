@@ -52,8 +52,8 @@ const tasksIngestPlugin: FastifyPluginAsync<IngestOpts> = async (fastify, { conf
       const result = await ingestTaskDir(db, resolved, projectId);
       return result;
     } catch (err) {
-      if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return reply.badRequest('tasksDir not found or not accessible');
+      if (err instanceof Error && 'code' in err && ['ENOENT', 'ENOTDIR'].includes((err as NodeJS.ErrnoException).code ?? '')) {
+        return reply.badRequest('tasksDir is not a directory or not accessible');
       }
       if (err instanceof Error && err.message.startsWith('Too many files:')) {
         return reply.badRequest(err.message);

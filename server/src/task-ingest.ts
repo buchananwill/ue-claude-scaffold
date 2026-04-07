@@ -168,10 +168,8 @@ export async function ingestTaskDir(
   // dependency graph across all projects, not just the project being ingested.
   // The replanned count in the response is the global count.
   let replanned = 0;
-  if (ingested > 0) {
-    const replanResult = await runReplan();
-    replanned = replanResult.replanned;
-  }
+  const replanResult = await runReplan();
+  replanned = replanResult.replanned;
 
   return { ingested, skipped, errors, replanned, tasks: results };
 }
