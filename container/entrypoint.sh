@@ -167,7 +167,7 @@ PRE_MATCHERS=$(jq -n --argjson hooks "$PRE_BASH" '[{"matcher":"Bash","hooks":$ho
 # Append Edit and Write matchers for C++ linting when enabled
 if [ "${HOOK_CPP_LINT}" = "true" ]; then
     PRE_MATCHERS=$(jq -n --argjson m "$PRE_MATCHERS" \
-        '$m + [{"matcher":"Edit","hooks":[{"type":"command","command":"python3 /claude-hooks/lint-cpp-diff.py"}]},{"matcher":"Write","hooks":[{"type":"command","command":"python3 /claude-hooks/lint-cpp-diff.py"}]}]')
+        '$m + [{"matcher":"Edit","hooks":[{"type":"command","command":"node /claude-hooks/lint-cpp-diff.mjs"}]},{"matcher":"Write","hooks":[{"type":"command","command":"node /claude-hooks/lint-cpp-diff.mjs"}]}]')
 fi
 
 # Build PostToolUse matchers: auto-push after commit for writable workspaces
@@ -190,8 +190,22 @@ echo ""
 # MCP config is written after agent registration (needs SESSION_TOKEN)
 
 # ── Symlink read-only plugin mounts ──────────────────────────────────────────
-if [ -f /patch_workspace.py ] && [ -d /plugins-ro ]; then
-    python3 /patch_workspace.py
+if [ -d /plugins-ro ]; then
+    mkdir -p /workspace/Plugins
+    for plugin_dir in /plugins-ro/*/; do
+        [ -d "$plugin_dir" ] || continue
+        plugin_name="$(basename "$plugin_dir")"
+        # Reject traversal names
+        if [[ -z "$plugin_name" || "$plugin_name" == "." || "$plugin_name" == ".." ]]; then
+            echo "WARNING: skipping suspicious plugin directory name: '$plugin_dir'" >&2
+            continue
+        fi
+        link="/workspace/Plugins/$plugin_name"
+        if [ ! -e "$link" ]; then
+            ln -sfn "$plugin_dir" "$link"
+            echo "Symlinked $plugin_dir -> $link"
+        fi
+    done
 fi
 
 # ── Register with coordination server ────────────────────────────────────────

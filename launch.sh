@@ -446,19 +446,26 @@ fi
 # and needs AGENTS_PATH. The rm -rf is safe because containers snapshot agents
 # from /staged-agents into their own filesystem at startup (entrypoint.sh).
 COMPILED_AGENTS_DIR="$SCRIPT_DIR/.compiled-agents"
+[[ -n "$COMPILED_AGENTS_DIR" && "$COMPILED_AGENTS_DIR" == "$SCRIPT_DIR/"* ]] || {
+  echo "Error: unsafe COMPILED_AGENTS_DIR: $COMPILED_AGENTS_DIR" >&2
+  exit 1
+}
 rm -rf "$COMPILED_AGENTS_DIR"
 mkdir -p "$COMPILED_AGENTS_DIR"
 
-if [[ ! -f "$SCRIPT_DIR/scripts/compile-agent.py" ]]; then
-  echo "Error: compile-agent.py not found at $SCRIPT_DIR/scripts/" >&2
+if [[ ! -f "$SCRIPT_DIR/server/dist/bin/compile-agent.js" ]]; then
+  echo "Error: compile-agent.js not found at $SCRIPT_DIR/server/dist/bin/" >&2
+  echo "  Run 'cd server && npm run build' first." >&2
   exit 1
 fi
 
 if [[ -d "$SCRIPT_DIR/dynamic-agents" && -f "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" ]]; then
   echo "Compiling dynamic agent: ${AGENT_TYPE}..."
-  if ! python "$SCRIPT_DIR/scripts/compile-agent.py" \
+  if ! node "$SCRIPT_DIR/server/dist/bin/compile-agent.js" \
     "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" \
     -o "$COMPILED_AGENTS_DIR" \
+    --skills-dir "$SCRIPT_DIR/skills" \
+    --dynamic-dir "$SCRIPT_DIR/dynamic-agents" \
     --recursive; then
     echo "Error: Agent compilation failed for '${AGENT_TYPE}'. See above for details." >&2
     exit 1

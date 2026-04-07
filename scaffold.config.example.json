@@ -7,9 +7,7 @@
     "uprojectFile": "MyUEProject.uproject"
   },
 
-  "tasks": {
-    "seedBranch": "docker/{project-id}/current-root"
-  },
+  "tasks": {},
 
   "engine": {
     "path": "",
@@ -43,8 +41,7 @@
 
   "container": {
     "agentType": "container-orchestrator",
-    "maxTurns": 200,
-    "seedBranch": "docker/{project-id}/current-root"
+    "maxTurns": 200
   },
 
   "server": {
@@ -54,7 +51,7 @@
     "bareRepoPath": ""
   },
 
-  "_NOTE": "When 'projects' is present, legacy top-level 'project', 'engine', and 'build' fields are ignored. Both are shown here for illustration only.",
+  "_NOTE": "When 'projects' is present, legacy top-level 'project', 'engine', and 'build' fields are ignored. Both are shown here for illustration only. seedBranch is computed automatically as docker/{projectId}/current-root and only needs to be set if overriding the default.",
 
   "projects": {
     "my-ue-game": {

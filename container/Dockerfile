@@ -3,7 +3,6 @@ FROM node:22-slim
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    python3 \
     curl \
     jq \
     ca-certificates \
@@ -35,7 +34,6 @@ COPY mcp-servers/ /mcp-servers/
 RUN cd /mcp-servers && npm install --omit=dev
 
 # Copy workspace setup scripts
-COPY patch_workspace.py /patch_workspace.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

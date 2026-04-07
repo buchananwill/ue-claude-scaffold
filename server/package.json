@@ -16,6 +16,9 @@
     "coordination"
   ],
   "type": "module",
+  "bin": {
+    "compile-agent": "./dist/bin/compile-agent.js"
+  },
   "engines": {
     "node": ">=22"
   },
@@ -35,6 +38,7 @@
     "@fastify/sensible": "^6",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5",
+    "gray-matter": "^4.0.3",
     "pg": "^8.20.0"
   },
   "devDependencies": {

@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import sensible from '@fastify/sensible';
 import { loadConfig } from './config.js';
-import { initDrizzle, closeDrizzle, getDbStatus } from './drizzle-instance.js';
+import { initDrizzle, closeDrizzle, getDbStatus, getDb } from './drizzle-instance.js';
 import projectIdPlugin from './plugins/project-id.js';
 import {
   healthPlugin,
@@ -18,9 +18,13 @@ import {
   roomsPlugin,
   teamsPlugin,
   projectsPlugin,
+  configPlugin,
+  branchOpsPlugin,
+  hooksPlugin,
+  containerSettingsPlugin,
+  tasksIngestPlugin,
 } from './routes/index.js';
 import { sweepStaleLock } from './routes/ubt.js';
-import { getDb } from './drizzle-instance.js';
 import { seedFromConfig } from './queries/projects.js';
 
 const config = loadConfig();
@@ -67,6 +71,11 @@ await server.register(syncPlugin, { config });
 await server.register(roomsPlugin);
 await server.register(teamsPlugin);
 await server.register(projectsPlugin);
+await server.register(configPlugin, { config });
+await server.register(branchOpsPlugin, { config });
+await server.register(hooksPlugin);
+await server.register(containerSettingsPlugin);
+await server.register(tasksIngestPlugin, { config });
 
 try {
   const address = await server.listen({
