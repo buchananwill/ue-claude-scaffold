@@ -24,6 +24,7 @@ import {
   containerSettingsPlugin,
   tasksIngestPlugin,
   exitClassifyPlugin,
+  statusPlugin,
 } from './routes/index.js';
 import { sweepStaleLock } from './routes/ubt.js';
 import { seedFromConfig } from './queries/projects.js';
@@ -78,6 +79,7 @@ await server.register(hooksPlugin);
 await server.register(containerSettingsPlugin);
 await server.register(tasksIngestPlugin, { config });
 await server.register(exitClassifyPlugin);
+await server.register(statusPlugin);
 
 try {
   const address = await server.listen({

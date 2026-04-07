@@ -18,3 +18,4 @@ export { default as hooksPlugin } from './hooks.js';
 export { default as containerSettingsPlugin } from './container-settings.js';
 export { default as tasksIngestPlugin } from './tasks-ingest.js';
 export { default as exitClassifyPlugin } from './exit-classify.js';
+export { default as statusPlugin } from './status.js';
