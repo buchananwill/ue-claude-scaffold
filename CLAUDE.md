@@ -58,8 +58,9 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
 
 1. **Shell scripts** (`launch.sh`, `setup.sh`, `status.sh`, `stop.sh`) — orchestrate Docker and config. Read structural config from `scaffold.config.json` and secrets from `.env`.
 
-2. **Coordination server** (`server/`) — Fastify + TypeScript, SQLite via better-sqlite3 (WAL mode). Runs on the host (default port 9100). Provides:
+2. **Coordination server** (`server/`) — Fastify + TypeScript, SQLite via better-sqlite3 (WAL mode). Runs on the host (default port 9100). Requests are scoped by the `X-Project-Id` header (default `default`); every persisted row — agents, tasks, messages, builds, ubt_lock, files, rooms, teams — carries a `project_id` column so a single server serves multiple UE projects in isolation. Provides:
    - `GET /health` — server health check (returns status, db path, config summary)
+   - `GET /projects`, `POST /projects` — list and register projects (portable config stored in the `projects` table)
    - `POST /build`, `POST /test` — sync worktree from bare repo, run host-side build/test scripts, return structured `{success, exit_code, output, stderr}`
    - `GET /builds` — query build history with filtering
    - `POST /agents/register`, `GET /agents`, `GET /agents/{name}`, `POST /agents/{name}/status`, `DELETE /agents/{name}`, `DELETE /agents` — agent lifecycle
@@ -93,6 +94,8 @@ persistent — created once by `setup.sh`, never recreated on launch. The exteri
 (where interactive sessions and planning happen) is synced into the bare repo's
 `docker/{project-id}/current-root` branch via `POST /sync/plans`.
 
+`{project-id}` is the scoping key shared by config, DB rows, and git branches. Each project gets its own bare repo directory and its own set of `docker/{project-id}/*` branches.
+
 ### Build Hook Interception
 
 Container agents don't run builds directly. Two PreToolUse hooks in `container/hooks/` enforce this:
@@ -124,6 +127,7 @@ docker/{project-id}/agent-2         ← agent-2's working branch
 - Default (no `--fresh`) resumes from the agent's existing branch.
 - Plans must be committed in the exterior repo, then synced to the bare repo via `POST /sync/plans` (or the dashboard's "Sync Bare Repo" button) before tasks can reference them. The server validates plan `sourcePath` references against `docker/{project-id}/current-root` in the bare repo.
 - Plans on `docker/{project-id}/current-root` can be merged into agent branches via `POST /agents/{name}/sync`, `targetAgents` on `POST /tasks`, or `targetAgents` on `POST /sync/plans`.
+- Scripts target a specific project via `--project <id>`. If `scaffold.config.json` has exactly one project (including a legacy single-project config synthesized as `default`), the flag can be omitted.
 
 ### Agent Definitions
 
@@ -142,10 +146,11 @@ Agent type definitions live in `agents/` as markdown files. Each defines the age
 - Test helper (`src/test-helper.ts`) creates isolated Fastify instances with temp SQLite DBs
 - DB schema is embedded in `src/db.ts` as a single source of truth (no migration files)
 - Agent identification via `X-Agent-Name` header on requests
+- Project scoping via `X-Project-Id` header; see `server/src/plugins/project-id.ts`. Branch naming helpers in `server/src/branch-naming.ts` (`seedBranchFor`, `agentBranchFor`)
 
 ### Configuration Split
 
-- `scaffold.config.json` — structural config (paths, ports, build scripts, path remaps). Not committed (user-specific). Copy from `scaffold.config.example.json`.
+- `scaffold.config.json` — structural config (paths, ports, build scripts, path remaps). Not committed (user-specific). Copy from `scaffold.config.example.json`. Supports either the legacy single-project shape (top-level `project`, `engine`, `build`, `server` fields) or a multi-project shape with a `projects: { [id]: ProjectConfig }` map. Legacy configs are synthesized internally as `{ default: {...} }`.
 - `.env` — secrets and per-launch params (auth credentials, agent name, branch). Not committed. Copy from `.env.example`.
 - `container/docker-compose.yml` — Docker Compose config with local volume mounts. Not committed (user-specific). Copy from `container/docker-compose.example.yml`.
 - `container/container-settings.json` — Claude Code settings injected into containers (hooks config, permissions)

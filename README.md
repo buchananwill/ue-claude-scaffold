@@ -61,8 +61,9 @@ cd ue-claude-scaffold
 
 # 3. Edit .env with your authentication credentials
 
-# 4. Edit scaffold.config.json with your project paths
-#    Required: project.path, engine.path, server.bareRepoPath
+# 4. Edit scaffold.config.json with your project paths.
+#    For a single UE project use the legacy top-level fields;
+#    for multiple projects use the `projects` map (see Configuration below).
 
 # 5. Start the coordination server
 cd server && npm run dev
@@ -152,22 +153,24 @@ A Fastify + TypeScript server running on the host. Provides:
 - **File ownership** -- tracks which agent owns which files during task execution
 - **Search** -- full-text search across tasks, messages, and agents
 - **Coalesce** -- system-wide coordination for graceful shutdown (pause pumps, release files)
+- **Multi-tenancy** -- one server serves multiple UE projects. Requests scope by `X-Project-Id` header (default `default`); every persisted row carries a `project_id`
 
 ### Git Data Flow
 
 ```
-Project Worktree --> [bare repo] --> Container Clone
-                                          |
-                                     Agent works
-                                          |
-                                 Container pushes --> [bare repo]
-                                                           |
-                                 Server fetches --> Staging Worktree --> Build/Test
+Host Project (exterior repo) --> POST /sync/plans --> [bare repo per project] <-- Container (clone/push)
+                                                              |
+                            docker/{project-id}/current-root  <-- seed branch; synced from exterior repo
+                            docker/{project-id}/agent-1       <-- agent-1's working branch
+                            docker/{project-id}/agent-2       <-- agent-2's working branch
+                                                              |
+                            Server fetches agent branch --> Staging Worktree --> Build/Test
 ```
 
-The bare repo acts as a shared intermediary. The container clones from it on startup and pushes changes back when a
-build is requested. The server then fetches those changes into a staging worktree on the host where the real UE build
-tools run.
+Each configured project gets its own bare repo and its own set of `docker/{project-id}/*` branches. The container
+clones its agent branch on startup and pushes back when a build is requested. The server then fetches those changes
+into a staging worktree on the host where the real UE build tools run. `{project-id}` is the scoping key shared by
+config, DB rows, git branches, and the `X-Project-Id` HTTP header.
 
 ## Configuration
 
@@ -191,8 +194,31 @@ build scripts) lives in `scaffold.config.json`.
 
 Structural configuration. Created from `scaffold.config.example.json` by `setup.sh`.
 
+**Single-project vs multi-project.** The file accepts either the legacy shape (top-level `project`/`engine`/`build`/`server` fields) or a multi-project shape:
+
+```json
+{
+  "projects": {
+    "my-ue-game": {
+      "name": "MyUEGame",
+      "path": "D:\\Projects\\MyUEGame",
+      "uprojectFile": "MyUEGame.uproject",
+      "bareRepoPath": "D:\\Repos\\my-ue-game.git",
+      "seedBranch": "docker/my-ue-game/current-root",
+      "engine":  { "path": "C:\\UE_5.7", "version": "5.7" },
+      "build":   { "scriptPath": "Scripts/build.py", "testScriptPath": "Scripts/run_tests.py" },
+      "plugins": { "stagingCopies": [] },
+      "stagingWorktreeRoot": "D:\\Staging\\my-ue-game"
+    }
+  }
+}
+```
+
+When a `projects` block is present it takes precedence over the legacy top-level fields. Legacy single-project configs are treated internally as a single project named `default`. See `scaffold.config.example.json` for a complete working example showing both shapes side by side.
+
 | Field                        | Description                                   |
 |------------------------------|-----------------------------------------------|
+| `projects`                   | Optional map of project ID -> per-project config. When present, takes precedence over the legacy top-level fields |
 | `project.name`               | Your UE project name                          |
 | `project.path`               | Absolute path to the project                  |
 | `project.uprojectFile`       | The `.uproject` filename                      |
@@ -204,8 +230,8 @@ Structural configuration. Created from `scaffold.config.example.json` by `setup.
 | `plugins.readOnlyMounts`     | Plugin paths to mount read-only in containers |
 | `container.agentType`        | Default agent type for containers             |
 | `container.maxTurns`         | Max turns for the agent                       |
-| `container.seedBranch`       | Seed branch reference (informational; `launch.sh` computes branch from project ID) |
-| `tasks.seedBranch`           | Seed branch for legacy single-project mode (no `projects` block). In multi-project mode, set `seedBranch` per-project inside the `projects` map |
+| `container.seedBranch`       | Optional override for the seed branch. Default is `docker/{project-id}/current-root`, computed by `server/src/branch-naming.ts` |
+| `tasks.seedBranch`           | Legacy single-project seed branch override. For multi-project configs, set `seedBranch` inside each entry of the `projects` map |
 | `server.port`                | Coordination server port                      |
 | `server.ubtLockTimeoutMs`    | Timeout for UBT lock acquisition              |
 | `server.stagingWorktreeRoot` | Path to the host-side staging worktree        |
@@ -224,12 +250,17 @@ Parameterized launcher for container agents.
 # Explicit agent name
 ./launch.sh --agent-name agent-2
 
+# Select which configured project to launch against
+./launch.sh --project my-ue-game
+
 # Preview what would happen without launching
 ./launch.sh --dry-run
 
 # Full usage
 ./launch.sh --help
 ```
+
+If only one project is configured, `--project` can be omitted.
 
 ### `setup.sh`
 
@@ -243,6 +274,8 @@ First-time setup. Checks prerequisites, creates configuration files, installs se
 ./setup.sh --non-interactive
 ```
 
+In multi-project mode `setup.sh` walks every entry in `projects` and creates a bare repo for each.
+
 ### `stop.sh`
 
 Stop running agent containers.
@@ -253,6 +286,9 @@ Stop running agent containers.
 
 # Stop a specific agent
 ./stop.sh --agent agent-1
+
+# Stop only containers belonging to a specific project
+./stop.sh --project my-ue-game
 
 # Graceful drain — pause pumps, wait for in-flight tasks, stop containers
 ./stop.sh --drain
@@ -277,6 +313,9 @@ Monitoring dashboard. Shows registered agents and message board activity.
 
 # Only show messages after a specific ID
 ./status.sh --since 42
+
+# Filter agents and messages to a specific project
+./status.sh --project my-ue-game
 ```
 
 Requires `curl` and `jq`. Supports `NO_COLOR` environment variable to disable color output.
@@ -351,6 +390,9 @@ agent has a `MAX_TURNS` limit (default 200) after which it will stop.
 
 **Port conflict on 9100**
 Change `server.port` in `scaffold.config.json` and restart the server.
+
+**Agent lands on the wrong project / empty task queue**
+Confirm `--project <id>` matches a key in `scaffold.config.json` -> `projects`. Without `--project`, the scripts fall back to the sole configured project, which only works when exactly one is defined.
 
 ## Contributing
 
