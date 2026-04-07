@@ -74,6 +74,7 @@ export function checkLines(lines, filePath) {
     }
 
     // Rule 4: Greedy lambda captures [&] or [=]
+    // Two branches match Python's structure: one for (params) lambdas, one for {body} no-arg lambdas
     if (/\[&\]\s*\(/.test(line) || /\[=\]\s*\(/.test(line)) {
       issues.push(
         `  LINT [${filePath}:${lineNum}] Greedy capture: ` +
@@ -194,10 +195,8 @@ function main() {
 }
 
 // Run main when executed directly (not imported)
-const isMain = process.argv[1] && (
-  process.argv[1].endsWith('lint-cpp-diff.mjs') ||
-  process.argv[1].includes('lint-cpp-diff.mjs')
-);
+import { fileURLToPath } from 'node:url';
+const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   main();
 }

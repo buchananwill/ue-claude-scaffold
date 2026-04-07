@@ -70,10 +70,10 @@ describe('buildSettingsJson', () => {
     const result = buildSettingsJson(opts);
     const post = getPostMatchers(result);
 
-    assert.ok(post);
-    assert.equal(post!.length, 1);
-    assert.equal(post![0].matcher, 'Bash');
-    assert.ok(post![0].hooks[0].command.includes('push-after-commit.sh'));
+    assert.ok(post != null);
+    assert.equal(post.length, 1);
+    assert.equal(post[0].matcher, 'Bash');
+    assert.ok(post[0].hooks[0].command.includes('push-after-commit.sh'));
   });
 
   it('all true: all hooks present', () => {
@@ -95,8 +95,8 @@ describe('buildSettingsJson', () => {
 
     // PostToolUse
     const post = getPostMatchers(result);
-    assert.ok(post);
-    assert.ok(post![0].hooks[0].command.includes('push-after-commit.sh'));
+    assert.ok(post != null);
+    assert.ok(post[0].hooks[0].command.includes('push-after-commit.sh'));
   });
 
   it('workspaceReadonly=true: no guard-branch regardless of other flags', () => {
