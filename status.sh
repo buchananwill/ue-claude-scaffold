@@ -41,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       fi
       ;;
     --since)
+      if [[ -z "${2:-}" || ! "$2" =~ ^[0-9]+$ ]]; then
+        echo "Error: --since requires a non-negative integer argument" >&2
+        exit 1
+      fi
       CURSOR="$2"; shift 2 ;;
     --project)
       PROJECT_ID="$2"; shift 2 ;;
@@ -128,7 +132,7 @@ _print_agent_row() {
   local name="$1" project="$2" worktree="$3" status="$4" registered="$5"
   local colored_status
   colored_status=$(_status_color "$status")
-  if [[ -n "$_SHOW_PROJECT" ]]; then
+  if [[ -n "$SHOW_PROJECT" ]]; then
     printf "  %-15s %-20s %-25s %b %s\n" "$name" "$project" "$worktree" "$colored_status" "$registered"
   else
     printf "  %-15s %-25s %b %s\n" "$name" "$worktree" "$colored_status" "$registered"
@@ -139,7 +143,7 @@ _print_task_row() {
   local id="$1" pri="$2" status="$3" project="$4" claimed="$5" title="$6"
   local colored_status
   colored_status=$(_task_status_color "$status")
-  if [[ -n "$_SHOW_PROJECT" ]]; then
+  if [[ -n "$SHOW_PROJECT" ]]; then
     printf "  %-4s  %-4s  %-12b  %-15s  %-12s  %s\n" "$id" "$pri" "$colored_status" "$project" "$claimed" "$title"
   else
     printf "  %-4s  %-4s  %-12b  %-12s  %s\n" "$id" "$pri" "$colored_status" "$claimed" "$title"
@@ -147,9 +151,9 @@ _print_task_row() {
 }
 
 # ── Print status ─────────────────────────────────────────────────────────────
-# _SHOW_PROJECT is set when no --project filter is active (show project column)
-_SHOW_PROJECT=""
-[[ -z "$PROJECT_ID" ]] && _SHOW_PROJECT="1"
+# SHOW_PROJECT is set when no --project filter is active (show project column)
+SHOW_PROJECT=""
+[[ -z "$PROJECT_ID" ]] && SHOW_PROJECT="1"
 
 print_status() {
   # Build status URL — project scoping is via X-Project-Id header only
@@ -172,7 +176,7 @@ print_status() {
   if [[ "$agent_count" -eq 0 ]]; then
     echo "  No agents registered."
   else
-    if [[ -n "$_SHOW_PROJECT" ]]; then
+    if [[ -n "$SHOW_PROJECT" ]]; then
       printf "  %-15s %-20s %-25s %-10s %s\n" "NAME" "PROJECT" "WORKTREE" "STATUS" "REGISTERED"
       printf "  %-15s %-20s %-25s %-10s %s\n" "----" "-------" "--------" "------" "----------"
     else
@@ -195,7 +199,7 @@ print_status() {
   if [[ "$task_count" -eq 0 ]]; then
     echo "  No tasks."
   else
-    if [[ -n "$_SHOW_PROJECT" ]]; then
+    if [[ -n "$SHOW_PROJECT" ]]; then
       printf "  ${C_DIM}%-4s  %-4s  %-12s  %-15s  %-12s  %s${C_RESET}\n" "ID" "PRI" "STATUS" "PROJECT" "CLAIMED BY" "TITLE"
     else
       printf "  ${C_DIM}%-4s  %-4s  %-12s  %-12s  %s${C_RESET}\n" "ID" "PRI" "STATUS" "CLAIMED BY" "TITLE"
@@ -222,15 +226,16 @@ print_status() {
       # where local is redundant
       if [[ "$type" == "summary" ]]; then
         summary=$(echo "$payload" | jq -r '.summary // .' 2>/dev/null || echo "$payload")
-        printf '%b\n' "  [${C_DIM}${timestamp}${C_RESET}] ${C_BOLD}${agent}${C_RESET}  ${type}"
+        printf '  [%b] %b  %s\n' "${C_DIM}${timestamp}${C_RESET}" "${C_BOLD}${agent}${C_RESET}" "$type"
         echo "$summary" | sed 's/^/    /'
       else
         summary=$(echo "$payload" | jq -r 'if type == "object" then (to_entries | map("\(.key)=\(.value)") | join(", ")) else . end' 2>/dev/null || echo "$payload")
-        printf '%b\n' "  [${C_DIM}${timestamp}${C_RESET}] ${C_BOLD}${agent}${C_RESET}  ${type}  ${summary}"
+        printf '  [%b] %b  %s  %s\n' "${C_DIM}${timestamp}${C_RESET}" "${C_BOLD}${agent}${C_RESET}" "$type" "$summary"
       fi
     done
 
-    # Update cursor to max id
+    # Update cursor to max id — intentionally mutates the global CURSOR so
+    # subsequent iterations in --follow mode only fetch newer messages.
     local max_id
     max_id=$(echo "$status_json" | jq '[.messages[].id] | max')
     if [[ "$max_id" != "null" && -n "$max_id" ]]; then

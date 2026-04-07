@@ -146,34 +146,35 @@ describe('GET /status', () => {
     assert.ok(msgIds.includes(id2), 'should include id2');
   });
 
-  it('since=0 behaves the same as no since parameter (paging mode)', async () => {
+  it('since=0 enters polling mode and returns all messages', async () => {
     const db = ctx.db;
 
-    await msgQ.insert(db, {
+    const id1 = await msgQ.insert(db, {
       fromAgent: 'zero-agent',
       channel: 'general',
       type: 'status_update',
-      payload: { message: 'msg for since=0 test' },
+      payload: { message: 'msg 1 for since=0 test' },
     });
 
-    const resNoSince = await ctx.app.inject({
-      method: 'GET',
-      url: '/status',
+    const id2 = await msgQ.insert(db, {
+      fromAgent: 'zero-agent',
+      channel: 'general',
+      type: 'status_update',
+      payload: { message: 'msg 2 for since=0 test' },
     });
+
     const resSince0 = await ctx.app.inject({
       method: 'GET',
       url: '/status?since=0',
     });
 
-    assert.equal(resNoSince.statusCode, 200);
     assert.equal(resSince0.statusCode, 200);
+    const body = resSince0.json();
 
-    const bodyNoSince = resNoSince.json();
-    const bodySince0 = resSince0.json();
-
-    // Both should return messages (paging mode)
-    assert.ok(bodyNoSince.messages.length > 0, 'no-since should have messages');
-    assert.ok(bodySince0.messages.length > 0, 'since=0 should have messages');
+    // since=0 means polling mode: return all messages with id > 0
+    const msgIds = body.messages.map((m: { id: number }) => m.id);
+    assert.ok(msgIds.includes(id1), 'since=0 should include id1');
+    assert.ok(msgIds.includes(id2), 'since=0 should include id2');
   });
 
   it('returns 400 for invalid since parameter', async () => {

@@ -50,14 +50,18 @@ export async function list(db: DrizzleDb, opts: ListOpts = {}) {
     conditions.push(eq(messages.projectId, opts.projectId));
   }
 
-  // Polling mode: since => ORDER BY id ASC, no limit
+  // Polling mode: since => ORDER BY id ASC, capped by limit when provided
   if (opts.since != null) {
     conditions.push(gt(messages.id, opts.since));
-    return db
+    const query = db
       .select()
       .from(messages)
       .where(and(...conditions))
       .orderBy(asc(messages.id));
+    if (opts.limit != null) {
+      return query.limit(opts.limit);
+    }
+    return query;
   }
 
   // Paging mode: before => ORDER BY id DESC LIMIT n, then reverse

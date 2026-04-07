@@ -23,15 +23,15 @@ const statusPlugin: FastifyPluginAsync = async (fastify) => {
       if (!Number.isFinite(parsed) || parsed < 0 || parsed !== Math.floor(parsed)) {
         return reply.badRequest('since must be a non-negative integer');
       }
-      sinceNum = parsed || undefined;
+      sinceNum = parsed;
     }
 
     // Clamp taskLimit to [1, 200]
     const parsedLimit = Number(taskLimit);
-    const taskLimitNum = Math.min(Math.max(1, Number.isFinite(parsedLimit) ? parsedLimit : 20), 200);
+    const taskLimitNum = Math.min(Math.max(1, Math.floor(Number.isFinite(parsedLimit) ? parsedLimit : 20)), 200);
 
     const db = getDb();
-    const projectFilter = projectId !== 'default' ? projectId : undefined;
+    const projectFilter = projectId;
 
     const [agentRows, taskRows, taskTotal, messageRows] = await Promise.all([
       agentsQ.getAll(db, projectFilter),
@@ -48,9 +48,13 @@ const statusPlugin: FastifyPluginAsync = async (fastify) => {
     return {
       agents: agentRows.map(formatAgent),
       tasks: {
+        // Cast needed: Drizzle returns camelCase fields but TaskRow declares snake_case as required;
+        // formatTask's pick() helper handles both naming conventions.
         items: taskRows.map((r) => formatTask(r as unknown as TaskRow)),
         total: taskTotal,
       },
+      // slice is a safety belt: the query passes limit but older callers of msgQ.list
+      // without a limit would return unbounded results in polling mode.
       messages: messageRows.slice(0, MESSAGE_LIMIT).map(formatMessage),
     };
   });
