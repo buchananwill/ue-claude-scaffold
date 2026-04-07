@@ -1,13 +1,12 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createDrizzleTestApp, type DrizzleTestContext } from './drizzle-test-helper.js';
 import { ingestTaskFile, ingestTaskDir } from './task-ingest.js';
-import { tasks } from './schema/tables.js';
+import { tasks, taskFiles } from './schema/tables.js';
 import { eq } from 'drizzle-orm';
-import { taskFiles } from './schema/tables.js';
 
 describe('ingestTaskFile', () => {
   let ctx: DrizzleTestContext;
@@ -239,6 +238,7 @@ describe('ingestTaskDir', () => {
     assert.equal(result.ingested, 2);
     assert.equal(result.skipped, 0);
     assert.equal(result.errors, 0);
+    assert.ok(result.replanned >= 0, 'replanned should be returned from runReplan');
     assert.equal(result.tasks.length, 2);
 
     // Verify both .md files were processed

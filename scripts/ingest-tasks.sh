@@ -21,7 +21,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --tasks-dir)  TASKS_DIR="$2"; shift 2 ;;
     --server-url) SERVER_URL="$2"; shift 2 ;;
-    --project)    PROJECT_ID="$2"; shift 2 ;;
+    --project)    export PROJECT_ID="$2"; shift 2 ;;
     --dry-run)    DRY_RUN=true; shift ;;
     --help)
       echo "Usage: $0 [--tasks-dir PATH] [--server-url URL] [--project ID] [--dry-run] [--help]"
@@ -29,6 +29,10 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
+
+if [[ -z "${PROJECT_ID:-}" ]]; then
+  echo "Warning: --project not specified; targeting project 'default'" >&2
+fi
 
 # ── Validate ────────────────────────────────────────────────────────────────
 if [[ ! -d "$TASKS_DIR" ]]; then
@@ -55,5 +59,10 @@ response="$(_post_json "${SERVER_URL}/tasks/ingest" "$(jq -n --arg tasksDir "$TA
 ingested="$(echo "$response" | jq -r '.ingested')"
 skipped="$(echo "$response" | jq -r '.skipped')"
 replanned="$(echo "$response" | jq -r '.replanned')"
+errors="$(echo "$response" | jq -r '.errors')"
 
-echo "Done. ${ingested} task(s) ingested, ${skipped} skipped, ${replanned} replanned."
+echo "Done. ${ingested} task(s) ingested, ${skipped} skipped, ${replanned} replanned, ${errors} error(s)."
+
+if [[ "$errors" -gt 0 ]]; then
+  exit 1
+fi
