@@ -14,6 +14,7 @@ _poll_and_claim_task() {
         agent_st=$(_curl_server -sf "${SERVER_URL}/agents/${AGENT_NAME}" --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || agent_st="unknown"
         if [ "$agent_st" = "stopping" ]; then
             echo "Stop signal received during task poll — shutting down."
+            ABNORMAL_SHUTDOWN="stop_requested"
             exit 0
         fi
 
@@ -38,6 +39,11 @@ _poll_and_claim_task() {
 
         if [ -n "$task_json" ] && [ "$task_json" != "null" ]; then
             CURRENT_TASK_ID=$(echo "$body" | jq -r '.task.id')
+            if [[ ! "$CURRENT_TASK_ID" =~ ^[0-9a-zA-Z_-]+$ ]]; then
+                echo "ERROR: Received malformed task ID from server: $CURRENT_TASK_ID" >&2
+                PUMP_STATUS="circuit_break"
+                return
+            fi
             CURRENT_TASK_TITLE=$(echo "$body" | jq -r '.task.title // "Untitled"')
             CURRENT_TASK_DESC=$(echo "$body" | jq -r '.task.description // ""')
             CURRENT_TASK_AC=$(echo "$body" | jq -r '.task.acceptanceCriteria // "None specified"')
@@ -75,6 +81,7 @@ _poll_and_claim_task() {
 # _pump_iteration runs one task cycle and returns a status enum.
 # Returns via PUMP_STATUS variable: continue | stop | circuit_break
 _pump_iteration() {
+    local TASK_EXIT
     PUMP_STATUS="continue"
     ABNORMAL_SHUTDOWN=""  # Reset per-task
 

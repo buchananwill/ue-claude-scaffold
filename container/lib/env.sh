@@ -19,6 +19,10 @@ WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
 AGENT_MODE="${AGENT_MODE:-single}"
 PROJECT_ID="${PROJECT_ID:-default}"
+if [[ ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "ERROR: PROJECT_ID contains invalid characters: $PROJECT_ID" >&2
+    exit 1
+fi
 LOG_VERBOSITY="${LOG_VERBOSITY:-verbose}"
 CLAUDE_OUTPUT_LOG="/tmp/claude-output.log"
 HOST_LOG_DIR="/logs"

@@ -167,9 +167,11 @@ _register_agent() {
 }
 
 _smoke_test_messages() {
+    local SMOKE_RESPONSE SMOKE_STATUS smoke_payload
+    smoke_payload=$(jq -n '{channel: "general", type: "status_update", payload: {message: "Container online. Preparing to launch Claude agent."}}')
     SMOKE_RESPONSE=$(_curl_server -s -w "\n%{http_code}" -X POST "${SERVER_URL}/messages" \
         -H "Content-Type: application/json" \
-        -d "{\"channel\":\"general\",\"type\":\"status_update\",\"payload\":{\"message\":\"Container online. Preparing to launch Claude agent.\"}}" \
+        -d "$smoke_payload" \
         --max-time 10 2>/dev/null) || SMOKE_RESPONSE=$'\n000'
     SMOKE_STATUS="${SMOKE_RESPONSE##*$'\n'}"
     if [ "$SMOKE_STATUS" = "200" ] || [ "$SMOKE_STATUS" = "201" ]; then
