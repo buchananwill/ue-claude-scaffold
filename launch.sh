@@ -66,9 +66,11 @@ if ! curl -sf "http://localhost:${SERVER_PORT:-9100}/health" >/dev/null 2>&1; th
 fi
 
 # ── Compile dynamic agents ──────────────────────────────────────────────────
-_team_flag=""
-[[ -n "$_CLI_TEAM" ]] && _team_flag="true"
-_compile_agents "$SCRIPT_DIR" "$AGENT_TYPE" "$_team_flag"
+if [[ "$_CLI_NO_AGENT" != "true" ]]; then
+  _team_flag=""
+  [[ -n "$_CLI_TEAM" ]] && _team_flag="true"
+  _compile_agents "$SCRIPT_DIR" "$AGENT_TYPE" "$_team_flag"
+fi
 export AGENTS_PATH
 
 # ── Team mode — delegate to scripts/launch-team.sh ──────────────────────────
@@ -80,12 +82,14 @@ if [[ -n "$_CLI_TEAM" ]]; then
 fi
 
 # ── Agent collision guard ───────────────────────────────────────────────────
-_agent_status=$(curl -sf "http://localhost:${SERVER_PORT}/agents/${AGENT_NAME}" \
-    -H "X-Project-Id: ${PROJECT_ID}" 2>/dev/null | jq -r '.status // empty' 2>/dev/null || true)
-if [[ "$_agent_status" == "active" ]]; then
-  echo "Error: agent '${AGENT_NAME}' is already active for project '${PROJECT_ID}'." >&2
-  echo "Use a different --agent-name, or stop the existing container first." >&2
-  exit 1
+if [[ "$_CLI_NO_AGENT" != "true" ]]; then
+  _agent_status=$(curl -sf "http://localhost:${SERVER_PORT}/agents/${AGENT_NAME}" \
+      -H "X-Project-Id: ${PROJECT_ID}" 2>/dev/null | jq -r '.status // empty' 2>/dev/null || true)
+  if [[ "$_agent_status" == "active" ]]; then
+    echo "Error: agent '${AGENT_NAME}' is already active for project '${PROJECT_ID}'." >&2
+    echo "Use a different --agent-name, or stop the existing container first." >&2
+    exit 1
+  fi
 fi
 
 # ── Stop existing container ─────────────────────────────────────────────────

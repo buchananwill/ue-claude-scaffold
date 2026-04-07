@@ -98,8 +98,8 @@ _parse_launch_args() {
         ;;
       --brief)
         _CLI_BRIEF="$2"; shift 2
-        if [[ "$_CLI_BRIEF" == /* || "$_CLI_BRIEF" == *..* || "$_CLI_BRIEF" == .* ]]; then
-          echo "Error: --brief must be a relative repo path without '..' components" >&2
+        if [[ "$_CLI_BRIEF" == /* || "$_CLI_BRIEF" == *..* || "$_CLI_BRIEF" == .* || "$_CLI_BRIEF" == */.* ]]; then
+          echo "Error: --brief must be a relative repo path without '..' or hidden directory components" >&2
           exit 1
         fi
         ;;

@@ -58,7 +58,12 @@ while [[ $# -gt 0 ]]; do
     --drain)
       MODE="drain"; shift ;;
     --timeout)
-      TIMEOUT="$2"; shift 2 ;;
+      TIMEOUT="$2"; shift 2
+      if [[ ! "$TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+        echo "Error: --timeout must be a positive integer" >&2
+        exit 1
+      fi
+      ;;
     --help)
       usage; exit 0 ;;
     *)
@@ -68,7 +73,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ── Validate PROJECT_ID ─────────────────────────────────────────────────────
+# ── Validate identifiers ────────────────────────────────────────────────────
+if [[ -n "$AGENT_NAME" && ! "$AGENT_NAME" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
+  echo "Error: --agent value contains invalid characters or exceeds 64 chars: $AGENT_NAME" >&2
+  exit 1
+fi
+
+if [[ -n "$TEAM_ID" && ! "$TEAM_ID" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
+  echo "Error: --team value contains invalid characters or exceeds 64 chars: $TEAM_ID" >&2
+  exit 1
+fi
+
 if [[ -n "$PROJECT_ID" && ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
   echo "Error: PROJECT_ID contains invalid characters: $PROJECT_ID" >&2
   echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
@@ -109,8 +124,8 @@ signal_stop() {
 
 # ── Helper: stop all claude-* projects ───────────────────────────────────────
 stop_all() {
-  local compose_file="$SCRIPT_DIR/container/docker-compose.yml"
   local stopped=0
+  local agent_name
 
   # Find running containers with claude- project prefix
   local projects
@@ -136,7 +151,7 @@ stop_all() {
     for project in $projects; do
       # Extract agent name from docker project (format: claude-${PROJECT_ID}-${AGENT_NAME})
       if [[ "$project" == "${prefix}"* ]]; then
-        local agent_name="${project#${prefix}}"
+        agent_name="${project#${prefix}}"
         if echo "$project_agents" | grep -qx "$agent_name"; then
           filtered="$filtered $project"
         fi
@@ -155,9 +170,9 @@ stop_all() {
   for project in $projects; do
     # Extract agent name from docker project
     if [[ -n "$PROJECT_ID" ]]; then
-      local agent_name="${project#claude-${PROJECT_ID}-}"
+      agent_name="${project#claude-${PROJECT_ID}-}"
     else
-      local agent_name="${project#claude-}"
+      agent_name="${project#claude-}"
     fi
     signal_stop "$agent_name"
   done
@@ -181,8 +196,8 @@ fi
 # ── Mode: agent — stop specific ──────────────────────────────────────────────
 if [[ "$MODE" == "agent" ]]; then
   # If --project not specified, default to "default" project for backwards compatibility
-  local project_prefix="${PROJECT_ID:-default}"
-  local compose_project_name="claude-${project_prefix}-${AGENT_NAME}"
+  project_prefix="${PROJECT_ID:-default}"
+  compose_project_name="claude-${project_prefix}-${AGENT_NAME}"
 
   echo "Stopping agent: $AGENT_NAME (project: $project_prefix)..."
   signal_stop "$AGENT_NAME"
@@ -202,18 +217,22 @@ if [[ "$MODE" == "team" ]]; then
     exit 1
   }
 
-  MEMBERS=$(echo "$TEAM_RESPONSE" | jq -r '.members[].agentName' 2>/dev/null) || {
+  mapfile -t _members < <(echo "$TEAM_RESPONSE" | jq -r '.members[].agentName' 2>/dev/null) || {
     echo "Error: Could not parse member list from team response" >&2
     exit 1
   }
 
+  if [[ ${#_members[@]} -eq 0 ]]; then
+    echo "Warning: No members found in team $TEAM_ID" >&2
+  fi
+
   # Signal all members before killing containers
-  for member in $MEMBERS; do
+  for member in "${_members[@]}"; do
     signal_stop "$member"
   done
 
   stopped=0
-  for member in $MEMBERS; do
+  for member in "${_members[@]}"; do
     echo "  Stopping claude-${member} ..."
     (cd "$SCRIPT_DIR/container" && \
       "${COMPOSE_CMD[@]}" --project-name "claude-${member}" down 2>/dev/null) || true
