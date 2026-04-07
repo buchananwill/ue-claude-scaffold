@@ -204,6 +204,37 @@ describe('ensureAgentBranch', () => {
     assert.equal(sha, repos.headSha);
   });
 
+  it('creates agent branch from a custom seedBranch override (fresh=false)', () => {
+    const customBranch = 'custom/agent-seed';
+
+    // Create the custom seed branch pointing at HEAD SHA — do NOT create the default seed
+    execFileSync('git', ['update-ref', `refs/heads/${customBranch}`, repos.headSha], {
+      cwd: repos.bareDir,
+      timeout: 5000,
+    });
+
+    // Use a different projectId that has no default seed branch — proves the override is used
+    const result = ensureAgentBranch({
+      bareRepoPath: repos.bareDir,
+      projectId: 'noseed',
+      agentName: 'agent-custom',
+      fresh: false,
+      seedBranch: customBranch,
+    });
+
+    assert.equal(result.action, 'created');
+    assert.equal(result.branch, 'docker/noseed/agent-custom');
+    assert.equal(result.sha, repos.headSha);
+
+    // Verify the agent branch SHA matches the custom seed's SHA
+    const agentSha = execFileSync('git', ['rev-parse', '--verify', 'refs/heads/docker/noseed/agent-custom'], {
+      cwd: repos.bareDir,
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+    assert.equal(agentSha, repos.headSha);
+  });
+
   it('throws if seed branch does not exist', () => {
     assert.throws(
       () => ensureAgentBranch({
