@@ -81,32 +81,45 @@ cd server && npm run dev
 ```
 ue-claude-scaffold/
 ├── agents/                    # Claude Code agent definitions
-│   ├── container-orchestrator.md   # Default: E2E plan executor
-│   ├── container-implementer.md    # Code writer
-│   ├── container-reviewer.md       # Code reviewer
-│   └── container-tester.md         # Test writer
+│   ├── container-orchestrator.md          # Default: E2E plan executor
+│   ├── container-implementer.md           # Code writer
+│   ├── container-reviewer.md              # Generic code reviewer
+│   ├── container-decomposition-reviewer.md  # Decomposition + lifetime/safety review
+│   ├── container-safety-reviewer.md       # Memory/thread safety + invariants
+│   ├── container-style-reviewer.md        # Style and conventions
+│   ├── container-tester.md                # Test writer
+│   ├── changeling.md                      # Adaptive agent template
+│   └── core/                              # Shared agent fragments
 ├── container/                 # Docker container infrastructure
 │   ├── Dockerfile
 │   ├── docker-compose.example.yml  # Template — copy to docker-compose.yml
 │   ├── entrypoint.sh
 │   ├── container-settings.json
-│   ├── hooks/                 # Claude Code PreToolUse hooks
-│   │   ├── intercept_build_test.sh   # Routes build/test to host
-│   │   └── block-push-passthrough.sh # Blocks manual git push
-│   └── instructions/          # Standing instructions for container agents
-│       ├── 00-build-loop.md   # Build routing and UBT queue discipline
-│       ├── 01-debrief.md      # Debrief/reporting instructions
-│       ├── 02-messages.md     # Message board and monitoring guidance
-│       └── 03-task-worker.md  # Task worker mode protocol
-├── dashboard/                 # React + Vite monitoring SPA
-│   ├── src/                   # TanStack Router + Query, Mantine UI
-│   └── package.json
+│   ├── mcp-servers/           # MCP servers loaded by container Claude
+│   └── hooks/                 # Claude Code hooks
+│       ├── intercept_build_test.sh    # Routes build/test to host
+│       ├── block-push-passthrough.sh  # Blocks manual git push
+│       ├── guard-branch.sh            # Refuses commits to forbidden branches
+│       ├── inject-agent-header.sh     # Adds X-Agent-Name to outbound requests
+│       ├── push-after-commit.sh       # Auto-push after commits
+│       └── lint-cpp-diff.py           # C++ diff linter
+├── dashboard/                 # React + Vite monitoring SPA (TanStack Router + Query, Mantine UI)
+├── server/                    # Fastify + TypeScript coordination server
+│   ├── src/                   # Routes, schema, plugins, queries
+│   └── drizzle/               # Generated SQL migrations
+├── skills/                    # Modular skills loaded by dynamic agents
+├── dynamic-agents/            # Compiled agent definitions for runtime use
+├── teams/                     # Design team definitions and status
+├── briefs/                    # Design briefs for teams and agents
 ├── plans/                     # Plan documents for container agents
+├── tasks/                     # Task prompt markdown
+├── issues/                    # Reported problems and discussion items
+├── memory/                    # Persistent memory snapshots
+├── logs/                      # Agent execution logs
+├── database/                  # Local PGlite data directory
+├── Notes/                     # Ad-hoc notes and design docs
 ├── scripts/
 │   └── ingest-tasks.sh        # Bulk-import task markdown into the queue
-├── server/                    # TypeScript coordination server (Fastify)
-│   └── src/
-├── tasks/                     # Task prompts directory
 ├── launch.sh                  # Parameterized agent launcher
 ├── setup.sh                   # First-time setup script
 ├── status.sh                  # Agent monitoring script
@@ -128,7 +141,7 @@ Each container runs a single Claude Code instance in non-interactive (`-p`) mode
 1. Reads the plan from the task prompt
 2. Resolves sub-agents from the project's CLAUDE.md role mapping
 3. Delegates each phase to an **implementer** -> verifies build -> delegates to **reviewer**
-4. Iterates on failures (max 3 build retries, max 2 review cycles per phase)
+4. Iterates on failures (max 5 build retries, max 5 review cycles per phase)
 5. Commits each phase with a debrief audit document
 
 ### Build/Test Routing
@@ -146,10 +159,13 @@ it:
 A Fastify + TypeScript server running on the host. Provides:
 
 - **Build/test proxy** -- routes container build requests to the host UE installation
-- **Message board** -- SQLite-backed pub/sub for agent progress reporting
+- **Message board** -- pub/sub for agent progress reporting, persisted in PGlite via Drizzle
+- **Rooms & teams** -- threaded message rooms and design-team registration
 - **Agent registry** -- tracks active agents and their status
+- **Project registry** -- portable per-project config (`GET/POST /projects`) backed by the `projects` table
 - **UBT lock** -- serializes build tool access with priority queue (multi-agent support)
 - **Build history** -- queryable record of all builds with duration and outcome
+- **Task queue** -- claim/complete/fail/release/replan lifecycle for worker-mode containers
 - **File ownership** -- tracks which agent owns which files during task execution
 - **Search** -- full-text search across tasks, messages, and agents
 - **Coalesce** -- system-wide coordination for graceful shutdown (pause pumps, release files)
@@ -183,10 +199,14 @@ build scripts) lives in `scaffold.config.json`.
 |---------------------------|----------|--------------------------|--------------------------------------------|
 | `CLAUDE_CREDENTIALS_PATH` | Yes*     | —                        | Path to `.credentials.json` for OAuth auth |
 | `ANTHROPIC_API_KEY`       | Yes*     | —                        | API key for token-based auth               |
+| `DATABASE_URL`            | No       | (PGlite)                 | External Postgres connection string. Omit to use the in-process PGlite database |
 | `AGENT_NAME`              | No       | `agent-1`                | Agent identifier                           |
 | `WORK_BRANCH`             | No       | (computed)               | Git branch for the agent -- normally set automatically by launch.sh |
-| `AGENT_TYPE`              | No       | `container-orchestrator` | Agent definition to use                    |
+| `AGENT_TYPE`              | Yes      | —                        | Agent definition to load (e.g. `container-orchestrator`, `scaffold-orchestrator`) |
 | `MAX_TURNS`               | No       | `200`                    | Max Claude Code turns before stopping      |
+| `WORKER_MODE`             | No       | `false`                  | Run as task-queue worker instead of plan executor |
+| `WORKER_POLL_INTERVAL`    | No       | `30`                     | Worker polling interval in seconds         |
+| `WORKER_SINGLE_TASK`      | No       | `true`                   | Worker exits after one task instead of looping |
 
 *One of `CLAUDE_CREDENTIALS_PATH` or `ANTHROPIC_API_KEY` is required.
 
@@ -227,7 +247,13 @@ When a `projects` block is present it takes precedence over the legacy top-level
 | `build.scriptPath`           | Build script path relative to project root    |
 | `build.testScriptPath`       | Test script path relative to project root     |
 | `build.defaultTestFilters`   | Array of default test filter strings          |
-| `plugins.readOnlyMounts`     | Plugin paths to mount read-only in containers |
+| `build.buildTimeoutMs`       | Per-build timeout in ms (default `660000`)    |
+| `build.testTimeoutMs`        | Per-test timeout in ms (default `700000`)     |
+| `build.ubtRetryCount`        | UBT lock acquisition retries (default `5`)    |
+| `build.ubtRetryDelayMs`      | Delay between UBT retries in ms (default `30000`) |
+| `plugins.stagingCopies`      | Plugin sources to copy into the staging worktree (`{source, relativeDest}` pairs) |
+| `hooks.buildIntercept`       | Per-project toggle for the build/test intercept hook |
+| `hooks.cppLint`              | Per-project toggle for the C++ diff linter hook |
 | `container.agentType`        | Default agent type for containers             |
 | `container.maxTurns`         | Max turns for the agent                       |
 | `container.seedBranch`       | Optional override for the seed branch. Default is `docker/{project-id}/current-root`, computed by `server/src/branch-naming.ts` |
@@ -250,8 +276,33 @@ Parameterized launcher for container agents.
 # Explicit agent name
 ./launch.sh --agent-name agent-2
 
+# Override which agent definition to load
+./launch.sh --agent-type container-implementer
+
 # Select which configured project to launch against
 ./launch.sh --project my-ue-game
+
+# Reset the agent branch to docker/{project-id}/current-root before launch
+./launch.sh --fresh
+
+# Single-task worker mode (claim one task and exit)
+./launch.sh --worker
+
+# Continuous pump mode (keep claiming tasks until drained)
+./launch.sh --pump
+
+# Run N pump containers in parallel
+./launch.sh --pump --parallel 4
+
+# Launch into a design team with a brief
+./launch.sh --team inventory-ui --brief briefs/inventory-ui.md
+
+# One-shot prompt (no task queue)
+./launch.sh --prompt "Audit the Inventory module for unused includes"
+
+# Toggle hooks at launch
+./launch.sh --hooks      # Force-enable build intercept and C++ linting
+./launch.sh --no-hooks   # Force-disable both
 
 # Preview what would happen without launching
 ./launch.sh --dry-run
@@ -289,6 +340,9 @@ Stop running agent containers.
 
 # Stop only containers belonging to a specific project
 ./stop.sh --project my-ue-game
+
+# Stop all containers in a specific design team
+./stop.sh --team inventory-ui
 
 # Graceful drain — pause pumps, wait for in-flight tasks, stop containers
 ./stop.sh --drain
@@ -332,12 +386,16 @@ cp agents/*.md ~/.claude/agents/
 
 ### Available Agent Types
 
-| Type                     | Description                                                                                                              |
-|--------------------------|--------------------------------------------------------------------------------------------------------------------------|
-| `container-orchestrator` | Default. Executes a pre-authored plan E2E — delegates to sub-agents, no human approval gates.                            |
-| `container-implementer`  | Writes code according to a plan or fix instructions. Builds after each change and iterates until clean.                  |
-| `container-reviewer`     | Reviews implementation against the original spec and project style. Uses confidence scoring to minimize false positives. |
-| `container-tester`       | Writes tests for an implementation, runs them, and iterates until passing.                                               |
+| Type                                | Description                                                                                                              |
+|-------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
+| `container-orchestrator`            | Default. Executes a pre-authored plan E2E — delegates to sub-agents, no human approval gates.                            |
+| `container-implementer`             | Writes code according to a plan or fix instructions. Builds after each change and iterates until clean.                  |
+| `container-reviewer`                | Generic reviewer for spec and project style. Uses confidence scoring to minimize false positives.                        |
+| `container-decomposition-reviewer`  | Reviews decomposition criteria including lifetime/safety considerations.                                                 |
+| `container-safety-reviewer`         | Focused review of memory safety, thread safety, and invariant preservation.                                              |
+| `container-style-reviewer`          | Focused review of style and coding conventions.                                                                          |
+| `container-tester`                  | Writes tests for an implementation, runs them, and iterates until passing.                                               |
+| `changeling`                        | Adaptive agent template used to compose dynamic agents at launch.                                                        |
 
 ### Customising for your project
 

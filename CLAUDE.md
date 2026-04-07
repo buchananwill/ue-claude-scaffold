@@ -58,16 +58,18 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
 
 1. **Shell scripts** (`launch.sh`, `setup.sh`, `status.sh`, `stop.sh`) — orchestrate Docker and config. Read structural config from `scaffold.config.json` and secrets from `.env`.
 
-2. **Coordination server** (`server/`) — Fastify + TypeScript, SQLite via better-sqlite3 (WAL mode). Runs on the host (default port 9100). Requests are scoped by the `X-Project-Id` header (default `default`); every persisted row — agents, tasks, messages, builds, ubt_lock, files, rooms, teams — carries a `project_id` column so a single server serves multiple UE projects in isolation. Provides:
+2. **Coordination server** (`server/`) — Fastify + TypeScript, PGlite (in-process Postgres) accessed via Drizzle ORM. Runs on the host (default port 9100). Requests are scoped by the `X-Project-Id` header (default `default`); every persisted row — agents, tasks, messages, builds, ubt_lock, files, rooms, teams — carries a `project_id` column so a single server serves multiple UE projects in isolation. Provides:
    - `GET /health` — server health check (returns status, db path, config summary)
    - `GET /projects`, `POST /projects` — list and register projects (portable config stored in the `projects` table)
    - `POST /build`, `POST /test` — sync worktree from bare repo, run host-side build/test scripts, return structured `{success, exit_code, output, stderr}`
    - `GET /builds` — query build history with filtering
    - `POST /agents/register`, `GET /agents`, `GET /agents/{name}`, `POST /agents/{name}/status`, `DELETE /agents/{name}`, `DELETE /agents` — agent lifecycle
    - `POST /agents/{name}/sync` — merge `docker/{project-id}/current-root` into `docker/{project-id}/{name}`; propagates plans to running containers
-   - `GET /messages`, `POST /messages`, `GET /messages/{channel}`, `POST /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve` — SQLite-backed message board for agent progress
+   - `GET /messages`, `POST /messages`, `GET /messages/{channel}`, `POST /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve` — message board for agent progress
+   - `/rooms/*` — threaded message rooms (alternative to the flat message board)
+   - `/teams/*` — design team registration and lifecycle
    - UBT lock (`GET /ubt/status`, `POST /ubt/acquire`, `POST /ubt/release`) — singleton mutex with priority queue and stale-lock sweeping (60s interval)
-   - `/tasks/*` — task queue with claim/complete/fail/release lifecycle for worker mode
+   - `/tasks/*` — task queue split across `tasks.ts`, `tasks-claim.ts`, `tasks-lifecycle.ts`, `tasks-files.ts`, `tasks-replan.ts` (claim/complete/fail/release/replan lifecycle for worker mode)
    - `POST /sync/plans` — merge committed state from the exterior repo into the bare repo's `docker/{project-id}/current-root` branch; optionally propagates to agent branches via `targetAgents` body param
    - `GET /search` — full-text search across tasks, messages, agents
    - `GET /files` — file ownership registry (tracks which agent owns which files)
@@ -102,6 +104,7 @@ Container agents don't run builds directly. Two PreToolUse hooks in `container/h
 
 - **`intercept_build_test.sh`** — intercepts build/test commands, commits+pushes to the bare repo, then calls the coordination server's `/build` or `/test` endpoint. The server syncs to a staging worktree and runs the real UE build scripts.
 - **`block-push-passthrough.sh`** — blocks manual `git push` commands. Pushes are handled automatically by the build/test intercept hook, so direct pushes are an error.
+- Additional hooks in `container/hooks/` cover branch guarding (`guard-branch.sh`), agent header injection (`inject-agent-header.sh`), post-commit auto-push (`push-after-commit.sh`), and C++ diff linting (`lint-cpp-diff.py`).
 
 ### Task-Queue Execution
 
@@ -135,16 +138,20 @@ Agent type definitions live in `agents/` as markdown files. Each defines the age
 
 - `container-orchestrator` — default for container execution; executes a plan E2E by delegating to sub-agents
 - `container-implementer` — writes code according to a plan or fix instructions
-- `container-reviewer` — reviews implementation against spec and project style
+- `container-reviewer` — generic reviewer for spec and project style
+- `container-decomposition-reviewer` — review focused on decomposition criteria including lifetime/safety
+- `container-safety-reviewer` — review focused on memory/thread safety and invariants
+- `container-style-reviewer` — review focused on style and coding conventions
 - `container-tester` — writes and runs tests for an implementation
+- `changeling` — adaptive agent template (see `agents/changeling.md`)
 
 ### Server Code Conventions
 
 - ESM (`"type": "module"`) — all imports use `.js` extensions even for `.ts` files
 - Fastify plugins pattern — each route file exports a `FastifyPluginAsync` as default
-- Tests use Node.js built-in `node:test` + `node:assert` (no Jest/Vitest)
-- Test helper (`src/test-helper.ts`) creates isolated Fastify instances with temp SQLite DBs
-- DB schema is embedded in `src/db.ts` as a single source of truth (no migration files)
+- Tests use Node.js built-in `node:test` + `node:assert/strict`
+- Test setup uses `server/src/drizzle-test-helper.ts` (creates isolated PGlite + Drizzle databases per test); `server/src/test-helper.ts` re-exports it and provides config helpers
+- DB schema is defined in `server/src/schema/tables.ts`; SQL migrations live in `server/drizzle/` and are applied via `npm run db:migrate` (which runs `src/migrate.ts`)
 - Agent identification via `X-Agent-Name` header on requests
 - Project scoping via `X-Project-Id` header; see `server/src/plugins/project-id.ts`. Branch naming helpers in `server/src/branch-naming.ts` (`seedBranchFor`, `agentBranchFor`)
 
@@ -154,11 +161,7 @@ Agent type definitions live in `agents/` as markdown files. Each defines the age
 - `.env` — secrets and per-launch params (auth credentials, agent name, branch). Not committed. Copy from `.env.example`.
 - `container/docker-compose.yml` — Docker Compose config with local volume mounts. Not committed (user-specific). Copy from `container/docker-compose.example.yml`.
 - `container/container-settings.json` — Claude Code settings injected into containers (hooks config, permissions)
-- `container/instructions/*.md` — standing instructions prepended to every task prompt (sorted by filename):
-  - `00-build-loop.md` — build routing and UBT queue discipline
-  - `01-debrief.md` — debrief/reporting instructions
-  - `02-messages.md` — message board and monitoring guidance
-  - `03-task-worker.md` — task worker mode protocol
+- `skills/` — modular skills loaded by dynamic agent definitions. Each skill is a directory with a `SKILL.md`. Current skills include `task-worker-protocol`, `orchestrator-phase-protocol`, and `debrief-protocol`.
 
 ### Issues
 
