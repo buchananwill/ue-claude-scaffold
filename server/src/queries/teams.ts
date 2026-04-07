@@ -1,6 +1,9 @@
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { teams, teamMembers, rooms, roomMembers } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
+import type { DrizzleDb, DrizzleTx } from '../drizzle-instance.js';
+
+/** Accept either a full DB instance or a transaction client. */
+type DbOrTx = DrizzleDb | DrizzleTx;
 
 export interface CreateOpts {
   id: string;
@@ -9,7 +12,7 @@ export interface CreateOpts {
   projectId?: string;
 }
 
-export async function create(db: DrizzleDb, opts: CreateOpts) {
+export async function create(db: DbOrTx, opts: CreateOpts) {
   const rows = await db
     .insert(teams)
     .values({
@@ -31,7 +34,7 @@ export interface CreateWithRoomOpts extends CreateOpts {
  * Creates a team, its associated room, and adds members to both.
  * Mirrors the transaction logic in the teams route.
  */
-export async function createWithRoom(db: DrizzleDb, opts: CreateWithRoomOpts) {
+export async function createWithRoom(db: DbOrTx, opts: CreateWithRoomOpts) {
   const team = await create(db, opts);
 
   // Add team members
@@ -64,7 +67,7 @@ export async function createWithRoom(db: DrizzleDb, opts: CreateWithRoomOpts) {
   return team;
 }
 
-export async function getById(db: DrizzleDb, id: string) {
+export async function getById(db: DbOrTx, id: string) {
   const rows = await db.select().from(teams).where(eq(teams.id, id));
   return rows[0] ?? null;
 }
@@ -74,7 +77,7 @@ export interface ListOpts {
   projectId?: string;
 }
 
-export async function list(db: DrizzleDb, opts: ListOpts = {}) {
+export async function list(db: DbOrTx, opts: ListOpts = {}) {
   const conditions = [];
 
   if (opts.status) {
@@ -91,27 +94,27 @@ export async function list(db: DrizzleDb, opts: ListOpts = {}) {
     .orderBy(desc(teams.createdAt));
 }
 
-export async function dissolve(db: DrizzleDb, id: string) {
+export async function dissolve(db: DbOrTx, id: string) {
   await db
     .update(teams)
     .set({ status: 'dissolved', dissolvedAt: sql`now()` })
     .where(eq(teams.id, id));
 }
 
-export async function updateStatus(db: DrizzleDb, id: string, status: string) {
+export async function updateStatus(db: DbOrTx, id: string, status: string) {
   await db.update(teams).set({ status }).where(eq(teams.id, id));
 }
 
-export async function updateDeliverable(db: DrizzleDb, id: string, deliverable: string) {
+export async function updateDeliverable(db: DbOrTx, id: string, deliverable: string) {
   await db.update(teams).set({ deliverable }).where(eq(teams.id, id));
 }
 
-export async function deleteTeam(db: DrizzleDb, id: string): Promise<boolean> {
+export async function deleteTeam(db: DbOrTx, id: string): Promise<boolean> {
   const rows = await db.delete(teams).where(eq(teams.id, id)).returning();
   return rows.length > 0;
 }
 
-export async function getMembers(db: DrizzleDb, teamId: string) {
+export async function getMembers(db: DbOrTx, teamId: string) {
   return db
     .select({
       agentName: teamMembers.agentName,
@@ -123,7 +126,7 @@ export async function getMembers(db: DrizzleDb, teamId: string) {
 }
 
 export async function addMember(
-  db: DrizzleDb,
+  db: DbOrTx,
   teamId: string,
   agentName: string,
   role: string,
@@ -143,7 +146,7 @@ export async function addMember(
     });
 }
 
-export async function removeMember(db: DrizzleDb, teamId: string, agentName: string) {
+export async function removeMember(db: DbOrTx, teamId: string, agentName: string) {
   await db
     .delete(teamMembers)
     .where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.agentName, agentName)));

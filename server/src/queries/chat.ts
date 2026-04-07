@@ -1,6 +1,9 @@
 import { eq, and, gt, lt, desc, asc } from 'drizzle-orm';
 import { chatMessages, roomMembers } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
+import type { DrizzleDb, DrizzleTx } from '../drizzle-instance.js';
+
+/** Accept either a full DB instance or a transaction client. */
+type DbOrTx = DrizzleDb | DrizzleTx;
 
 export interface SendMessageOpts {
   roomId: string;
@@ -9,7 +12,7 @@ export interface SendMessageOpts {
   replyTo?: number | null;
 }
 
-export async function sendMessage(db: DrizzleDb, opts: SendMessageOpts) {
+export async function sendMessage(db: DbOrTx, opts: SendMessageOpts) {
   const rows = await db
     .insert(chatMessages)
     .values({
@@ -28,7 +31,7 @@ export interface GetHistoryOpts {
   limit?: number;
 }
 
-export async function getHistory(db: DrizzleDb, roomId: string, opts: GetHistoryOpts = {}) {
+export async function getHistory(db: DbOrTx, roomId: string, opts: GetHistoryOpts = {}) {
   const pageSize = Math.min(Math.max(opts.limit ?? 100, 1), 500);
 
   if (opts.after != null) {
@@ -64,7 +67,7 @@ export async function getHistory(db: DrizzleDb, roomId: string, opts: GetHistory
   return rows;
 }
 
-export async function isMember(db: DrizzleDb, roomId: string, member: string): Promise<boolean> {
+export async function isMember(db: DbOrTx, roomId: string, member: string): Promise<boolean> {
   const rows = await db
     .select({ member: roomMembers.member })
     .from(roomMembers)

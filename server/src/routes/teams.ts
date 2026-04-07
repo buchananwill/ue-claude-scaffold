@@ -4,8 +4,12 @@ import type { ScaffoldConfig } from '../config.js';
 import { getDb } from '../drizzle-instance.js';
 import { resolveProject } from '../resolve-project.js';
 import { launchTeam } from '../team-launcher.js';
+import { AGENT_NAME_RE } from '../branch-naming.js';
 import * as teamsQ from '../queries/teams.js';
 import * as roomsQ from '../queries/rooms.js';
+
+/** Regex for valid team id values. */
+const TEAM_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
 const VALID_STATUSES = ['active', 'converging', 'dissolved'] as const;
 
@@ -31,6 +35,21 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     const { id, name, briefPath, members } = request.body;
     const db = getDb();
 
+    // Validate team id format
+    if (!TEAM_ID_RE.test(id)) {
+      return reply.badRequest('Invalid team id — must match ^[a-zA-Z0-9_-]{1,64}$');
+    }
+
+    // Validate each member's agentName and role
+    for (const m of members) {
+      if (!AGENT_NAME_RE.test(m.agentName)) {
+        return reply.badRequest(`Invalid agentName '${m.agentName}' — must match ^[a-zA-Z0-9_-]{1,64}$`);
+      }
+      if (!m.role || m.role.trim().length === 0) {
+        return reply.badRequest(`Member '${m.agentName}' has an empty role`);
+      }
+    }
+
     const leaderCount = members.filter(m => m.isLeader).length;
     if (leaderCount !== 1) {
       return reply.badRequest('Exactly one discussion leader is required');
@@ -38,25 +57,25 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
 
     try {
       await db.transaction(async (tx) => {
-        const existing = await teamsQ.getById(tx as any, id);
+        const existing = await teamsQ.getById(tx, id);
         if (existing) {
           if (existing.status !== 'dissolved') {
             throw Object.assign(new Error(`Team '${id}' already exists and is not dissolved`), { statusCode: 409 });
           }
           // Clean up old team data
-          await roomsQ.deleteRoom(tx as any, id);
-          await teamsQ.deleteTeam(tx as any, id);
+          await roomsQ.deleteRoom(tx, id);
+          await teamsQ.deleteTeam(tx, id);
         }
 
-        await teamsQ.create(tx as any, { id, name, briefPath: briefPath ?? null, projectId: request.projectId });
+        await teamsQ.create(tx, { id, name, briefPath: briefPath ?? null, projectId: request.projectId });
         for (const m of members) {
-          await teamsQ.addMember(tx as any, id, m.agentName, m.role, m.isLeader);
+          await teamsQ.addMember(tx, id, m.agentName, m.role, m.isLeader);
         }
-        await roomsQ.createRoom(tx as any, { id, name, type: 'group', createdBy: caller, projectId: request.projectId });
+        await roomsQ.createRoom(tx, { id, name, type: 'group', createdBy: caller, projectId: request.projectId });
         for (const m of members) {
-          await roomsQ.addMember(tx as any, id, m.agentName);
+          await roomsQ.addMember(tx, id, m.agentName);
         }
-        await roomsQ.addMember(tx as any, id, 'user');
+        await roomsQ.addMember(tx, id, 'user');
       });
     } catch (err: unknown) {
       if (err instanceof Error && (err as Error & { statusCode?: number }).statusCode === 409) {

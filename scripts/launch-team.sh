@@ -81,6 +81,10 @@ echo ""
 FIRST=true
 while IFS= read -r member; do
   _NAME=$(echo "$member" | jq -r '.agentName')
+  if [[ ! "$_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: server returned invalid agentName: $_NAME" >&2
+    exit 1
+  fi
   _TYPE=$(echo "$member" | jq -r '.agentType')
   _BRANCH=$(echo "$member" | jq -r '.branch')
   _ROLE=$(echo "$member" | jq -r '.role')

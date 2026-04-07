@@ -12,6 +12,7 @@ import type { MergedProjectConfig } from './config.js';
 import { seedBranchFor, agentBranchFor, AGENT_NAME_RE } from './branch-naming.js';
 import { ensureAgentBranch } from './branch-ops.js';
 import * as teamsQ from './queries/teams.js';
+import * as roomsQ from './queries/rooms.js';
 import * as chatQ from './queries/chat.js';
 
 /** A member entry from the team definition JSON file. */
@@ -160,36 +161,40 @@ export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult
   // 2. Load and validate team definition
   const def = loadTeamDef(teamsDir, teamId);
 
-  // 3. Check for duplicate registration
-  const existing = await teamsQ.getById(db, def.id);
-  if (existing) {
-    if (existing.status !== 'dissolved') {
-      throw new Error(`Team '${def.id}' already exists and is ${existing.status}`);
-    }
-    // Dissolved team — will be replaced by createWithRoom
-  }
-
-  // 4. Register team + room in DB (uses the createWithRoom helper)
-  await teamsQ.createWithRoom(db, {
-    id: def.id,
-    name: def.name,
-    briefPath,
-    projectId,
-    createdBy: 'user',
-    members: def.members.map(m => ({
-      agentName: m.agentName,
-      role: m.role,
-      isLeader: m.isLeader,
-    })),
-  });
-
+  // 3. Check for duplicate registration and register in a transaction
   const roomId = def.id;
 
-  // 5. Post brief path as the first room message
-  await chatQ.sendMessage(db, {
-    roomId,
-    sender: 'user',
-    content: `Brief: \`${briefPath}\` -- read this file from your workspace to begin.`,
+  await db.transaction(async (tx) => {
+    const existing = await teamsQ.getById(tx, def.id);
+    if (existing) {
+      if (existing.status !== 'dissolved') {
+        throw new Error(`Team '${def.id}' already exists and is ${existing.status}`);
+      }
+      // Clean up dissolved team data before re-registration
+      await roomsQ.deleteRoom(tx, def.id);
+      await teamsQ.deleteTeam(tx, def.id);
+    }
+
+    // 4. Register team + room in DB (uses the createWithRoom helper)
+    await teamsQ.createWithRoom(tx, {
+      id: def.id,
+      name: def.name,
+      briefPath,
+      projectId,
+      createdBy: 'user',
+      members: def.members.map(m => ({
+        agentName: m.agentName,
+        role: m.role,
+        isLeader: m.isLeader,
+      })),
+    });
+
+    // 5. Post brief path as the first room message
+    await chatQ.sendMessage(tx, {
+      roomId,
+      sender: 'user',
+      content: `Brief: \`${briefPath}\` -- read this file from your workspace to begin.`,
+    });
   });
 
   // 6. Set up agent branch refs (fresh reset to seed branch HEAD)
