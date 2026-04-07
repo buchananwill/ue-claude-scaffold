@@ -13,3 +13,4 @@ export { default as roomsPlugin } from './rooms.js';
 export { default as teamsPlugin } from './teams.js';
 export { default as projectsPlugin } from './projects.js';
 export { default as configPlugin } from './config.js';
+export { default as branchOpsPlugin } from './branch-ops.js';

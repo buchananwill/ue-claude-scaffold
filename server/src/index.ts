@@ -19,6 +19,7 @@ import {
   teamsPlugin,
   projectsPlugin,
   configPlugin,
+  branchOpsPlugin,
 } from './routes/index.js';
 import { sweepStaleLock } from './routes/ubt.js';
 import { getDb } from './drizzle-instance.js';
@@ -69,6 +70,7 @@ await server.register(roomsPlugin);
 await server.register(teamsPlugin);
 await server.register(projectsPlugin);
 await server.register(configPlugin, { config });
+await server.register(branchOpsPlugin, { config });
 
 try {
   const address = await server.listen({
