@@ -91,3 +91,24 @@ _validate_branch_name() {
 
   return 0
 }
+
+# _read_server_port <script_dir>
+#   Reads the coordination server port from scaffold.config.json.
+#   Falls back to 9100 if the file is absent or the key is missing.
+#   Validates the port is in the range 1-65535.
+#   Echoes the port number on success; returns 1 on validation failure.
+_read_server_port() {
+  local script_dir="$1"
+  local port=9100
+
+  if [[ -f "$script_dir/scaffold.config.json" ]]; then
+    port="$(jq -r '.server.port // 9100' "$script_dir/scaffold.config.json" 2>/dev/null || echo 9100)"
+  fi
+
+  if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || (( port < 1 || port > 65535 )); then
+    echo "Error: invalid server port in scaffold.config.json: $port" >&2
+    return 1
+  fi
+
+  echo "$port"
+}

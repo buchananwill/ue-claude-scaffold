@@ -64,15 +64,14 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
           await teamsQ.deleteTeam(tx, id);
         }
 
-        await teamsQ.create(tx, { id, name, briefPath: briefPath ?? null, projectId: request.projectId });
-        for (const m of members) {
-          await teamsQ.addMember(tx, id, m.agentName, m.role, m.isLeader);
-        }
-        await roomsQ.createRoom(tx, { id, name, type: 'group', createdBy: caller, projectId: request.projectId });
-        for (const m of members) {
-          await roomsQ.addMember(tx, id, m.agentName);
-        }
-        await roomsQ.addMember(tx, id, 'user');
+        await teamsQ.createWithRoom(tx, {
+          id,
+          name,
+          briefPath: briefPath ?? null,
+          projectId: request.projectId,
+          createdBy: caller,
+          members,
+        });
       });
     } catch (err: unknown) {
       if (err instanceof Error && (err as Error & { statusCode?: number }).statusCode === 409) {

@@ -33,16 +33,12 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
   echo "Error: SCRIPT_DIR is not set" >&2; exit 1
 fi
 
+# -- Source shared libraries -------------------------------------------------
+# shellcheck source=lib/compose-detect.sh
+source "$SCRIPT_DIR/scripts/lib/compose-detect.sh"
+
 # -- Detect docker compose ---------------------------------------------------
-COMPOSE_CMD=()
-if docker compose version &>/dev/null; then
-  COMPOSE_CMD=(docker compose)
-elif docker-compose --version &>/dev/null; then
-  COMPOSE_CMD=(docker-compose)
-else
-  echo "Error: Neither 'docker compose' nor 'docker-compose' found." >&2
-  exit 1
-fi
+_detect_compose || exit 1
 
 echo "=== Launching Team: $_CLI_TEAM ==="
 echo "  Brief: $_CLI_BRIEF"

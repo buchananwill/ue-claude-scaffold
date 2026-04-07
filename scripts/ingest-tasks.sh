@@ -5,15 +5,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/curl-json.sh
 source "$SCRIPT_DIR/lib/curl-json.sh"
+# shellcheck source=lib/validators.sh
+source "$SCRIPT_DIR/lib/validators.sh"
 
 # ── Defaults ────────────────────────────────────────────────────────────────
 TASKS_DIR="./tasks"
 DRY_RUN=false
 
-_cfg_port=9100
-if [[ -f "$SCRIPT_DIR/../scaffold.config.json" ]]; then
-  _cfg_port="$(jq -r '.server.port // 9100' "$SCRIPT_DIR/../scaffold.config.json" 2>/dev/null || echo 9100)"
-fi
+_cfg_port="$(_read_server_port "$SCRIPT_DIR/..")" || exit 1
 SERVER_URL="http://localhost:$_cfg_port"
 
 # ── Parse flags ─────────────────────────────────────────────────────────────

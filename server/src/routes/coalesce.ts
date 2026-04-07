@@ -1,14 +1,24 @@
 import type { FastifyPluginAsync } from 'fastify';
+import type { DrizzleDb } from '../drizzle-instance.js';
 import { getDb } from '../drizzle-instance.js';
 import * as coalesceQ from '../queries/coalesce.js';
 import * as agentsQ from '../queries/agents.js';
+
+/** Check whether the system is ready to coalesce (no active tasks, all pump agents idle). */
+async function checkCanCoalesce(db: DrizzleDb, projectId: string) {
+  const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
+  const agentRows = await agentsQ.getAll(db, projectId);
+  const pumpAgents = agentRows.filter(a => a.mode === 'pump');
+  const allPumpIdle = pumpAgents.every(a => ['idle', 'done', 'paused'].includes(a.status));
+  return { canCoalesce: activeTaskCount === 0 && allPumpIdle, activeTaskCount, pumpAgents, allPumpIdle };
+}
 
 const coalescePlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get('/coalesce/status', async (request) => {
     const projectId = request.projectId;
     const db = getDb();
 
-    const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
+    const { canCoalesce, activeTaskCount, pumpAgents, allPumpIdle } = await checkCanCoalesce(db, projectId);
     const pendingCount = await coalesceQ.countPendingTasks(db, projectId);
     const claimedFileCount = await coalesceQ.countClaimedFiles(db, projectId);
 
@@ -25,10 +35,6 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
         activeTasks,
       };
     }));
-
-    const pumpAgents = agents.filter(a => a.mode === 'pump');
-    const allPumpIdle = pumpAgents.every(a => ['idle', 'done', 'paused'].includes(a.status));
-    const canCoalesce = activeTaskCount === 0 && allPumpIdle;
 
     let reason: string | undefined;
     if (!canCoalesce) {
@@ -90,13 +96,9 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     let pollError: string | undefined;
     try {
       while (Date.now() < deadline) {
-        const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
-        const agentRows = await agentsQ.getAll(db, projectId);
-        const pumpAgents = agentRows.filter(a => a.mode === 'pump');
-        const allPumpIdle = pumpAgents.every(a =>
-          ['idle', 'done', 'paused'].includes(a.status));
+        const poll = await checkCanCoalesce(db, projectId);
 
-        if (activeTaskCount === 0 && allPumpIdle) {
+        if (poll.canCoalesce) {
           break;
         }
 
@@ -113,18 +115,13 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
 
     // 3. Final status check — timedOut is determined by whether we actually drained
     // (Fastify's default error handler sanitizes any uncaught errors in responses)
-    const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
+    const finalCheck = await checkCanCoalesce(db, projectId);
     const pendingCount = await coalesceQ.countPendingTasks(db, projectId);
     const claimedFileCount = await coalesceQ.countClaimedFiles(db, projectId);
-    const agentRows = await agentsQ.getAll(db, projectId);
-    const pumpAgents = agentRows.filter(a => a.mode === 'pump');
-    const allPumpIdle = pumpAgents.every(a =>
-      ['idle', 'done', 'paused'].includes(a.status));
-    const canCoalesce = activeTaskCount === 0 && allPumpIdle;
-    const timedOut = !canCoalesce;
+    const timedOut = !finalCheck.canCoalesce;
 
     return {
-      drained: canCoalesce,
+      drained: finalCheck.canCoalesce,
       timedOut,
       ...(pollError ? { error: 'Drain polling interrupted; see server log for details.' } : {}),
       paused: pausedAgents,
@@ -133,7 +130,7 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
         taskId: r.id,
         title: r.title,
       })),
-      activeTasks: activeTaskCount,
+      activeTasks: finalCheck.activeTaskCount,
       pendingTasks: pendingCount,
       totalClaimedFiles: claimedFileCount,
     };

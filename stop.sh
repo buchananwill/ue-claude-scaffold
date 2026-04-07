@@ -97,14 +97,7 @@ if [[ -n "$PROJECT_ID" && ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
 fi
 
 # ── Read port from scaffold.config.json ──────────────────────────────────────
-_cfg_port=9100
-if [[ -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
-    _cfg_port="$(jq -r '.server.port // 9100' "$SCRIPT_DIR/scaffold.config.json" 2>/dev/null || echo 9100)"
-fi
-if [[ ! "$_cfg_port" =~ ^[0-9]{1,5}$ ]] || (( _cfg_port < 1 || _cfg_port > 65535 )); then
-  echo "Error: invalid server port in scaffold.config.json: $_cfg_port" >&2
-  exit 1
-fi
+_cfg_port="$(_read_server_port "$SCRIPT_DIR")" || exit 1
 BASE_URL="http://localhost:$_cfg_port"
 
 # ── Check dependencies ──────────────────────────────────────────────────────

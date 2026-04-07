@@ -3,6 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ── Source shared libraries ─────────────────────────────────────────────────
+# shellcheck source=scripts/lib/validators.sh
+source "$SCRIPT_DIR/scripts/lib/validators.sh"
+
 # ── Usage ────────────────────────────────────────────────────────────────────
 usage() {
   cat <<'USAGE'
@@ -68,16 +72,7 @@ if [[ -n "$PROJECT_ID" && ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
 fi
 
 # ── Read port from scaffold.config.json ──────────────────────────────────────
-_cfg_port=9100
-if [[ -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
-    _cfg_port="$(jq -r '.server.port // 9100' "$SCRIPT_DIR/scaffold.config.json" 2>/dev/null || echo 9100)"
-fi
-
-if [[ "$_cfg_port" -lt 1 || "$_cfg_port" -gt 65535 ]] 2>/dev/null; then
-  echo "Error: Invalid port number: $_cfg_port (must be 1-65535)" >&2
-  exit 1
-fi
-
+_cfg_port="$(_read_server_port "$SCRIPT_DIR")" || exit 1
 BASE_URL="http://localhost:$_cfg_port"
 
 # ── Check dependencies ──────────────────────────────────────────────────────
