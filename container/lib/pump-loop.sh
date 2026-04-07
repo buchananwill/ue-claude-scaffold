@@ -84,6 +84,7 @@ _pump_iteration() {
     local TASK_EXIT
     PUMP_STATUS="continue"
     ABNORMAL_SHUTDOWN=""  # Reset per-task
+    ABNORMAL_REASON=""    # Keep in sync with ABNORMAL_SHUTDOWN
 
     echo "Polling for tasks..."
     if ! _poll_and_claim_task; then

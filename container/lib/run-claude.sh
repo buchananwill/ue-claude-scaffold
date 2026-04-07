@@ -92,6 +92,9 @@ _run_claude() {
     local full_prompt="$1"
     local mode="$2"
 
+    # Clear any stale stop sentinel from a prior container run
+    rm -f /tmp/.stop_requested
+
     echo "Prompt assembled ($(echo -n "$full_prompt" | wc -c) bytes)"
 
     # ── Audit: dump full prompt text to log ─────────────────────────────────
