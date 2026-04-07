@@ -16,8 +16,7 @@ import {
   linkFilesToTask, linkDepsToTask, depsForTask,
   formatTaskWithFiles,
 } from './tasks-files.js';
-import { runReplan } from './tasks-replan.js';
-import tasksReplanPlugin from './tasks-replan.js';
+import tasksReplanPlugin, { runReplan } from './tasks-replan.js';
 import tasksClaimPlugin from './tasks-claim.js';
 import tasksLifecyclePlugin from './tasks-lifecycle.js';
 
@@ -314,16 +313,16 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const priorityFiltered = priorityRaw
       ? priorityRaw.filter(Boolean).map(Number).filter(v => Number.isFinite(v) && Number.isInteger(v))
       : undefined;
-    // If any segments were non-empty but failed numeric parsing, return 400
     if (priorityRaw) {
       const nonEmpty = priorityRaw.filter(Boolean);
+      // Empty segments (from leading/trailing/doubled commas) — check first, mirrors status/agent
+      if (priorityRaw.length !== nonEmpty.length) {
+        return reply.badRequest('Invalid priority filter: contains empty segments (leading, trailing, or doubled commas).');
+      }
+      // Non-empty but failed numeric parsing
       if (nonEmpty.length > (priorityFiltered?.length ?? 0)) {
         const invalid = nonEmpty.filter(s => { const n = Number(s); return !Number.isFinite(n) || !Number.isInteger(n); });
         return reply.badRequest(`Invalid priority values: ${invalid.join(', ')}. Priority must be integers.`);
-      }
-      // Empty segments (from leading/trailing/doubled commas) are also invalid
-      if (priorityRaw.length !== nonEmpty.length) {
-        return reply.badRequest('Invalid priority filter: contains empty segments (leading, trailing, or doubled commas).');
       }
     }
     const priorityArr = priorityFiltered;
@@ -547,6 +546,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const { status } = request.query;
     if (!status) {
       return reply.badRequest('status query parameter is required (e.g. ?status=completed)');
+    }
+    if (!(tasksCore.VALID_TASK_STATUSES as readonly string[]).includes(status)) {
+      return reply.badRequest(`Invalid status value: "${status}". Valid statuses: ${tasksCore.VALID_TASK_STATUSES.join(', ')}`);
     }
     if (status === 'claimed' || status === 'in_progress') {
       return reply.conflict('cannot bulk-delete tasks that are claimed or in progress');

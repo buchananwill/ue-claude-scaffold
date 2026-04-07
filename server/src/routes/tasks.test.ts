@@ -247,6 +247,27 @@ describe('tasks routes', () => {
     assert.ok(res.json().message.includes('Invalid agent name'));
   });
 
+  it('GET /tasks returns 400 when status filter exceeds 50 values', async () => {
+    const statuses = Array.from({ length: 51 }, () => 'pending').join(',');
+    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?status=${statuses}` });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Too many'));
+  });
+
+  it('GET /tasks returns 400 when agent filter exceeds 50 values', async () => {
+    const agents = Array.from({ length: 51 }, (_, i) => `agent-${i}`).join(',');
+    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?agent=${agents}` });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Too many'));
+  });
+
+  it('GET /tasks returns 400 when priority filter exceeds 50 values', async () => {
+    const priorities = Array.from({ length: 51 }, (_, i) => String(i)).join(',');
+    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?priority=${priorities}` });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Too many'));
+  });
+
   it('GET /tasks filtered total matches filtered count, not global count', async () => {
     await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
     await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });
