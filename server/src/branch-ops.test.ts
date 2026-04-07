@@ -76,6 +76,18 @@ describe('seedBranchSha', () => {
       /Seed branch.*does not exist/,
     );
   });
+
+  it('returns the SHA when a custom seedBranch override is provided', () => {
+    const customBranch = 'custom/seed-branch';
+    // Create a branch with the custom name
+    execFileSync('git', ['update-ref', `refs/heads/${customBranch}`, repos.headSha], {
+      cwd: repos.bareDir,
+      timeout: 5000,
+    });
+
+    const sha = seedBranchSha(repos.bareDir, 'myproject', { seedBranch: customBranch });
+    assert.equal(sha, repos.headSha);
+  });
 });
 
 describe('ensureAgentBranch', () => {
@@ -330,5 +342,26 @@ describe('bootstrapBareRepo', () => {
       }),
       /already exists/,
     );
+  });
+
+  it('uses a custom seedBranch override when provided', () => {
+    const bareDir = path.join(base, 'custom-seed-bare.git');
+    const result = bootstrapBareRepo({
+      bareRepoPath: bareDir,
+      projectPath: sourceDir,
+      projectId: 'testproj',
+      seedBranch: 'my/custom-root',
+    });
+
+    assert.equal(result.seedBranch, 'my/custom-root');
+    assert.equal(result.sha, headSha);
+
+    // Verify the custom-named branch exists in the bare repo
+    const branchSha = execFileSync('git', ['rev-parse', 'refs/heads/my/custom-root'], {
+      cwd: bareDir,
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+    assert.equal(branchSha, headSha);
   });
 });
