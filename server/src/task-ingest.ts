@@ -34,6 +34,11 @@ export interface IngestDirResult {
  * filename), priority (default 0, must be integer), acceptance_criteria,
  * files (array of file paths). Body after frontmatter becomes description.
  * Deduplicates against existing tasks by sourcePath.
+ *
+ * @param filePath - Used as the dedup key (stored as `sourcePath` in the DB).
+ *   Should be a consistent, canonical absolute path for dedup to work correctly
+ *   across invocations. Note this is a host-specific path — dedup only works
+ *   within a single host where paths are stable.
  */
 export async function ingestTaskFile(
   db: DrizzleDb,
@@ -147,8 +152,9 @@ export async function ingestTaskDir(
         skipped++;
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      results.push({ file, action: 'error', error: message });
+      const code = (err as NodeJS.ErrnoException).code;
+      const message = code ? `File error: ${code}` : 'Failed to process file';
+      results.push({ file, action: 'error' as const, error: message });
       errors++;
     }
   }

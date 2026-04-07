@@ -21,7 +21,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --tasks-dir)  TASKS_DIR="$2"; shift 2 ;;
     --server-url) SERVER_URL="$2"; shift 2 ;;
-    --project)    export PROJECT_ID="$2"; shift 2 ;;
+    --project)    PROJECT_ID="$2"; shift 2 ;;
     --dry-run)    DRY_RUN=true; shift ;;
     --help)
       echo "Usage: $0 [--tasks-dir PATH] [--server-url URL] [--project ID] [--dry-run] [--help]"

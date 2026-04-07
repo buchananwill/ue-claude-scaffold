@@ -1,9 +1,12 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createDrizzleTestApp, type DrizzleTestContext } from './drizzle-test-helper.js';
-import { ingestTaskFile } from './task-ingest.js';
+import { ingestTaskFile, ingestTaskDir } from './task-ingest.js';
 import { tasks } from './schema/tables.js';
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { taskFiles } from './schema/tables.js';
 
 describe('ingestTaskFile', () => {
@@ -197,5 +200,69 @@ describe('ingestTaskFile', () => {
     const result = await ingestTaskFile(ctx.db, '/tasks/no-priority.md', content, 'default');
     const rows = await ctx.db.select().from(tasks).where(eq(tasks.id, result.taskId));
     assert.equal(rows[0].priority, 0);
+  });
+});
+
+describe('ingestTaskDir', () => {
+  let ctx: DrizzleTestContext;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    ctx = await createDrizzleTestApp();
+    tmpDir = await mkdtemp(join(tmpdir(), 'ingest-dir-test-'));
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    await ctx.cleanup();
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('ingests .md files, skips non-.md files', async () => {
+    // File with frontmatter
+    await writeFile(join(tmpDir, 'task-one.md'), [
+      '---',
+      'title: Task One',
+      'priority: 3',
+      '---',
+      'Description for task one.',
+    ].join('\n'));
+
+    // File without frontmatter
+    await writeFile(join(tmpDir, 'task-two.md'), 'Plain markdown with no frontmatter.');
+
+    // Non-.md file that should be filtered out
+    await writeFile(join(tmpDir, 'notes.txt'), 'This should be ignored.');
+
+    const result = await ingestTaskDir(ctx.db, tmpDir, 'default');
+
+    assert.equal(result.ingested, 2);
+    assert.equal(result.skipped, 0);
+    assert.equal(result.errors, 0);
+    assert.equal(result.tasks.length, 2);
+
+    // Verify both .md files were processed
+    const actions = result.tasks.map((t) => t.action);
+    assert.ok(actions.every((a) => a === 'created'));
+
+    // Verify the non-.md file was excluded
+    const files = result.tasks.map((t) => t.file);
+    assert.ok(!files.includes('notes.txt'));
+  });
+
+  it('dedup on re-ingest returns skipped for existing tasks', async () => {
+    await writeFile(join(tmpDir, 'repeat.md'), [
+      '---',
+      'title: Repeat Task',
+      '---',
+      'Body.',
+    ].join('\n'));
+
+    const first = await ingestTaskDir(ctx.db, tmpDir, 'default');
+    assert.equal(first.ingested, 1);
+
+    const second = await ingestTaskDir(ctx.db, tmpDir, 'default');
+    assert.equal(second.ingested, 0);
+    assert.equal(second.skipped, 1);
   });
 });

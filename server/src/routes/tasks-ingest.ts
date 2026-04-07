@@ -30,15 +30,20 @@ const tasksIngestPlugin: FastifyPluginAsync<IngestOpts> = async (fastify, { conf
     const { tasksDir } = request.body;
     const projectId = request.projectId;
 
-    // Path traversal check
-    if (tasksDir.includes('..')) {
-      return reply.badRequest('tasksDir must not contain path traversal (..)');
+    // Require absolute path — eliminates need for relative-path traversal checks
+    if (!path.isAbsolute(tasksDir)) {
+      return reply.badRequest('tasksDir must be an absolute path');
     }
 
     // Resolve and validate against configured project paths
     const resolved = path.resolve(tasksDir);
-    const allowedRoots = Object.values(config.resolvedProjects).map((p) => p.path);
-    const isAllowed = allowedRoots.some((root) => resolved.startsWith(root));
+    const allowedRoots = Object.values(config.resolvedProjects)
+      .map((p) => path.resolve(p.path))
+      .filter((r) => r.length > 0);
+    if (allowedRoots.length === 0) {
+      return reply.badRequest('No project paths configured on this server');
+    }
+    const isAllowed = allowedRoots.some((root) => resolved === root || resolved.startsWith(root + path.sep));
     if (!isAllowed) {
       return reply.badRequest('tasksDir is not within any configured project path');
     }
