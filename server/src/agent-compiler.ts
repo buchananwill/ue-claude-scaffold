@@ -167,6 +167,7 @@ export function compileAgent(
   const skills = (meta['skills'] as string[] | undefined) ?? [];
   delete meta['skills'];
   if (skills.length === 0) {
+    // Matches Python: compile_agent() writes directly to stderr for no-skills warning
     process.stderr.write(`WARNING: ${path.basename(source)} has no skills listed — copying as-is\n`);
   }
 

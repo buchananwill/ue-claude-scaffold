@@ -109,7 +109,7 @@ function main(): void {
 
   if (args.clean) {
     const resolvedOutput = path.resolve(args.output);
-    if (!resolvedOutput.startsWith(REPO_ROOT + path.sep) && resolvedOutput !== REPO_ROOT) {
+    if (!resolvedOutput.startsWith(REPO_ROOT + path.sep)) {
       process.stderr.write(`ERROR: --output path must be within the repository\n`);
       process.exit(1);
     }
@@ -120,6 +120,13 @@ function main(): void {
       console.log(`Nothing to clean — ${args.output} does not exist`);
     }
     return;
+  }
+
+  // Ensure --output resolves to a path strictly inside the repository
+  const resolvedOutput = path.resolve(args.output);
+  if (!resolvedOutput.startsWith(REPO_ROOT + path.sep)) {
+    process.stderr.write('ERROR: --output path must be within the repository\n');
+    process.exit(1);
   }
 
   // Validate source path does not contain '..' to prevent path traversal
