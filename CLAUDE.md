@@ -61,7 +61,7 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
 
 2. **Coordination server** (`server/`) — Fastify + TypeScript, PGlite (in-process Postgres) accessed via Drizzle ORM. Runs on the host (default port 9100). The server relies on network isolation and is not hardened for internet exposure — it is designed to be accessed only by local Docker containers and the operator's dashboard. Requests are scoped by the `X-Project-Id` header (default `default`); every persisted row — agents, tasks, messages, builds, ubt_lock, files, rooms, teams — carries a `project_id` column so a single server serves multiple UE projects in isolation. The server owns config resolution, branch operations, hook cascade generation, container-settings rendering, exit classification, team launch orchestration, task ingestion, agent definition compilation, and C++ diff linting. Provides:
    - `GET /health` — server health check (returns status, db path, config summary)
-   - `GET /status` — aggregate status overview (agents, tasks, builds, UBT lock)
+   - `GET /status` — aggregate status overview (agents, tasks, recent messages from the general channel)
    - `GET /projects`, `POST /projects`, `GET /projects/{id}`, `PATCH /projects/{id}`, `DELETE /projects/{id}` — project CRUD (portable config stored in the `projects` table)
    - `POST /projects/{id}/seed/bootstrap` — bootstrap a bare repo and create the seed branch for a project
    - `GET /config` — list all project IDs known to the config
@@ -77,7 +77,7 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `POST /tasks/ingest` — ingest task markdown files into the task queue
    - `POST /teams/{id}/launch` — orchestrate team container launches
    - `POST /messages`, `GET /messages/{channel}`, `GET /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve`, `DELETE /messages/{param}` — message board for agent progress
-   - `/rooms/*` — threaded message rooms (alternative to the flat message board)
+   - `/rooms/*` — threaded message rooms (alternative to the flat message board); includes `GET /transcript` for plain-text human-readable transcripts
    - `/teams/*` — design team registration and lifecycle
    - UBT lock (`GET /ubt/status`, `POST /ubt/acquire`, `POST /ubt/release`) — singleton mutex with priority queue and stale-lock sweeping (60s interval)
    - `/tasks/*` — task queue split across `tasks.ts`, `tasks-claim.ts`, `tasks-lifecycle.ts`, `tasks-files.ts`, `tasks-replan.ts` (claim/complete/fail/release/replan lifecycle for worker mode)
