@@ -6,13 +6,13 @@ describe('resolveHooks', () => {
   // --- System defaults only ---
 
   it('defaults buildIntercept=true when hasBuildScript=true, cppLint=false', () => {
-    const result = resolveHooks({ projectId: 'proj', hasBuildScript: true });
+    const result = resolveHooks({ hasBuildScript: true });
     assert.equal(result.buildIntercept, true);
     assert.equal(result.cppLint, false);
   });
 
   it('defaults buildIntercept=false when hasBuildScript=false', () => {
-    const result = resolveHooks({ projectId: 'proj', hasBuildScript: false });
+    const result = resolveHooks({ hasBuildScript: false });
     assert.equal(result.buildIntercept, false);
     assert.equal(result.cppLint, false);
   });
@@ -21,7 +21,6 @@ describe('resolveHooks', () => {
 
   it('project overrides buildIntercept', () => {
     const result = resolveHooks({
-      projectId: 'proj',
       hasBuildScript: true,
       projectHooks: { buildIntercept: false },
     });
@@ -31,7 +30,6 @@ describe('resolveHooks', () => {
 
   it('project enables cppLint', () => {
     const result = resolveHooks({
-      projectId: 'proj',
       hasBuildScript: false,
       projectHooks: { cppLint: true },
     });
@@ -43,7 +41,6 @@ describe('resolveHooks', () => {
 
   it('team overrides project buildIntercept', () => {
     const result = resolveHooks({
-      projectId: 'proj',
       hasBuildScript: true,
       projectHooks: { buildIntercept: false },
       teamHooks: { buildIntercept: true },
@@ -53,7 +50,6 @@ describe('resolveHooks', () => {
 
   it('team overrides project cppLint', () => {
     const result = resolveHooks({
-      projectId: 'proj',
       hasBuildScript: false,
       projectHooks: { cppLint: true },
       teamHooks: { cppLint: false },
@@ -65,7 +61,6 @@ describe('resolveHooks', () => {
 
   it('member overrides team', () => {
     const result = resolveHooks({
-      projectId: 'proj',
       hasBuildScript: true,
       teamHooks: { buildIntercept: false, cppLint: true },
       memberHooks: { buildIntercept: true, cppLint: false },
@@ -78,7 +73,6 @@ describe('resolveHooks', () => {
 
   it('CLI overrides all lower levels', () => {
     const result = resolveHooks({
-      projectId: 'proj',
       hasBuildScript: true,
       projectHooks: { buildIntercept: true, cppLint: true },
       teamHooks: { buildIntercept: true, cppLint: true },
@@ -93,7 +87,6 @@ describe('resolveHooks', () => {
 
   it('team overrides buildIntercept but not cppLint', () => {
     const result = resolveHooks({
-      projectId: 'proj',
       hasBuildScript: true,
       projectHooks: { buildIntercept: false, cppLint: true },
       teamHooks: { buildIntercept: true },
@@ -104,7 +97,6 @@ describe('resolveHooks', () => {
 
   it('null values are treated as no-override', () => {
     const result = resolveHooks({
-      projectId: 'proj',
       hasBuildScript: true,
       projectHooks: { buildIntercept: false },
       teamHooks: { buildIntercept: null },
@@ -114,7 +106,6 @@ describe('resolveHooks', () => {
 
   it('undefined values are treated as no-override', () => {
     const result = resolveHooks({
-      projectId: 'proj',
       hasBuildScript: true,
       projectHooks: { buildIntercept: false },
       teamHooks: { buildIntercept: undefined },
@@ -126,7 +117,6 @@ describe('resolveHooks', () => {
 
   it('full cascade: CLI wins over all', () => {
     const result = resolveHooks({
-      projectId: 'proj',
       hasBuildScript: false,
       projectHooks: { buildIntercept: true, cppLint: true },
       teamHooks: { buildIntercept: false, cppLint: false },
@@ -139,7 +129,6 @@ describe('resolveHooks', () => {
 
   it('full cascade without CLI: member wins', () => {
     const result = resolveHooks({
-      projectId: 'proj',
       hasBuildScript: false,
       projectHooks: { buildIntercept: true, cppLint: false },
       teamHooks: { buildIntercept: false, cppLint: true },

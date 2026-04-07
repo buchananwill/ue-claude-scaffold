@@ -17,7 +17,6 @@ export interface HookFlags {
 }
 
 export interface HookResolutionInput {
-  projectId: string;
   hasBuildScript: boolean;
   projectHooks?: HookFlags;
   teamHooks?: HookFlags;
