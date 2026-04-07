@@ -62,7 +62,9 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
 2. **Coordination server** (`server/`) — Fastify + TypeScript, PGlite (in-process Postgres) accessed via Drizzle ORM. Runs on the host (default port 9100). The server relies on network isolation and is not hardened for internet exposure — it is designed to be accessed only by local Docker containers and the operator's dashboard. Requests are scoped by the `X-Project-Id` header (default `default`); every persisted row — agents, tasks, messages, builds, ubt_lock, files, rooms, teams — carries a `project_id` column so a single server serves multiple UE projects in isolation. The server owns config resolution, branch operations, hook cascade generation, container-settings rendering, exit classification, team launch orchestration, task ingestion, agent definition compilation, and C++ diff linting. Provides:
    - `GET /health` — server health check (returns status, db path, config summary)
    - `GET /status` — aggregate status overview (agents, tasks, builds, UBT lock)
-   - `GET /projects`, `POST /projects` — list and register projects (portable config stored in the `projects` table)
+   - `GET /projects`, `POST /projects`, `GET /projects/{id}`, `PATCH /projects/{id}`, `DELETE /projects/{id}` — project CRUD (portable config stored in the `projects` table)
+   - `POST /projects/{id}/seed/bootstrap` — bootstrap a bare repo and create the seed branch for a project
+   - `GET /config` — list all project IDs known to the config
    - `GET /config/{projectId}` — resolved project configuration for shell scripts and containers
    - `POST /build`, `POST /test` — sync worktree from bare repo, run host-side build/test scripts, return structured `{success, exit_code, output, stderr}`
    - `GET /builds` — query build history with filtering
@@ -74,7 +76,7 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `GET /agents/{name}/settings.json`, `GET /agents/{name}/mcp.json` — render container settings and MCP config for an agent
    - `POST /tasks/ingest` — ingest task markdown files into the task queue
    - `POST /teams/{id}/launch` — orchestrate team container launches
-   - `GET /messages`, `POST /messages`, `GET /messages/{channel}`, `POST /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve` — message board for agent progress
+   - `POST /messages`, `GET /messages/{channel}`, `GET /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve`, `DELETE /messages/{param}` — message board for agent progress
    - `/rooms/*` — threaded message rooms (alternative to the flat message board)
    - `/teams/*` — design team registration and lifecycle
    - UBT lock (`GET /ubt/status`, `POST /ubt/acquire`, `POST /ubt/release`) — singleton mutex with priority queue and stale-lock sweeping (60s interval)
