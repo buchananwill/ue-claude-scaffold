@@ -195,6 +195,11 @@ if [ -d /plugins-ro ]; then
     for plugin_dir in /plugins-ro/*/; do
         [ -d "$plugin_dir" ] || continue
         plugin_name="$(basename "$plugin_dir")"
+        # Reject traversal names
+        if [[ -z "$plugin_name" || "$plugin_name" == "." || "$plugin_name" == ".." ]]; then
+            echo "WARNING: skipping suspicious plugin directory name: '$plugin_dir'" >&2
+            continue
+        fi
         link="/workspace/Plugins/$plugin_name"
         if [ ! -e "$link" ]; then
             ln -sfn "$plugin_dir" "$link"
