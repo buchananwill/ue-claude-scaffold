@@ -45,13 +45,9 @@ export function OverviewPage() {
     return names;
   }, [agents.data]);
 
-  const availablePriorities = useMemo(() => {
-    const taskList = tasks.data?.tasks;
-    if (!taskList) return [];
-    const set = new Set<number>();
-    for (const t of taskList) set.add(t.priority);
-    return Array.from(set).sort((a, b) => b - a);
-  }, [tasks.data?.tasks]);
+  // Priorities are a small bounded domain; enumerate statically rather than
+  // deriving from the current page (which would miss values not on this page).
+  const availablePriorities = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
   const handleSync = async () => {
     setSyncing(true);

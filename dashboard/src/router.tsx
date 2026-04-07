@@ -38,7 +38,7 @@ function boundedString(val: unknown, maxLen = 100): string | undefined {
   return val;
 }
 
-const VALID_AGENT_SEGMENT = /^[a-zA-Z0-9_-]+$/;
+const VALID_AGENT_SEGMENT = /^[a-zA-Z0-9_-]{1,64}$/;
 const VALID_TASK_STATUSES = new Set<string>(TASK_STATUSES);
 const VALID_DIR_VALUES = new Set(['asc', 'desc']);
 const VALID_BUILD_TYPES = new Set(['build', 'test']);

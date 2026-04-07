@@ -56,16 +56,22 @@ export function RootLayout() {
   }
 
   // Single project: redirect immediately without a blank flash.
-  // Cast needed because Navigate is typed against the root route's params,
-  // but we are navigating to a child route (/$projectId). The router resolves
-  // the params correctly at runtime.
   if (projects.length === 1) {
-    const navProps = {
-      to: '/$projectId',
-      params: { projectId: projects[0].id },
-      replace: true,
-    };
-    return <Navigate {...navProps as any} />;
+    return (
+      <Navigate
+        to="/$projectId"
+        params={{ projectId: projects[0].id }}
+        search={{
+          status: undefined,
+          agent: undefined,
+          priority: undefined,
+          sort: undefined,
+          dir: undefined,
+          page: undefined,
+        }}
+        replace
+      />
+    );
   }
 
   // Multiple projects: show picker
@@ -80,8 +86,7 @@ export function RootLayout() {
               withBorder
               padding="lg"
               component={Link}
-              to={'/$projectId' as any}
-              params={{ projectId: project.id } as any}
+              {...{ to: '/$projectId', params: { projectId: project.id } } as object}
               style={{ cursor: 'pointer', textDecoration: 'none', color: 'inherit' }}
             >
               <Group gap="sm" mb="xs">

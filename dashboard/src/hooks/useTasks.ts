@@ -26,8 +26,10 @@ export function useTasks(params?: UseTasksParams) {
   // translates into a `claimed_by IS NULL` condition.
   if (params?.agent && params.agent.length > 0) qs.set('agent', params.agent.join(','));
   if (params?.priority && params.priority.length > 0) qs.set('priority', params.priority.join(','));
-  if (params?.sort) qs.set('sort', params.sort);
-  if (params?.dir) qs.set('dir', params.dir);
+  if (params?.sort) {
+    qs.set('sort', params.sort);
+    if (params?.dir) qs.set('dir', params.dir);
+  }
   const path = `/tasks?${qs.toString()}`;
 
   const statusKey = params?.status?.join(',') ?? '';
