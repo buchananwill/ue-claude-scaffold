@@ -1,0 +1,211 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { resolveProjectConfig, type ResolvedProjectConfig } from './config-resolver.js';
+import { createTestConfig } from './test-helper.js';
+import type { ScaffoldConfig } from './config.js';
+
+describe('resolveProjectConfig', () => {
+  it('resolves a legacy (default) project config', () => {
+    const config = createTestConfig();
+    const resolved = resolveProjectConfig('default', config);
+
+    assert.equal(resolved.projectId, 'default');
+    assert.equal(resolved.name, 'TestProject');
+    assert.equal(resolved.path, '/tmp/test-project');
+    assert.equal(resolved.bareRepoPath, '/tmp/test-repo.git');
+    assert.equal(resolved.seedBranch, 'docker/default/current-root');
+    assert.equal(resolved.serverPort, 9100);
+    assert.equal(resolved.enginePath, '/tmp/engine');
+    assert.equal(resolved.engineVersion, '5.4');
+    assert.equal(resolved.buildScriptPath, '/tmp/build.sh');
+    assert.equal(resolved.testScriptPath, '/tmp/test.sh');
+    assert.equal(resolved.buildTimeoutMs, 660_000);
+    assert.equal(resolved.testTimeoutMs, 700_000);
+    assert.deepEqual(resolved.defaultTestFilters, []);
+    assert.equal(resolved.stagingWorktreeRoot, null);
+    assert.equal(resolved.logsPath, null);
+    assert.equal(resolved.agentType, null);
+    assert.deepEqual(resolved.hooks, { buildIntercept: null, cppLint: null });
+  });
+
+  it('resolves a multi-project config', () => {
+    const config = createTestConfig({
+      resolvedProjects: {
+        'my-game': {
+          name: 'MyGame',
+          path: '/projects/mygame',
+          bareRepoPath: '/repos/mygame.git',
+          seedBranch: 'custom-seed',
+          engine: { path: '/engines/5.5', version: '5.5' },
+          build: {
+            scriptPath: '/scripts/build.py',
+            testScriptPath: '/scripts/test.py',
+            buildTimeoutMs: 120_000,
+            testTimeoutMs: 180_000,
+          },
+          stagingWorktreeRoot: '/staging/mygame',
+        },
+        'other-project': {
+          name: 'Other',
+          path: '/projects/other',
+          bareRepoPath: '/repos/other.git',
+        },
+      },
+    });
+
+    const resolved = resolveProjectConfig('my-game', config);
+    assert.equal(resolved.projectId, 'my-game');
+    assert.equal(resolved.name, 'MyGame');
+    assert.equal(resolved.path, '/projects/mygame');
+    assert.equal(resolved.bareRepoPath, '/repos/mygame.git');
+    assert.equal(resolved.seedBranch, 'custom-seed');
+    assert.equal(resolved.enginePath, '/engines/5.5');
+    assert.equal(resolved.engineVersion, '5.5');
+    assert.equal(resolved.buildScriptPath, '/scripts/build.py');
+    assert.equal(resolved.testScriptPath, '/scripts/test.py');
+    assert.equal(resolved.buildTimeoutMs, 120_000);
+    assert.equal(resolved.testTimeoutMs, 180_000);
+    assert.equal(resolved.stagingWorktreeRoot, '/staging/mygame');
+
+    // Second project resolves too
+    const other = resolveProjectConfig('other-project', config);
+    assert.equal(other.projectId, 'other-project');
+    assert.equal(other.name, 'Other');
+    assert.equal(other.enginePath, null);
+    assert.equal(other.buildScriptPath, null);
+    // Falls back to config.build defaults for timeouts
+    assert.equal(other.buildTimeoutMs, 660_000);
+    assert.equal(other.testTimeoutMs, 700_000);
+  });
+
+  it('throws for an unknown project id', () => {
+    const config = createTestConfig();
+    assert.throws(
+      () => resolveProjectConfig('nonexistent', config),
+      /Unknown project.*nonexistent/,
+    );
+  });
+
+  it('resolves correctly when engine is not configured', () => {
+    const config = createTestConfig({
+      resolvedProjects: {
+        'no-engine': {
+          name: 'NoEngine',
+          path: '/projects/noengine',
+          bareRepoPath: '/repos/noengine.git',
+          // No engine block
+        },
+      },
+    });
+
+    const resolved = resolveProjectConfig('no-engine', config);
+    assert.equal(resolved.enginePath, null);
+    assert.equal(resolved.engineVersion, null);
+    // Should still have valid defaults for other fields
+    assert.equal(resolved.projectId, 'no-engine');
+    assert.equal(resolved.name, 'NoEngine');
+    assert.equal(resolved.path, '/projects/noengine');
+  });
+
+  it('uses custom server port from config', () => {
+    const config = createTestConfig({
+      server: {
+        port: 8080,
+        ubtLockTimeoutMs: 600000,
+        bareRepoPath: '/tmp/test-repo.git',
+      },
+    });
+
+    const resolved = resolveProjectConfig('default', config);
+    assert.equal(resolved.serverPort, 8080);
+  });
+
+  it('uses custom defaultTestFilters from config', () => {
+    const config = createTestConfig({
+      build: {
+        scriptPath: '/tmp/build.sh',
+        testScriptPath: '/tmp/test.sh',
+        defaultTestFilters: ['MyModule', 'OtherModule'],
+        buildTimeoutMs: 660_000,
+        testTimeoutMs: 700_000,
+        ubtRetryCount: 5,
+        ubtRetryDelayMs: 30_000,
+      },
+    });
+
+    const resolved = resolveProjectConfig('default', config);
+    assert.deepEqual(resolved.defaultTestFilters, ['MyModule', 'OtherModule']);
+  });
+});
+
+import { createDrizzleTestApp } from './test-helper.js';
+import configPlugin from './routes/config.js';
+
+describe('GET /config routes', () => {
+  it('GET /config returns project IDs', async () => {
+    const { app, cleanup } = await createDrizzleTestApp();
+    try {
+      const config = createTestConfig();
+      await app.register(configPlugin, { config });
+
+      const res = await app.inject({ method: 'GET', url: '/config' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.deepEqual(body.projectIds, ['default']);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('GET /config returns multiple project IDs', async () => {
+    const { app, cleanup } = await createDrizzleTestApp();
+    try {
+      const config = createTestConfig({
+        resolvedProjects: {
+          alpha: { name: 'Alpha', path: '/a', bareRepoPath: '/a.git' },
+          beta: { name: 'Beta', path: '/b', bareRepoPath: '/b.git' },
+        },
+      });
+      await app.register(configPlugin, { config });
+
+      const res = await app.inject({ method: 'GET', url: '/config' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.deepEqual(body.projectIds.sort(), ['alpha', 'beta']);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('GET /config/:projectId returns resolved config', async () => {
+    const { app, cleanup } = await createDrizzleTestApp();
+    try {
+      const config = createTestConfig();
+      await app.register(configPlugin, { config });
+
+      const res = await app.inject({ method: 'GET', url: '/config/default' });
+      assert.equal(res.statusCode, 200);
+      const body: ResolvedProjectConfig = JSON.parse(res.payload);
+      assert.equal(body.projectId, 'default');
+      assert.equal(body.name, 'TestProject');
+      assert.equal(body.bareRepoPath, '/tmp/test-repo.git');
+      assert.equal(body.serverPort, 9100);
+      assert.deepEqual(body.hooks, { buildIntercept: null, cppLint: null });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('GET /config/:projectId returns 404 for unknown project', async () => {
+    const { app, cleanup } = await createDrizzleTestApp();
+    try {
+      const config = createTestConfig();
+      await app.register(configPlugin, { config });
+
+      const res = await app.inject({ method: 'GET', url: '/config/nonexistent' });
+      assert.equal(res.statusCode, 404);
+    } finally {
+      await cleanup();
+    }
+  });
+});
