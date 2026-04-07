@@ -104,6 +104,105 @@ describe('tasks routes', () => {
     assert.equal(body2.total, 3);
   });
 
+  it('GET /tasks with multi-status filter', async () => {
+    // Create tasks, then manually change one status via direct claim
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending1' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending2' } });
+
+    // Get all with status=pending
+    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending' });
+    const body1 = res1.json() as any;
+    assert.equal(body1.tasks.length, 2);
+    assert.equal(body1.total, 2);
+
+    // Multi-status: pending,completed (only pending exist)
+    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,completed' });
+    const body2 = res2.json() as any;
+    assert.equal(body2.tasks.length, 2);
+    assert.equal(body2.total, 2);
+  });
+
+  it('GET /tasks with priority filter', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,2' });
+    const body = res.json() as any;
+    assert.equal(body.tasks.length, 2);
+    assert.equal(body.total, 2);
+    const priorities = body.tasks.map((t: any) => t.priority);
+    assert.ok(priorities.includes(0));
+    assert.ok(priorities.includes(2));
+  });
+
+  it('GET /tasks with sort and dir', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA', priority: 1 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ', priority: 2 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM', priority: 0 } });
+
+    // Sort by title ascending
+    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=asc' });
+    const body1 = res1.json() as any;
+    assert.equal(body1.tasks[0].title, 'AAA');
+    assert.equal(body1.tasks[1].title, 'MMM');
+    assert.equal(body1.tasks[2].title, 'ZZZ');
+
+    // Sort by title descending
+    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=desc' });
+    const body2 = res2.json() as any;
+    assert.equal(body2.tasks[0].title, 'ZZZ');
+    assert.equal(body2.tasks[2].title, 'AAA');
+  });
+
+  it('GET /tasks with invalid sort column returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=bogus' });
+    assert.equal(res.statusCode, 400);
+    const body = res.json();
+    assert.ok(body.message.includes('Invalid sort column'));
+  });
+
+  it('GET /tasks with invalid dir returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=sideways' });
+    assert.equal(res.statusCode, 400);
+    const body = res.json();
+    assert.ok(body.message.includes('Invalid dir'));
+  });
+
+  it('GET /tasks with agent filter', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned1' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned2' } });
+
+    // Filter by __unassigned__ (both tasks have null claimedBy)
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=__unassigned__' });
+    const body = res.json() as any;
+    assert.equal(body.tasks.length, 2);
+    assert.equal(body.total, 2);
+  });
+
+  it('GET /tasks priority filter ignores non-numeric values', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });
+
+    // "abc" is non-numeric and will be filtered out, only 0 remains
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,abc' });
+    const body = res.json() as any;
+    assert.equal(body.tasks.length, 1);
+    assert.equal(body.total, 1);
+    assert.equal(body.tasks[0].priority, 0);
+  });
+
+  it('GET /tasks filtered total matches filtered count, not global count', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=1' });
+    const body = res.json() as any;
+    assert.equal(body.tasks.length, 1);
+    assert.equal(body.total, 1); // not 3!
+  });
+
   it('GET /tasks/:id returns a single task', async () => {
     const post = await ctx.app.inject({
       method: 'POST',

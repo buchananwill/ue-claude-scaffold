@@ -59,7 +59,7 @@ describe('tasks-core queries', () => {
   });
 
   it('should list with status filter', async () => {
-    const all = await tasksCore.list(db, { status: 'pending' });
+    const all = await tasksCore.list(db, { status: ['pending'] });
     assert.ok(all.length > 0);
     for (const t of all) {
       assert.equal(t.status, 'pending');
@@ -75,7 +75,7 @@ describe('tasks-core queries', () => {
   });
 
   it('should count tasks', async () => {
-    const c = await tasksCore.count(db, { status: 'pending' });
+    const c = await tasksCore.count(db, { status: ['pending'] });
     assert.ok(c > 0);
   });
 

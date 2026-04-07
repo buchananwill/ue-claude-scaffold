@@ -280,16 +280,58 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
   // GET /tasks
   fastify.get<{
-    Querystring: { status?: string; limit?: string; offset?: string; project?: string };
-  }>('/tasks', async (request) => {
-    const { status, limit, offset, project } = request.query;
+    Querystring: {
+      status?: string;
+      agent?: string;
+      priority?: string;
+      sort?: string;
+      dir?: string;
+      limit?: string;
+      offset?: string;
+      project?: string;
+    };
+  }>('/tasks', async (request, reply) => {
+    const { status, agent: agentFilter, priority: priorityFilter, sort, dir, limit, offset, project } = request.query;
     const projectId = project || request.projectId;
     const limitNum = Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 20);
     const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
 
+    // Parse multi-value filters
+    const statusArr = status ? status.split(',').filter(Boolean) : undefined;
+    const agentArr = agentFilter ? agentFilter.split(',').filter(Boolean) : undefined;
+    const priorityArr = priorityFilter
+      ? priorityFilter.split(',').map(Number).filter(v => Number.isFinite(v) && Number.isInteger(v))
+      : undefined;
+
+    // Validate sort column
+    let sortCol: tasksCore.SortColumn | undefined;
+    if (sort) {
+      if (!tasksCore.VALID_SORT_COLUMNS.includes(sort)) {
+        return reply.badRequest(
+          `Invalid sort column: "${sort}". Valid columns: ${tasksCore.VALID_SORT_COLUMNS.join(', ')}`
+        );
+      }
+      sortCol = sort as tasksCore.SortColumn;
+    }
+
+    // Validate dir
+    let dirVal: 'asc' | 'desc' | undefined;
+    if (dir) {
+      if (dir !== 'asc' && dir !== 'desc') {
+        return reply.badRequest('Invalid dir: must be "asc" or "desc"');
+      }
+      dirVal = dir;
+    }
+
     const db = getDb();
-    const rows = await tasksCore.list(db, { status, projectId, limit: limitNum, offset: offsetNum });
-    const total = await tasksCore.count(db, { status, projectId });
+    const filterOpts = {
+      status: statusArr,
+      agent: agentArr,
+      priority: priorityArr?.length ? priorityArr : undefined,
+      projectId,
+    };
+    const rows = await tasksCore.list(db, { ...filterOpts, limit: limitNum, offset: offsetNum, sort: sortCol, dir: dirVal });
+    const total = await tasksCore.count(db, filterOpts);
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
 
     const formattedTasks = await Promise.all(

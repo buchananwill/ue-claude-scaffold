@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, sql, count as countFn, inArray } from 'drizzle-orm';
+import { eq, and, desc, asc, sql, count as countFn, inArray, isNull, type SQL } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 
@@ -33,49 +33,110 @@ export async function getById(db: DrizzleDb, id: number) {
   return rows[0] ?? null;
 }
 
+/** Columns that can appear in the `sort` query param. */
+const SORTABLE_COLUMNS = {
+  id: tasks.id,
+  priority: tasks.priority,
+  status: tasks.status,
+  title: tasks.title,
+  claimedBy: tasks.claimedBy,
+  createdAt: tasks.createdAt,
+} as const;
+
+export type SortColumn = keyof typeof SORTABLE_COLUMNS;
+
+export const VALID_SORT_COLUMNS: readonly string[] = Object.keys(SORTABLE_COLUMNS);
+
 export interface ListOpts {
-  status?: string;
+  status?: string[];
+  agent?: string[];
+  priority?: number[];
   projectId?: string;
   limit?: number;
   offset?: number;
+  sort?: SortColumn;
+  dir?: 'asc' | 'desc';
 }
 
-export async function list(db: DrizzleDb, opts: ListOpts = {}) {
-  const conditions = [];
+function buildFilterConditions(opts: { status?: string[]; agent?: string[]; priority?: number[]; projectId?: string }): SQL[] {
+  const conditions: SQL[] = [];
 
-  if (opts.status) {
-    conditions.push(eq(tasks.status, opts.status));
+  if (opts.status && opts.status.length > 0) {
+    if (opts.status.length === 1) {
+      conditions.push(eq(tasks.status, opts.status[0]));
+    } else {
+      conditions.push(inArray(tasks.status, opts.status));
+    }
+  }
+  if (opts.agent && opts.agent.length > 0) {
+    const unassigned = opts.agent.includes('__unassigned__');
+    const named = opts.agent.filter(a => a !== '__unassigned__');
+    if (unassigned && named.length > 0) {
+      // claimedBy IS NULL OR claimedBy IN (...)
+      conditions.push(sql`(${isNull(tasks.claimedBy)} OR ${inArray(tasks.claimedBy, named)})`);
+    } else if (unassigned) {
+      conditions.push(isNull(tasks.claimedBy));
+    } else {
+      if (named.length === 1) {
+        conditions.push(eq(tasks.claimedBy, named[0]));
+      } else {
+        conditions.push(inArray(tasks.claimedBy, named));
+      }
+    }
+  }
+  if (opts.priority && opts.priority.length > 0) {
+    if (opts.priority.length === 1) {
+      conditions.push(eq(tasks.priority, opts.priority[0]));
+    } else {
+      conditions.push(inArray(tasks.priority, opts.priority));
+    }
   }
   if (opts.projectId) {
     conditions.push(eq(tasks.projectId, opts.projectId));
   }
 
+  return conditions;
+}
+
+export async function list(db: DrizzleDb, opts: ListOpts = {}) {
+  const conditions = buildFilterConditions(opts);
+
   const limitVal = opts.limit ?? 100;
   const offsetVal = opts.offset ?? 0;
+
+  // Build ORDER BY clause
+  const orderClauses: SQL[] = [];
+  if (opts.sort && opts.sort in SORTABLE_COLUMNS) {
+    const col = SORTABLE_COLUMNS[opts.sort];
+    orderClauses.push(opts.dir === 'asc' ? asc(col) : desc(col));
+    // Tiebreaker: id ASC (unless already sorting by id)
+    if (opts.sort !== 'id') {
+      orderClauses.push(asc(tasks.id));
+    }
+  } else {
+    // Default sort: priority DESC, id ASC
+    orderClauses.push(desc(tasks.priority));
+    orderClauses.push(asc(tasks.id));
+  }
 
   return db
     .select()
     .from(tasks)
     .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(tasks.priority), asc(tasks.id))
+    .orderBy(...orderClauses)
     .limit(limitVal)
     .offset(offsetVal);
 }
 
 export interface CountOpts {
-  status?: string;
+  status?: string[];
+  agent?: string[];
+  priority?: number[];
   projectId?: string;
 }
 
 export async function count(db: DrizzleDb, opts: CountOpts = {}): Promise<number> {
-  const conditions = [];
-
-  if (opts.status) {
-    conditions.push(eq(tasks.status, opts.status));
-  }
-  if (opts.projectId) {
-    conditions.push(eq(tasks.projectId, opts.projectId));
-  }
+  const conditions = buildFilterConditions(opts);
 
   const rows = await db
     .select({ count: countFn() })
