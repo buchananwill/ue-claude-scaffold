@@ -105,9 +105,9 @@ fi
 
 # ── Build compose file list ─────────────────────────────────────────────────
 _compose_dir="$SCRIPT_DIR/container"
-_COMPOSE_FILES=("docker-compose.template.yml")
+_compose_files=("docker-compose.template.yml")
 if [[ -n "${UE_ENGINE_PATH:-}" ]]; then
-  _COMPOSE_FILES+=("docker-compose.engine.yml")
+  _compose_files+=("docker-compose.engine.yml")
 fi
 
 # ── Export vars for docker-compose ───────────────────────────────────────────
@@ -126,7 +126,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
     _AGENT="agent-${i}"
     _BRANCH="docker/${PROJECT_ID}/${_AGENT}"
     _setup_branch "$_BRANCH" "$_CLI_FRESH"
-    _launch_container "$_AGENT" "$_compose_dir" "${_COMPOSE_FILES[@]}" -- \
+    _launch_container "$_AGENT" "$_compose_dir" "${_compose_files[@]}" -- \
       AGENT_NAME="$_AGENT" WORK_BRANCH="$_BRANCH" PROJECT_ID="$PROJECT_ID" \
       BARE_REPO_PATH="$BARE_REPO_PATH" AGENTS_PATH="$AGENTS_PATH" \
       HOOK_BUILD_INTERCEPT="$HOOK_BUILD_INTERCEPT" HOOK_CPP_LINT="$HOOK_CPP_LINT" \
@@ -136,7 +136,7 @@ if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
   _print_resolved_config
   echo "Monitor: ./status.sh --follow    Stop: ./stop.sh    Drain: ./stop.sh --drain"
 else
-  _launch_container "$AGENT_NAME" "$_compose_dir" "${_COMPOSE_FILES[@]}"
+  _launch_container "$AGENT_NAME" "$_compose_dir" "${_compose_files[@]}"
   _print_resolved_config
   echo "Monitor: ./status.sh --follow"
   echo "Logs:    ${COMPOSE_CMD[*]} --project-name $(_compose_project_name "$PROJECT_ID" "$AGENT_NAME") -f $_compose_dir/docker-compose.template.yml logs -f"

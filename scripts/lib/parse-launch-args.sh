@@ -91,7 +91,7 @@ _parse_launch_args() {
         _CLI_PROJECT="$2"; shift 2 ;;
       --team)
         _CLI_TEAM="$2"; shift 2
-        if [[ ! "$_CLI_TEAM" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        if [[ ! "$_CLI_TEAM" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
           echo "Error: --team value contains invalid characters: $_CLI_TEAM" >&2
           exit 1
         fi

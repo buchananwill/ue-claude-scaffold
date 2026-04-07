@@ -95,6 +95,10 @@ _cfg_port=9100
 if [[ -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
     _cfg_port="$(jq -r '.server.port // 9100' "$SCRIPT_DIR/scaffold.config.json" 2>/dev/null || echo 9100)"
 fi
+if [[ ! "$_cfg_port" =~ ^[0-9]{1,5}$ ]] || (( _cfg_port < 1 || _cfg_port > 65535 )); then
+  echo "Error: invalid server port in scaffold.config.json: $_cfg_port" >&2
+  exit 1
+fi
 BASE_URL="http://localhost:$_cfg_port"
 
 # ── Check dependencies ──────────────────────────────────────────────────────
@@ -128,11 +132,11 @@ stop_all() {
   local agent_name
 
   # Find running containers with claude- project prefix
-  local projects
-  projects=$(docker ps --filter "label=com.docker.compose.project" --format '{{.Labels}}' 2>/dev/null | \
-    grep -oP 'com\.docker\.compose\.project=\Kclaude-[^,]+' | sort -u || true)
+  local -a projects=()
+  mapfile -t projects < <(docker ps --filter "label=com.docker.compose.project" --format '{{index .Labels "com.docker.compose.project"}}' 2>/dev/null | \
+    grep -oP 'claude-[^,]+' | sort -u)
 
-  if [[ -z "$projects" ]]; then
+  if [[ ${#projects[@]} -eq 0 ]]; then
     echo "No running claude-* containers found."
     return
   fi
@@ -146,20 +150,20 @@ stop_all() {
       return 1
     }
 
-    local filtered=""
+    local -a filtered=()
     local prefix="claude-${PROJECT_ID}-"
-    for project in $projects; do
+    for project in "${projects[@]}"; do
       # Extract agent name from docker project (format: claude-${PROJECT_ID}-${AGENT_NAME})
       if [[ "$project" == "${prefix}"* ]]; then
         agent_name="${project#${prefix}}"
         if echo "$project_agents" | grep -qx "$agent_name"; then
-          filtered="$filtered $project"
+          filtered+=("$project")
         fi
       fi
     done
-    projects="${filtered# }"
+    projects=("${filtered[@]}")
 
-    if [[ -z "$projects" ]]; then
+    if [[ ${#projects[@]} -eq 0 ]]; then
       echo "No running containers found for project $PROJECT_ID."
       return
     fi
@@ -167,17 +171,21 @@ stop_all() {
 
   # Signal all agents via server BEFORE killing containers, so the
   # entrypoint's _shutdown handler can complete the two-call DELETE.
-  for project in $projects; do
+  for project in "${projects[@]}"; do
     # Extract agent name from docker project
     if [[ -n "$PROJECT_ID" ]]; then
       agent_name="${project#claude-${PROJECT_ID}-}"
     else
       agent_name="${project#claude-}"
     fi
+    if [[ ! "$agent_name" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
+      echo "Warning: skipping agent with unexpected name: $agent_name" >&2
+      continue
+    fi
     signal_stop "$agent_name"
   done
 
-  for project in $projects; do
+  for project in "${projects[@]}"; do
     echo "Stopping $project ..."
     (cd "$SCRIPT_DIR/container" && "${COMPOSE_CMD[@]}" --project-name "$project" down 2>/dev/null) || true
     stopped=$((stopped + 1))
