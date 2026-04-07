@@ -8,7 +8,7 @@ import { mergeIntoAgentBranches } from '../git-utils.js';
 import { AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
 import { validateSourcePath } from '../tasks-validation.js';
-import { formatTask, type TaskRow } from './tasks-types.js';
+import { formatTask, toTaskRow, type TaskRow } from './tasks-types.js';
 import {
   type TasksOpts, type TaskBody, type PatchBody,
   taskBodyKeys, patchBodyKeys,
@@ -16,12 +16,141 @@ import {
   linkFilesToTask, linkDepsToTask, depsForTask,
   formatTaskWithFiles,
 } from './tasks-files.js';
-import { runReplan } from './tasks-replan.js';
-import tasksReplanPlugin from './tasks-replan.js';
+import tasksReplanPlugin, { runReplan } from './tasks-replan.js';
 import tasksClaimPlugin from './tasks-claim.js';
 import tasksLifecyclePlugin from './tasks-lifecycle.js';
+export { formatTask, toTaskRow, type TaskRow } from './tasks-types.js';
 
-export { formatTask, type TaskRow } from './tasks-types.js';
+/**
+ * Parse a comma-separated query string into an array of non-empty strings.
+ * Returns `undefined` if the input is falsy. Returns an error string if
+ * empty segments are found (leading/trailing/doubled commas) or if the
+ * array exceeds `maxValues` elements.
+ */
+export function parseCommaFilter(
+  raw: string | undefined,
+  label: string,
+  maxValues = 50,
+): { values: string[] | undefined; error?: string } {
+  if (!raw) return { values: undefined };
+  const parts = raw.split(',');
+  const filtered = parts.filter(Boolean);
+  if (parts.length !== filtered.length) {
+    return {
+      values: undefined,
+      error: `Invalid ${label} filter: contains empty segments (leading, trailing, or doubled commas).`,
+    };
+  }
+  if (filtered.length > maxValues) {
+    return {
+      values: undefined,
+      error: `Too many ${label} values (max ${maxValues}).`,
+    };
+  }
+  return { values: filtered };
+}
+
+interface TaskListQueryInput {
+  status?: string;
+  agent?: string;
+  priority?: string;
+  sort?: string;
+  dir?: string;
+  limit?: string;
+  offset?: string;
+}
+
+interface ParsedTaskListQuery {
+  statusArr: string[] | undefined;
+  agentArr: string[] | undefined;
+  priorityArr: number[] | undefined;
+  sortCol: tasksCore.SortColumn | undefined;
+  dirVal: 'asc' | 'desc' | undefined;
+  limitNum: number;
+  offsetNum: number;
+}
+
+type ParseResult =
+  | { ok: true; data: ParsedTaskListQuery }
+  | { ok: false; error: string };
+
+/**
+ * Parse and validate all query parameters for `GET /tasks`. Returns a
+ * discriminated union: `{ ok: true, data }` on success, `{ ok: false, error }`
+ * on validation failure. The caller is responsible for sending the 400 reply.
+ */
+export function parseTaskListQuery(
+  query: TaskListQueryInput,
+): ParseResult {
+  const { status, agent: agentFilter, priority: priorityFilter, sort, dir, limit, offset } = query;
+  const limitNum = Math.min(Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : tasksCore.DEFAULT_LIST_LIMIT), 500);
+  const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
+
+  // --- comma-separated filters ---
+  const statusResult = parseCommaFilter(status, 'status');
+  if (statusResult.error) return { ok: false, error: statusResult.error };
+  const statusArr = statusResult.values;
+
+  const agentResult = parseCommaFilter(agentFilter, 'agent');
+  if (agentResult.error) return { ok: false, error: agentResult.error };
+  const agentArr = agentResult.values;
+
+  const priorityResult = parseCommaFilter(priorityFilter, 'priority');
+  if (priorityResult.error) return { ok: false, error: priorityResult.error };
+
+  // Additional numeric validation for priority
+  let priorityArr: number[] | undefined;
+  if (priorityResult.values) {
+    const parsed = priorityResult.values.map(Number).filter(v => Number.isFinite(v) && Number.isInteger(v));
+    if (parsed.length < priorityResult.values.length) {
+      const invalid = priorityResult.values.filter(s => { const n = Number(s); return !Number.isFinite(n) || !Number.isInteger(n); });
+      return { ok: false, error: `Invalid priority values: ${invalid.map(v => v.slice(0, 32)).join(', ')}. Priority must be integers.` };
+    }
+    priorityArr = parsed;
+  }
+
+  // Validate status values against known statuses
+  if (statusArr) {
+    for (const s of statusArr) {
+      if (!(tasksCore.VALID_TASK_STATUSES as readonly string[]).includes(s)) {
+        return { ok: false, error: `Invalid status value: "${s.slice(0, 32)}". Valid statuses: ${tasksCore.VALID_TASK_STATUSES.join(', ')}` };
+      }
+    }
+  }
+
+  // Validate agent names
+  if (agentArr) {
+    for (const a of agentArr) {
+      if (a === '__unassigned__') continue;
+      if (!AGENT_NAME_RE.test(a)) {
+        return { ok: false, error: `Invalid agent name: "${a.slice(0, 64)}".` };
+      }
+    }
+  }
+
+  // Validate sort column
+  let sortCol: tasksCore.SortColumn | undefined;
+  if (sort) {
+    if (!tasksCore.VALID_SORT_COLUMNS.includes(sort)) {
+      return { ok: false, error: `Invalid sort column: "${sort.slice(0, 32)}". Valid columns: ${tasksCore.VALID_SORT_COLUMNS.join(', ')}` };
+    }
+    sortCol = sort as tasksCore.SortColumn;
+  }
+
+  // Validate dir
+  let dirVal: 'asc' | 'desc' | undefined;
+  if (dir) {
+    if (dir !== 'asc' && dir !== 'desc') {
+      return { ok: false, error: 'Invalid dir: must be "asc" or "desc"' };
+    }
+    if (!sort) {
+      return { ok: false, error: 'dir requires sort to be specified' };
+    }
+    dirVal = dir;
+  }
+
+  return { ok: true, data: { statusArr, agentArr, priorityArr, sortCol, dirVal, limitNum, offsetNum } };
+}
 
 const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   const config = opts.config;
@@ -280,20 +409,35 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
   // GET /tasks
   fastify.get<{
-    Querystring: { status?: string; limit?: string; offset?: string; project?: string };
-  }>('/tasks', async (request) => {
-    const { status, limit, offset, project } = request.query;
-    const projectId = project || request.projectId;
-    const limitNum = Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : 20);
-    const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
+    Querystring: {
+      status?: string;
+      agent?: string;
+      priority?: string;
+      sort?: string;
+      dir?: string;
+      limit?: string;
+      offset?: string;
+    };
+  }>('/tasks', async (request, reply) => {
+    const projectId = request.projectId;
+
+    const parsed = parseTaskListQuery(request.query);
+    if (!parsed.ok) return reply.badRequest(parsed.error);
+    const { statusArr, agentArr, priorityArr, sortCol, dirVal, limitNum, offsetNum } = parsed.data;
 
     const db = getDb();
-    const rows = await tasksCore.list(db, { status, projectId, limit: limitNum, offset: offsetNum });
-    const total = await tasksCore.count(db, { status, projectId });
+    const filterOpts = {
+      status: statusArr,
+      agent: agentArr,
+      priority: priorityArr,
+      projectId,
+    };
+    const rows = await tasksCore.list(db, { ...filterOpts, limit: limitNum, offset: offsetNum, sort: sortCol, dir: dirVal });
+    const total = await tasksCore.count(db, filterOpts);
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
 
     const formattedTasks = await Promise.all(
-      rows.map(r => formatTaskWithFiles(r as unknown as TaskRow, agent, config))
+      rows.map(r => formatTaskWithFiles(toTaskRow(r), agent, config))
     );
     return { tasks: formattedTasks, total };
   });
@@ -308,7 +452,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       return reply.notFound('task not found');
     }
     const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
-    return formatTaskWithFiles(row as unknown as TaskRow, agent, config);
+    return formatTaskWithFiles(toTaskRow(row), agent, config);
   });
 
   // PATCH /tasks/:id — edit a pending task
@@ -360,9 +504,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     // Mixed-protocol check: evaluate resulting state (existing row + patch)
-    const resultSourcePath = 'sourcePath' in body ? body.sourcePath : (row as any).sourcePath ?? (row as any).source_path;
+    const resultSourcePath = 'sourcePath' in body ? body.sourcePath : row.sourcePath;
     const resultDesc = 'description' in body ? body.description : row.description;
-    const resultAC = 'acceptanceCriteria' in body ? body.acceptanceCriteria : (row as any).acceptanceCriteria ?? (row as any).acceptance_criteria;
+    const resultAC = 'acceptanceCriteria' in body ? body.acceptanceCriteria : row.acceptanceCriteria;
     if (hasValue(resultSourcePath) && (hasValue(resultDesc) || hasValue(resultAC))) {
       return reply.badRequest(
         'Mixed task protocol: a task must use EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode), not both. ' +
@@ -392,7 +536,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     if ('sourcePath' in body && typeof body.sourcePath === 'string') {
-      const patchProjectId = row.projectId ?? (row as any).project_id;
+      const patchProjectId = row.projectId;
       const spCheck = await validateSourcePath({
         sourcePath: body.sourcePath, projectId: patchProjectId, config, db,
       });
@@ -411,7 +555,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
     if (hasFiles) {
       await taskFilesQ.deleteFilesForTask(db, id);
-      await linkFilesToTask(id, body.files!, row.projectId ?? (row as any).project_id);
+      await linkFilesToTask(id, body.files!, row.projectId);
     }
     if (hasDeps) {
       await taskDepsQ.deleteDepsForTask(db, id);
@@ -446,11 +590,14 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if (!status) {
       return reply.badRequest('status query parameter is required (e.g. ?status=completed)');
     }
+    if (!(tasksCore.VALID_TASK_STATUSES as readonly string[]).includes(status)) {
+      return reply.badRequest(`Invalid status value: "${status.slice(0, 32)}". Valid statuses: ${tasksCore.VALID_TASK_STATUSES.join(', ')}`);
+    }
     if (status === 'claimed' || status === 'in_progress') {
       return reply.conflict('cannot bulk-delete tasks that are claimed or in progress');
     }
     const db = getDb();
-    const deleted = await tasksCore.deleteByStatus(db, status);
+    const deleted = await tasksCore.deleteByStatus(db, status, request.projectId);
     return { ok: true, deleted };
   });
 };

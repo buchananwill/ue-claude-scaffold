@@ -1,4 +1,4 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestDb, type TestDb } from './test-utils.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
@@ -8,12 +8,12 @@ describe('tasks-core queries', () => {
   let tdb: TestDb;
   let db: DrizzleDb;
 
-  before(async () => {
+  beforeEach(async () => {
     tdb = await createTestDb();
     db = tdb.db;
   });
 
-  after(async () => {
+  afterEach(async () => {
     await tdb.close();
   });
 
@@ -47,7 +47,6 @@ describe('tasks-core queries', () => {
   });
 
   it('should list tasks with ordering', async () => {
-    // Insert tasks with different priorities
     await tasksCore.insert(db, { title: 'Low', priority: 1, projectId: 'list-test' });
     await tasksCore.insert(db, { title: 'High', priority: 10, projectId: 'list-test' });
     await tasksCore.insert(db, { title: 'Mid', priority: 5, projectId: 'list-test' });
@@ -59,7 +58,8 @@ describe('tasks-core queries', () => {
   });
 
   it('should list with status filter', async () => {
-    const all = await tasksCore.list(db, { status: 'pending' });
+    await tasksCore.insert(db, { title: 'Pending task', priority: 1 });
+    const all = await tasksCore.list(db, { status: ['pending'] });
     assert.ok(all.length > 0);
     for (const t of all) {
       assert.equal(t.status, 'pending');
@@ -67,6 +67,10 @@ describe('tasks-core queries', () => {
   });
 
   it('should list with pagination', async () => {
+    await tasksCore.insert(db, { title: 'A', priority: 3 });
+    await tasksCore.insert(db, { title: 'B', priority: 2 });
+    await tasksCore.insert(db, { title: 'C', priority: 1 });
+
     const page1 = await tasksCore.list(db, { limit: 2, offset: 0 });
     const page2 = await tasksCore.list(db, { limit: 2, offset: 2 });
     assert.equal(page1.length, 2);
@@ -75,12 +79,16 @@ describe('tasks-core queries', () => {
   });
 
   it('should count tasks', async () => {
-    const c = await tasksCore.count(db, { status: 'pending' });
+    await tasksCore.insert(db, { title: 'Count me' });
+    const c = await tasksCore.count(db, { status: ['pending'] });
     assert.ok(c > 0);
   });
 
   it('should count with project filter', async () => {
-    const c = await tasksCore.count(db, { projectId: 'list-test' });
+    await tasksCore.insert(db, { title: 'A', projectId: 'count-test' });
+    await tasksCore.insert(db, { title: 'B', projectId: 'count-test' });
+    await tasksCore.insert(db, { title: 'C', projectId: 'count-test' });
+    const c = await tasksCore.count(db, { projectId: 'count-test' });
     assert.equal(c, 3);
   });
 
@@ -104,9 +112,8 @@ describe('tasks-core queries', () => {
   it('should delete by status', async () => {
     await tasksCore.insert(db, { title: 'To Delete', projectId: 'del-test' });
     await tasksCore.insert(db, { title: 'To Delete 2', projectId: 'del-test' });
-    const n = await tasksCore.deleteByStatus(db, 'pending');
-    // Should delete at least the ones we made (and others from earlier tests)
-    assert.ok(n >= 2);
+    const n = await tasksCore.deleteByStatus(db, 'pending', 'del-test');
+    assert.equal(n, 2);
   });
 
   it('should delete by id if not claimed/in_progress', async () => {
@@ -123,5 +130,15 @@ describe('tasks-core queries', () => {
     await db.execute(sqlTag`UPDATE tasks SET status = 'claimed' WHERE id = ${task.id}`);
     const ok = await tasksCore.deleteById(db, task.id);
     assert.equal(ok, false);
+  });
+
+  it('should default sort direction to asc when dir is omitted', async () => {
+    await tasksCore.insert(db, { title: 'ZZZ', priority: 1 });
+    await tasksCore.insert(db, { title: 'AAA', priority: 2 });
+
+    // sort=title with no dir should default to asc
+    const rows = await tasksCore.list(db, { sort: 'title' });
+    assert.equal(rows[0].title, 'AAA');
+    assert.equal(rows[1].title, 'ZZZ');
   });
 });

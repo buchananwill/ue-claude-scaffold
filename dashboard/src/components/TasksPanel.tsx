@@ -11,6 +11,7 @@ import {
   Anchor,
   Badge,
   Tooltip,
+  Loader,
 } from '@mantine/core';
 import {
   IconFilter,
@@ -18,33 +19,28 @@ import {
 } from '@tabler/icons-react';
 import { Fragment, useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import type { Task } from '../api/types.ts';
-import type { TaskFilters } from '../hooks/useTaskFilters.ts';
-import { useProject } from '../contexts/ProjectContext.tsx';
-import { UNASSIGNED, TASK_STATUSES } from '../hooks/useTaskFilters.ts';
-import { useTaskActions } from '../hooks/useTaskActions.ts';
-import { SortHeader } from './SortHeader.tsx';
-import { StatusBadge } from './StatusBadge.tsx';
-import { RelativeTime } from './RelativeTime.tsx';
-import { TaskDetailRow } from './TaskDetailRow.tsx';
-import { TaskDuration } from './TaskDuration.tsx';
-
-const STATUS_LABELS: Record<string, string> = {
-  pending: 'Pending',
-  claimed: 'Claimed',
-  in_progress: 'In Progress',
-  completed: 'Completed',
-  failed: 'Failed',
-};
+import type { Task } from '../api/types.js';
+import type { TaskFilters, TaskFiltersUrlBacked } from '../hooks/useTaskFilters.js';
+import { useProject } from '../contexts/ProjectContext.js';
+import { UNASSIGNED } from '../hooks/useTaskFilters.js';
+import { TASK_STATUSES, STATUS_LABELS } from '../constants/task-statuses.js';
+import { useTaskActions } from '../hooks/useTaskActions.js';
+import { SortHeader } from './SortHeader.js';
+import { StatusBadge } from './StatusBadge.js';
+import { RelativeTime } from './RelativeTime.js';
+import { TaskDetailRow } from './TaskDetailRow.js';
+import { TaskDuration } from './TaskDuration.js';
 
 interface TasksPanelProps {
   tasks: Task[] | null;
   isFetching: boolean;
-  filters: TaskFilters;
+  filters: TaskFilters | TaskFiltersUrlBacked;
   excludeStatuses?: Set<string>;
+  availableAgents?: string[];
+  availablePriorities?: number[];
 }
 
-export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: TasksPanelProps) {
+export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availableAgents, availablePriorities }: TasksPanelProps) {
   const { projectId } = useProject();
   const [expanded, setExpanded] = useState<number | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<number | null>(null);
@@ -59,7 +55,6 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: Task
   });
 
   const {
-    displayedTasks,
     sortColumn,
     sortDir,
     agentFilter,
@@ -71,9 +66,14 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: Task
     setPriorityFilter,
     clearAllFilters,
     hasActiveFilters,
-    uniqueAgents,
-    uniquePriorities,
   } = filters;
+
+  // When using client-side filtering (useTaskFilters), displayedTasks/uniqueAgents/uniquePriorities
+  // are available. When using server-side filtering (useTaskFiltersUrlBacked), the tasks prop
+  // is already filtered by the server and those derived values are not present.
+  const displayedTasks = 'displayedTasks' in filters ? filters.displayedTasks : (tasks ?? []);
+  const uniqueAgents = 'uniqueAgents' in filters ? filters.uniqueAgents : (availableAgents ?? []);
+  const uniquePriorities = 'uniquePriorities' in filters ? filters.uniquePriorities : (availablePriorities ?? []);
 
   const deletableStatuses = new Set(['completed', 'failed', 'pending']);
   const bulkDeletable = displayedTasks.filter((t) => deletableStatuses.has(t.status));
@@ -138,15 +138,18 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses }: Task
         </Group>
       </Group>
 
-      {(!tasks || tasks.length === 0) ? (
-        <Text c="dimmed" ta="center" py="md" size="sm">No tasks</Text>
-      ) : displayedTasks.length === 0 ? (
+      {isFetching && displayedTasks.length === 0 ? (
+        <Stack align="center" py="md">
+          <Loader size="sm" />
+          <Text c="dimmed" size="sm">Loading tasks...</Text>
+        </Stack>
+      ) : displayedTasks.length === 0 && hasActiveFilters ? (
         <Stack gap="xs" align="center" py="md">
           <Text c="dimmed" size="sm">No tasks match the current filters.</Text>
-          {hasActiveFilters && (
-            <Anchor size="sm" onClick={clearAllFilters}>Clear all filters</Anchor>
-          )}
+          <Anchor size="sm" onClick={clearAllFilters}>Clear all filters</Anchor>
         </Stack>
+      ) : displayedTasks.length === 0 ? (
+        <Text c="dimmed" ta="center" py="md" size="sm">No tasks</Text>
       ) : (
         <Table striped highlightOnHover fz="sm" style={{ opacity: isFetching ? 0.7 : 1, transition: 'opacity 150ms' }}>
           <Table.Thead>

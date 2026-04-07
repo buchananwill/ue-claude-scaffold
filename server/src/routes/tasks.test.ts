@@ -104,6 +104,181 @@ describe('tasks routes', () => {
     assert.equal(body2.total, 3);
   });
 
+  it('GET /tasks with multi-status filter', async () => {
+    // Create tasks, then manually change one status via direct claim
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending1' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending2' } });
+
+    // Get all with status=pending
+    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending' });
+    const body1 = res1.json() as any;
+    assert.equal(body1.tasks.length, 2);
+    assert.equal(body1.total, 2);
+
+    // Multi-status: pending,completed (only pending exist)
+    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,completed' });
+    const body2 = res2.json() as any;
+    assert.equal(body2.tasks.length, 2);
+    assert.equal(body2.total, 2);
+  });
+
+  it('GET /tasks with priority filter', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,2' });
+    const body = res.json() as any;
+    assert.equal(body.tasks.length, 2);
+    assert.equal(body.total, 2);
+    const priorities = body.tasks.map((t: any) => t.priority);
+    assert.ok(priorities.includes(0));
+    assert.ok(priorities.includes(2));
+  });
+
+  it('GET /tasks with sort and dir', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA', priority: 1 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ', priority: 2 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM', priority: 0 } });
+
+    // Sort by title ascending
+    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=asc' });
+    const body1 = res1.json() as any;
+    assert.equal(body1.tasks[0].title, 'AAA');
+    assert.equal(body1.tasks[1].title, 'MMM');
+    assert.equal(body1.tasks[2].title, 'ZZZ');
+
+    // Sort by title descending
+    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=desc' });
+    const body2 = res2.json() as any;
+    assert.equal(body2.tasks[0].title, 'ZZZ');
+    assert.equal(body2.tasks[2].title, 'AAA');
+  });
+
+  it('GET /tasks with invalid sort column returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=bogus' });
+    assert.equal(res.statusCode, 400);
+    const body = res.json();
+    assert.ok(body.message.includes('Invalid sort column'));
+  });
+
+  it('GET /tasks with invalid dir returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=sideways' });
+    assert.equal(res.statusCode, 400);
+    const body = res.json();
+    assert.ok(body.message.includes('Invalid dir'));
+  });
+
+  it('GET /tasks with agent filter', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned1' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned2' } });
+
+    // Filter by __unassigned__ (both tasks have null claimedBy)
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=__unassigned__' });
+    const body = res.json() as any;
+    assert.equal(body.tasks.length, 2);
+    assert.equal(body.total, 2);
+  });
+
+  it('GET /tasks priority filter returns 400 for non-numeric values', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,abc' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid priority'));
+  });
+
+  it('GET /tasks priority filter returns 400 for trailing comma (empty segment)', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('empty segments'));
+  });
+
+  it('GET /tasks priority filter returns 400 for leading comma (empty segment)', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=,1' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('empty segments'));
+  });
+
+  it('GET /tasks with dir but no sort returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?dir=asc' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('dir requires sort'));
+  });
+
+  it('GET /tasks with sort but no dir defaults to ascending', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM' } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as any;
+    assert.equal(body.tasks[0].title, 'AAA');
+    assert.equal(body.tasks[1].title, 'MMM');
+    assert.equal(body.tasks[2].title, 'ZZZ');
+  });
+
+  it('GET /tasks with invalid status returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=bogus' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid status value'));
+  });
+
+  it('GET /tasks status filter returns 400 for empty segments', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('empty segments'));
+  });
+
+  it('GET /tasks agent filter returns 400 for empty segments', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=,agent-1' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('empty segments'));
+  });
+
+  it('GET /tasks agent filter returns 400 for invalid agent name', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=../bad' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid agent name'));
+  });
+
+  it('GET /tasks returns 400 when status filter exceeds 50 values', async () => {
+    const statuses = Array.from({ length: 51 }, () => 'pending').join(',');
+    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?status=${statuses}` });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Too many'));
+  });
+
+  it('GET /tasks returns 400 when agent filter exceeds 50 values', async () => {
+    const agents = Array.from({ length: 51 }, (_, i) => `agent-${i}`).join(',');
+    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?agent=${agents}` });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Too many'));
+  });
+
+  it('GET /tasks returns 400 when priority filter exceeds 50 values', async () => {
+    const priorities = Array.from({ length: 51 }, (_, i) => String(i)).join(',');
+    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?priority=${priorities}` });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Too many'));
+  });
+
+  it('GET /tasks filtered total matches filtered count, not global count', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=1' });
+    const body = res.json() as any;
+    assert.equal(body.tasks.length, 1);
+    assert.equal(body.total, 1); // not 3!
+  });
+
   it('GET /tasks/:id returns a single task', async () => {
     const post = await ctx.app.inject({
       method: 'POST',
@@ -485,6 +660,174 @@ describe('tasks routes', () => {
     });
     assert.equal(patch.statusCode, 400);
     assert.ok(patch.json().message.includes('source_path'));
+  });
+
+  describe('DELETE /tasks bulk-delete by status', () => {
+    it('deletes completed tasks and returns count', async () => {
+      const r1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Done 1' },
+      });
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Done 2' },
+      });
+      // Also insert a pending task that should NOT be deleted
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Still pending' },
+      });
+
+      // Move two tasks to completed status via claim+complete lifecycle
+      const id1 = r1.json().id;
+      const id2 = r2.json().id;
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${id1}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${id1}/complete`,
+        headers: { 'x-agent-name': 'agent-1' },
+        payload: { result: { summary: 'done' } },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${id2}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${id2}/complete`,
+        headers: { 'x-agent-name': 'agent-1' },
+        payload: { result: { summary: 'done' } },
+      });
+
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: '/tasks?status=completed',
+      });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.ok, true);
+      assert.equal(body.deleted, 2);
+
+      // Verify the pending task still exists
+      const listRes = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+      const listBody = listRes.json() as any;
+      assert.equal(listBody.total, 1);
+      assert.equal(listBody.tasks[0].title, 'Still pending');
+    });
+
+    it('returns 400 for invalid status value', async () => {
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: '/tasks?status=bogus',
+      });
+      assert.equal(res.statusCode, 400);
+      const body = res.json();
+      assert.ok(body.message.includes('Invalid status value'));
+    });
+
+    it('returns 400 when status query param is missing', async () => {
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: '/tasks',
+      });
+      assert.equal(res.statusCode, 400);
+      const body = res.json();
+      assert.ok(body.message.includes('status query parameter is required'));
+    });
+
+    it('returns 409 for claimed status (protected)', async () => {
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: '/tasks?status=claimed',
+      });
+      assert.equal(res.statusCode, 409);
+      const body = res.json();
+      assert.ok(body.message.includes('cannot bulk-delete'));
+    });
+
+    it('returns 409 for in_progress status (protected)', async () => {
+      const res = await ctx.app.inject({ method: 'DELETE', url: '/tasks?status=in_progress', headers: { 'x-project-id': 'test' } });
+      assert.equal(res.statusCode, 409);
+    });
+
+    it('scopes deletion to the requesting project', async () => {
+      // Insert a task in project "alpha"
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        headers: { 'x-project-id': 'alpha' },
+        payload: { title: 'Alpha completed' },
+      });
+      // Insert a task in project "beta"
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        headers: { 'x-project-id': 'beta' },
+        payload: { title: 'Beta completed' },
+      });
+
+      // Claim and complete both tasks
+      const alphaList = await ctx.app.inject({
+        method: 'GET',
+        url: '/tasks',
+        headers: { 'x-project-id': 'alpha' },
+      });
+      const alphaId = (alphaList.json() as any).tasks[0].id;
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${alphaId}/claim`,
+        headers: { 'x-agent-name': 'agent-1', 'x-project-id': 'alpha' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${alphaId}/complete`,
+        headers: { 'x-agent-name': 'agent-1', 'x-project-id': 'alpha' },
+        payload: { result: { summary: 'done' } },
+      });
+
+      const betaList = await ctx.app.inject({
+        method: 'GET',
+        url: '/tasks',
+        headers: { 'x-project-id': 'beta' },
+      });
+      const betaId = (betaList.json() as any).tasks[0].id;
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${betaId}/claim`,
+        headers: { 'x-agent-name': 'agent-1', 'x-project-id': 'beta' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${betaId}/complete`,
+        headers: { 'x-agent-name': 'agent-1', 'x-project-id': 'beta' },
+        payload: { result: { summary: 'done' } },
+      });
+
+      // Delete completed tasks scoped to "alpha" only
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: '/tasks?status=completed',
+        headers: { 'x-project-id': 'alpha' },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.json().deleted, 1);
+
+      // Beta's completed task should still exist
+      const betaAfter = await ctx.app.inject({
+        method: 'GET',
+        url: '/tasks?status=completed',
+        headers: { 'x-project-id': 'beta' },
+      });
+      assert.equal((betaAfter.json() as any).total, 1);
+    });
   });
 
 });

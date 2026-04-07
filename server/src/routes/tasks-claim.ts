@@ -8,7 +8,7 @@ import * as agentsQ from '../queries/agents.js';
 import { existsInBareRepo } from '../git-utils.js';
 import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
-import type { TaskRow } from './tasks-types.js';
+import { toTaskRow, type TaskRow } from './tasks-types.js';
 import {
   type TasksOpts,
   blockersForTask,
@@ -23,12 +23,12 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
 
   /** Validate a task's sourcePath exists in the bare repo on an appropriate branch. */
   async function validateSourcePathForClaim(
-    task: { source_path?: string | null; sourcePath?: string | null; project_id?: string; projectId?: string },
+    task: { sourcePath?: string | null; projectId?: string },
     agent: string,
   ): Promise<{ valid: boolean; branch?: string }> {
-    const sp = task.sourcePath ?? task.source_path;
+    const sp = task.sourcePath;
     if (!sp) return { valid: true };
-    const taskProjectId = task.projectId ?? task.project_id ?? 'default';
+    const taskProjectId = task.projectId ?? 'default';
 
     const db = getDb();
 
@@ -86,13 +86,13 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
 
       // Claim its files
       const fileDeps = await taskFilesQ.getFilesForTask(db, candidate.id);
-      const taskProjectId = taskRow.projectId ?? (taskRow as any).project_id ?? 'default';
+      const taskProjectId = taskRow.projectId ?? 'default';
       for (const fp of fileDeps) {
         await taskFilesQ.claimFilesForAgent(db, agent, taskProjectId, fp);
       }
 
       const row = await tasksCore.getById(db, candidate.id);
-      const response: Record<string, unknown> = { task: await formatTaskWithFiles(row as unknown as TaskRow, agent, config) };
+      const response: Record<string, unknown> = { task: await formatTaskWithFiles(toTaskRow(row!), agent, config) };
       if (skippedSourcePath.length > 0) {
         response.skippedSourcePath = skippedSourcePath;
       }
@@ -142,7 +142,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
 
     const spCheck = await validateSourcePathForClaim(task, agent);
     if (!spCheck.valid) {
-      const sp = task.sourcePath ?? (task as any).source_path;
+      const sp = task.sourcePath!;
       const displayPath = sp.length > 256 ? sp.slice(0, 256) + '\u2026' : sp;
       return reply.code(409).send({
         statusCode: 409,
@@ -156,7 +156,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
 
     const blockers = await blockersForTask(id, agent);
     if (blockers.length > 0) {
-      const blockReasons = (await blockReasonsForTask(task as unknown as TaskRow, agent, config))
+      const blockReasons = (await blockReasonsForTask(toTaskRow(task), agent, config))
         .filter(r => r.startsWith('blocked by'));
       return reply.code(409).send({
         statusCode: 409,

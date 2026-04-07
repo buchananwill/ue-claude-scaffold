@@ -1,17 +1,21 @@
 import { useMemo, useState, useCallback } from 'react';
 import { useSearch, useNavigate } from '@tanstack/react-router';
-import type { Task } from '../api/types.ts';
+import type { Task } from '../api/types.js';
 
 export type SortDir = 'asc' | 'desc' | null;
 export type SortColumn = 'id' | 'priority' | 'status' | 'title' | 'claimedBy' | 'createdAt' | null;
 
+// Must match server/src/queries/tasks-core.ts VALID_SORT_COLUMNS
 export const VALID_SORT_COLUMNS = new Set<string>(['id', 'priority', 'status', 'title', 'claimedBy', 'createdAt']);
 
+/**
+ * Sentinel value for filtering tasks with no assigned agent.
+ * Recognized by the server's GET /tasks handler (see server/src/routes/tasks.ts)
+ * which translates it into a `claimed_by IS NULL` condition.
+ */
 const UNASSIGNED = '__unassigned__';
 
 export { UNASSIGNED };
-
-export const TASK_STATUSES = ['pending', 'claimed', 'in_progress', 'completed', 'failed'] as const;
 
 interface FilterState {
   statusFilter: Set<string>;
@@ -102,6 +106,17 @@ function useFilteredTasks(tasks: Task[], filters: FilterState) {
   };
 }
 
+/**
+ * Client-side task filtering and sorting hook. Manages filter/sort state in
+ * React state and applies filtering/sorting to the provided `tasks` array
+ * in-memory.
+ *
+ * WARNING: Do NOT use this with paginated server-side responses. When the
+ * server returns a page of tasks, client-side filtering would hide results
+ * that exist on other pages, producing incorrect counts and missing items.
+ * For paginated/server-filtered views, use {@link useTaskFiltersUrlBacked}
+ * instead.
+ */
 export function useTaskFilters(tasks: Task[]) {
   const [statusFilter, setStatusFilterRaw] = useState<Set<string>>(() => new Set());
   const [agentFilter, setAgentFilterRaw] = useState<Set<string>>(() => new Set());
@@ -148,10 +163,19 @@ export function useTaskFilters(tasks: Task[]) {
 }
 
 /**
- * URL-backed variant of useTaskFilters. Must only be used in components rendered
- * under the `/$projectId/` route, as it reads/writes search params via that route.
+ * URL-backed variant of task filter state for server-side filtering. Must only
+ * be used in components rendered under the `/$projectId/` route, as it
+ * reads/writes search params via that route.
+ *
+ * Unlike {@link useTaskFilters}, this variant does NOT do client-side filtering
+ * or sorting. It only manages filter/sort state (backed by URL search params).
+ * The caller is responsible for forwarding filter values to `useTasks()` which
+ * passes them as query parameters for server-side filtering and pagination.
+ *
+ * This is the correct choice for any view that uses server-side pagination
+ * (e.g. OverviewPage).
  */
-export function useTaskFiltersUrlBacked(tasks: Task[]) {
+export function useTaskFiltersUrlBacked() {
   const search = useSearch({ from: '/$projectId/' });
   const navigate = useNavigate({ from: '/$projectId/' });
 
@@ -168,7 +192,7 @@ export function useTaskFiltersUrlBacked(tasks: Task[]) {
   const priorityFilter = useMemo(() => {
     if (!search.priority) return new Set<number>();
     return new Set(
-      search.priority.split(',').map(Number).filter((n) => !Number.isNaN(n))
+      search.priority.split(',').filter(Boolean).map(Number).filter((n) => !Number.isNaN(n))
     );
   }, [search.priority]);
 
@@ -181,23 +205,23 @@ export function useTaskFiltersUrlBacked(tasks: Task[]) {
 
   const page = search.page ?? 1;
 
-  const setPage = (n: number) => {
+  const setPage = useCallback((n: number) => {
     navigate({ search: (prev) => ({ ...prev, page: n > 1 ? n : undefined }) });
-  };
+  }, [navigate]);
 
-  const setStatusFilter = (val: Set<string>) => {
+  const setStatusFilter = useCallback((val: Set<string>) => {
     navigate({ search: (prev) => ({ ...prev, status: val.size ? [...val].join(',') : undefined, page: undefined }) });
-  };
+  }, [navigate]);
 
-  const setAgentFilter = (val: Set<string>) => {
+  const setAgentFilter = useCallback((val: Set<string>) => {
     navigate({ search: (prev) => ({ ...prev, agent: val.size ? [...val].join(',') : undefined, page: undefined }) });
-  };
+  }, [navigate]);
 
-  const setPriorityFilter = (val: Set<number>) => {
+  const setPriorityFilter = useCallback((val: Set<number>) => {
     navigate({ search: (prev) => ({ ...prev, priority: val.size ? [...val].join(',') : undefined, page: undefined }) });
-  };
+  }, [navigate]);
 
-  const cycleSort = (col: NonNullable<SortColumn>) => {
+  const cycleSort = useCallback((col: NonNullable<SortColumn>) => {
     if (sortColumn !== col) {
       navigate({ search: (prev) => ({ ...prev, sort: col, dir: 'asc', page: undefined }) });
     } else if (sortDir === 'asc') {
@@ -205,21 +229,30 @@ export function useTaskFiltersUrlBacked(tasks: Task[]) {
     } else {
       navigate({ search: (prev) => ({ ...prev, sort: undefined, dir: undefined, page: undefined }) });
     }
-  };
+  }, [navigate, sortColumn, sortDir]);
 
-  const clearAllFilters = () => {
+  const clearAllFilters = useCallback(() => {
     navigate({ search: (prev) => ({ ...prev, status: undefined, agent: undefined, priority: undefined, sort: undefined, dir: undefined, page: undefined }) });
-  };
+  }, [navigate]);
 
-  const filters: FilterState = { statusFilter, agentFilter, priorityFilter, sortColumn, sortDir, setStatusFilter, setAgentFilter, setPriorityFilter, cycleSort, clearAllFilters };
-  const derived = useFilteredTasks(tasks, filters);
+  const hasActiveFilters = agentFilter.size > 0 || priorityFilter.size > 0 || statusFilter.size > 0 || sortColumn !== null;
 
   return {
-    ...filters,
-    ...derived,
+    statusFilter,
+    agentFilter,
+    priorityFilter,
+    sortColumn,
+    sortDir,
+    setStatusFilter,
+    setAgentFilter,
+    setPriorityFilter,
+    cycleSort,
+    clearAllFilters,
+    hasActiveFilters,
     page,
     setPage,
   };
 }
 
 export type TaskFilters = ReturnType<typeof useTaskFilters>;
+export type TaskFiltersUrlBacked = ReturnType<typeof useTaskFiltersUrlBacked>;
