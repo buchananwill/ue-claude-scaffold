@@ -22,8 +22,9 @@ export interface IngestFileResult {
 export interface IngestDirResult {
   ingested: number;
   skipped: number;
+  errors: number;
   replanned: number;
-  tasks: Array<{ file: string; action: 'created' | 'skipped'; taskId: number }>;
+  tasks: Array<{ file: string; action: 'created' | 'skipped' | 'error'; taskId?: number; error?: string }>;
 }
 
 /**
@@ -50,24 +51,35 @@ export async function ingestTaskFile(
     return { action: 'skipped', taskId: existing[0].id };
   }
 
-  // Parse frontmatter
-  const parsed = matter(fileContent);
-  const data = parsed.data as Record<string, unknown>;
-  const body = parsed.content.trim();
+  // Parse frontmatter — wrap in try/catch because gray-matter throws
+  // YAMLException on structurally invalid YAML within frontmatter delimiters.
+  let data: Record<string, unknown> = {};
+  let body: string;
+  try {
+    const parsed = matter(fileContent);
+    data = parsed.data as Record<string, unknown>;
+    body = parsed.content.trim();
+  } catch {
+    // Fall back to treating the entire content as description, derive title from filename
+    data = {};
+    body = fileContent.trim();
+  }
 
   // Title: frontmatter or fall back to filename
-  let title = typeof data.title === 'string' && data.title.length > 0
+  const title = typeof data.title === 'string' && data.title.length > 0
     ? data.title
     : basename(filePath, '.md').replace(/[-_]/g, ' ');
 
   // Priority: must be integer, default 0
-  let priority = 0;
-  if (data.priority !== undefined) {
-    const parsed = Number(data.priority);
-    if (Number.isInteger(parsed)) {
-      priority = parsed;
+  const priority = (() => {
+    if (data.priority !== undefined) {
+      const numericPriority = Number(data.priority);
+      if (Number.isInteger(numericPriority)) {
+        return numericPriority;
+      }
     }
-  }
+    return 0;
+  })();
 
   // Acceptance criteria
   const acceptanceCriteria = typeof data.acceptance_criteria === 'string'
@@ -118,27 +130,37 @@ export async function ingestTaskDir(
   const results: IngestDirResult['tasks'] = [];
   let ingested = 0;
   let skipped = 0;
+  let errors = 0;
 
+  // Sequential execution is intentional — avoids concurrent PGlite write contention.
   for (const file of mdFiles) {
-    const fullPath = join(dirPath, file);
-    const content = await readFile(fullPath, 'utf-8');
-    const result = await ingestTaskFile(db, fullPath, content, projectId);
+    try {
+      const fullPath = join(dirPath, file);
+      const content = await readFile(fullPath, 'utf-8');
+      const result = await ingestTaskFile(db, fullPath, content, projectId);
 
-    results.push({ file, action: result.action, taskId: result.taskId });
+      results.push({ file, action: result.action, taskId: result.taskId });
 
-    if (result.action === 'created') {
-      ingested++;
-    } else {
-      skipped++;
+      if (result.action === 'created') {
+        ingested++;
+      } else {
+        skipped++;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      results.push({ file, action: 'error', error: message });
+      errors++;
     }
   }
 
-  // Run replan after ingestion
+  // Replan is a global operation by design — it operates on the full task
+  // dependency graph across all projects, not just the project being ingested.
+  // The replanned count in the response is the global count.
   let replanned = 0;
   if (ingested > 0) {
     const replanResult = await runReplan();
     replanned = replanResult.replanned;
   }
 
-  return { ingested, skipped, replanned, tasks: results };
+  return { ingested, skipped, errors, replanned, tasks: results };
 }

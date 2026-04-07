@@ -76,7 +76,7 @@ await server.register(configPlugin, { config });
 await server.register(branchOpsPlugin, { config });
 await server.register(hooksPlugin);
 await server.register(containerSettingsPlugin);
-await server.register(tasksIngestPlugin);
+await server.register(tasksIngestPlugin, { config });
 
 try {
   const address = await server.listen({

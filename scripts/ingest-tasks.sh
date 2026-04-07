@@ -47,7 +47,7 @@ if [[ "$DRY_RUN" == true ]]; then
 fi
 
 # ── Ingest via server ──────────────────────────────────────────────────────
-response="$(_post_json "${SERVER_URL}/tasks/ingest" "{\"tasksDir\":\"${TASKS_DIR}\"}")" || {
+response="$(_post_json "${SERVER_URL}/tasks/ingest" "$(jq -n --arg tasksDir "$TASKS_DIR" '{"tasksDir": $tasksDir}')")" || {
   echo "Error: POST /tasks/ingest failed" >&2
   exit 1
 }

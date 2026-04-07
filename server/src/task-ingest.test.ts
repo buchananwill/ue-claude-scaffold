@@ -166,6 +166,26 @@ describe('ingestTaskFile', () => {
     assert.notEqual(second.taskId, first.taskId);
   });
 
+  it('invalid YAML syntax falls back to filename-derived title', async () => {
+    const content = [
+      '---',
+      'title: [invalid yaml',
+      '  broken: {unclosed',
+      '---',
+      'Body content',
+    ].join('\n');
+
+    const result = await ingestTaskFile(ctx.db, '/tasks/broken-yaml.md', content, 'default');
+
+    assert.equal(result.action, 'created');
+    const rows = await ctx.db.select().from(tasks).where(eq(tasks.id, result.taskId));
+    assert.equal(rows.length, 1);
+    // Title falls back to filename because YAML parse failed
+    assert.equal(rows[0].title, 'broken yaml');
+    // Full content (including the broken frontmatter) becomes description
+    assert.ok(rows[0].description!.includes('Body content'));
+  });
+
   it('priority defaults to 0 when not specified', async () => {
     const content = [
       '---',
