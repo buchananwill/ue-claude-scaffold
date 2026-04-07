@@ -13,6 +13,9 @@ const VALID_STATUSES = ['active', 'converging', 'dissolved'] as const;
 /** Regex for safe briefPath values — no path traversal, no absolute paths. */
 const BRIEF_PATH_RE = /^[a-zA-Z0-9_./-]+$/;
 
+/** Regex for safe role values — alphanumeric, spaces, hyphens, underscores, 1-128 chars. */
+const ROLE_RE = /^[a-zA-Z0-9 _-]{1,128}$/;
+
 interface TeamsOpts {
   config: ScaffoldConfig;
 }
@@ -44,6 +47,9 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       }
       if (!m.role || m.role.trim().length === 0) {
         return reply.badRequest(`Member '${m.agentName}' has an empty role`);
+      }
+      if (!ROLE_RE.test(m.role)) {
+        return reply.badRequest(`Member '${m.agentName}' has an invalid role — must match ^[a-zA-Z0-9 _-]{1,128}$`);
       }
     }
 
@@ -86,9 +92,13 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
   // GET /teams — list teams
   fastify.get<{
     Querystring: { status?: string };
-  }>('/teams', async (request) => {
+  }>('/teams', async (request, reply) => {
+    const statusFilter = request.query.status || undefined;
+    if (statusFilter !== undefined && !(VALID_STATUSES as readonly string[]).includes(statusFilter)) {
+      return reply.badRequest(`Invalid status filter '${statusFilter}'. Must be one of: ${VALID_STATUSES.join(', ')}`);
+    }
     const db = getDb();
-    const rows = await teamsQ.list(db, { status: request.query.status || undefined, projectId: request.projectId });
+    const rows = await teamsQ.list(db, { status: statusFilter, projectId: request.projectId });
 
     return rows.map((r) => ({
       id: r.id,
@@ -161,9 +171,6 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       if (!(VALID_STATUSES as readonly string[]).includes(status)) {
         return reply.badRequest(`Invalid status '${status}'. Must be one of: ${VALID_STATUSES.join(', ')}`);
       }
-    }
-
-    if (status !== undefined) {
       if (status === 'dissolved') {
         await teamsQ.dissolve(db, request.params.id);
       } else {

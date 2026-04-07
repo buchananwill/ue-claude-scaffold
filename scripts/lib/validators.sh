@@ -102,10 +102,10 @@ _read_server_port() {
   local port=9100
 
   if [[ -f "$script_dir/scaffold.config.json" ]]; then
-    port="$(jq -r '.server.port // 9100' "$script_dir/scaffold.config.json" 2>/dev/null || echo 9100)"
+    port="$(jq -r '.server.port // 9100' -- "$script_dir/scaffold.config.json" 2>/dev/null || echo 9100)"
   fi
 
-  if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || (( port < 1 || port > 65535 )); then
+  if [[ ! "$port" =~ ^[1-9][0-9]{0,4}$ ]] || (( port < 1 || port > 65535 )); then
     echo "Error: invalid server port in scaffold.config.json: $port" >&2
     return 1
   fi

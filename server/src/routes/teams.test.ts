@@ -464,4 +464,53 @@ describe('POST /teams — input validation', () => {
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('empty role'));
   });
+
+  it('returns 400 for role with invalid characters (B3)', async () => {
+    const res = await createTeam(ctx, {
+      id: 'valid-team-3',
+      name: 'Bad Role Team',
+      members: [{ agentName: 'alice', role: 'impl<script>', isLeader: true }],
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('invalid role'));
+  });
+
+  it('returns 400 for role exceeding 128 characters (B3)', async () => {
+    const res = await createTeam(ctx, {
+      id: 'valid-team-4',
+      name: 'Long Role Team',
+      members: [{ agentName: 'alice', role: 'a'.repeat(129), isLeader: true }],
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('invalid role'));
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  GET /teams — status filter validation (B2)                         */
+/* ------------------------------------------------------------------ */
+describe('GET /teams — status filter validation', () => {
+  let ctx: DrizzleTestContext;
+
+  beforeEach(async () => {
+    ctx = await createDrizzleTestApp();
+    await ctx.app.register(roomsPlugin);
+    await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    await ctx.cleanup();
+  });
+
+  it('returns 400 for invalid status query param', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/teams?status=bogus' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid status filter'));
+  });
+
+  it('accepts valid status query param', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/teams?status=active' });
+    assert.equal(res.statusCode, 200);
+  });
 });

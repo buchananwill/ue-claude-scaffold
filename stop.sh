@@ -90,10 +90,8 @@ if [[ -n "$TEAM_ID" ]]; then
   _validate_identifier "--team" "$TEAM_ID" || exit 1
 fi
 
-if [[ -n "$PROJECT_ID" && ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
-  echo "Error: PROJECT_ID contains invalid characters: $PROJECT_ID" >&2
-  echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
-  exit 1
+if [[ -n "$PROJECT_ID" ]]; then
+  _validate_identifier "--project" "$PROJECT_ID" || exit 1
 fi
 
 # ── Read port from scaffold.config.json ──────────────────────────────────────

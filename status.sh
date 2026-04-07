@@ -66,9 +66,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Validate PROJECT_ID ─────────────────────────────────────────────────────
-if [[ -n "$PROJECT_ID" && ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
-  echo "Error: PROJECT_ID must be 1-64 alphanumeric, hyphen, or underscore characters: $PROJECT_ID" >&2
-  exit 1
+if [[ -n "$PROJECT_ID" ]]; then
+  _validate_identifier "--project" "$PROJECT_ID" || exit 1
 fi
 
 # ── Read port from scaffold.config.json ──────────────────────────────────────

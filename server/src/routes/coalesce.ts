@@ -4,13 +4,14 @@ import { getDb } from '../drizzle-instance.js';
 import * as coalesceQ from '../queries/coalesce.js';
 import * as agentsQ from '../queries/agents.js';
 
-/** Check whether the system is ready to coalesce (no active tasks, all pump agents idle). */
-async function checkCanCoalesce(db: DrizzleDb, projectId: string) {
+/** Check whether the system is ready to coalesce (no active tasks, all pump agents idle).
+ *  Accepts optional pre-fetched agent rows to avoid redundant DB reads (TOCTOU fix). */
+async function checkCanCoalesce(db: DrizzleDb, projectId: string, prefetchedAgents?: Awaited<ReturnType<typeof agentsQ.getAll>>) {
   const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
-  const agentRows = await agentsQ.getAll(db, projectId);
+  const agentRows = prefetchedAgents ?? await agentsQ.getAll(db, projectId);
   const pumpAgents = agentRows.filter(a => a.mode === 'pump');
   const allPumpIdle = pumpAgents.every(a => ['idle', 'done', 'paused'].includes(a.status));
-  return { canCoalesce: activeTaskCount === 0 && allPumpIdle, activeTaskCount, pumpAgents, allPumpIdle };
+  return { canCoalesce: activeTaskCount === 0 && allPumpIdle, activeTaskCount, pumpAgents, allPumpIdle, agentRows };
 }
 
 const coalescePlugin: FastifyPluginAsync = async (fastify) => {
@@ -18,11 +19,10 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     const projectId = request.projectId;
     const db = getDb();
 
-    const { canCoalesce, activeTaskCount, pumpAgents, allPumpIdle } = await checkCanCoalesce(db, projectId);
+    const { canCoalesce, activeTaskCount, pumpAgents, allPumpIdle, agentRows } = await checkCanCoalesce(db, projectId);
     const pendingCount = await coalesceQ.countPendingTasks(db, projectId);
     const claimedFileCount = await coalesceQ.countClaimedFiles(db, projectId);
 
-    const agentRows = await agentsQ.getAll(db, projectId);
     const agents = await Promise.all(agentRows.map(async (row) => {
       const ownedFiles = await coalesceQ.getOwnedFiles(db, row.name, projectId);
       const activeTasks = await coalesceQ.countActiveTasksForAgent(db, row.name, projectId);
