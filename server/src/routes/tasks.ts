@@ -322,7 +322,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       // Non-empty but failed numeric parsing
       if (nonEmpty.length > (priorityFiltered?.length ?? 0)) {
         const invalid = nonEmpty.filter(s => { const n = Number(s); return !Number.isFinite(n) || !Number.isInteger(n); });
-        return reply.badRequest(`Invalid priority values: ${invalid.join(', ')}. Priority must be integers.`);
+        return reply.badRequest(`Invalid priority values: ${invalid.map(v => v.slice(0, 32)).join(', ')}. Priority must be integers.`);
       }
     }
     const priorityArr = priorityFiltered;
@@ -343,7 +343,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       for (const s of statusArr) {
         if (!(tasksCore.VALID_TASK_STATUSES as readonly string[]).includes(s)) {
           return reply.badRequest(
-            `Invalid status value: "${s}". Valid statuses: ${tasksCore.VALID_TASK_STATUSES.join(', ')}`
+            `Invalid status value: "${s.slice(0, 32)}". Valid statuses: ${tasksCore.VALID_TASK_STATUSES.join(', ')}`
           );
         }
       }
@@ -548,13 +548,13 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       return reply.badRequest('status query parameter is required (e.g. ?status=completed)');
     }
     if (!(tasksCore.VALID_TASK_STATUSES as readonly string[]).includes(status)) {
-      return reply.badRequest(`Invalid status value: "${status}". Valid statuses: ${tasksCore.VALID_TASK_STATUSES.join(', ')}`);
+      return reply.badRequest(`Invalid status value: "${status.slice(0, 32)}". Valid statuses: ${tasksCore.VALID_TASK_STATUSES.join(', ')}`);
     }
     if (status === 'claimed' || status === 'in_progress') {
       return reply.conflict('cannot bulk-delete tasks that are claimed or in progress');
     }
     const db = getDb();
-    const deleted = await tasksCore.deleteByStatus(db, status);
+    const deleted = await tasksCore.deleteByStatus(db, status, request.projectId);
     return { ok: true, deleted };
   });
 };

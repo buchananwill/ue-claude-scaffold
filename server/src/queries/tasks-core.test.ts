@@ -112,8 +112,8 @@ describe('tasks-core queries', () => {
   it('should delete by status', async () => {
     await tasksCore.insert(db, { title: 'To Delete', projectId: 'del-test' });
     await tasksCore.insert(db, { title: 'To Delete 2', projectId: 'del-test' });
-    const n = await tasksCore.deleteByStatus(db, 'pending');
-    assert.ok(n >= 2);
+    const n = await tasksCore.deleteByStatus(db, 'pending', 'del-test');
+    assert.equal(n, 2);
   });
 
   it('should delete by id if not claimed/in_progress', async () => {

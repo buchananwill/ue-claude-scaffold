@@ -12,7 +12,7 @@ export interface TaskRow {
   claimed_by: string | null;
   claimed_at: string | null;
   completed_at: string | null;
-  result: string | null;
+  result: unknown;
   base_priority: number;
   progress_log: string | null;
   created_at: string;
@@ -42,7 +42,7 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     claimed_by: row.claimedBy,
     claimed_at: row.claimedAt ? String(row.claimedAt) : null,
     completed_at: row.completedAt ? String(row.completedAt) : null,
-    result: row.result as string | null,
+    result: row.result ?? null, // jsonb column — Drizzle returns unknown; parseResult handles coercion
     base_priority: row.basePriority,
     progress_log: row.progressLog,
     created_at: row.createdAt ? String(row.createdAt) : '',

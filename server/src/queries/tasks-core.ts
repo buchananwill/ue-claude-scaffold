@@ -184,10 +184,10 @@ export async function patch(db: DrizzleDb, id: number, fields: PatchFields): Pro
   return rows.length > 0;
 }
 
-export async function deleteByStatus(db: DrizzleDb, status: string): Promise<number> {
+export async function deleteByStatus(db: DrizzleDb, status: string, projectId: string): Promise<number> {
   const rows = await db
     .delete(tasks)
-    .where(eq(tasks.status, status))
+    .where(and(eq(tasks.status, status), eq(tasks.projectId, projectId)))
     .returning();
   return rows.length;
 }

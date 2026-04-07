@@ -662,6 +662,169 @@ describe('tasks routes', () => {
     assert.ok(patch.json().message.includes('source_path'));
   });
 
+  describe('DELETE /tasks bulk-delete by status', () => {
+    it('deletes completed tasks and returns count', async () => {
+      const r1 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Done 1' },
+      });
+      const r2 = await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Done 2' },
+      });
+      // Also insert a pending task that should NOT be deleted
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        payload: { title: 'Still pending' },
+      });
+
+      // Move two tasks to completed status via claim+complete lifecycle
+      const id1 = r1.json().id;
+      const id2 = r2.json().id;
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${id1}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${id1}/complete`,
+        headers: { 'x-agent-name': 'agent-1' },
+        payload: { result: { summary: 'done' } },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${id2}/claim`,
+        headers: { 'x-agent-name': 'agent-1' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${id2}/complete`,
+        headers: { 'x-agent-name': 'agent-1' },
+        payload: { result: { summary: 'done' } },
+      });
+
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: '/tasks?status=completed',
+      });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.ok, true);
+      assert.equal(body.deleted, 2);
+
+      // Verify the pending task still exists
+      const listRes = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+      const listBody = listRes.json() as any;
+      assert.equal(listBody.total, 1);
+      assert.equal(listBody.tasks[0].title, 'Still pending');
+    });
+
+    it('returns 400 for invalid status value', async () => {
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: '/tasks?status=bogus',
+      });
+      assert.equal(res.statusCode, 400);
+      const body = res.json();
+      assert.ok(body.message.includes('Invalid status value'));
+    });
+
+    it('returns 400 when status query param is missing', async () => {
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: '/tasks',
+      });
+      assert.equal(res.statusCode, 400);
+      const body = res.json();
+      assert.ok(body.message.includes('status query parameter is required'));
+    });
+
+    it('returns 409 for claimed status (protected)', async () => {
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: '/tasks?status=claimed',
+      });
+      assert.equal(res.statusCode, 409);
+      const body = res.json();
+      assert.ok(body.message.includes('cannot bulk-delete'));
+    });
+
+    it('scopes deletion to the requesting project', async () => {
+      // Insert a task in project "alpha"
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        headers: { 'x-project-id': 'alpha' },
+        payload: { title: 'Alpha completed' },
+      });
+      // Insert a task in project "beta"
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/tasks',
+        headers: { 'x-project-id': 'beta' },
+        payload: { title: 'Beta completed' },
+      });
+
+      // Claim and complete both tasks
+      const alphaList = await ctx.app.inject({
+        method: 'GET',
+        url: '/tasks',
+        headers: { 'x-project-id': 'alpha' },
+      });
+      const alphaId = (alphaList.json() as any).tasks[0].id;
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${alphaId}/claim`,
+        headers: { 'x-agent-name': 'agent-1', 'x-project-id': 'alpha' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${alphaId}/complete`,
+        headers: { 'x-agent-name': 'agent-1', 'x-project-id': 'alpha' },
+        payload: { result: { summary: 'done' } },
+      });
+
+      const betaList = await ctx.app.inject({
+        method: 'GET',
+        url: '/tasks',
+        headers: { 'x-project-id': 'beta' },
+      });
+      const betaId = (betaList.json() as any).tasks[0].id;
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${betaId}/claim`,
+        headers: { 'x-agent-name': 'agent-1', 'x-project-id': 'beta' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/tasks/${betaId}/complete`,
+        headers: { 'x-agent-name': 'agent-1', 'x-project-id': 'beta' },
+        payload: { result: { summary: 'done' } },
+      });
+
+      // Delete completed tasks scoped to "alpha" only
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: '/tasks?status=completed',
+        headers: { 'x-project-id': 'alpha' },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.json().deleted, 1);
+
+      // Beta's completed task should still exist
+      const betaAfter = await ctx.app.inject({
+        method: 'GET',
+        url: '/tasks?status=completed',
+        headers: { 'x-project-id': 'beta' },
+      });
+      assert.equal((betaAfter.json() as any).total, 1);
+    });
+  });
+
 });
 
 describe('tasks with bare repo and agents', () => {
