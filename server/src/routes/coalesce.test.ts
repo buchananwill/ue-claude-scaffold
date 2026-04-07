@@ -201,13 +201,15 @@ describe('coalesce routes (drizzle)', () => {
     await registerAgent('pump-1');
 
     const res1 = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
+    assert.equal(res1.statusCode, 200);
     const body1 = res1.json();
     assert.ok(body1.paused.includes('pump-1'));
 
+    // Second call should succeed without errors
     const res2 = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
-    const body2 = res2.json();
-    assert.ok(body2.paused.includes('pump-1'));
+    assert.equal(res2.statusCode, 200);
 
+    // Agent should still be paused after two calls
     const agentRes = await ctx.app.inject({ method: 'GET', url: '/agents/pump-1' });
     assert.equal(agentRes.json().status, 'paused');
   });

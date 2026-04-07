@@ -3,7 +3,7 @@
 #
 # Provides _signal_and_stop_projects for signalling agents via the coordination
 # server and then running docker compose down on each project.
-# Requires: COMPOSE_CMD (array), SCRIPT_DIR, BASE_URL to be set before sourcing.
+# Requires: COMPOSE_CMD (array) to be set before sourcing.
 # Source this file; do not execute it directly.
 
 # Guard against double-sourcing
@@ -17,6 +17,7 @@ readonly _LIB_STOP_HELPERS_LOADED=1
 _signal_stop() {
   local agent_name="$1"
   local base_url="$2"
+  [[ "$agent_name" =~ ^[a-zA-Z0-9_-]{1,64}$ ]] || return 1
   curl -sf -X DELETE "${base_url}/agents/${agent_name}" --max-time 5 >/dev/null 2>&1 || true
 }
 

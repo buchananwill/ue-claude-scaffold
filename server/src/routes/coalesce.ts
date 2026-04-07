@@ -87,22 +87,28 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     const pollIntervalMs = 2000;
     const deadline = Date.now() + timeout * 1000;
 
-    while (Date.now() < deadline) {
-      const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
-      const agentRows = await agentsQ.getAll(db, projectId);
-      const pumpAgents = agentRows.filter(a => a.mode === 'pump');
-      const allPumpIdle = pumpAgents.every(a =>
-        ['idle', 'done', 'paused'].includes(a.status));
+    let pollError: string | undefined;
+    try {
+      while (Date.now() < deadline) {
+        const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
+        const agentRows = await agentsQ.getAll(db, projectId);
+        const pumpAgents = agentRows.filter(a => a.mode === 'pump');
+        const allPumpIdle = pumpAgents.every(a =>
+          ['idle', 'done', 'paused'].includes(a.status));
 
-      if (activeTaskCount === 0 && allPumpIdle) {
-        break;
+        if (activeTaskCount === 0 && allPumpIdle) {
+          break;
+        }
+
+        if (Date.now() + pollIntervalMs >= deadline) {
+          break;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
       }
-
-      if (Date.now() + pollIntervalMs >= deadline) {
-        break;
-      }
-
-      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+    } catch (err) {
+      pollError = err instanceof Error ? err.message : String(err);
+      fastify.log.error({ err }, 'Drain polling loop error');
     }
 
     // 3. Final status check — timedOut is determined by whether we actually drained
@@ -120,6 +126,7 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     return {
       drained: canCoalesce,
       timedOut,
+      ...(pollError ? { error: pollError } : {}),
       paused: pausedAgents,
       inFlightAtStart: inFlightRows.map(r => ({
         agent: r.claimedBy,

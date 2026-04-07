@@ -4,10 +4,10 @@ import type { DrizzleDb, DrizzleTx } from '../drizzle-instance.js';
 
 type DbOrTx = DrizzleDb | DrizzleTx;
 
-const ACTIVE_STATUSES = ['claimed', 'in_progress'];
+const ACTIVE_STATUSES = ['claimed', 'in_progress'] as const;
 
 export async function countActiveTasks(db: DrizzleDb, projectId?: string): Promise<number> {
-  const conditions = [sql`${tasks.status} IN ('claimed', 'in_progress')`];
+  const conditions = [inArray(tasks.status, ACTIVE_STATUSES)];
   if (projectId) {
     conditions.push(eq(tasks.projectId, projectId));
   }
@@ -25,7 +25,7 @@ export async function countActiveTasksForAgent(db: DrizzleDb, agent: string): Pr
     .where(
       and(
         eq(tasks.claimedBy, agent),
-        sql`${tasks.status} IN ('claimed', 'in_progress')`,
+        inArray(tasks.status, ACTIVE_STATUSES),
       ),
     );
   return Number(rows[0].count);
@@ -55,7 +55,7 @@ export async function countClaimedFiles(db: DbOrTx, projectId?: string): Promise
   return Number(rows[0].count);
 }
 
-export async function getOwnedFiles(db: DrizzleDb, agent: string, projectId?: string) {
+export async function getOwnedFiles(db: DrizzleDb, agent: string, projectId?: string): Promise<string[]> {
   const conditions = [eq(files.claimant, agent)];
   if (projectId) {
     conditions.push(eq(files.projectId, projectId));
@@ -67,7 +67,7 @@ export async function getOwnedFiles(db: DrizzleDb, agent: string, projectId?: st
   return rows.map((r) => r.path);
 }
 
-export async function pausePumpAgents(db: DrizzleDb, projectId?: string) {
+export async function pausePumpAgents(db: DrizzleDb, projectId?: string): Promise<void> {
   const conditions = [
     eq(agents.mode, 'pump'),
     sql`${agents.status} NOT IN ('stopping', 'done', 'error', 'paused')`,
@@ -81,8 +81,8 @@ export async function pausePumpAgents(db: DrizzleDb, projectId?: string) {
     .where(and(...conditions));
 }
 
-export async function getInFlightTasks(db: DrizzleDb, projectId?: string) {
-  const conditions = [sql`${tasks.status} IN ('claimed', 'in_progress')`];
+export async function getInFlightTasks(db: DrizzleDb, projectId?: string): Promise<Array<{ id: number; title: string; claimedBy: string | null }>> {
+  const conditions = [inArray(tasks.status, ACTIVE_STATUSES)];
   if (projectId) {
     conditions.push(eq(tasks.projectId, projectId));
   }
@@ -96,7 +96,7 @@ export async function getInFlightTasks(db: DrizzleDb, projectId?: string) {
     .where(and(...conditions));
 }
 
-export async function releaseAllFiles(db: DbOrTx, projectId?: string) {
+export async function releaseAllFiles(db: DbOrTx, projectId?: string): Promise<void> {
   const conditions = [isNotNull(files.claimant)];
   if (projectId) {
     conditions.push(eq(files.projectId, projectId));
@@ -107,7 +107,7 @@ export async function releaseAllFiles(db: DbOrTx, projectId?: string) {
     .where(and(...conditions));
 }
 
-export async function resumePausedAgents(db: DbOrTx, projectId?: string) {
+export async function resumePausedAgents(db: DbOrTx, projectId?: string): Promise<void> {
   const conditions = [eq(agents.status, 'paused')];
   if (projectId) {
     conditions.push(eq(agents.projectId, projectId));
