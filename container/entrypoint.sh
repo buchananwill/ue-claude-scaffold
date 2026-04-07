@@ -231,7 +231,7 @@ _detect_abnormal_exit() {
     [ -f "$log_file" ] || return 1
 
     local log_tail elapsed output_lines response
-    log_tail="$(tail -200 "$log_file")"
+    log_tail="$(tail -200 "$log_file" | head -c 50000)"
     output_lines="$(wc -l < "$log_file")"
 
     if [ -n "${CLAUDE_START_TS:-}" ]; then
@@ -245,6 +245,7 @@ _detect_abnormal_exit() {
     # Build JSON payload using a tmpfile to avoid shell escaping issues
     local tmpfile
     tmpfile="$(mktemp)"
+    trap 'rm -f "$tmpfile"' RETURN
     python3 -c "
 import json, sys
 payload = {
@@ -257,18 +258,13 @@ json.dump(payload, sys.stdout)
 
     # If JSON encoding failed, fall back to not-abnormal
     if [ ! -s "$tmpfile" ]; then
-        rm -f "$tmpfile"
         return 1
     fi
 
     response="$(_curl_server -s -X POST "${SERVER_URL}/agents/${AGENT_NAME}/exit-classify" \
         -H "Content-Type: application/json" \
         -d @"$tmpfile" \
-        --max-time 10 2>/dev/null)" || {
-        rm -f "$tmpfile"
-        return 1
-    }
-    rm -f "$tmpfile"
+        --max-time 10 2>/dev/null)" || return 1
 
     local is_abnormal
     # Python prints True/False for bools; normalize to lowercase for shell comparison
@@ -293,9 +289,10 @@ import json, sys
 agent = sys.argv[1]
 reason = sys.argv[2]
 task_id = sys.argv[3]
+channel = sys.argv[4]
 msg = f'Agent {agent} shut down abnormally: {reason}. Claimed task released. Uncommitted work discarded. Manual restart required.'
 payload = {
-    'channel': 'general',
+    'channel': channel,
     'type': 'abnormal_shutdown',
     'payload': {
         'agent': agent,
@@ -305,7 +302,7 @@ payload = {
     },
 }
 json.dump(payload, sys.stdout)
-" "${AGENT_NAME}" "${reason}" "${task_id}" > "$tmpfile" 2>/dev/null
+" "${AGENT_NAME}" "${reason}" "${task_id}" "${AGENT_NAME}" > "$tmpfile" 2>/dev/null
     _curl_server -s -X POST "${SERVER_URL}/messages" \
         -H "Content-Type: application/json" \
         -d @"$tmpfile" \

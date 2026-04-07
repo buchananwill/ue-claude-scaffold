@@ -5,6 +5,7 @@
 
 export interface ClassifyExitInput {
   logTail: string;
+  /** Whole seconds elapsed since agent start. Route schema enforces integer constraint. */
   elapsedSeconds: number;
   /** Total line count of the full log file, not the length of logTail. */
   outputLineCount: number;
