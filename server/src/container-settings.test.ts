@@ -60,9 +60,9 @@ describe('buildSettingsJson', () => {
 
     assert.equal(matchers.length, 3); // Bash, Edit, Write
     assert.equal(matchers[1].matcher, 'Edit');
-    assert.ok(matchers[1].hooks[0].command.includes('lint-cpp-diff.py'));
+    assert.ok(matchers[1].hooks[0].command.includes('lint-cpp-diff.mjs'));
     assert.equal(matchers[2].matcher, 'Write');
-    assert.ok(matchers[2].hooks[0].command.includes('lint-cpp-diff.py'));
+    assert.ok(matchers[2].hooks[0].command.includes('lint-cpp-diff.mjs'));
   });
 
   it('gitSync only: PostToolUse with push-after-commit', () => {

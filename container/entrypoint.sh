@@ -167,7 +167,7 @@ PRE_MATCHERS=$(jq -n --argjson hooks "$PRE_BASH" '[{"matcher":"Bash","hooks":$ho
 # Append Edit and Write matchers for C++ linting when enabled
 if [ "${HOOK_CPP_LINT}" = "true" ]; then
     PRE_MATCHERS=$(jq -n --argjson m "$PRE_MATCHERS" \
-        '$m + [{"matcher":"Edit","hooks":[{"type":"command","command":"python3 /claude-hooks/lint-cpp-diff.py"}]},{"matcher":"Write","hooks":[{"type":"command","command":"python3 /claude-hooks/lint-cpp-diff.py"}]}]')
+        '$m + [{"matcher":"Edit","hooks":[{"type":"command","command":"node /claude-hooks/lint-cpp-diff.mjs"}]},{"matcher":"Write","hooks":[{"type":"command","command":"node /claude-hooks/lint-cpp-diff.mjs"}]}]')
 fi
 
 # Build PostToolUse matchers: auto-push after commit for writable workspaces

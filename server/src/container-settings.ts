@@ -67,8 +67,8 @@ function hook(script: string): Hook {
   return { type: 'command', command: `bash ${HOOKS_PREFIX}${script}` };
 }
 
-function pythonHook(script: string): Hook {
-  return { type: 'command', command: `python3 ${HOOKS_PREFIX}${script}` };
+function nodeHook(script: string): Hook {
+  return { type: 'command', command: `node ${HOOKS_PREFIX}${script}` };
 }
 
 export function buildSettingsJson(opts: SettingsOpts): SettingsJson {
@@ -94,7 +94,7 @@ export function buildSettingsJson(opts: SettingsOpts): SettingsJson {
 
   // C++ lint matchers for Edit and Write
   if (opts.cppLint) {
-    const lintHook = pythonHook('lint-cpp-diff.py');
+    const lintHook = nodeHook('lint-cpp-diff.mjs');
     preMatchers.push({ matcher: 'Edit', hooks: [lintHook] });
     preMatchers.push({ matcher: 'Write', hooks: [lintHook] });
   }
