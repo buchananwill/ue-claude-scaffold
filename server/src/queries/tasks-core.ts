@@ -53,6 +53,9 @@ export type SortColumn = keyof typeof SORTABLE_COLUMNS;
 
 export const VALID_SORT_COLUMNS: readonly string[] = Object.keys(SORTABLE_COLUMNS);
 
+/** Known task status values accepted by the API. */
+export const VALID_TASK_STATUSES = ['pending', 'claimed', 'in_progress', 'completed', 'failed', 'integrated', 'cycle'] as const;
+
 export interface ListOpts {
   status?: string[];
   agent?: string[];

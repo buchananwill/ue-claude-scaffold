@@ -23,12 +23,12 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
 
   /** Validate a task's sourcePath exists in the bare repo on an appropriate branch. */
   async function validateSourcePathForClaim(
-    task: { source_path?: string | null; sourcePath?: string | null; project_id?: string; projectId?: string },
+    task: { sourcePath?: string | null; projectId?: string },
     agent: string,
   ): Promise<{ valid: boolean; branch?: string }> {
-    const sp = task.sourcePath ?? task.source_path;
+    const sp = task.sourcePath;
     if (!sp) return { valid: true };
-    const taskProjectId = task.projectId ?? task.project_id ?? 'default';
+    const taskProjectId = task.projectId ?? 'default';
 
     const db = getDb();
 
@@ -86,7 +86,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
 
       // Claim its files
       const fileDeps = await taskFilesQ.getFilesForTask(db, candidate.id);
-      const taskProjectId = taskRow.projectId ?? (taskRow as any).project_id ?? 'default';
+      const taskProjectId = taskRow.projectId ?? 'default';
       for (const fp of fileDeps) {
         await taskFilesQ.claimFilesForAgent(db, agent, taskProjectId, fp);
       }
@@ -142,7 +142,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
 
     const spCheck = await validateSourcePathForClaim(task, agent);
     if (!spCheck.valid) {
-      const sp = task.sourcePath ?? (task as any).source_path;
+      const sp = task.sourcePath!;
       const displayPath = sp.length > 256 ? sp.slice(0, 256) + '\u2026' : sp;
       return reply.code(409).send({
         statusCode: 409,

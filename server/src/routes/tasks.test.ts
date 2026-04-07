@@ -204,6 +204,49 @@ describe('tasks routes', () => {
     assert.ok(res.json().message.includes('empty segments'));
   });
 
+  it('GET /tasks with dir but no sort returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?dir=asc' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('dir requires sort'));
+  });
+
+  it('GET /tasks with sort but no dir defaults to ascending', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM' } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as any;
+    assert.equal(body.tasks[0].title, 'AAA');
+    assert.equal(body.tasks[1].title, 'MMM');
+    assert.equal(body.tasks[2].title, 'ZZZ');
+  });
+
+  it('GET /tasks with invalid status returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=bogus' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid status value'));
+  });
+
+  it('GET /tasks status filter returns 400 for empty segments', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('empty segments'));
+  });
+
+  it('GET /tasks agent filter returns 400 for empty segments', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=,agent-1' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('empty segments'));
+  });
+
+  it('GET /tasks agent filter returns 400 for invalid agent name', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=../bad' });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid agent name'));
+  });
+
   it('GET /tasks filtered total matches filtered count, not global count', async () => {
     await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
     await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });

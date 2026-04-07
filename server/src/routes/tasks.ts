@@ -1,7 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { getDb } from '../drizzle-instance.js';
 import * as tasksCore from '../queries/tasks-core.js';
-import type { TaskDbRow } from '../queries/tasks-core.js';
 import * as taskFilesQ from '../queries/task-files.js';
 import * as taskDepsQ from '../queries/task-deps.js';
 import type { ScaffoldConfig } from '../config.js';
@@ -296,9 +295,21 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const limitNum = Math.min(Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : tasksCore.DEFAULT_LIST_LIMIT), 500);
     const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
 
-    // Parse multi-value filters
-    const statusArr = status ? status.split(',').filter(Boolean) : undefined;
-    const agentArr = agentFilter ? agentFilter.split(',').filter(Boolean) : undefined;
+    // Parse multi-value filters — reject empty segments (leading/trailing/doubled commas)
+    const statusRaw = status ? status.split(',') : undefined;
+    const statusFiltered = statusRaw?.filter(Boolean);
+    if (statusRaw && statusRaw.length !== statusFiltered!.length) {
+      return reply.badRequest('Invalid status filter: contains empty segments (leading, trailing, or doubled commas).');
+    }
+    const statusArr = statusFiltered;
+
+    const agentRaw = agentFilter ? agentFilter.split(',') : undefined;
+    const agentFiltered = agentRaw?.filter(Boolean);
+    if (agentRaw && agentRaw.length !== agentFiltered!.length) {
+      return reply.badRequest('Invalid agent filter: contains empty segments (leading, trailing, or doubled commas).');
+    }
+    const agentArr = agentFiltered;
+
     const priorityRaw = priorityFilter ? priorityFilter.split(',') : undefined;
     const priorityFiltered = priorityRaw
       ? priorityRaw.filter(Boolean).map(Number).filter(v => Number.isFinite(v) && Number.isInteger(v))
@@ -317,6 +328,38 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
     const priorityArr = priorityFiltered;
 
+    // Cardinality limits — reject if any filter array exceeds 50 elements
+    if (statusArr && statusArr.length > 50) {
+      return reply.badRequest('Too many status values (max 50).');
+    }
+    if (agentArr && agentArr.length > 50) {
+      return reply.badRequest('Too many agent values (max 50).');
+    }
+    if (priorityArr && priorityArr.length > 50) {
+      return reply.badRequest('Too many priority values (max 50).');
+    }
+
+    // Validate status values against known statuses
+    if (statusArr) {
+      for (const s of statusArr) {
+        if (!(tasksCore.VALID_TASK_STATUSES as readonly string[]).includes(s)) {
+          return reply.badRequest(
+            `Invalid status value: "${s}". Valid statuses: ${tasksCore.VALID_TASK_STATUSES.join(', ')}`
+          );
+        }
+      }
+    }
+
+    // Validate agent names
+    if (agentArr) {
+      for (const a of agentArr) {
+        if (a === '__unassigned__') continue;
+        if (!AGENT_NAME_RE.test(a)) {
+          return reply.badRequest(`Invalid agent name: "${a.slice(0, 64)}".`);
+        }
+      }
+    }
+
     // Validate sort column
     let sortCol: tasksCore.SortColumn | undefined;
     if (sort) {
@@ -334,6 +377,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       if (dir !== 'asc' && dir !== 'desc') {
         return reply.badRequest('Invalid dir: must be "asc" or "desc"');
       }
+      if (!sort) {
+        return reply.badRequest('dir requires sort to be specified');
+      }
       dirVal = dir;
     }
 
@@ -341,7 +387,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const filterOpts = {
       status: statusArr,
       agent: agentArr,
-      priority: priorityArr?.length ? priorityArr : undefined,
+      priority: priorityArr,
       projectId,
     };
     const rows = await tasksCore.list(db, { ...filterOpts, limit: limitNum, offset: offsetNum, sort: sortCol, dir: dirVal });
@@ -416,9 +462,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     // Mixed-protocol check: evaluate resulting state (existing row + patch)
-    const resultSourcePath = 'sourcePath' in body ? body.sourcePath : (row as any).sourcePath ?? (row as any).source_path;
+    const resultSourcePath = 'sourcePath' in body ? body.sourcePath : row.sourcePath;
     const resultDesc = 'description' in body ? body.description : row.description;
-    const resultAC = 'acceptanceCriteria' in body ? body.acceptanceCriteria : (row as any).acceptanceCriteria ?? (row as any).acceptance_criteria;
+    const resultAC = 'acceptanceCriteria' in body ? body.acceptanceCriteria : row.acceptanceCriteria;
     if (hasValue(resultSourcePath) && (hasValue(resultDesc) || hasValue(resultAC))) {
       return reply.badRequest(
         'Mixed task protocol: a task must use EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode), not both. ' +
@@ -448,7 +494,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
 
     if ('sourcePath' in body && typeof body.sourcePath === 'string') {
-      const patchProjectId = row.projectId ?? (row as any).project_id;
+      const patchProjectId = row.projectId;
       const spCheck = await validateSourcePath({
         sourcePath: body.sourcePath, projectId: patchProjectId, config, db,
       });
@@ -467,7 +513,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     }
     if (hasFiles) {
       await taskFilesQ.deleteFilesForTask(db, id);
-      await linkFilesToTask(id, body.files!, row.projectId ?? (row as any).project_id);
+      await linkFilesToTask(id, body.files!, row.projectId);
     }
     if (hasDeps) {
       await taskDepsQ.deleteDepsForTask(db, id);
