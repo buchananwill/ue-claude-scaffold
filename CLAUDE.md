@@ -48,17 +48,18 @@ The dashboard talks to the coordination server (default `http://localhost:9100`)
 ./stop.sh --drain        # Graceful shutdown (pause pumps, wait for in-flight tasks, stop)
 ./status.sh --follow     # Monitor agent progress (polls every 5s)
 ./scripts/ingest-tasks.sh --tasks-dir ./tasks  # Ingest task markdown files into task queue
+./scripts/launch-team.sh             # Server-side team launch (called by launch.sh --team)
 ```
 
-Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status.sh && bash -n stop.sh`
+Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status.sh && bash -n stop.sh && bash -n scripts/launch-team.sh`
 
 ## Architecture
 
 ### Four-Layer System
 
-1. **Shell scripts** (`launch.sh`, `setup.sh`, `status.sh`, `stop.sh`) — thin dispatch layers (each ≤200 lines) that parse CLI arguments and delegate to the coordination server and shared libraries. Source reusable functions from `scripts/lib/` (validators, config resolution, compose detection, branch setup, container launching, agent compilation, hook resolution, curl helpers, colors, arg parsing, stop helpers, resolved-config printing). Read structural config from `scaffold.config.json` and secrets from `.env`.
+1. **Shell scripts** (`launch.sh`, `setup.sh`, `status.sh`, `stop.sh`) — focused dispatch scripts that delegate logic to shared libraries in `scripts/lib/`. Source reusable functions from `scripts/lib/` (validators, config resolution, compose detection, branch setup, container launching, agent compilation, hook resolution, curl helpers, colors, arg parsing, stop helpers, resolved-config printing). Read structural config from `scaffold.config.json` and secrets from `.env`.
 
-2. **Coordination server** (`server/`) — Fastify + TypeScript, PGlite (in-process Postgres) accessed via Drizzle ORM. Runs on the host (default port 9100). Requests are scoped by the `X-Project-Id` header (default `default`); every persisted row — agents, tasks, messages, builds, ubt_lock, files, rooms, teams — carries a `project_id` column so a single server serves multiple UE projects in isolation. The server owns config resolution, branch operations, hook cascade generation, container-settings rendering, exit classification, team launch orchestration, task ingestion, agent definition compilation, and C++ diff linting. Provides:
+2. **Coordination server** (`server/`) — Fastify + TypeScript, PGlite (in-process Postgres) accessed via Drizzle ORM. Runs on the host (default port 9100). The server relies on network isolation and is not hardened for internet exposure — it is designed to be accessed only by local Docker containers and the operator's dashboard. Requests are scoped by the `X-Project-Id` header (default `default`); every persisted row — agents, tasks, messages, builds, ubt_lock, files, rooms, teams — carries a `project_id` column so a single server serves multiple UE projects in isolation. The server owns config resolution, branch operations, hook cascade generation, container-settings rendering, exit classification, team launch orchestration, task ingestion, agent definition compilation, and C++ diff linting. Provides:
    - `GET /health` — server health check (returns status, db path, config summary)
    - `GET /status` — aggregate status overview (agents, tasks, builds, UBT lock)
    - `GET /projects`, `POST /projects` — list and register projects (portable config stored in the `projects` table)
@@ -68,10 +69,9 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `POST /agents/register`, `GET /agents`, `GET /agents/{name}`, `POST /agents/{name}/status`, `DELETE /agents/{name}`, `DELETE /agents` — agent lifecycle
    - `POST /agents/{name}/sync` — merge `docker/{project-id}/current-root` into `docker/{project-id}/{name}`; propagates plans to running containers
    - `POST /agents/{name}/branch` — branch setup operations (create, reset, verify agent branches)
-   - `POST /agents/compile` — compile agent definition from agent type markdown + skills into a single system prompt
    - `POST /agents/{name}/exit-classify` — classify agent exit codes and decide retry/stop/report
-   - `GET /hooks/{projectId}` — render the hook cascade (intercept, guard, push, lint) for a project
-   - `GET /container-settings/{projectId}` — render container-settings.json for a project
+   - `POST /hooks/resolve` — stateless hook cascade resolution (intercept, guard, push, lint) from request body
+   - `GET /agents/{name}/settings.json`, `GET /agents/{name}/mcp.json` — render container settings and MCP config for an agent
    - `POST /tasks/ingest` — ingest task markdown files into the task queue
    - `POST /teams/{id}/launch` — orchestrate team container launches
    - `GET /messages`, `POST /messages`, `GET /messages/{channel}`, `POST /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve` — message board for agent progress
