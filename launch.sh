@@ -449,14 +449,15 @@ COMPILED_AGENTS_DIR="$SCRIPT_DIR/.compiled-agents"
 rm -rf "$COMPILED_AGENTS_DIR"
 mkdir -p "$COMPILED_AGENTS_DIR"
 
-if [[ ! -f "$SCRIPT_DIR/scripts/compile-agent.py" ]]; then
-  echo "Error: compile-agent.py not found at $SCRIPT_DIR/scripts/" >&2
+if [[ ! -f "$SCRIPT_DIR/server/dist/bin/compile-agent.js" ]]; then
+  echo "Error: compile-agent.js not found at $SCRIPT_DIR/server/dist/bin/" >&2
+  echo "  Run 'cd server && npm run build' first." >&2
   exit 1
 fi
 
 if [[ -d "$SCRIPT_DIR/dynamic-agents" && -f "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" ]]; then
   echo "Compiling dynamic agent: ${AGENT_TYPE}..."
-  if ! python "$SCRIPT_DIR/scripts/compile-agent.py" \
+  if ! node "$SCRIPT_DIR/server/dist/bin/compile-agent.js" \
     "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" \
     -o "$COMPILED_AGENTS_DIR" \
     --recursive; then

@@ -16,6 +16,9 @@
     "coordination"
   ],
   "type": "module",
+  "bin": {
+    "compile-agent": "./dist/bin/compile-agent.js"
+  },
   "engines": {
     "node": ">=22"
   },
