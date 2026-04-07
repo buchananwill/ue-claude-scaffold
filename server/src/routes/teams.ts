@@ -1,11 +1,19 @@
 import type { FastifyPluginAsync } from 'fastify';
+import type { ScaffoldConfig } from '../config.js';
 import { getDb } from '../drizzle-instance.js';
+import { resolveProject } from '../resolve-project.js';
+import { launchTeam } from '../team-launcher.js';
 import * as teamsQ from '../queries/teams.js';
 import * as roomsQ from '../queries/rooms.js';
 
 const VALID_STATUSES = ['active', 'converging', 'dissolved'] as const;
 
-const teamsPlugin: FastifyPluginAsync = async (fastify) => {
+interface TeamsPluginOpts {
+  config?: ScaffoldConfig;
+}
+
+const teamsPlugin: FastifyPluginAsync<TeamsPluginOpts> = async (fastify, opts) => {
+  const config = opts.config;
   // POST /teams — create a team
   fastify.post<{
     Body: {
@@ -148,6 +156,57 @@ const teamsPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     return { ok: true };
+  });
+  // POST /teams/:id/launch — server-side team launch
+  fastify.post<{
+    Params: { id: string };
+    Body: { projectId?: string; briefPath: string; teamsDir?: string };
+  }>('/teams/:id/launch', async (request, reply) => {
+    if (!config) {
+      return reply.code(500).send({ error: 'Server config not available for team launch' });
+    }
+
+    const teamId = request.params.id;
+    const { briefPath, teamsDir } = request.body;
+    const projectId = request.body.projectId ?? request.projectId;
+    const db = getDb();
+
+    if (!briefPath) {
+      return reply.badRequest('briefPath is required');
+    }
+
+    let project;
+    try {
+      project = await resolveProject(config, db, projectId);
+    } catch {
+      return reply.badRequest(`Unknown project: "${projectId}"`);
+    }
+
+    // Default teamsDir to a sibling 'teams/' directory relative to config location
+    // In practice, the shell caller will pass the correct teamsDir
+    const resolvedTeamsDir = teamsDir ?? '';
+    if (!resolvedTeamsDir) {
+      return reply.badRequest('teamsDir is required');
+    }
+
+    try {
+      const result = await launchTeam({
+        projectId,
+        teamId,
+        briefPath,
+        teamsDir: resolvedTeamsDir,
+        project,
+        db,
+      });
+      return { ok: true, ...result };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Distinguish "not found" errors from other failures
+      if (message.includes('not found')) {
+        return reply.notFound(message);
+      }
+      return reply.badRequest(message);
+    }
   });
 };
 
