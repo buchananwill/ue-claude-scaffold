@@ -10,10 +10,11 @@ const exitClassifyPlugin: FastifyPluginAsync = async (fastify) => {
       params: {
         type: 'object',
         properties: {
-          name: { type: 'string', minLength: 1 },
+          name: { type: 'string', minLength: 1, maxLength: 128 },
         },
         required: ['name'],
       },
+      // Schema must stay in sync with ClassifyExitInput in ../exit-classifier.ts
       body: {
         type: 'object',
         required: ['logTail', 'elapsedSeconds', 'outputLineCount'],
@@ -28,6 +29,7 @@ const exitClassifyPlugin: FastifyPluginAsync = async (fastify) => {
       },
     },
   }, async (request): Promise<ClassifyExitResult> => {
+    // Agent name used for log correlation only — no existence check needed for this stateless endpoint
     const { name } = request.params;
     request.log.info({ agent: name }, 'exit-classify request');
     const { logTail, elapsedSeconds, outputLineCount } = request.body;

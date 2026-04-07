@@ -31,7 +31,9 @@ const TOKEN_PATTERN =
  * for clean exits.
  */
 export function classifyExit(input: ClassifyExitInput): ClassifyExitResult {
-  const { logTail, elapsedSeconds, outputLineCount } = input;
+  const logTail = input.logTail;
+  const elapsedSeconds = Math.floor(input.elapsedSeconds);
+  const outputLineCount = Math.floor(input.outputLineCount);
 
   // Auth failure
   if (AUTH_PATTERN.test(logTail)) {

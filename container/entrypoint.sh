@@ -246,15 +246,8 @@ _detect_abnormal_exit() {
     local tmpfile
     tmpfile="$(mktemp)"
     trap 'rm -f "$tmpfile"' RETURN
-    python3 -c "
-import json, sys
-payload = {
-    'logTail': sys.stdin.read(),
-    'elapsedSeconds': int(sys.argv[1]),
-    'outputLineCount': int(sys.argv[2]),
-}
-json.dump(payload, sys.stdout)
-" "$elapsed" "$output_lines" < <(printf '%s' "$log_tail") > "$tmpfile" 2>/dev/null
+    jq -n --arg logTail "$log_tail" --argjson e "$elapsed" --argjson l "$output_lines" \
+        '{logTail: $logTail, elapsedSeconds: $e, outputLineCount: $l}' > "$tmpfile" 2>/dev/null
 
     # If JSON encoding failed, fall back to not-abnormal
     if [ ! -s "$tmpfile" ]; then
@@ -267,11 +260,10 @@ json.dump(payload, sys.stdout)
         --max-time 10 2>/dev/null)" || return 1
 
     local is_abnormal
-    # Python prints True/False for bools; normalize to lowercase for shell comparison
-    is_abnormal="$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(str(d.get('abnormal', False)).lower())" 2>/dev/null)" || return 1
+    is_abnormal="$(jq -r '.abnormal // false' <<< "$response")" || return 1
 
     if [ "$is_abnormal" = "true" ]; then
-        ABNORMAL_REASON="$(printf '%s' "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reason') or 'unknown')" 2>/dev/null)" || ABNORMAL_REASON="unknown"
+        ABNORMAL_REASON="$(jq -r '.reason // "unknown"' <<< "$response")" || ABNORMAL_REASON="unknown"
         return 0
     fi
 
@@ -283,31 +275,29 @@ _post_abnormal_shutdown_message() {
     local task_id="${2:-}"
     local tmpfile
     tmpfile=$(mktemp)
-    # Use python3 to safely JSON-encode values, avoiding shell injection
-    python3 -c "
-import json, sys
-agent = sys.argv[1]
-reason = sys.argv[2]
-task_id = sys.argv[3]
-channel = sys.argv[4]
-msg = f'Agent {agent} shut down abnormally: {reason}. Claimed task released. Uncommitted work discarded. Manual restart required.'
-payload = {
-    'channel': channel,
-    'type': 'abnormal_shutdown',
-    'payload': {
-        'agent': agent,
-        'reason': reason,
-        'taskId': task_id,
-        'message': msg,
-    },
-}
-json.dump(payload, sys.stdout)
-" "${AGENT_NAME}" "${reason}" "${task_id}" "${AGENT_NAME}" > "$tmpfile" 2>/dev/null
+    trap 'rm -f "$tmpfile"' RETURN
+    # Use jq to safely JSON-encode values, avoiding shell injection
+    local msg="Agent ${AGENT_NAME} shut down abnormally: ${reason}. Claimed task released. Uncommitted work discarded. Manual restart required."
+    jq -n \
+        --arg channel "${AGENT_NAME}" \
+        --arg agent "${AGENT_NAME}" \
+        --arg reason "$reason" \
+        --arg taskId "$task_id" \
+        --arg message "$msg" \
+        '{
+            channel: $channel,
+            type: "abnormal_shutdown",
+            payload: {
+                agent: $agent,
+                reason: $reason,
+                taskId: $taskId,
+                message: $message
+            }
+        }' > "$tmpfile" 2>/dev/null
     _curl_server -s -X POST "${SERVER_URL}/messages" \
         -H "Content-Type: application/json" \
         -d @"$tmpfile" \
         --max-time 10 >/dev/null 2>&1 || true
-    rm -f "$tmpfile"
 }
 
 _shutdown() {
