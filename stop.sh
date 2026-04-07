@@ -236,11 +236,19 @@ if [[ "$MODE" == "team" ]]; then
 
   # Signal all members before killing containers
   for member in "${_members[@]}"; do
+    if [[ ! "$member" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
+      echo "Warning: skipping member with unexpected name: $member" >&2
+      continue
+    fi
     signal_stop "$member"
   done
 
   stopped=0
   for member in "${_members[@]}"; do
+    if [[ ! "$member" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
+      echo "Warning: skipping member with unexpected name: $member" >&2
+      continue
+    fi
     echo "  Stopping claude-${member} ..."
     (cd "$SCRIPT_DIR/container" && \
       "${COMPOSE_CMD[@]}" --project-name "claude-${member}" down 2>/dev/null) || true
