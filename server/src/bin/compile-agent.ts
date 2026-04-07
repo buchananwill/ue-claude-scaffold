@@ -62,7 +62,7 @@ function parseArgs(argv: string[]): ParsedArgs {
         process.exit(1);
       }
       args.skillsDir = argv[i];
-    } else if (arg === '--dynamic-dir') {
+    } else if (arg === '--dynamic-dir') { // Extension over Python: allows explicit directory for sub-agent discovery
       i++;
       if (i >= argv.length) {
         process.stderr.write(`Error: ${arg} requires a value\n`);
@@ -112,6 +112,12 @@ function main(): void {
       console.log(`Nothing to clean — ${args.output} does not exist`);
     }
     return;
+  }
+
+  // Validate source path does not contain '..' to prevent path traversal
+  if (args.source && args.source.includes('..')) {
+    process.stderr.write('ERROR: source path must not contain \'..\'\n');
+    process.exit(1);
   }
 
   let sources: string[];
@@ -177,7 +183,7 @@ function main(): void {
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`Error: ${message}\n`);
+    process.stderr.write(`ERROR: ${message}\n`);
     process.exit(1);
   }
 

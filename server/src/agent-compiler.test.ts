@@ -101,9 +101,11 @@ describe('agent-compiler', () => {
       assert.equal(result, '---\ndesc: "has: colon"\n---\n');
     });
 
-    it('quotes strings with double quotes', () => {
+    it('quotes strings with double quotes — Python-compatible (no escaping)', () => {
+      // Python writes f'{key}: "{val}"' verbatim — interior double quotes are NOT escaped.
+      // This is a known Python-compatible limitation producing technically broken YAML.
       const result = serializeFrontmatter({ desc: 'has "quotes"' });
-      assert.equal(result, '---\ndesc: "has \\"quotes\\""\n---\n');
+      assert.equal(result, '---\ndesc: "has "quotes""\n---\n');
     });
   });
 
@@ -113,6 +115,53 @@ describe('agent-compiler', () => {
       const { meta } = parseFrontmatter(original + '\nBody\n');
       const serialized = serializeFrontmatter(meta);
       assert.equal(serialized, original);
+    });
+
+    it('colon-containing value round-trips correctly', () => {
+      const original = '---\ndesc: "value: with colon"\n---\n';
+      const { meta } = parseFrontmatter(original + '\nBody\n');
+      const serialized = serializeFrontmatter(meta);
+      assert.equal(serialized, original);
+    });
+
+    it('double-quote value round-trips only by accident (known Python-compatible limitation)', () => {
+      // Python's serialize_frontmatter does not escape interior double quotes,
+      // producing technically invalid YAML like: desc: "has "quotes""
+      // Our parser happens to recover the original value because it only strips
+      // the outermost quotes, but a strict YAML parser would reject this.
+      const meta = { desc: 'has "quotes"' };
+      const serialized = serializeFrontmatter(meta);
+      // Serialized form has unescaped interior quotes (broken YAML)
+      assert.equal(serialized, '---\ndesc: "has "quotes""\n---\n');
+      // Our lenient parser happens to recover the value — but this is fragile
+      const { meta: reparsed } = parseFrontmatter(serialized + '\nBody\n');
+      assert.equal(reparsed['desc'], 'has "quotes"');
+    });
+  });
+
+  describe('exact compiled output', () => {
+    it('asserts exact full content of compiled output (frontmatter + separator + body)', () => {
+      const skillsDir = makeDir('skills');
+      const outputDir = path.join(tmpDir, 'output');
+
+      writeFile('skills/only-skill/SKILL.md',
+        '---\nname: only-skill\ndescription: The only skill\n---\n\n# Only Skill\n\nSkill body here.\n');
+
+      const source = writeFile('dynamic/exact-agent.md',
+        '---\nname: exact-agent\nmodel: opus\nskills:\n  - only-skill\n---\n\nAgent preamble.\n');
+
+      compileAgent(source, outputDir, skillsDir);
+      const compiled = fs.readFileSync(path.join(outputDir, 'exact-agent.md'), 'utf-8');
+
+      const expected =
+        '---\nname: exact-agent\nmodel: opus\n---\n' +
+        '\n' +
+        'Agent preamble.\n' +
+        '\n' +
+        '# Only Skill\n' +
+        '\n' +
+        'Skill body here.\n';
+      assert.equal(compiled, expected);
     });
   });
 

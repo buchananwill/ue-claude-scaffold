@@ -104,9 +104,12 @@ export function serializeFrontmatter(meta: Record<string, string | string[]>): s
       // Inline list format for compactness
       const quoted = val.join(', ');
       lines.push(`${key}: [${quoted}]`);
+    // Note: single-quote values are not quoted, matching Python behavior
+    // Note: list items are not individually quoted, matching Python behavior
     } else if (typeof val === 'string' && (val.includes('\n') || val.includes(':') || val.includes('"'))) {
-      const escaped = val.replace(/"/g, '\\"');
-      lines.push(`${key}: "${escaped}"`);
+      // Python writes f'{key}: "{val}"' verbatim — no escaping of interior double quotes.
+      // We match this bug-for-bug for byte-identical output.
+      lines.push(`${key}: "${val}"`);
     } else {
       lines.push(`${key}: ${val}`);
     }

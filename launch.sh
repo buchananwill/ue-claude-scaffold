@@ -464,6 +464,8 @@ if [[ -d "$SCRIPT_DIR/dynamic-agents" && -f "$SCRIPT_DIR/dynamic-agents/${AGENT_
   if ! node "$SCRIPT_DIR/server/dist/bin/compile-agent.js" \
     "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" \
     -o "$COMPILED_AGENTS_DIR" \
+    --skills-dir "$SCRIPT_DIR/skills" \
+    --dynamic-dir "$SCRIPT_DIR/dynamic-agents" \
     --recursive; then
     echo "Error: Agent compilation failed for '${AGENT_TYPE}'. See above for details." >&2
     exit 1
