@@ -101,6 +101,12 @@ describe('agent-compiler', () => {
       assert.equal(result, '---\ndesc: "has: colon"\n---\n');
     });
 
+    it('does not quote list items containing colons (Python-compatible)', () => {
+      const meta = { tools: ['Read', 'init: setup', 'Bash'] };
+      const result = serializeFrontmatter(meta);
+      assert.equal(result, '---\ntools: [Read, init: setup, Bash]\n---\n');
+    });
+
     it('quotes strings with double quotes — Python-compatible (no escaping)', () => {
       // Python writes f'{key}: "{val}"' verbatim — interior double quotes are NOT escaped.
       // This is a known Python-compatible limitation producing technically broken YAML.

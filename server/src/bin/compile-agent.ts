@@ -73,7 +73,10 @@ function parseArgs(argv: string[]): ParsedArgs {
       args.recursive = true;
     } else if (arg === '--clean') {
       args.clean = true;
-    } else if (!arg.startsWith('-')) {
+    } else if (arg.startsWith('-')) {
+      process.stderr.write(`ERROR: unrecognized argument: ${arg}\n`);
+      process.exit(1);
+    } else {
       args.source = arg;
     }
     i++;
@@ -105,6 +108,11 @@ function main(): void {
   const args = parseArgs(process.argv.slice(2));
 
   if (args.clean) {
+    const resolvedOutput = path.resolve(args.output);
+    if (!resolvedOutput.startsWith(REPO_ROOT + path.sep) && resolvedOutput !== REPO_ROOT) {
+      process.stderr.write(`ERROR: --output path must be within the repository\n`);
+      process.exit(1);
+    }
     if (fs.existsSync(args.output)) {
       fs.rmSync(args.output, { recursive: true, force: true });
       console.log(`Removed ${args.output}`);
