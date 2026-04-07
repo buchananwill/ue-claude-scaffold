@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { classifyExit, type ClassifyExitInput, type ClassifyExitResult } from '../exit-classifier.js';
 
+// Stateless plugin — no config/opts needed (consistent with hooks, messages, files, etc.)
 const exitClassifyPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.post<{
     Params: { name: string };

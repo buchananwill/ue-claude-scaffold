@@ -238,25 +238,26 @@ _detect_abnormal_exit() {
         local now
         now=$(date +%s)
         elapsed=$((now - CLAUDE_START_TS))
+        (( elapsed < 0 )) && elapsed=0
     else
         elapsed=9999
     fi
 
-    # Build JSON payload using a tmpfile to avoid shell escaping issues
-    local tmpfile
-    tmpfile="$(mktemp)"
-    trap 'rm -f "$tmpfile"' RETURN
+    # Build JSON payload using a classify_tmpfile to avoid shell escaping issues
+    local classify_tmpfile
+    classify_tmpfile="$(mktemp)"
+    trap 'rm -f "$classify_tmpfile"' RETURN
     jq -n --arg logTail "$log_tail" --argjson e "$elapsed" --argjson l "$output_lines" \
-        '{logTail: $logTail, elapsedSeconds: $e, outputLineCount: $l}' > "$tmpfile" 2>/dev/null
+        '{logTail: $logTail, elapsedSeconds: $e, outputLineCount: $l}' > "$classify_tmpfile" 2>/dev/null
 
     # If JSON encoding failed, fall back to not-abnormal
-    if [ ! -s "$tmpfile" ]; then
+    if [ ! -s "$classify_tmpfile" ]; then
         return 1
     fi
 
     response="$(_curl_server -s -X POST "${SERVER_URL}/agents/${AGENT_NAME}/exit-classify" \
         -H "Content-Type: application/json" \
-        -d @"$tmpfile" \
+        -d @"$classify_tmpfile" \
         --max-time 10 2>/dev/null)" || return 1
 
     local is_abnormal
@@ -273,9 +274,9 @@ _detect_abnormal_exit() {
 _post_abnormal_shutdown_message() {
     local reason="$1"
     local task_id="${2:-}"
-    local tmpfile
-    tmpfile=$(mktemp)
-    trap 'rm -f "$tmpfile"' RETURN
+    local shutdown_tmpfile
+    shutdown_tmpfile=$(mktemp)
+    trap 'rm -f "$shutdown_tmpfile"' RETURN
     # Use jq to safely JSON-encode values, avoiding shell injection
     local msg="Agent ${AGENT_NAME} shut down abnormally: ${reason}. Claimed task released. Uncommitted work discarded. Manual restart required."
     jq -n \
@@ -293,10 +294,10 @@ _post_abnormal_shutdown_message() {
                 taskId: $taskId,
                 message: $message
             }
-        }' > "$tmpfile" 2>/dev/null
+        }' > "$shutdown_tmpfile" 2>/dev/null
     _curl_server -s -X POST "${SERVER_URL}/messages" \
         -H "Content-Type: application/json" \
-        -d @"$tmpfile" \
+        -d @"$shutdown_tmpfile" \
         --max-time 10 >/dev/null 2>&1 || true
 }
 
