@@ -103,6 +103,7 @@ while IFS= read -r member; do
     echo "Error: server returned invalid branch: $_BRANCH" >&2; exit 1
   fi
   _ROLE=$(echo "$member" | jq -r '.role')
+  # Spaces are intentionally allowed in role names (e.g. "team lead", "tech writer")
   if [[ ! "$_ROLE" =~ ^[a-zA-Z0-9\ _-]{1,128}$ ]]; then
     echo "Error: server returned invalid role: $_ROLE" >&2; exit 1
   fi

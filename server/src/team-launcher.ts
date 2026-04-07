@@ -104,6 +104,7 @@ export function loadTeamDef(teamsDir: string, teamId: string): TeamDef {
     throw new Error(`Invalid team definition JSON: ${msg}`);
   }
 
+  // Cast is validated by the structural checks below
   const def = raw as TeamDef;
   if (!def.id || !def.name || !Array.isArray(def.members) || def.members.length === 0) {
     throw new Error(`Team definition is missing required fields (id, name, members)`);
@@ -133,6 +134,9 @@ export function loadTeamDef(teamsDir: string, teamId: string): TeamDef {
       throw new Error(`Team member '${m.agentName}' has invalid agentType '${m.agentType}' — must match ^[a-zA-Z0-9_-]{1,64}$`);
     }
     if (!m.role) throw new Error(`Team member '${m.agentName}' missing required field: role`);
+    if (!/^[a-zA-Z0-9 _-]{1,128}$/.test(m.role)) {
+      throw new Error(`Team member '${m.agentName}' role '${m.role}' contains invalid characters (only alphanumeric, spaces, underscores, hyphens allowed)`);
+    }
   }
 
   return def;

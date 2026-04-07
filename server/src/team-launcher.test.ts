@@ -123,6 +123,34 @@ describe('loadTeamDef', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('throws on role with invalid characters', () => {
+    const dir = createTeamsDir('bad-role', {
+      id: 'bad-role',
+      name: 'Bad Role',
+      members: [
+        { agentName: 'agent-1', role: 'Tech Lead (Architecture)', agentType: 'orchestrator', isLeader: true },
+      ],
+    });
+    assert.throws(
+      () => loadTeamDef(dir, 'bad-role'),
+      /contains invalid characters/,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('accepts role with spaces', () => {
+    const dir = createTeamsDir('space-role', {
+      id: 'space-role',
+      name: 'Space Role',
+      members: [
+        { agentName: 'agent-1', role: 'team lead', agentType: 'orchestrator', isLeader: true },
+      ],
+    });
+    const def = loadTeamDef(dir, 'space-role');
+    assert.equal(def.members[0].role, 'team lead');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('throws when no leader is present', () => {
     const dir = createTeamsDir('no-leader', {
       id: 'no-leader',
