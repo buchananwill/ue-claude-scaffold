@@ -7,6 +7,7 @@ tools: [Agent, Read, Glob, Grep, Bash]
 skills:
   - action-boundary
   - commit-discipline
+  - ue-engine-mount
   - orchestrator-phase-protocol
   - orchestrator-system-wiring
   - orchestrator-message-discipline

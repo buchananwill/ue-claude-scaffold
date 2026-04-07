@@ -21,11 +21,12 @@ Use curl via the Bash tool:
 curl -s -X POST "${SERVER_URL}/messages" \
   -H "Content-Type: application/json" \
   -H "X-Agent-Name: ${AGENT_NAME}" \
+  -H "X-Project-Id: ${PROJECT_ID}" \
   -d '{"channel":"general","type":"status_update","payload":{"message":"[YOUR-ROLE] Status message here."}}' \
   --max-time 5 >/dev/null 2>&1 || true
 ```
 
-`SERVER_URL` and `AGENT_NAME` are environment variables already set in the container. The `|| true` makes the call non-fatal.
+`SERVER_URL`, `AGENT_NAME`, and `PROJECT_ID` are environment variables already set in the container. The `X-Project-Id` header is REQUIRED — without it the server scopes the message to the `default` project and the operator will not see it on their dashboard. The `|| true` makes the call non-fatal.
 
 ## Smoke Test — First Message
 
@@ -35,6 +36,7 @@ Your very first action, before reading the plan or doing any work, is to post a 
 curl -sf -X POST "${SERVER_URL}/messages" \
   -H "Content-Type: application/json" \
   -H "X-Agent-Name: ${AGENT_NAME}" \
+  -H "X-Project-Id: ${PROJECT_ID}" \
   -d '{"channel":"general","type":"status_update","payload":{"message":"[YOUR-ROLE] Agent online. Beginning work."}}' \
   --max-time 5
 ```

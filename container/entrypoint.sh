@@ -497,10 +497,6 @@ poll_and_claim_task() {
 
 TASK_PROMPT=""
 
-# Inject verbosity directive
-TASK_PROMPT="${TASK_PROMPT}LOG_VERBOSITY: ${LOG_VERBOSITY}
-"
-
 # Inject chat room and team role if set
 if [ -n "${CHAT_ROOM:-}" ]; then
     TASK_PROMPT="${TASK_PROMPT}CHAT_ROOM: ${CHAT_ROOM}

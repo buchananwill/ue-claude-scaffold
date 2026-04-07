@@ -10,6 +10,7 @@ skills:
   - container-build-routing
   - container-git-build-intercept
   - tdd-implementation-loop
+  - ue-engine-mount
   - ue-cpp-style
   - ue-correctness
   - ue-safety

@@ -10,6 +10,7 @@ skills:
   - container-build-routing
   - container-git-build-intercept
   - commit-discipline
+  - ue-engine-mount
   - ue-cpp-style
   - test-format-schema
   - project-test-knowledge

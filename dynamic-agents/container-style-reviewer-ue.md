@@ -7,6 +7,7 @@ tools: [Read, Glob, Grep, Bash]
 skills:
   - action-boundary
   - review-process
+  - ue-engine-mount
   - ue-cpp-style
   - lint-hook-awareness
   - review-output-schema

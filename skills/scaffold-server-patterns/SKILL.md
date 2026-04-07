@@ -58,9 +58,11 @@ db.prepare('INSERT INTO messages (channel, body) VALUES (?, ?)').run(channel, bo
 db.prepare(`SELECT * FROM agents WHERE name = '${name}'`).get()
 ```
 
-## Agent Identification
+## Agent and Project Identification
 
 Agents identify themselves via the `X-Agent-Name` HTTP header on requests to the coordination server. Routes that need agent context read this header.
+
+Every request must also carry an `X-Project-Id` header. The `project-id` plugin (`server/src/plugins/project-id.ts`) reads this header in a `preHandler` hook and decorates `request.projectId`. A missing header defaults to `'default'`, which silently scopes the request to the wrong project — write any new client (curl example, hook, MCP server) so it always sets `X-Project-Id` from the container's `PROJECT_ID` env var.
 
 ## Error Helpers
 

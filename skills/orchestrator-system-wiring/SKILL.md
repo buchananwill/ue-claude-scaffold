@@ -4,6 +4,8 @@ description: Use for the UE container orchestrator. Defines the UE agent resolut
 axis: environment
 ---
 
+***ACCESS SCOPE: ubt-build-hook-interceptor***
+
 # Orchestrator System Wiring
 
 Agent resolution for the UE container orchestrator — which sub-agents to delegate to and their mandates.
