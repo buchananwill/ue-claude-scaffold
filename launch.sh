@@ -9,112 +9,20 @@ if ! command -v jq &>/dev/null; then
     exit 1
 fi
 
-# ── Usage ────────────────────────────────────────────────────────────────────
-usage() {
-  cat <<'USAGE'
-Usage: ./launch.sh [OPTIONS]
+# ── Source libraries ─────────────────────────────────────────────────────────
+source "$SCRIPT_DIR/scripts/lib/parse-launch-args.sh"
+source "$SCRIPT_DIR/scripts/lib/compose-detect.sh"
+source "$SCRIPT_DIR/scripts/lib/resolve-config.sh"
+source "$SCRIPT_DIR/scripts/lib/resolve-hooks.sh"
+source "$SCRIPT_DIR/scripts/lib/compile-agents.sh"
+source "$SCRIPT_DIR/scripts/lib/branch-setup.sh"
+source "$SCRIPT_DIR/scripts/lib/launch-container.sh"
+source "$SCRIPT_DIR/scripts/lib/print-resolved-config.sh"
 
-Launch a containerized Claude Code agent against your Unreal Engine project.
+# ── Parse CLI ────────────────────────────────────────────────────────────────
+_parse_launch_args "$@"
 
-Options:
-  --agent-name NAME   Agent identifier (default: from .env or "agent-1")
-  --agent-type TYPE   Agent type (required: set in .env, scaffold.config.json, or here)
-  --project ID        Project identifier for multi-project configs (default: "default")
-  --verbosity LEVEL   Message board verbosity: quiet, normal, verbose (default: normal)
-  --worker            Run in task-queue worker mode (no plan file needed)
-  --pump              Run in pump mode (multi-task worker with claim-next)
-  --parallel N        Launch N parallel pump agents (implies --pump)
-  --fresh             Reset agent branch to docker/current-root HEAD (clean start)
-  --team TEAM_ID      Launch a design team (reads teams/<TEAM_ID>.json)
-  --brief PATH        Repo-relative path to a brief file (required with --team)
-  --prompt TEXT       Pass a direct prompt to the agent (bypasses task queue)
-  --dry-run           Print resolved configuration and exit without launching
-  --hooks             Force all hooks enabled (build intercept + C++ lint)
-  --no-hooks          Force all hooks disabled
-  --help              Show this help message and exit
-
-Branch is docker/{project-id}/{agent-name}, forked from docker/{project-id}/current-root.
-
-Examples:
-  ./launch.sh --agent-name agent-2 --worker
-  ./launch.sh --worker --agent-name worker-1
-  ./launch.sh --pump --agent-name pump-1
-  ./launch.sh --verbosity verbose
-  ./launch.sh --parallel 3
-  ./launch.sh --team design-team-1 --brief Notes/docker-claude/briefs/inventory.md
-  ./launch.sh --dry-run
-USAGE
-}
-
-# ── Parse CLI flags ──────────────────────────────────────────────────────────
-_CLI_AGENT_NAME=""
-_CLI_AGENT_TYPE=""
-_CLI_VERBOSITY=""
-_CLI_DRY_RUN=false
-_CLI_WORKER=false
-_CLI_PUMP=false
-_CLI_FRESH=false
-_CLI_PARALLEL=0
-_CLI_PROJECT=""
-_CLI_TEAM=""
-_CLI_BRIEF=""
-_CLI_HOOK_BUILD=""
-_CLI_HOOK_LINT=""
-_CLI_PROMPT=""
-_CLI_NO_AGENT=false
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --agent-name)
-      _CLI_AGENT_NAME="$2"; shift 2 ;;
-    --agent-type)
-      _CLI_AGENT_TYPE="$2"; shift 2 ;;
-    --verbosity)
-      _CLI_VERBOSITY="$2"; shift 2 ;;
-    --worker)
-      _CLI_WORKER=true; shift ;;
-    --pump)
-      _CLI_PUMP=true; shift ;;
-    --parallel)
-      _CLI_PARALLEL="$2"; shift 2 ;;
-    --fresh)
-      _CLI_FRESH=true; shift ;;
-    --project)
-      _CLI_PROJECT="$2"; shift 2 ;;
-    --team)
-      _CLI_TEAM="$2"; shift 2
-      if [[ ! "$_CLI_TEAM" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        echo "Error: --team value contains invalid characters: $_CLI_TEAM" >&2
-        exit 1
-      fi
-      ;;
-    --brief)
-      _CLI_BRIEF="$2"; shift 2
-      if [[ "$_CLI_BRIEF" == /* || "$_CLI_BRIEF" == *..* ]]; then
-        echo "Error: --brief must be a relative repo path without '..' components" >&2
-        exit 1
-      fi
-      ;;
-    --hooks)
-      _CLI_HOOK_BUILD="true"; _CLI_HOOK_LINT="true"; shift ;;
-    --no-hooks)
-      _CLI_HOOK_BUILD="false"; _CLI_HOOK_LINT="false"; shift ;;
-    --prompt)
-      _CLI_PROMPT="$2"; shift 2 ;;
-    --no-agent)
-      _CLI_NO_AGENT=true; shift ;;
-    --dry-run)
-      _CLI_DRY_RUN=true; shift ;;
-    --help)
-      usage; exit 0 ;;
-    *)
-      echo "Unknown option: $1" >&2
-      usage >&2
-      exit 1 ;;
-  esac
-done
-
-# ── Load .env (secrets and per-launch params only) ────────────────────────────
+# ── Load .env ────────────────────────────────────────────────────────────────
 if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
   echo "Error: .env not found at $SCRIPT_DIR/.env" >&2
   exit 1
@@ -124,380 +32,46 @@ set -a
 source "$SCRIPT_DIR/.env"
 set +a
 
-# ── Read structural config from scaffold.config.json ─────────────────────────
-if [[ ! -f "$SCRIPT_DIR/scaffold.config.json" ]]; then
-  echo "Error: scaffold.config.json not found at $SCRIPT_DIR/scaffold.config.json" >&2
-  echo "Run ./setup.sh or copy scaffold.config.example.json and configure it." >&2
-  exit 1
-fi
-
-_cfg="$SCRIPT_DIR/scaffold.config.json"
-
-# ── Resolve PROJECT_ID ─────────────────────────────────────────────────────
+# ── Resolve project config ──────────────────────────────────────────────────
 PROJECT_ID="${_CLI_PROJECT:-default}"
+_validate_identifier "PROJECT_ID" "$PROJECT_ID" || exit 1
 
-# Validate PROJECT_ID format
-if [[ ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-  echo "Error: PROJECT_ID contains invalid characters: $PROJECT_ID" >&2
-  echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
-  exit 1
-fi
-if [[ ${#PROJECT_ID} -gt 64 ]]; then
-  echo "Error: PROJECT_ID must be at most 64 characters" >&2; exit 1
-fi
-
-_validate_hook_values() {
-    local label="$1"; shift
-    for _hv in "$@"; do
-        case "$_hv" in
-            true|false|"") ;;
-            *) echo "Error: hooks values in $label must be true or false, got '$_hv'" >&2; exit 1 ;;
-        esac
-    done
-}
-
-# ── Resolve project config from scaffold.config.json ───────────────────────
-PROJECT_HOOK_BUILD=""
-PROJECT_HOOK_LINT=""
-PROJECT_AGENT_TYPE=""
-
-if jq -e --arg id "$PROJECT_ID" '.projects[$id]' "$_cfg" >/dev/null 2>&1; then
-  # Multi-project mode: read from projects map
-  BARE_REPO_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].bareRepoPath // empty' "$_cfg")
-  PROJECT_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].path // empty' "$_cfg")
-  UE_ENGINE_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].engine.path // empty' "$_cfg")
-  SERVER_PORT=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].serverPort // .server.port // 9100' "$_cfg")
-  _raw_build=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.scriptPath // .build.scriptPath // "build.py"' "$_cfg")
-  BUILD_SCRIPT_NAME=$(basename "$_raw_build")
-  _raw_test=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.testScriptPath // .build.testScriptPath // "run_tests.py"' "$_cfg")
-  TEST_SCRIPT_NAME=$(basename "$_raw_test")
-  DEFAULT_TEST_FILTERS=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].build.defaultTestFilters // .build.defaultTestFilters // [] | if type == "array" then join(" ") else . end' "$_cfg")
-  LOGS_PATH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].logsPath // empty' "$_cfg")
-  PROJECT_HOOK_BUILD=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].hooks.buildIntercept // empty' "$_cfg")
-  PROJECT_HOOK_LINT=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].hooks.cppLint // empty' "$_cfg")
-  PROJECT_AGENT_TYPE=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].agentType // empty' "$_cfg")
-  PROJECT_SEED_BRANCH=$(jq -r --arg id "$PROJECT_ID" '.projects[$id].seedBranch // empty' "$_cfg")
-elif [[ "$PROJECT_ID" == "default" ]]; then
-  # Legacy mode: read from top-level fields (existing code)
-  UE_ENGINE_PATH="$(jq -r '.engine.path // empty' "$_cfg")"
-  PROJECT_PATH="$(jq -r '.project.path // empty' "$_cfg")"
-  BARE_REPO_PATH="$(jq -r '.server.bareRepoPath // empty' "$_cfg")"
-  SERVER_PORT="$(jq -r '.server.port // 9100' "$_cfg")"
-  _raw_build="$(jq -r '.build.scriptPath // "build.py"' "$_cfg")"
-  BUILD_SCRIPT_NAME="$(basename "$_raw_build")"
-  _raw_test="$(jq -r '.build.testScriptPath // "run_tests.py"' "$_cfg")"
-  TEST_SCRIPT_NAME="$(basename "$_raw_test")"
-  DEFAULT_TEST_FILTERS="$(jq -r '.build.defaultTestFilters // [] | join(" ")' "$_cfg")"
-  LOGS_PATH="$(jq -r '.logs.path // empty' "$_cfg")"
-  PROJECT_HOOK_BUILD=$(jq -r '.hooks.buildIntercept // empty' "$_cfg")
-  PROJECT_HOOK_LINT=$(jq -r '.hooks.cppLint // empty' "$_cfg")
-  PROJECT_SEED_BRANCH=$(jq -r '.tasks.seedBranch // empty' "$_cfg")
-else
-  # --project was specified but ID not found in projects map
-  _available=$(jq -r '.projects // {} | keys | join(", ")' "$_cfg")
-  echo "Error: Project '$PROJECT_ID' not found in scaffold.config.json." >&2
-  if [[ -n "$_available" ]]; then
-    echo "Available projects: $_available" >&2
-  else
-    echo "No projects defined. Add a 'projects' map to scaffold.config.json or omit --project." >&2
-  fi
-  exit 1
-fi
-
-# Validate project-level hook values from config
-_validate_hook_values "scaffold.config.json" "$PROJECT_HOOK_BUILD" "$PROJECT_HOOK_LINT"
-
-if [ -z "$LOGS_PATH" ]; then
-    LOGS_PATH="$SCRIPT_DIR/logs"
-fi
-mkdir -p "$LOGS_PATH"
+_resolve_project_config "$SCRIPT_DIR" "$PROJECT_ID"
+_resolve_agent_vars
+_validate_required_config "$SCRIPT_DIR/scaffold.config.json"
 
 export BARE_REPO_PATH UE_ENGINE_PATH PROJECT_PATH CLAUDE_CREDENTIALS_PATH SERVER_PORT LOGS_PATH PROJECT_ID
 
-# ── Apply CLI overrides ─────────────────────────────────────────────────────
-AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
-if [ "$_CLI_NO_AGENT" = "true" ]; then
-  AGENT_TYPE=""
-elif [[ -n "$_CLI_TEAM" ]]; then
-  # Team mode: AGENT_TYPE is per-member from the server response, not required here
-  AGENT_TYPE="${_CLI_AGENT_TYPE:-${PROJECT_AGENT_TYPE:-${AGENT_TYPE:-}}}"
-else
-  AGENT_TYPE="${_CLI_AGENT_TYPE:-${PROJECT_AGENT_TYPE:-${AGENT_TYPE:-}}}"
-  if [ -z "$AGENT_TYPE" ]; then
-    echo "Error: AGENT_TYPE is not set. Set it in .env, scaffold.config.json, or pass --agent-type." >&2
-    exit 1
-  fi
-fi
-
-# ── Validate AGENT_NAME and AGENT_TYPE (prevent path traversal) ────────────
-if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-  echo "Error: AGENT_NAME contains invalid characters: $AGENT_NAME" >&2
-  echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
-  exit 1
-fi
-if [[ -n "$AGENT_TYPE" && ! "$AGENT_TYPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-  echo "Error: AGENT_TYPE contains invalid characters: $AGENT_TYPE" >&2
-  echo "Only alphanumeric characters, hyphens, and underscores are allowed." >&2
-  exit 1
-fi
-MAX_TURNS="${MAX_TURNS:-200}"
-# --parallel implies pump mode
-if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
-    _CLI_PUMP=true
-fi
-
-if [ "$_CLI_PUMP" = "true" ]; then
-    WORKER_MODE=true
-    WORKER_SINGLE_TASK=false
-    AGENT_MODE=pump
-elif [ "$_CLI_WORKER" = "true" ]; then
-    WORKER_MODE=true
-else
-    WORKER_MODE="${WORKER_MODE:-false}"
-fi
-AGENT_MODE="${AGENT_MODE:-single}"
-WORKER_POLL_INTERVAL="${WORKER_POLL_INTERVAL:-30}"
-WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
-LOG_VERBOSITY="${_CLI_VERBOSITY:-${LOG_VERBOSITY:-normal}}"
-
-# ── Compute branch names ─────────────────────────────────────────────────────
-AGENT_BRANCH="docker/${PROJECT_ID}/${AGENT_NAME}"
-_default_root="${PROJECT_SEED_BRANCH:-docker/${PROJECT_ID}/current-root}"
-ROOT_BRANCH="${ROOT_BRANCH:-$_default_root}"
-WORK_BRANCH="$AGENT_BRANCH"
-
-if [[ "$ROOT_BRANCH" != "$_default_root" ]]; then
-  echo "Warning: ROOT_BRANCH overridden via environment to '$ROOT_BRANCH' (config default: '$_default_root')" >&2
-fi
-
-if [[ -n "$ROOT_BRANCH" ]] && { [[ "$ROOT_BRANCH" =~ \.\. ]] || [[ ! "$ROOT_BRANCH" =~ ^[a-zA-Z0-9/_.-]{1,200}$ ]]; }; then
-  echo "Error: ROOT_BRANCH value '$ROOT_BRANCH' is not a valid git branch name" >&2
-  exit 1
-fi
-
-# Validate verbosity
-case "$LOG_VERBOSITY" in
-  quiet|normal|verbose) ;;
-  *)
-    echo "Error: --verbosity must be quiet, normal, or verbose (got '$LOG_VERBOSITY')" >&2
-    exit 1 ;;
-esac
-
-# ── Validate required vars ───────────────────────────────────────────────────
-_errors=()
-if [[ -z "${BARE_REPO_PATH:-}" ]]; then
-  _errors+=("BARE_REPO_PATH is not set. Set it in scaffold.config.json.")
-fi
-# UE_ENGINE_PATH is only required when the project declares an engine config
-if [[ -z "${UE_ENGINE_PATH:-}" ]]; then
-  _has_engine=false
-  if jq -e --arg id "$PROJECT_ID" '.projects[$id].engine' "$_cfg" >/dev/null 2>&1; then
-    _has_engine=true
-  elif [[ "$PROJECT_ID" == "default" ]] && jq -e '.engine.path // empty | select(. != "")' "$_cfg" >/dev/null 2>&1; then
-    _has_engine=true
-  fi
-  if [[ "$_has_engine" == true ]]; then
-    _errors+=("UE_ENGINE_PATH is not set. Set engine.path in scaffold.config.json.")
-  fi
-fi
-
-if [[ ${#_errors[@]} -gt 0 ]]; then
-  echo "Configuration errors:" >&2
-  for err in "${_errors[@]}"; do
-    echo "  - $err" >&2
-  done
-  exit 1
-fi
-
 # ── Detect docker compose ───────────────────────────────────────────────────
-COMPOSE_CMD=""
-if docker compose version &>/dev/null; then
-  COMPOSE_CMD="docker compose"
-elif docker-compose --version &>/dev/null; then
-  COMPOSE_CMD="docker-compose"
-else
-  echo "Error: Neither 'docker compose' nor 'docker-compose' found." >&2
-  exit 1
+_detect_compose || exit 1
+
+# ── Resolve hooks ────────────────────────────────────────────────────────────
+if [[ -n "$_CLI_TEAM" && -f "$SCRIPT_DIR/teams/${_CLI_TEAM}.json" ]]; then
+  TEAM_DEF="$SCRIPT_DIR/teams/${_CLI_TEAM}.json"
 fi
-
-# ── Hook resolution ─────────────────────────────────────────────────────────
-_resolve_hook_value() {
-    local result="$1"   # system default
-    [ -n "$2" ] && result="$2"   # project override
-    [ -n "$3" ] && result="$3"   # team override
-    [ -n "$4" ] && result="$4"   # member override
-    [ -n "$5" ] && result="$5"   # CLI override
-    echo "$result"
-}
-
-resolve_hooks() {
-    local member_json="${1:-}"
-
-    # System default: buildIntercept is true if project has a build script
-    local sys_build="false"
-    local _has_build_script=""
-    if jq -e --arg id "$PROJECT_ID" \
-        '(.projects[$id].build.scriptPath // .build.scriptPath // empty) | select(. != "")' \
-        "$_cfg" >/dev/null 2>&1; then
-        _has_build_script="true"
-    fi
-    [ "$_has_build_script" = "true" ] && sys_build="true"
-    local sys_lint="false"
-
-    # Team-level overrides (only in team launch mode)
-    local team_build="" team_lint=""
-    if [ -n "${TEAM_DEF:-}" ] && [ -f "${TEAM_DEF:-}" ]; then
-        team_build=$(jq -r '.hooks.buildIntercept // empty' "$TEAM_DEF")
-        team_lint=$(jq -r '.hooks.cppLint // empty' "$TEAM_DEF")
-    fi
-
-    # Validate team hook values
-    _validate_hook_values "team definition" "$team_build" "$team_lint"
-
-    # Per-member overrides
-    local member_build="" member_lint=""
-    if [ -n "$member_json" ]; then
-        member_build=$(echo "$member_json" | jq -r '.hooks.buildIntercept // empty')
-        member_lint=$(echo "$member_json" | jq -r '.hooks.cppLint // empty')
-    fi
-
-    # Validate member hook values
-    _validate_hook_values "member definition" "$member_build" "$member_lint"
-
-    # Resolve cascade: system -> project -> team -> member -> CLI
-    HOOK_BUILD_INTERCEPT=$(_resolve_hook_value "$sys_build" "$PROJECT_HOOK_BUILD" "$team_build" "$member_build" "${_CLI_HOOK_BUILD:-}")
-    HOOK_CPP_LINT=$(_resolve_hook_value "$sys_lint" "$PROJECT_HOOK_LINT" "$team_lint" "$member_lint" "${_CLI_HOOK_LINT:-}")
-}
-
-# ── Container launch helper ─────────────────────────────────────────────────
-# Usage: _launch_container <agent_name> [ENV_OVERRIDES...]
-# All env overrides are passed as VAR=VALUE arguments after the agent name.
-# The function handles the docker compose invocation with the project name.
-_launch_container() {
-  local _lc_agent="$1"; shift
-  local _lc_project_name="claude-${PROJECT_ID}-${_lc_agent}"
-
-  # Build env array from remaining arguments
-  local _lc_env=("$@")
-
-  (cd "$SCRIPT_DIR/container" && env "${_lc_env[@]}" \
-    $COMPOSE_CMD --project-name "$_lc_project_name" up --build --detach)
-}
+_resolve_hooks ""
 
 # ── Dry run ──────────────────────────────────────────────────────────────────
 if [[ "$_CLI_DRY_RUN" == true ]]; then
-  if [[ -n "$_CLI_TEAM" ]]; then
-    if [[ -f "$SCRIPT_DIR/teams/${_CLI_TEAM}.json" ]]; then
-      TEAM_DEF="$SCRIPT_DIR/teams/${_CLI_TEAM}.json"
-    else
-      echo "Warning: Team file not found: $SCRIPT_DIR/teams/${_CLI_TEAM}.json (team hooks will not be applied)" >&2
-    fi
-  fi
-  resolve_hooks ""
-  echo ""
-  echo "=== Dry Run — Resolved Configuration ==="
-  echo "  AGENT_NAME:       $AGENT_NAME"
-  echo "  AGENT_BRANCH:     $AGENT_BRANCH"
-  echo "  ROOT_BRANCH:      $ROOT_BRANCH"
-  echo "  WORK_BRANCH:      $WORK_BRANCH"
-  echo "  AGENT_TYPE:       $AGENT_TYPE"
-  echo "  PROJECT_ID:       $PROJECT_ID"
-  if [[ -d "$SCRIPT_DIR/dynamic-agents" && -f "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" ]]; then
-    echo "  AGENT_COMPILED:   yes (dynamic-agents/${AGENT_TYPE}.md)"
-    # List other dynamic agents as potential sub-agents
-    _sub_agents=()
-    for _candidate in "$SCRIPT_DIR"/dynamic-agents/*.md; do
-      _cname="$(basename "${_candidate%.md}")"
-      if [[ "$_cname" != "$AGENT_TYPE" ]]; then
-        _sub_agents+=("$_cname")
-      fi
-    done
-    if [[ ${#_sub_agents[@]} -gt 0 ]]; then
-      _sub_list=$(IFS=', '; echo "${_sub_agents[*]}")
-      echo "  SUB_AGENT_CANDIDATES: $_sub_list"
-    fi
-  else
-    echo "  AGENT_COMPILED:   no (static agents fallback)"
-  fi
-  echo "  MAX_TURNS:        $MAX_TURNS"
-  echo "  BARE_REPO_PATH:   $BARE_REPO_PATH"
-  echo "  UE_ENGINE_PATH:   $UE_ENGINE_PATH"
-  echo "  SERVER_PORT:      ${SERVER_PORT:-9100}"
-  echo "  WORKER_MODE:      $WORKER_MODE"
-  echo "  WORKER_POLL_INT:  $WORKER_POLL_INTERVAL"
-  echo "  WORKER_SINGLE:    $WORKER_SINGLE_TASK"
-  echo "  AGENT_MODE:       $AGENT_MODE"
-  echo "  LOG_VERBOSITY:    $LOG_VERBOSITY"
-  echo "  PARALLEL:         $_CLI_PARALLEL"
-  echo "  FRESH:            $_CLI_FRESH"
-  echo "  HOOKS:"
-  echo "    buildIntercept: $HOOK_BUILD_INTERCEPT"
-  echo "    cppLint:        $HOOK_CPP_LINT"
-  if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
-    echo ""
-    echo "Parallel agent branches:"
-    for i in $(seq 1 "$_CLI_PARALLEL"); do
-      echo "  agent-${i} → docker/${PROJECT_ID}/agent-${i}"
-    done
-  fi
-  echo ""
+  echo "=== Dry Run ==="
+  _print_resolved_config
   exit 0
 fi
 
-# ── Check coordination server ────────────────────────────────────────────────
+# ── Check coordination server ───────────────────────────────────────────────
 if ! curl -sf "http://localhost:${SERVER_PORT:-9100}/health" >/dev/null 2>&1; then
   echo "Error: Coordination server is not running on port ${SERVER_PORT:-9100}." >&2
   echo "Start the coordination server first: cd server && npm run dev" >&2
   exit 1
 fi
 
-# ── Compile dynamic agents ─────────────────────────────────────────────────
-# Compile agents before team-mode/launch checks because team mode exits early
-# and needs AGENTS_PATH. The rm -rf is safe because containers snapshot agents
-# from /staged-agents into their own filesystem at startup (entrypoint.sh).
-COMPILED_AGENTS_DIR="$SCRIPT_DIR/.compiled-agents"
-[[ -n "$COMPILED_AGENTS_DIR" && "$COMPILED_AGENTS_DIR" == "$SCRIPT_DIR/"* ]] || {
-  echo "Error: unsafe COMPILED_AGENTS_DIR: $COMPILED_AGENTS_DIR" >&2
-  exit 1
-}
-rm -rf "$COMPILED_AGENTS_DIR"
-mkdir -p "$COMPILED_AGENTS_DIR"
+# ── Compile dynamic agents ──────────────────────────────────────────────────
+_team_flag=""
+[[ -n "$_CLI_TEAM" ]] && _team_flag="--team"
+_compile_agents "$SCRIPT_DIR" "$AGENT_TYPE" "$_team_flag"
+export AGENTS_PATH
 
-if [[ ! -f "$SCRIPT_DIR/server/dist/bin/compile-agent.js" ]]; then
-  echo "Error: compile-agent.js not found at $SCRIPT_DIR/server/dist/bin/" >&2
-  echo "  Run 'cd server && npm run build' first." >&2
-  exit 1
-fi
-
-# In team mode, AGENT_TYPE may be empty — skip compilation of dynamic agents
-if [[ -n "$AGENT_TYPE" && -d "$SCRIPT_DIR/dynamic-agents" && -f "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" ]]; then
-  echo "Compiling dynamic agent: ${AGENT_TYPE}..."
-  if ! node "$SCRIPT_DIR/server/dist/bin/compile-agent.js" \
-    "$SCRIPT_DIR/dynamic-agents/${AGENT_TYPE}.md" \
-    -o "$COMPILED_AGENTS_DIR" \
-    --skills-dir "$SCRIPT_DIR/skills" \
-    --dynamic-dir "$SCRIPT_DIR/dynamic-agents" \
-    --recursive; then
-    echo "Error: Agent compilation failed for '${AGENT_TYPE}'. See above for details." >&2
-    exit 1
-  fi
-else
-  # Fallback: copy static agents directory (legacy behaviour)
-  if [[ -d "$SCRIPT_DIR/agents" ]]; then
-    cp "$SCRIPT_DIR/agents/"*.md "$COMPILED_AGENTS_DIR/" 2>/dev/null || true
-  fi
-  # Warn if no agent files ended up in the output directory (not an error in team mode)
-  if [[ -z "$_CLI_TEAM" ]] && ! ls "$COMPILED_AGENTS_DIR"/*.md &>/dev/null; then
-    echo "Warning: No .md agent files found in compiled agents directory." >&2
-    echo "  The container may still work if agents are provided from another source." >&2
-  fi
-fi
-
-export AGENTS_PATH="$COMPILED_AGENTS_DIR"
-
-# ── Team mode ───────────────────────────────────────────────────────────────
-# Delegates to scripts/launch-team.sh which calls POST /teams/:id/launch
-# on the coordination server, then launches containers from the response.
+# ── Team mode — delegate to scripts/launch-team.sh ──────────────────────────
 if [[ -n "$_CLI_TEAM" ]]; then
   export _CLI_TEAM _CLI_BRIEF PROJECT_ID SERVER_PORT SCRIPT_DIR
   export BARE_REPO_PATH UE_ENGINE_PATH CLAUDE_CREDENTIALS_PATH AGENTS_PATH
@@ -514,121 +88,26 @@ if [[ "$_agent_status" == "active" ]]; then
   exit 1
 fi
 
-# ── Stop existing container if running ──────────────────────────────────────
-(
-  cd "$SCRIPT_DIR/container"
-  $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${AGENT_NAME}" down 2>/dev/null || true
-)
+# ── Stop existing container ─────────────────────────────────────────────────
+(cd "$SCRIPT_DIR/container" && \
+  $COMPOSE_CMD --project-name "$(_compose_project_name "$PROJECT_ID" "$AGENT_NAME")" down 2>/dev/null) || true
 
-# ── Branch setup in persistent bare repo ────────────────────────────────────
-
-# Helper: set up a branch in the bare repo (fresh reset, create, or resume).
-# Usage: _setup_branch <branch_name> <fresh_flag>
-_setup_branch() {
-  local branch="$1"
-  local fresh="$2"
-
-  if [ "$fresh" = "true" ]; then
-    local root_sha
-    root_sha=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
-    git -C "$BARE_REPO_PATH" update-ref "refs/heads/${branch}" "$root_sha"
-    echo "  Reset branch ${branch} to ${ROOT_BRANCH} (--fresh)"
-  elif ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${branch}" &>/dev/null; then
-    local root_sha
-    root_sha=$(git -C "$BARE_REPO_PATH" rev-parse "refs/heads/${ROOT_BRANCH}")
-    git -C "$BARE_REPO_PATH" update-ref "refs/heads/${branch}" "$root_sha"
-    echo "  Created branch ${branch} from ${ROOT_BRANCH}"
-  else
-    echo "  Resuming existing branch ${branch}"
-  fi
-}
-
-if [[ ! -d "$BARE_REPO_PATH" ]]; then
-  echo "Error: Bare repo not found at $BARE_REPO_PATH" >&2
-  echo "Run ./setup.sh to create it, or create it manually:" >&2
-  echo "  git clone --bare <your-project> $BARE_REPO_PATH" >&2
-  exit 1
-fi
-
-if ! git -C "$BARE_REPO_PATH" rev-parse --verify "refs/heads/${ROOT_BRANCH}" &>/dev/null; then
-  echo "Error: Branch '${ROOT_BRANCH}' not found in bare repo." >&2
-  echo "Push it from your project:" >&2
-  echo "  git push $BARE_REPO_PATH HEAD:refs/heads/${ROOT_BRANCH}" >&2
-  exit 1
-fi
+# ── Branch setup ─────────────────────────────────────────────────────────────
+_validate_bare_repo
 
 if ! [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
-  # Single-agent branch setup
   _setup_branch "$AGENT_BRANCH" "$_CLI_FRESH"
 fi
 
-resolve_hooks ""
-
-# ── Generate docker-compose.yml ─────────────────────────────────────────────
-# Built dynamically so that optional volume mounts (UE engine, plugins) are
-# only included when the project actually needs them.  This avoids host-OS
-# portability issues (e.g. /dev/null fallback doesn't exist on Windows).
-
-_COMPOSE_FILE="$SCRIPT_DIR/container/docker-compose.yml"
-
-_generate_compose() {
-  local _volumes=""
-  _volumes="      # Required: bare repo for git operations
-      - \${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git
-      # Host-side logs (persist after container shutdown for forensic review)
-      - \${LOGS_PATH:-./logs}:/logs
-      # Claude authentication (OAuth credentials file)
-      - \${CLAUDE_CREDENTIALS_PATH:?Set CLAUDE_CREDENTIALS_PATH in .env}:/home/claude/.claude/.credentials.json:ro
-      # Agent definitions (compiled by launch.sh)
-      - \${AGENTS_PATH:-../agents}:/staged-agents:ro"
-
-  # UE engine mount — only for projects that declare an engine path
-  if [ -n "${UE_ENGINE_PATH:-}" ]; then
-    _volumes="${_volumes}
-      # UE engine (read-only)
-      - \${UE_ENGINE_PATH}:/engine:ro"
-  fi
-
-  cat > "$_COMPOSE_FILE" <<COMPOSEOF
-# Auto-generated by launch.sh — do not edit manually.
-# Template: container/docker-compose.example.yml
-
-services:
-  claude-worker:
-    build:
-      context: .
-    environment:
-      - AGENT_NAME=\${AGENT_NAME:-agent-1}
-      - WORK_BRANCH=\${WORK_BRANCH:-main}
-      - AGENT_TYPE=\${AGENT_TYPE:?Set AGENT_TYPE in .env}
-      - MAX_TURNS=\${MAX_TURNS:-200}
-      - SERVER_URL=http://host.docker.internal:\${SERVER_PORT:-9100}
-      - BUILD_SCRIPT_NAME=\${BUILD_SCRIPT_NAME:-build.py}
-      - TEST_SCRIPT_NAME=\${TEST_SCRIPT_NAME:-run_tests.py}
-      - DEFAULT_TEST_FILTERS=\${DEFAULT_TEST_FILTERS:-}
-      - LOG_VERBOSITY=\${LOG_VERBOSITY:-normal}
-      - WORKER_MODE=\${WORKER_MODE:-false}
-      - WORKER_POLL_INTERVAL=\${WORKER_POLL_INTERVAL:-30}
-      - WORKER_SINGLE_TASK=\${WORKER_SINGLE_TASK:-true}
-      - HOOK_BUILD_INTERCEPT=\${HOOK_BUILD_INTERCEPT:-false}
-      - HOOK_CPP_LINT=\${HOOK_CPP_LINT:-false}
-      - PROJECT_ID=\${PROJECT_ID:-default}
-      - CHAT_ROOM=\${CHAT_ROOM:-}
-      - TEAM_ROLE=\${TEAM_ROLE:-}
-      - BRIEF_PATH=\${BRIEF_PATH:-}
-      - DIRECT_PROMPT=\${DIRECT_PROMPT:-}
-    volumes:
-${_volumes}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-COMPOSEOF
-}
-
-_generate_compose
+# ── Build compose file list ─────────────────────────────────────────────────
+_compose_dir="$SCRIPT_DIR/container"
+_COMPOSE_FILES=("docker-compose.template.yml")
+if [[ -n "${UE_ENGINE_PATH:-}" ]]; then
+  _COMPOSE_FILES+=("docker-compose.engine.yml")
+fi
 
 # ── Export vars for docker-compose ───────────────────────────────────────────
-export HOOK_BUILD_INTERCEPT
-export HOOK_CPP_LINT
+export HOOK_BUILD_INTERCEPT HOOK_CPP_LINT
 export AGENT_NAME WORK_BRANCH AGENT_TYPE MAX_TURNS LOG_VERBOSITY PROJECT_ID
 export BARE_REPO_PATH UE_ENGINE_PATH PROJECT_PATH LOGS_PATH
 export WORKER_MODE WORKER_POLL_INTERVAL WORKER_SINGLE_TASK
@@ -639,60 +118,27 @@ export DIRECT_PROMPT="${_CLI_PROMPT:-}"
 # ── Launch ───────────────────────────────────────────────────────────────────
 if [ "$_CLI_PARALLEL" -ge 1 ] 2>/dev/null; then
   echo "=== Launching $_CLI_PARALLEL parallel agents ==="
-
   for i in $(seq 1 "$_CLI_PARALLEL"); do
     _AGENT="agent-${i}"
     _BRANCH="docker/${PROJECT_ID}/${_AGENT}"
-
     _setup_branch "$_BRANCH" "$_CLI_FRESH"
-
-    _launch_container "$_AGENT" \
-      AGENT_NAME="$_AGENT" \
-      WORK_BRANCH="$_BRANCH" \
-      PROJECT_ID="$PROJECT_ID" \
-      BARE_REPO_PATH="$BARE_REPO_PATH" \
-      AGENTS_PATH="$AGENTS_PATH" \
-      HOOK_BUILD_INTERCEPT="$HOOK_BUILD_INTERCEPT" \
-      HOOK_CPP_LINT="$HOOK_CPP_LINT" \
-      WORKER_MODE=true \
-      WORKER_SINGLE_TASK=false \
-      AGENT_MODE=pump
-
+    _launch_container "$_AGENT" "$_compose_dir" "${_COMPOSE_FILES[@]}" -- \
+      AGENT_NAME="$_AGENT" WORK_BRANCH="$_BRANCH" PROJECT_ID="$PROJECT_ID" \
+      BARE_REPO_PATH="$BARE_REPO_PATH" AGENTS_PATH="$AGENTS_PATH" \
+      HOOK_BUILD_INTERCEPT="$HOOK_BUILD_INTERCEPT" HOOK_CPP_LINT="$HOOK_CPP_LINT" \
+      WORKER_MODE=true WORKER_SINGLE_TASK=false AGENT_MODE=pump
     echo "  Launched $_AGENT on branch $_BRANCH"
   done
-
-  echo ""
-  echo "=== $_CLI_PARALLEL Agents Launched ==="
-  echo "  Root branch: $ROOT_BRANCH"
-  echo ""
-  echo "Monitor progress:"
-  echo "  ./status.sh --follow"
-  echo ""
-  echo "Stop all agents:"
-  echo "  ./stop.sh"
-  echo ""
-  echo "Graceful drain:"
-  echo "  ./stop.sh --drain"
+  _print_resolved_config
+  echo "Monitor: ./status.sh --follow    Stop: ./stop.sh    Drain: ./stop.sh --drain"
 else
-  if [ "$_CLI_FRESH" = "true" ]; then
-    (cd "$SCRIPT_DIR/container" && \
-      $COMPOSE_CMD --project-name "claude-${PROJECT_ID}-${AGENT_NAME}" build --no-cache)
+  if [[ "$_CLI_FRESH" == "true" ]]; then
+    (cd "$_compose_dir" && $COMPOSE_CMD \
+      --project-name "$(_compose_project_name "$PROJECT_ID" "$AGENT_NAME")" build --no-cache)
   fi
-  _launch_container "$AGENT_NAME"
-
-  echo ""
-  echo "=== Agent Launched ==="
-  echo "  Agent:     $AGENT_NAME"
-  echo "  Branch:    $WORK_BRANCH"
-  echo "  Type:      $AGENT_TYPE"
-  echo "  Verbosity: $LOG_VERBOSITY"
-  echo ""
-  echo "Monitor progress:"
-  echo "  ./status.sh --follow"
-  echo ""
-  echo "View container logs:"
-  echo "  docker compose --project-name claude-${PROJECT_ID}-${AGENT_NAME} -f $SCRIPT_DIR/container/docker-compose.yml logs -f"
-  echo ""
-  echo "Stop agent:"
-  echo "  $COMPOSE_CMD --project-name \"claude-${PROJECT_ID}-${AGENT_NAME}\" down"
+  _launch_container "$AGENT_NAME" "$_compose_dir" "${_COMPOSE_FILES[@]}"
+  _print_resolved_config
+  echo "Monitor: ./status.sh --follow"
+  echo "Logs:    docker compose --project-name $(_compose_project_name "$PROJECT_ID" "$AGENT_NAME") -f $_compose_dir/docker-compose.template.yml logs -f"
+  echo "Stop:    $COMPOSE_CMD --project-name \"$(_compose_project_name "$PROJECT_ID" "$AGENT_NAME")\" down"
 fi

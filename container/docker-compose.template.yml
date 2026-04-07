@@ -1,0 +1,39 @@
+# Base docker-compose template for Claude Code agent containers.
+# Used by launch.sh via: docker compose -f docker-compose.template.yml [...]
+# Do not edit — this is the canonical template.
+
+services:
+  claude-worker:
+    build:
+      context: .
+    environment:
+      - AGENT_NAME=${AGENT_NAME:-agent-1}
+      - WORK_BRANCH=${WORK_BRANCH:-main}
+      - AGENT_TYPE=${AGENT_TYPE:?Set AGENT_TYPE in .env}
+      - MAX_TURNS=${MAX_TURNS:-200}
+      - SERVER_URL=http://host.docker.internal:${SERVER_PORT:-9100}
+      - BUILD_SCRIPT_NAME=${BUILD_SCRIPT_NAME:-build.py}
+      - TEST_SCRIPT_NAME=${TEST_SCRIPT_NAME:-run_tests.py}
+      - DEFAULT_TEST_FILTERS=${DEFAULT_TEST_FILTERS:-}
+      - LOG_VERBOSITY=${LOG_VERBOSITY:-normal}
+      - WORKER_MODE=${WORKER_MODE:-false}
+      - WORKER_POLL_INTERVAL=${WORKER_POLL_INTERVAL:-30}
+      - WORKER_SINGLE_TASK=${WORKER_SINGLE_TASK:-true}
+      - HOOK_BUILD_INTERCEPT=${HOOK_BUILD_INTERCEPT:-false}
+      - HOOK_CPP_LINT=${HOOK_CPP_LINT:-false}
+      - PROJECT_ID=${PROJECT_ID:-default}
+      - CHAT_ROOM=${CHAT_ROOM:-}
+      - TEAM_ROLE=${TEAM_ROLE:-}
+      - BRIEF_PATH=${BRIEF_PATH:-}
+      - DIRECT_PROMPT=${DIRECT_PROMPT:-}
+    volumes:
+      # Required: bare repo for git operations
+      - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git
+      # Host-side logs (persist after container shutdown for forensic review)
+      - ${LOGS_PATH:-./logs}:/logs
+      # Claude authentication (OAuth credentials file)
+      - ${CLAUDE_CREDENTIALS_PATH:?Set CLAUDE_CREDENTIALS_PATH in .env}:/home/claude/.claude/.credentials.json:ro
+      # Agent definitions (compiled by launch.sh)
+      - ${AGENTS_PATH:-../agents}:/staged-agents:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

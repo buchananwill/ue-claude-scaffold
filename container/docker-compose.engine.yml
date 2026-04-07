@@ -1,0 +1,8 @@
+# Engine overlay for docker-compose.template.yml.
+# Adds the UE engine volume mount when UE_ENGINE_PATH is set.
+# Used by launch.sh via: docker compose -f docker-compose.template.yml -f docker-compose.engine.yml [...]
+
+services:
+  claude-worker:
+    volumes:
+      - ${UE_ENGINE_PATH:?Set UE_ENGINE_PATH}:/engine:ro
