@@ -9,13 +9,13 @@
 readonly _LIB_VALIDATORS_LOADED=1
 
 # _validate_identifier <label> <value>
-#   Validates that <value> matches ^[a-zA-Z0-9_-]+$.
+#   Validates that <value> matches ^[a-zA-Z0-9_-]{1,64}$.
 #   On failure, prints an error to stderr and returns 1.
 _validate_identifier() {
   local label="$1"
   local value="$2"
-  if [[ ! "$value" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-    echo "Error: ${label} contains invalid characters: ${value}" >&2
+  if [[ ! "$value" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]; then
+    echo "Error: ${label} contains invalid characters or exceeds 64 chars: ${value}" >&2
     return 1
   fi
   return 0
