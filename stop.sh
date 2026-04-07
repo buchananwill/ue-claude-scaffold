@@ -56,12 +56,21 @@ TIMEOUT=600
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent)
+      if [[ -z "${2:-}" ]]; then
+        echo "Error: --agent requires an argument" >&2; exit 1
+      fi
       MODE="agent"
       AGENT_NAME="$2"; shift 2 ;;
     --team)
+      if [[ -z "${2:-}" ]]; then
+        echo "Error: --team requires an argument" >&2; exit 1
+      fi
       MODE="team"
       TEAM_ID="$2"; shift 2 ;;
     --project)
+      if [[ -z "${2:-}" ]]; then
+        echo "Error: --project requires an argument" >&2; exit 1
+      fi
       PROJECT_ID="$2"; shift 2 ;;
     --drain)
       MODE="drain"; shift ;;
@@ -181,10 +190,7 @@ if [[ "$MODE" == "team" ]]; then
   team_project_id=$(echo "$TEAM_RESPONSE" | jq -r '.projectId // empty' 2>/dev/null)
   team_project_id="${team_project_id:-${PROJECT_ID:-default}}"
 
-  if [[ ! "$team_project_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-    echo "Error: team_project_id contains invalid characters: $team_project_id" >&2
-    exit 1
-  fi
+  _validate_identifier "team_project_id" "$team_project_id" || exit 1
 
   mapfile -t _members < <(echo "$TEAM_RESPONSE" | jq -r '.members[].agentName' 2>/dev/null) || {
     echo "Error: Could not parse member list from team response" >&2

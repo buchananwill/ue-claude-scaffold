@@ -179,6 +179,9 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     }
 
     if (deliverable !== undefined) {
+      if (typeof deliverable !== 'string' || deliverable.length > 65536) {
+        return reply.badRequest('deliverable must be a string of at most 65536 characters');
+      }
       await teamsQ.updateDeliverable(db, request.params.id, deliverable);
     }
 

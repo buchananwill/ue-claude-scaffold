@@ -4,9 +4,18 @@ import { getDb } from '../drizzle-instance.js';
 import * as coalesceQ from '../queries/coalesce.js';
 import * as agentsQ from '../queries/agents.js';
 
+/** Result of a coalesce readiness check. */
+interface CoalesceCheckResult {
+  canCoalesce: boolean;
+  activeTaskCount: number;
+  pumpAgents: Awaited<ReturnType<typeof agentsQ.getAll>>;
+  allPumpIdle: boolean;
+  agentRows: Awaited<ReturnType<typeof agentsQ.getAll>>;
+}
+
 /** Check whether the system is ready to coalesce (no active tasks, all pump agents idle).
  *  Accepts optional pre-fetched agent rows to avoid redundant DB reads (TOCTOU fix). */
-async function checkCanCoalesce(db: DrizzleDb, projectId: string, prefetchedAgents?: Awaited<ReturnType<typeof agentsQ.getAll>>) {
+async function checkCanCoalesce(db: DrizzleDb, projectId: string, prefetchedAgents?: Awaited<ReturnType<typeof agentsQ.getAll>>): Promise<CoalesceCheckResult> {
   const activeTaskCount = await coalesceQ.countActiveTasks(db, projectId);
   const agentRows = prefetchedAgents ?? await agentsQ.getAll(db, projectId);
   const pumpAgents = agentRows.filter(a => a.mode === 'pump');
@@ -20,21 +29,25 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     const db = getDb();
 
     const { canCoalesce, activeTaskCount, pumpAgents, allPumpIdle, agentRows } = await checkCanCoalesce(db, projectId);
-    const pendingCount = await coalesceQ.countPendingTasks(db, projectId);
-    const claimedFileCount = await coalesceQ.countClaimedFiles(db, projectId);
 
-    const agents = await Promise.all(agentRows.map(async (row) => {
-      const ownedFiles = await coalesceQ.getOwnedFiles(db, row.name, projectId);
-      const activeTasks = await coalesceQ.countActiveTasksForAgent(db, row.name, projectId);
-      return {
-        name: row.name,
-        status: row.status,
-        mode: row.mode,
-        branch: row.worktree,
-        ownedFiles,
-        activeTasks,
-      };
-    }));
+    const [pendingCount, claimedFileCount, agents] = await Promise.all([
+      coalesceQ.countPendingTasks(db, projectId),
+      coalesceQ.countClaimedFiles(db, projectId),
+      Promise.all(agentRows.map(async (row) => {
+        const [ownedFiles, agentActiveTasks] = await Promise.all([
+          coalesceQ.getOwnedFiles(db, row.name, projectId),
+          coalesceQ.countActiveTasksForAgent(db, row.name, projectId),
+        ]);
+        return {
+          name: row.name,
+          status: row.status,
+          mode: row.mode,
+          branch: row.worktree,
+          ownedFiles,
+          activeTasks: agentActiveTasks,
+        };
+      })),
+    ]);
 
     let reason: string | undefined;
     if (!canCoalesce) {
