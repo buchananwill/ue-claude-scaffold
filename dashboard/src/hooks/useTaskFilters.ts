@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback } from 'react';
 import { useSearch, useNavigate } from '@tanstack/react-router';
 import type { Task } from '../api/types.js';
+export { TASK_STATUSES, STATUS_LABELS } from '../constants/task-statuses.js';
 
 export type SortDir = 'asc' | 'desc' | null;
 export type SortColumn = 'id' | 'priority' | 'status' | 'title' | 'claimedBy' | 'createdAt' | null;
@@ -16,9 +17,6 @@ export const VALID_SORT_COLUMNS = new Set<string>(['id', 'priority', 'status', '
 const UNASSIGNED = '__unassigned__';
 
 export { UNASSIGNED };
-
-// Must match server/src/queries/tasks-core.ts VALID_TASK_STATUSES
-export const TASK_STATUSES = ['pending', 'claimed', 'in_progress', 'completed', 'failed', 'integrated', 'cycle'] as const;
 
 interface FilterState {
   statusFilter: Set<string>;

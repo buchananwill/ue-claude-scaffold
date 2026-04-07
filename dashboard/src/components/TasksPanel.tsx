@@ -22,24 +22,14 @@ import { Link } from '@tanstack/react-router';
 import type { Task } from '../api/types.js';
 import type { TaskFilters, TaskFiltersUrlBacked } from '../hooks/useTaskFilters.js';
 import { useProject } from '../contexts/ProjectContext.js';
-import { UNASSIGNED, TASK_STATUSES } from '../hooks/useTaskFilters.js';
+import { UNASSIGNED } from '../hooks/useTaskFilters.js';
+import { TASK_STATUSES, STATUS_LABELS } from '../constants/task-statuses.js';
 import { useTaskActions } from '../hooks/useTaskActions.js';
 import { SortHeader } from './SortHeader.js';
 import { StatusBadge } from './StatusBadge.js';
 import { RelativeTime } from './RelativeTime.js';
 import { TaskDetailRow } from './TaskDetailRow.js';
 import { TaskDuration } from './TaskDuration.js';
-
-// Must match server/src/queries/tasks-core.ts VALID_TASK_STATUSES
-const STATUS_LABELS: Record<string, string> = {
-  pending: 'Pending',
-  claimed: 'Claimed',
-  in_progress: 'In Progress',
-  completed: 'Completed',
-  failed: 'Failed',
-  integrated: 'Integrated',
-  cycle: 'Cycle',
-};
 
 interface TasksPanelProps {
   tasks: Task[] | null;

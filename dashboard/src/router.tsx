@@ -14,7 +14,8 @@ import { BuildLogPage } from './pages/BuildLogPage.js';
 import { ChatPage } from './pages/ChatPage.js';
 import { TeamsPage } from './pages/TeamsPage.js';
 import { SearchPage } from './pages/SearchPage.js';
-import { TASK_STATUSES, VALID_SORT_COLUMNS } from './hooks/useTaskFilters.js';
+import { TASK_STATUSES } from './constants/task-statuses.js';
+import { VALID_SORT_COLUMNS } from './hooks/useTaskFilters.js';
 
 const rootRoute = createRootRoute({
   component: Outlet,

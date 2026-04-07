@@ -19,8 +19,147 @@ import {
 import tasksReplanPlugin, { runReplan } from './tasks-replan.js';
 import tasksClaimPlugin from './tasks-claim.js';
 import tasksLifecyclePlugin from './tasks-lifecycle.js';
+import type { FastifyReply } from 'fastify';
 
 export { formatTask, toTaskRow, type TaskRow } from './tasks-types.js';
+
+/**
+ * Parse a comma-separated query string into an array of non-empty strings.
+ * Returns `undefined` if the input is falsy. Returns an error string if
+ * empty segments are found (leading/trailing/doubled commas) or if the
+ * array exceeds `maxValues` elements.
+ */
+export function parseCommaFilter(
+  raw: string | undefined,
+  label: string,
+  maxValues = 50,
+): { values: string[] | undefined; error?: string } {
+  if (!raw) return { values: undefined };
+  const parts = raw.split(',');
+  const filtered = parts.filter(Boolean);
+  if (parts.length !== filtered.length) {
+    return {
+      values: undefined,
+      error: `Invalid ${label} filter: contains empty segments (leading, trailing, or doubled commas).`,
+    };
+  }
+  if (filtered.length > maxValues) {
+    return {
+      values: undefined,
+      error: `Too many ${label} values (max ${maxValues}).`,
+    };
+  }
+  return { values: filtered };
+}
+
+interface TaskListQueryInput {
+  status?: string;
+  agent?: string;
+  priority?: string;
+  sort?: string;
+  dir?: string;
+  limit?: string;
+  offset?: string;
+}
+
+interface ParsedTaskListQuery {
+  statusArr: string[] | undefined;
+  agentArr: string[] | undefined;
+  priorityArr: number[] | undefined;
+  sortCol: tasksCore.SortColumn | undefined;
+  dirVal: 'asc' | 'desc' | undefined;
+  limitNum: number;
+  offsetNum: number;
+}
+
+/**
+ * Parse and validate all query parameters for `GET /tasks`. Sends a 400
+ * reply and returns `null` when validation fails; otherwise returns a
+ * validated options object ready for `tasksCore.list` / `tasksCore.count`.
+ */
+export async function parseTaskListQuery(
+  query: TaskListQueryInput,
+  reply: FastifyReply,
+): Promise<ParsedTaskListQuery | null> {
+  const { status, agent: agentFilter, priority: priorityFilter, sort, dir, limit, offset } = query;
+  const limitNum = Math.min(Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : tasksCore.DEFAULT_LIST_LIMIT), 500);
+  const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
+
+  // --- comma-separated filters ---
+  const statusResult = parseCommaFilter(status, 'status');
+  if (statusResult.error) { reply.badRequest(statusResult.error); return null; }
+  const statusArr = statusResult.values;
+
+  const agentResult = parseCommaFilter(agentFilter, 'agent');
+  if (agentResult.error) { reply.badRequest(agentResult.error); return null; }
+  const agentArr = agentResult.values;
+
+  const priorityResult = parseCommaFilter(priorityFilter, 'priority');
+  if (priorityResult.error) { reply.badRequest(priorityResult.error); return null; }
+
+  // Additional numeric validation for priority
+  let priorityArr: number[] | undefined;
+  if (priorityResult.values) {
+    const parsed = priorityResult.values.map(Number).filter(v => Number.isFinite(v) && Number.isInteger(v));
+    if (parsed.length < priorityResult.values.length) {
+      const invalid = priorityResult.values.filter(s => { const n = Number(s); return !Number.isFinite(n) || !Number.isInteger(n); });
+      reply.badRequest(`Invalid priority values: ${invalid.map(v => v.slice(0, 32)).join(', ')}. Priority must be integers.`);
+      return null;
+    }
+    priorityArr = parsed;
+  }
+
+  // Validate status values against known statuses
+  if (statusArr) {
+    for (const s of statusArr) {
+      if (!(tasksCore.VALID_TASK_STATUSES as readonly string[]).includes(s)) {
+        reply.badRequest(
+          `Invalid status value: "${s.slice(0, 32)}". Valid statuses: ${tasksCore.VALID_TASK_STATUSES.join(', ')}`
+        );
+        return null;
+      }
+    }
+  }
+
+  // Validate agent names
+  if (agentArr) {
+    for (const a of agentArr) {
+      if (a === '__unassigned__') continue;
+      if (!AGENT_NAME_RE.test(a)) {
+        reply.badRequest(`Invalid agent name: "${a.slice(0, 64)}".`);
+        return null;
+      }
+    }
+  }
+
+  // Validate sort column
+  let sortCol: tasksCore.SortColumn | undefined;
+  if (sort) {
+    if (!tasksCore.VALID_SORT_COLUMNS.includes(sort)) {
+      reply.badRequest(
+        `Invalid sort column: "${sort.slice(0, 32)}". Valid columns: ${tasksCore.VALID_SORT_COLUMNS.join(', ')}`
+      );
+      return null;
+    }
+    sortCol = sort as tasksCore.SortColumn;
+  }
+
+  // Validate dir
+  let dirVal: 'asc' | 'desc' | undefined;
+  if (dir) {
+    if (dir !== 'asc' && dir !== 'desc') {
+      reply.badRequest('Invalid dir: must be "asc" or "desc"');
+      return null;
+    }
+    if (!sort) {
+      reply.badRequest('dir requires sort to be specified');
+      return null;
+    }
+    dirVal = dir;
+  }
+
+  return { statusArr, agentArr, priorityArr, sortCol, dirVal, limitNum, offsetNum };
+}
 
 const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   const config = opts.config;
@@ -289,98 +428,11 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       offset?: string;
     };
   }>('/tasks', async (request, reply) => {
-    const { status, agent: agentFilter, priority: priorityFilter, sort, dir, limit, offset } = request.query;
     const projectId = request.projectId;
-    const limitNum = Math.min(Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : tasksCore.DEFAULT_LIST_LIMIT), 500);
-    const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
 
-    // Parse multi-value filters — reject empty segments (leading/trailing/doubled commas)
-    const statusRaw = status ? status.split(',') : undefined;
-    const statusFiltered = statusRaw?.filter(Boolean);
-    if (statusRaw && statusRaw.length !== statusFiltered!.length) {
-      return reply.badRequest('Invalid status filter: contains empty segments (leading, trailing, or doubled commas).');
-    }
-    const statusArr = statusFiltered;
-
-    const agentRaw = agentFilter ? agentFilter.split(',') : undefined;
-    const agentFiltered = agentRaw?.filter(Boolean);
-    if (agentRaw && agentRaw.length !== agentFiltered!.length) {
-      return reply.badRequest('Invalid agent filter: contains empty segments (leading, trailing, or doubled commas).');
-    }
-    const agentArr = agentFiltered;
-
-    const priorityRaw = priorityFilter ? priorityFilter.split(',') : undefined;
-    const priorityFiltered = priorityRaw
-      ? priorityRaw.filter(Boolean).map(Number).filter(v => Number.isFinite(v) && Number.isInteger(v))
-      : undefined;
-    if (priorityRaw) {
-      const nonEmpty = priorityRaw.filter(Boolean);
-      // Empty segments (from leading/trailing/doubled commas) — check first, mirrors status/agent
-      if (priorityRaw.length !== nonEmpty.length) {
-        return reply.badRequest('Invalid priority filter: contains empty segments (leading, trailing, or doubled commas).');
-      }
-      // Non-empty but failed numeric parsing
-      if (nonEmpty.length > (priorityFiltered?.length ?? 0)) {
-        const invalid = nonEmpty.filter(s => { const n = Number(s); return !Number.isFinite(n) || !Number.isInteger(n); });
-        return reply.badRequest(`Invalid priority values: ${invalid.map(v => v.slice(0, 32)).join(', ')}. Priority must be integers.`);
-      }
-    }
-    const priorityArr = priorityFiltered;
-
-    // Cardinality limits — reject if any filter array exceeds 50 elements
-    if (statusArr && statusArr.length > 50) {
-      return reply.badRequest('Too many status values (max 50).');
-    }
-    if (agentArr && agentArr.length > 50) {
-      return reply.badRequest('Too many agent values (max 50).');
-    }
-    if (priorityArr && priorityArr.length > 50) {
-      return reply.badRequest('Too many priority values (max 50).');
-    }
-
-    // Validate status values against known statuses
-    if (statusArr) {
-      for (const s of statusArr) {
-        if (!(tasksCore.VALID_TASK_STATUSES as readonly string[]).includes(s)) {
-          return reply.badRequest(
-            `Invalid status value: "${s.slice(0, 32)}". Valid statuses: ${tasksCore.VALID_TASK_STATUSES.join(', ')}`
-          );
-        }
-      }
-    }
-
-    // Validate agent names
-    if (agentArr) {
-      for (const a of agentArr) {
-        if (a === '__unassigned__') continue;
-        if (!AGENT_NAME_RE.test(a)) {
-          return reply.badRequest(`Invalid agent name: "${a.slice(0, 64)}".`);
-        }
-      }
-    }
-
-    // Validate sort column
-    let sortCol: tasksCore.SortColumn | undefined;
-    if (sort) {
-      if (!tasksCore.VALID_SORT_COLUMNS.includes(sort)) {
-        return reply.badRequest(
-          `Invalid sort column: "${sort.slice(0, 32)}". Valid columns: ${tasksCore.VALID_SORT_COLUMNS.join(', ')}`
-        );
-      }
-      sortCol = sort as tasksCore.SortColumn;
-    }
-
-    // Validate dir
-    let dirVal: 'asc' | 'desc' | undefined;
-    if (dir) {
-      if (dir !== 'asc' && dir !== 'desc') {
-        return reply.badRequest('Invalid dir: must be "asc" or "desc"');
-      }
-      if (!sort) {
-        return reply.badRequest('dir requires sort to be specified');
-      }
-      dirVal = dir;
-    }
+    const parsed = await parseTaskListQuery(request.query, reply);
+    if (!parsed) return;
+    const { statusArr, agentArr, priorityArr, sortCol, dirVal, limitNum, offsetNum } = parsed;
 
     const db = getDb();
     const filterOpts = {
