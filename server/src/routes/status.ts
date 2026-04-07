@@ -59,9 +59,7 @@ const statusPlugin: FastifyPluginAsync = async (fastify) => {
         items: taskRows.map((r) => formatTask(r as unknown as TaskRow)),
         total: taskTotal,
       },
-      // slice is a safety belt: the query passes limit but older callers of msgQ.list
-      // without a limit would return unbounded results in polling mode.
-      messages: messageRows.slice(0, MESSAGE_LIMIT).map(formatMessage),
+      messages: messageRows.map(formatMessage),
     };
   });
 };

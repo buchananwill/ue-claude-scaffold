@@ -123,6 +123,7 @@ describe('GET /status', () => {
       channel: 'general',
       type: 'status_update',
       payload: { message: 'msg 1' },
+      projectId: 'since-proj',
     });
 
     const id2 = await msgQ.insert(db, {
@@ -130,12 +131,14 @@ describe('GET /status', () => {
       channel: 'general',
       type: 'status_update',
       payload: { message: 'msg 2' },
+      projectId: 'since-proj',
     });
 
     // Use since=id1 to only get msg 2
     const res = await ctx.app.inject({
       method: 'GET',
       url: `/status?since=${id1}`,
+      headers: { 'x-project-id': 'since-proj' },
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();

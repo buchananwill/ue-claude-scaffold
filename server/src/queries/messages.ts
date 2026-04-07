@@ -39,7 +39,7 @@ export interface ListOpts {
 }
 
 export async function list(db: DrizzleDb, opts: ListOpts = {}) {
-  const conditions = [];
+  const conditions: SQL[] = [];
 
   if (opts.channel) {
     conditions.push(eq(messages.channel, opts.channel));
@@ -90,7 +90,7 @@ export interface CountOpts {
 }
 
 export async function count(db: DrizzleDb, opts: CountOpts = {}): Promise<number> {
-  const conditions = [];
+  const conditions: SQL[] = [];
 
   if (opts.channel) {
     conditions.push(eq(messages.channel, opts.channel));
