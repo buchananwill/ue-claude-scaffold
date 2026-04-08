@@ -35,22 +35,28 @@ _detect_abnormal_exit() {
         elapsed=9999
     fi
 
-    # Build JSON payload using a classify_tmpfile to avoid shell escaping issues
+    # Build JSON payload in a tmpfile to avoid shell escaping issues.
+    # NOTE: do NOT use `trap ... RETURN` here — RETURN traps fire on every
+    # subsequent function return in the shell (they are not scoped to the
+    # defining function), and with `set -u` that turns a stale local-variable
+    # reference into a fatal unbound-variable error inside unrelated callers.
     local classify_tmpfile
     classify_tmpfile="$(mktemp)"
-    trap 'rm -f "$classify_tmpfile"' RETURN
+
     jq -n --arg logTail "$log_tail" --argjson e "$elapsed" --argjson l "$output_lines" \
         '{logTail: $logTail, elapsedSeconds: $e, outputLineCount: $l}' > "$classify_tmpfile" 2>/dev/null
 
     # If JSON encoding failed, fall back to not-abnormal
     if [ ! -s "$classify_tmpfile" ]; then
+        rm -f "$classify_tmpfile"
         return 1
     fi
 
     response="$(_curl_server -s -X POST "${SERVER_URL}/agents/${AGENT_NAME}/exit-classify" \
         -H "Content-Type: application/json" \
         -d @"$classify_tmpfile" \
-        --max-time 10 2>/dev/null)" || return 1
+        --max-time 10 2>/dev/null)" || { rm -f "$classify_tmpfile"; return 1; }
+    rm -f "$classify_tmpfile"
 
     local is_abnormal
     is_abnormal="$(jq -r '.abnormal // false' <<< "$response")" || return 1
@@ -66,9 +72,9 @@ _detect_abnormal_exit() {
 _post_abnormal_shutdown_message() {
     local reason="$1"
     local task_id="${2:-}"
+    # NOTE: avoid `trap ... RETURN` — see _detect_abnormal_exit for why.
     local shutdown_tmpfile
     shutdown_tmpfile=$(mktemp)
-    trap 'rm -f "$shutdown_tmpfile"' RETURN
     local msg="Agent ${AGENT_NAME} shut down abnormally: ${reason}. Claimed task released. Uncommitted work discarded. Manual restart required."
     jq -n \
         --arg channel "${AGENT_NAME}" \
@@ -90,6 +96,7 @@ _post_abnormal_shutdown_message() {
         -H "Content-Type: application/json" \
         -d @"$shutdown_tmpfile" \
         --max-time 10 >/dev/null 2>&1 || true
+    rm -f "$shutdown_tmpfile"
 }
 
 _shutdown() {

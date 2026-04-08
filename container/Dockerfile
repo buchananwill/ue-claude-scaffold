@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     jq \
     ca-certificates \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Project-specific dependencies ─────────────────────────────────────────
@@ -31,14 +32,15 @@ RUN chmod +x /claude-hooks/*.sh
 COPY mcp-servers/ /mcp-servers/
 RUN npm install --omit=dev --prefix /mcp-servers
 
-# Copy workspace setup scripts
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Copy entrypoint and library helpers
+COPY entrypoint.sh /scaffold/entrypoint.sh
+COPY lib /scaffold/lib
+RUN chmod +x /scaffold/entrypoint.sh
 
-# Smoke-test: verify runtime dependencies and absence of Python
+# Smoke-test: verify runtime dependencies
 RUN node --version && npm --version && \
-    node --check /claude-hooks/lint-cpp-diff.mjs && \
-    ! command -v python3
+    python3 --version && \
+    node --check /claude-hooks/lint-cpp-diff.mjs
 
 # Create directories owned by claude user
 RUN mkdir -p /workspace /task /home/claude/.claude \
@@ -47,4 +49,4 @@ RUN mkdir -p /workspace /task /home/claude/.claude \
 USER claude
 WORKDIR /workspace
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/scaffold/entrypoint.sh"]
