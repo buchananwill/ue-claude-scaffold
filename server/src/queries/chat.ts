@@ -29,6 +29,7 @@ export async function sendMessage(db: DbOrTx, opts: SendMessageOpts): Promise<{
       replyTo: opts.replyTo ?? null,
     })
     .returning();
+  if (rows.length === 0) throw new Error('Insert returned no rows');
   return rows[0];
 }
 
@@ -46,9 +47,9 @@ export async function getHistory(db: DbOrTx, roomId: string, opts: GetHistoryOpt
   content: string;
   replyTo: number | null;
   createdAt: Date | null;
-  sender: unknown;
+  sender: string;
 }>> {
-  const senderColumn = sql`COALESCE(${agents.name}, CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' END, 'unknown')`.as('sender');
+  const senderColumn = sql<string>`COALESCE(${agents.name}, CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' END, 'unknown')`.as('sender');
 
   const historySelect = {
     id: chatMessages.id,

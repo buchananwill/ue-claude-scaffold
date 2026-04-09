@@ -29,6 +29,7 @@ export async function createRoom(db: DbOrTx, opts: CreateRoomOpts): Promise<{
       projectId: opts.projectId ?? 'default',
     })
     .returning();
+  if (rows.length === 0) throw new Error('Insert returned no rows');
   return rows[0];
 }
 
@@ -141,7 +142,7 @@ export async function getMembers(db: DbOrTx, roomId: string): Promise<Array<{ ag
     .orderBy(agents.name);
 }
 
-export async function getPresence(db: DbOrTx, roomId: string) {
+export async function getPresence(db: DbOrTx, roomId: string): Promise<Array<{ name: string; joinedAt: Date | null; online: boolean; status: string }>> {
   const rows = await db
     .select({
       name: agents.name,
