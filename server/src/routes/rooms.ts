@@ -1,5 +1,4 @@
 import type { FastifyPluginAsync } from 'fastify';
-import type { ScaffoldConfig } from '../config.js';
 import { getDb } from '../drizzle-instance.js';
 import * as roomsQ from '../queries/rooms.js';
 import * as chatQ from '../queries/chat.js';
@@ -7,11 +6,18 @@ import * as agentsQ from '../queries/agents.js';
 import { sql, eq } from 'drizzle-orm';
 import { rooms, roomMembers, chatMessages, agents } from '../schema/tables.js';
 
-interface RoomsOpts {
-  config: ScaffoldConfig;
+const ROOM_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+function parseMessageCursor(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > Number.MAX_SAFE_INTEGER) {
+    return NaN; // sentinel — caller checks with Number.isNaN
+  }
+  return n;
 }
 
-const roomsPlugin: FastifyPluginAsync<RoomsOpts> = async (fastify, { config }) => {
+const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   // POST /rooms — create a room
   fastify.post<{
     Body: { id: string; name: string; type: 'group' | 'direct'; members?: string[] };
@@ -21,30 +27,49 @@ const roomsPlugin: FastifyPluginAsync<RoomsOpts> = async (fastify, { config }) =
     const { id, name, type, members } = request.body;
     const db = getDb();
 
+    // Validate id and name
+    if (!id || !ROOM_ID_RE.test(id)) {
+      return reply.badRequest('id must match /^[a-zA-Z0-9_-]{1,64}$/');
+    }
+    if (!name || name.length > 256) {
+      return reply.badRequest('name is required and must be at most 256 characters');
+    }
+
     if (type !== 'group' && type !== 'direct') {
       return reply.badRequest('type must be "group" or "direct"');
     }
 
-    await roomsQ.createRoom(db, { id, name, type, createdBy: caller, projectId: request.projectId });
-
-    // If caller is an agent, resolve UUID and add as member
+    // Resolve caller agent UUID before creating room
+    let callerAgentId: string | undefined;
     if (agentName) {
       const callerAgent = await agentsQ.getByName(db, request.projectId, agentName);
       if (!callerAgent) {
         return reply.code(403).send({ error: 'unknown_agent' });
       }
-      await roomsQ.addMember(db, id, callerAgent.id);
+      callerAgentId = callerAgent.id;
     }
-    // If no X-Agent-Name (operator), skip adding creator as member (implicit access)
 
+    // Resolve all member names to UUIDs before creating room
+    const memberIds: string[] = [];
     if (members) {
-      await Promise.all(members.map(async (m) => {
+      for (const m of members) {
         const agent = await agentsQ.getByName(db, request.projectId, m);
         if (!agent) {
-          throw fastify.httpErrors.notFound(`Unknown agent: ${m}`);
+          return reply.notFound(`Unknown agent: ${m}`);
         }
-        await roomsQ.addMember(db, id, agent.id);
-      }));
+        memberIds.push(agent.id);
+      }
+    }
+
+    // Now create the room and add members
+    await roomsQ.createRoom(db, { id, name, type, createdBy: caller, projectId: request.projectId });
+
+    if (callerAgentId) {
+      await roomsQ.addMember(db, id, callerAgentId);
+    }
+
+    for (const mid of memberIds) {
+      await roomsQ.addMember(db, id, mid);
     }
 
     return { ok: true, id };
@@ -234,9 +259,18 @@ const roomsPlugin: FastifyPluginAsync<RoomsOpts> = async (fastify, { config }) =
       }
     }
 
+    const sinceN = parseMessageCursor(since);
+    const beforeN = parseMessageCursor(before);
+    if (Number.isNaN(sinceN)) {
+      return reply.badRequest('since must be a non-negative safe integer');
+    }
+    if (Number.isNaN(beforeN)) {
+      return reply.badRequest('before must be a non-negative safe integer');
+    }
+
     const rows = await chatQ.getHistory(db, id, {
-      after: since ? Number(since) : undefined,
-      before: before ? Number(before) : undefined,
+      after: sinceN,
+      before: beforeN,
       limit: pageSize,
     });
 
@@ -258,6 +292,9 @@ const roomsPlugin: FastifyPluginAsync<RoomsOpts> = async (fastify, { config }) =
 
     // Use raw SQL for the transcript query since it joins rooms + chat_messages + agents with formatting
     const roomFilter = request.query.room;
+    if (roomFilter && !ROOM_ID_RE.test(roomFilter)) {
+      return reply.badRequest('Invalid room filter');
+    }
     const rows = roomFilter
       ? await db.execute(sql`
           SELECT

@@ -71,6 +71,17 @@ export function validateBriefOnSeedBranch(
   briefPath: string,
   seedBranchOverride?: string | null,
 ): void {
+  // Validate briefPath is safe before passing to git cat-file
+  if (
+    !briefPath ||
+    briefPath.includes('..') ||
+    briefPath.includes('\0') ||
+    briefPath.startsWith('/') ||
+    !/^[a-zA-Z0-9_.\/\-]{1,512}$/.test(briefPath)
+  ) {
+    throw new Error(`Invalid briefPath: '${briefPath}' — must be a relative path without '..' or special characters`);
+  }
+
   const branch = seedBranchFor(projectId, seedBranchOverride ? { seedBranch: seedBranchOverride } : undefined);
   const result = spawnSync('git', ['cat-file', '-e', `${branch}:${briefPath}`], {
     cwd: bareRepoPath,

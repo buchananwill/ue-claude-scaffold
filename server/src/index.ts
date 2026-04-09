@@ -70,7 +70,7 @@ await server.register(searchPlugin);
 await server.register(buildsPlugin);
 await server.register(coalescePlugin);
 await server.register(syncPlugin, { config });
-await server.register(roomsPlugin, { config });
+await server.register(roomsPlugin);
 await server.register(teamsPlugin, { config });
 await server.register(projectsPlugin);
 await server.register(configPlugin, { config });
