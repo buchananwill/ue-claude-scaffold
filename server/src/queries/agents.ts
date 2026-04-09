@@ -8,6 +8,10 @@ type AgentRow = typeof agents.$inferSelect;
 const VALID_STATUSES = new Set(['idle', 'working', 'done', 'error', 'paused', 'stopping', 'deleted']);
 const VALID_MODES = new Set(['single', 'pump']);
 
+function byProjectAndName(projectId: string, name: string) {
+  return and(eq(agents.projectId, projectId), eq(agents.name, name));
+}
+
 export interface RegisterOpts {
   name: string;
   projectId: string;
@@ -72,7 +76,7 @@ export async function getByName(db: DrizzleDb, projectId: string, name: string):
   const rows = await db
     .select()
     .from(agents)
-    .where(and(eq(agents.projectId, projectId), eq(agents.name, name)));
+    .where(byProjectAndName(projectId, name));
   return rows[0] ?? null;
 }
 
@@ -92,21 +96,15 @@ export async function updateStatus(db: DrizzleDb, projectId: string, name: strin
   await db
     .update(agents)
     .set({ status })
-    .where(and(eq(agents.projectId, projectId), eq(agents.name, name)));
+    .where(byProjectAndName(projectId, name));
 }
 
 export async function softDelete(db: DrizzleDb, projectId: string, name: string): Promise<void> {
-  await db
-    .update(agents)
-    .set({ status: 'deleted' })
-    .where(and(eq(agents.projectId, projectId), eq(agents.name, name)));
+  await updateStatus(db, projectId, name, 'deleted');
 }
 
 export async function stopAgent(db: DrizzleDb, projectId: string, name: string): Promise<void> {
-  await db
-    .update(agents)
-    .set({ status: 'stopping' })
-    .where(and(eq(agents.projectId, projectId), eq(agents.name, name)));
+  await updateStatus(db, projectId, name, 'stopping');
 }
 
 export async function deleteAllForProject(db: DrizzleDb, projectId: string): Promise<number> {
@@ -148,6 +146,6 @@ export async function getWorktreeInfo(db: DrizzleDb, projectId: string, name: st
       projectId: agents.projectId,
     })
     .from(agents)
-    .where(and(eq(agents.projectId, projectId), eq(agents.name, name)));
+    .where(byProjectAndName(projectId, name));
   return rows[0] ?? null;
 }
