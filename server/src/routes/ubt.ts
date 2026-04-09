@@ -42,8 +42,8 @@ export async function getLastBuildResult(agent: string, type: 'build' | 'test'):
   if (!row) return null;
   return {
     success: row.success === 1,
-    output: (row.output as string) ?? '',
-    stderr: (row.stderr as string) ?? '',
+    output: row.output ?? '',
+    stderr: row.stderr ?? '',
   };
 }
 

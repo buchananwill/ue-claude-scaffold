@@ -1,7 +1,7 @@
 import { eq, and, sql, isNotNull, count as countFn, inArray } from 'drizzle-orm';
 import { tasks, files, agents } from '../schema/tables.js';
 import type { DrizzleDb, DbOrTx } from '../drizzle-instance.js';
-import { releaseAll as releaseAllFilesImpl } from './files.js';
+import * as filesQ from './files.js';
 
 const ACTIVE_STATUSES = ['claimed', 'in_progress'] as const;
 
@@ -76,7 +76,7 @@ export async function getInFlightTasks(db: DrizzleDb, projectId: string): Promis
 }
 
 export async function releaseAllFiles(db: DbOrTx, projectId: string): Promise<void> {
-  await releaseAllFilesImpl(db, projectId);
+  await filesQ.releaseAll(db, projectId);
 }
 
 export async function resumePausedAgents(db: DbOrTx, projectId: string): Promise<void> {
