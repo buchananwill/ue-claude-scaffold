@@ -176,7 +176,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     for (const name of request.body.members) {
       const agent = await agentsQ.getByName(db, request.projectId, name);
       if (!agent) {
-        return reply.code(404).send({ error: 'unknown_agent' });
+        return reply.notFound('unknown agent');
       }
       await roomsQ.addMember(db, request.params.id, agent.id);
     }
@@ -193,7 +193,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (!room) return;
     const agent = await agentsQ.getByName(db, request.projectId, request.params.member);
     if (!agent) {
-      return reply.code(404).send({ error: 'unknown_agent' });
+      return reply.notFound('unknown agent');
     }
     await roomsQ.removeMember(db, request.params.id, agent.id);
     return { ok: true };

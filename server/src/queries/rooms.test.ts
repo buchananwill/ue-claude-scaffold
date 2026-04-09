@@ -86,7 +86,7 @@ describe('rooms queries', () => {
   it('should list rooms filtered by member', async () => {
     await roomQ.addMember(db, 'room-2', AGENT_1_ID);
 
-    const rooms = await roomQ.listRooms(db, { member: 'agent-1' });
+    const rooms = await roomQ.listRooms(db, { member: 'agent-1', projectId: 'default' });
     assert.equal(rooms.length, 2); // member of both rooms
   });
 

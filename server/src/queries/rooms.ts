@@ -116,7 +116,7 @@ export async function getMembers(db: DbOrTx, roomId: string): Promise<Array<{ ag
     .from(roomMembers)
     .innerJoin(agents, eq(agents.id, roomMembers.agentId))
     .where(eq(roomMembers.roomId, roomId))
-    .orderBy(roomMembers.joinedAt);
+    .orderBy(roomMembers.joinedAt, roomMembers.agentId);
 }
 
 export async function getPresence(db: DbOrTx, roomId: string): Promise<Array<{ name: string; joinedAt: Date | null; online: boolean; status: string }>> {
