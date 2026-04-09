@@ -199,6 +199,19 @@ describe('rooms CRUD', () => {
     assert.equal(res.statusCode, 404);
   });
 
+  it('GET /rooms/:id returns 404 for room in different project', async () => {
+    // Create room with default project (no X-Project-Id header)
+    await createRoom(ctx, { id: 'r-proj', name: 'Project Room', type: 'group' });
+
+    // Attempt to GET with a different project
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/rooms/r-proj',
+      headers: { 'x-project-id': 'other-project' },
+    });
+    assert.equal(res.statusCode, 404);
+  });
+
   it('DELETE /rooms/:id/members/:member removes a member', async () => {
     await createRoom(ctx, { id: 'r1', name: 'Room 1', type: 'group', agent: 'alice', members: ['bob'] });
     const res = await ctx.app.inject({ method: 'DELETE', url: '/rooms/r1/members/bob' });

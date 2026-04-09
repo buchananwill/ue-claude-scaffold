@@ -82,13 +82,8 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     // Now create the room and add members
     await roomsQ.createRoom(db, { id, name, type, createdBy: caller, projectId: request.projectId });
 
-    if (callerAgentId) {
-      await roomsQ.addMember(db, id, callerAgentId);
-    }
-
-    for (const mid of memberIds) {
-      await roomsQ.addMember(db, id, mid);
-    }
+    const allMemberIds = callerAgentId ? [callerAgentId, ...memberIds] : memberIds;
+    await Promise.all(allMemberIds.map(mid => roomsQ.addMember(db, id, mid)));
 
     return { ok: true, id };
   });
@@ -228,6 +223,13 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     const db = getDb();
     const { id } = request.params;
     const { content, replyTo } = request.body;
+
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      return reply.badRequest('content is required');
+    }
+    if (content.length > 65536) {
+      return reply.badRequest('content must be at most 65536 characters');
+    }
 
     const room = await roomsQ.getRoom(db, id);
     if (!room) {

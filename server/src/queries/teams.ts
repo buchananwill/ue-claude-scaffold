@@ -59,8 +59,12 @@ export async function createWithRoom(db: DbOrTx, opts: CreateWithRoomOpts) {
   return team;
 }
 
-export async function getById(db: DbOrTx, id: string) {
-  const rows = await db.select().from(teams).where(eq(teams.id, id));
+export async function getById(db: DbOrTx, id: string, projectId?: string) {
+  const conditions = [eq(teams.id, id)];
+  if (projectId) {
+    conditions.push(eq(teams.projectId, projectId));
+  }
+  const rows = await db.select().from(teams).where(and(...conditions));
   return rows[0] ?? null;
 }
 

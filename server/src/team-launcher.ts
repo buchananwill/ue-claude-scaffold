@@ -186,7 +186,7 @@ export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult
   const roomId = def.id;
 
   await db.transaction(async (tx) => {
-    const existing = await teamsQ.getById(tx, def.id);
+    const existing = await teamsQ.getById(tx, def.id, projectId);
     if (existing) {
       if (existing.status !== 'dissolved') {
         throw new Error(`Team '${def.id}' already exists and is ${existing.status}`);
