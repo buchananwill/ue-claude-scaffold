@@ -79,7 +79,7 @@ describe('rooms queries', () => {
       createdBy: 'agent-1',
     });
 
-    const all = await roomQ.listRooms(db);
+    const all = await roomQ.listRooms(db, { projectId: 'default' });
     assert.equal(all.length, 2);
   });
 
