@@ -53,14 +53,14 @@ export async function getEstimatedBuildMs(type?: string): Promise<number> {
   return avg ?? 300_000;
 }
 
-export async function clearLockAndPromote(projectId: string = 'default'): Promise<{ promoted?: string }> {
+export async function clearLockAndPromote(): Promise<{ promoted?: string }> {
   const db = getDb();
   return db.transaction(async (tx) => {
-    await ubtQ.releaseLock(tx as any, projectId);
+    await ubtQ.releaseLock(tx as any);
     const next = await ubtQ.dequeue(tx as any);
     if (next) {
-      await ubtQ.acquireLock(tx as any, next.agent, next.priority, projectId);
-      return { promoted: next.agent };
+      await ubtQ.acquireLock(tx as any, next.agent_id, next.priority);
+      return { promoted: next.agent_id };
     }
     return {};
   });
@@ -73,8 +73,8 @@ export async function sweepStaleLock(): Promise<void> {
 
   if (isStale(lock.acquiredAt)) {
     await clearLockAndPromote();
-  } else if (lock.holder != null) {
-    const registered = await ubtQ.isAgentRegistered(db, lock.holder);
+  } else if (lock.holderAgentId != null) {
+    const registered = await ubtQ.isAgentRegistered(db, lock.holderAgentId);
     if (!registered) {
       await clearLockAndPromote();
     }
@@ -85,16 +85,15 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
   _timeoutMs = opts.config.server.ubtLockTimeoutMs;
 
   fastify.get('/ubt/status', async (request) => {
-    const projectId = request.projectId;
     const db = getDb();
-    const lock = await ubtQ.getLock(db, projectId);
-    const queue = await ubtQ.getQueue(db, projectId);
+    const lock = await ubtQ.getLock(db);
+    const queue = await ubtQ.getQueue(db);
 
     if (lock && isStale(lock.acquiredAt)) {
       return { holder: null, acquiredAt: null, stale: true, queue, estimatedWaitMs: 0 };
     }
 
-    if (!lock?.holder) {
+    if (!lock?.holderAgentId) {
       return {
         holder: null,
         acquiredAt: null,
@@ -105,7 +104,7 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
 
     const estimatedMs = await getEstimatedBuildMs();
     return {
-      holder: lock.holder,
+      holder: lock.holderAgentId,
       acquiredAt: lock.acquiredAt ?? null,
       queue,
       estimatedWaitMs: estimatedMs * (queue.length + 1),
@@ -116,7 +115,6 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
     Body: { agent: string; priority?: number };
   }>('/ubt/acquire', async (request) => {
     const { agent, priority = 0 } = request.body;
-    const projectId = request.projectId;
     const db = getDb();
 
     // Pre-compute estimated build time outside the transaction to avoid
@@ -124,38 +122,38 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
     const estimatedMs = await getEstimatedBuildMs();
 
     return db.transaction(async (tx) => {
-      const lock = await ubtQ.getLock(tx as any, projectId);
+      const lock = await ubtQ.getLock(tx as any);
 
       if (!lock || isStale(lock.acquiredAt)) {
-        await ubtQ.acquireLock(tx as any, agent, priority, projectId);
+        await ubtQ.acquireLock(tx as any, agent, priority);
         return { granted: true };
       }
 
-      if (lock.holder === agent) {
+      if (lock.holderAgentId === agent) {
         return { granted: true };
       }
 
-      const existing = await ubtQ.findInQueue(tx as any, agent, projectId);
+      const existing = await ubtQ.findInQueue(tx as any, agent);
       if (existing) {
         const pos = await ubtQ.getQueuePosition(tx as any, existing.id, existing.priority ?? 0);
         return {
           granted: false,
           position: pos,
           backoffMs: pos * 5000,
-          holder: lock.holder,
+          holder: lock.holderAgentId,
           holderSince: lock.acquiredAt,
           estimatedWaitMs: estimatedMs * pos,
         };
       }
 
-      const queueId = await ubtQ.enqueue(tx as any, agent, priority, projectId);
+      const queueId = await ubtQ.enqueue(tx as any, agent, priority);
       const pos = await ubtQ.getQueuePosition(tx as any, queueId, priority);
 
       return {
         granted: false,
         position: pos,
         backoffMs: pos * 5000,
-        holder: lock.holder,
+        holder: lock.holderAgentId,
         holderSince: lock.acquiredAt,
         estimatedWaitMs: estimatedMs * pos,
       };
@@ -166,20 +164,19 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
     Body: { agent: string };
   }>('/ubt/release', async (request) => {
     const { agent } = request.body;
-    const projectId = request.projectId;
     const db = getDb();
 
-    const lock = await ubtQ.getLock(db, projectId);
+    const lock = await ubtQ.getLock(db);
 
     if (!lock) {
       return { ok: false, reason: 'not_held' };
     }
 
-    if (lock.holder !== agent) {
+    if (lock.holderAgentId !== agent) {
       return { ok: false, reason: 'not_holder' };
     }
 
-    const result = await clearLockAndPromote(projectId);
+    const result = await clearLockAndPromote();
     return { ok: true, ...result };
   });
 };

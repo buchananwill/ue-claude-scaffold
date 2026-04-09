@@ -2,7 +2,10 @@ import { eq, and, desc, asc, ne, sql, count as countFn } from 'drizzle-orm';
 import { ubtLock, ubtQueue, agents } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 
-export async function getLock(db: DrizzleDb, hostId: string = 'local') {
+type UbtLockRow = typeof ubtLock.$inferSelect;
+type UbtQueueRow = typeof ubtQueue.$inferSelect;
+
+export async function getLock(db: DrizzleDb, hostId: string = 'local'): Promise<UbtLockRow | null> {
   const rows = await db
     .select()
     .from(ubtLock)
@@ -15,7 +18,7 @@ export async function acquireLock(
   agentId: string,
   priority: number,
   hostId: string = 'local',
-) {
+): Promise<void> {
   await db
     .insert(ubtLock)
     .values({
@@ -34,7 +37,7 @@ export async function acquireLock(
     });
 }
 
-export async function releaseLock(db: DrizzleDb, hostId: string = 'local') {
+export async function releaseLock(db: DrizzleDb, hostId: string = 'local'): Promise<void> {
   await db.delete(ubtLock).where(eq(ubtLock.hostId, hostId));
 }
 
@@ -50,7 +53,12 @@ export async function enqueue(
   return rows[0].id;
 }
 
-export async function dequeue(db: DrizzleDb) {
+export async function dequeue(db: DrizzleDb): Promise<{
+  id: number;
+  agent_id: string;
+  priority: number;
+  requested_at: Date;
+} | null> {
   // Atomic delete+return via subquery — avoids TOCTOU race under concurrent access
   const rows = await db.execute<{
     id: number;
@@ -69,7 +77,7 @@ export async function dequeue(db: DrizzleDb) {
   return rows.rows[0] ?? null;
 }
 
-export async function getQueue(db: DrizzleDb) {
+export async function getQueue(db: DrizzleDb): Promise<UbtQueueRow[]> {
   return db
     .select()
     .from(ubtQueue)
@@ -90,7 +98,7 @@ export async function getQueuePosition(
   return Number(rows[0].count);
 }
 
-export async function findInQueue(db: DrizzleDb, agentId: string) {
+export async function findInQueue(db: DrizzleDb, agentId: string): Promise<{ id: number; priority: number | null } | null> {
   const rows = await db
     .select({ id: ubtQueue.id, priority: ubtQueue.priority })
     .from(ubtQueue)
