@@ -1,11 +1,11 @@
 import { eq, and, desc, asc, ne, sql, count as countFn } from 'drizzle-orm';
 import { ubtLock, ubtQueue, agents } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
+import type { DrizzleDb, DbOrTx } from '../drizzle-instance.js';
 
 type UbtLockRow = typeof ubtLock.$inferSelect;
 type UbtQueueRow = typeof ubtQueue.$inferSelect;
 
-export async function getLock(db: DrizzleDb, hostId: string = 'local'): Promise<UbtLockRow | null> {
+export async function getLock(db: DbOrTx, hostId: string = 'local'): Promise<UbtLockRow | null> {
   const rows = await db
     .select()
     .from(ubtLock)
@@ -14,7 +14,7 @@ export async function getLock(db: DrizzleDb, hostId: string = 'local'): Promise<
 }
 
 export async function acquireLock(
-  db: DrizzleDb,
+  db: DbOrTx,
   agentId: string,
   priority: number,
   hostId: string = 'local',
@@ -37,12 +37,12 @@ export async function acquireLock(
     });
 }
 
-export async function releaseLock(db: DrizzleDb, hostId: string = 'local'): Promise<void> {
+export async function releaseLock(db: DbOrTx, hostId: string = 'local'): Promise<void> {
   await db.delete(ubtLock).where(eq(ubtLock.hostId, hostId));
 }
 
 export async function enqueue(
-  db: DrizzleDb,
+  db: DbOrTx,
   agentId: string,
   priority: number,
 ): Promise<number> {
@@ -53,7 +53,7 @@ export async function enqueue(
   return rows[0].id;
 }
 
-export async function dequeue(db: DrizzleDb): Promise<{
+export async function dequeue(db: DbOrTx): Promise<{
   id: number;
   agentId: string;
   priority: number;
@@ -79,7 +79,7 @@ export async function dequeue(db: DrizzleDb): Promise<{
   return { id: row.id, agentId: row.agent_id, priority: row.priority, requestedAt: row.requested_at };
 }
 
-export async function getQueue(db: DrizzleDb): Promise<UbtQueueRow[]> {
+export async function getQueue(db: DbOrTx): Promise<UbtQueueRow[]> {
   return db
     .select()
     .from(ubtQueue)
@@ -87,7 +87,7 @@ export async function getQueue(db: DrizzleDb): Promise<UbtQueueRow[]> {
 }
 
 export async function getQueuePosition(
-  db: DrizzleDb,
+  db: DbOrTx,
   id: number,
   priority: number,
 ): Promise<number> {
@@ -101,7 +101,7 @@ export async function getQueuePosition(
 }
 
 export async function findInQueue(
-  db: DrizzleDb,
+  db: DbOrTx,
   agentId: string,
 ): Promise<{ id: number; priority: number | null } | null> {
   const rows = await db
@@ -111,7 +111,7 @@ export async function findInQueue(
   return rows[0] ?? null;
 }
 
-export async function isAgentRegistered(db: DrizzleDb, agentId: string): Promise<boolean> {
+export async function isAgentRegistered(db: DbOrTx, agentId: string): Promise<boolean> {
   const rows = await db
     .select({ id: agents.id })
     .from(agents)

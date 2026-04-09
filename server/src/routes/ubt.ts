@@ -56,10 +56,10 @@ export async function getEstimatedBuildMs(type?: string): Promise<number> {
 export async function clearLockAndPromote(): Promise<{ promoted?: string }> {
   const db = getDb();
   return db.transaction(async (tx) => {
-    await ubtQ.releaseLock(tx as any);
-    const next = await ubtQ.dequeue(tx as any);
+    await ubtQ.releaseLock(tx);
+    const next = await ubtQ.dequeue(tx);
     if (next) {
-      await ubtQ.acquireLock(tx as any, next.agentId, next.priority);
+      await ubtQ.acquireLock(tx, next.agentId, next.priority);
       return { promoted: next.agentId };
     }
     return {};
@@ -122,10 +122,10 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
     const estimatedMs = await getEstimatedBuildMs();
 
     return db.transaction(async (tx) => {
-      const lock = await ubtQ.getLock(tx as any);
+      const lock = await ubtQ.getLock(tx);
 
       if (!lock || isStale(lock.acquiredAt)) {
-        await ubtQ.acquireLock(tx as any, agent, priority);
+        await ubtQ.acquireLock(tx, agent, priority);
         return { granted: true };
       }
 
@@ -133,9 +133,9 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
         return { granted: true };
       }
 
-      const existing = await ubtQ.findInQueue(tx as any, agent);
+      const existing = await ubtQ.findInQueue(tx, agent);
       if (existing) {
-        const pos = await ubtQ.getQueuePosition(tx as any, existing.id, existing.priority ?? 0);
+        const pos = await ubtQ.getQueuePosition(tx, existing.id, existing.priority ?? 0);
         return {
           granted: false,
           position: pos,
@@ -146,8 +146,8 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
         };
       }
 
-      const queueId = await ubtQ.enqueue(tx as any, agent, priority);
-      const pos = await ubtQ.getQueuePosition(tx as any, queueId, priority);
+      const queueId = await ubtQ.enqueue(tx, agent, priority);
+      const pos = await ubtQ.getQueuePosition(tx, queueId, priority);
 
       return {
         granted: false,
