@@ -6,7 +6,7 @@ import { existsInBareRepo, isCommittedInRepo } from '../git-utils.js';
 import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
 import type { TasksOpts } from './tasks-files.js';
-import { resolveAgentId } from './route-helpers.js';
+import { resolveAgent } from './route-helpers.js';
 
 const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   const config = opts.config;
@@ -130,7 +130,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
     }
 
     const db = getDb();
-    const agentRow = await resolveAgentId(db, request.projectId, agent);
+    const agentRow = await resolveAgent(db, request.projectId, agent);
     if (!agentRow) {
       return reply.notFound(`Agent '${agent}' not found in project '${request.projectId}'`);
     }

@@ -7,7 +7,7 @@ import { launchTeam } from '../team-launcher.js';
 import { AGENT_NAME_RE } from '../branch-naming.js';
 import * as teamsQ from '../queries/teams.js';
 import * as roomsQ from '../queries/rooms.js';
-import { resolveAgentId } from './route-helpers.js';
+import { resolveAgent } from './route-helpers.js';
 
 const VALID_STATUSES = ['active', 'converging', 'dissolved'] as const;
 
@@ -62,7 +62,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     // Resolve agent names to UUIDs
     const resolvedMembers: Array<{ agentId: string; role: string; isLeader?: boolean }> = [];
     for (const m of members) {
-      const agentRow = await resolveAgentId(db, request.projectId, m.agentName);
+      const agentRow = await resolveAgent(db, request.projectId, m.agentName);
       if (!agentRow) {
         return reply.badRequest(`Agent '${m.agentName}' not found in project '${request.projectId}'`);
       }
@@ -71,7 +71,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
 
     try {
       await db.transaction(async (tx) => {
-        const existing = await teamsQ.getById(tx, id);
+        const existing = await teamsQ.getById(tx, id, request.projectId);
         if (existing) {
           if (existing.status !== 'dissolved') {
             throw Object.assign(new Error(`Team '${id}' already exists and is not dissolved`), { statusCode: 409 });
@@ -127,7 +127,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     Params: { id: string };
   }>('/teams/:id', async (request, reply) => {
     const db = getDb();
-    const team = await teamsQ.getById(db, request.params.id);
+    const team = await teamsQ.getById(db, request.params.id, request.projectId);
     if (!team) {
       return reply.notFound(`Team '${request.params.id}' not found`);
     }
@@ -157,7 +157,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     Params: { id: string };
   }>('/teams/:id', async (request, reply) => {
     const db = getDb();
-    const team = await teamsQ.getById(db, request.params.id);
+    const team = await teamsQ.getById(db, request.params.id, request.projectId);
     if (!team) {
       return reply.notFound(`Team '${request.params.id}' not found`);
     }
@@ -171,7 +171,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     Body: { status?: string; deliverable?: string };
   }>('/teams/:id', async (request, reply) => {
     const db = getDb();
-    const team = await teamsQ.getById(db, request.params.id);
+    const team = await teamsQ.getById(db, request.params.id, request.projectId);
     if (!team) {
       return reply.notFound(`Team '${request.params.id}' not found`);
     }

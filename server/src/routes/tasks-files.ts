@@ -169,12 +169,12 @@ export async function formatTaskWithFiles(row: TaskRow, agent: string, config: S
   return formatTask(row, files, deps, blockers, reasons);
 }
 
-export async function checkAndClaimFiles(taskId: number, agent: string): Promise<ConflictInfo[] | null> {
+export async function checkAndClaimFiles(taskId: number, agentId: string): Promise<ConflictInfo[] | null> {
   const db = getDb();
   const deps = await taskFilesQ.getFilesForTask(db, taskId);
   if (deps.length === 0) return null;
 
-  const conflictRows = await taskFilesQ.getFileConflicts(db, taskId, agent);
+  const conflictRows = await taskFilesQ.getFileConflicts(db, taskId, agentId);
 
   if (conflictRows.length > 0) {
     return conflictRows.map(r => ({ file: r.path, claimant: r.claimant! }));
@@ -183,7 +183,7 @@ export async function checkAndClaimFiles(taskId: number, agent: string): Promise
   const taskRow = await tasksCore.getById(db, taskId);
   const projectId = taskRow?.projectId ?? 'default';
   for (const dep of deps) {
-    await taskFilesQ.claimFilesForAgent(db, agent, projectId, dep);
+    await taskFilesQ.claimFilesForAgent(db, agentId, projectId, dep);
   }
   return [];
 }

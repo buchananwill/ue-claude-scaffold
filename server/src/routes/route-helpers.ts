@@ -7,7 +7,7 @@ import type { DrizzleDb } from '../drizzle-instance.js';
  * Returns the agent row if found, or null if no agent with that name exists
  * in the given project.
  */
-export async function resolveAgentId(
+export async function resolveAgent(
   db: DrizzleDb,
   projectId: string,
   name: string,

@@ -3,7 +3,7 @@ import { getDb, type DrizzleDb } from '../drizzle-instance.js';
 import * as roomsQ from '../queries/rooms.js';
 import type { RoomRow } from '../queries/rooms.js';
 import * as chatQ from '../queries/chat.js';
-import { resolveAgentId } from './route-helpers.js';
+import { resolveAgent } from './route-helpers.js';
 import { sql } from 'drizzle-orm';
 import { rooms, chatMessages, agents } from '../schema/tables.js';
 
@@ -67,7 +67,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     // Resolve caller agent UUID before creating room
     let callerAgentId: string | undefined;
     if (agentName) {
-      const callerAgent = await resolveAgentId(db, request.projectId, agentName);
+      const callerAgent = await resolveAgent(db, request.projectId, agentName);
       if (!callerAgent) {
         return reply.code(403).send({ error: 'unknown_agent' });
       }
@@ -78,7 +78,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     const memberIds: string[] = [];
     if (members) {
       for (const m of members) {
-        const agent = await resolveAgentId(db, request.projectId, m);
+        const agent = await resolveAgent(db, request.projectId, m);
         if (!agent) {
           return reply.notFound(`Unknown agent: ${m}`);
         }
@@ -174,7 +174,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (!room) return;
 
     for (const name of request.body.members) {
-      const agent = await resolveAgentId(db, request.projectId, name);
+      const agent = await resolveAgent(db, request.projectId, name);
       if (!agent) {
         return reply.notFound('unknown agent');
       }
@@ -191,7 +191,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     const db = getDb();
     const room = await requireRoom(db, request.params.id, request.projectId, reply);
     if (!room) return;
-    const agent = await resolveAgentId(db, request.projectId, request.params.member);
+    const agent = await resolveAgent(db, request.projectId, request.params.member);
     if (!agent) {
       return reply.notFound('unknown agent');
     }
@@ -221,7 +221,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
 
     if (agentName) {
       // Agent flow: resolve agent, check membership
-      const agent = await resolveAgentId(db, request.projectId, agentName);
+      const agent = await resolveAgent(db, request.projectId, agentName);
       if (!agent) {
         return reply.code(403).send({ error: 'unknown_agent' });
       }
@@ -266,7 +266,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
 
     const callerName = request.headers['x-agent-name'] as string | undefined;
     if (callerName) {
-      const agent = await resolveAgentId(db, request.projectId, callerName);
+      const agent = await resolveAgent(db, request.projectId, callerName);
       if (!agent) {
         return reply.code(403).send({ error: 'unknown_agent' });
       }
