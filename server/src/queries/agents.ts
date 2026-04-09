@@ -25,7 +25,12 @@ export interface RegisterOpts {
   sessionToken?: string | null;
 }
 
-export async function register(db: DrizzleDb, opts: RegisterOpts): Promise<void> {
+export interface RegisterResult {
+  id: string;
+  sessionToken: string;
+}
+
+export async function register(db: DrizzleDb, opts: RegisterOpts): Promise<RegisterResult> {
   const {
     name,
     projectId,
@@ -47,10 +52,12 @@ export async function register(db: DrizzleDb, opts: RegisterOpts): Promise<void>
     throw new Error(`Invalid agent mode: ${mode}`);
   }
 
-  await db
+  const id = uuidv7();
+
+  const rows = await db
     .insert(agents)
     .values({
-      id: uuidv7(),
+      id,
       name,
       projectId,
       worktree,
@@ -72,7 +79,11 @@ export async function register(db: DrizzleDb, opts: RegisterOpts): Promise<void>
         containerHost: sql`COALESCE(excluded.container_host, ${agents.containerHost})`,
         sessionToken,
       },
-    });
+    })
+    .returning({ id: agents.id, sessionToken: agents.sessionToken });
+
+  const row = rows[0];
+  return { id: row.id, sessionToken: row.sessionToken ?? sessionToken ?? '' };
 }
 
 /**

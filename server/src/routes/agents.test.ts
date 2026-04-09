@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import { createTestConfig } from '../test-helper.js';
-import { tasks } from '../schema/tables.js';
+import { tasks, agents } from '../schema/tables.js';
 import { eq, sql } from 'drizzle-orm';
 import agentsPlugin from './agents.js';
 
@@ -39,14 +39,15 @@ describe('agents routes (drizzle)', () => {
     const regBody = reg.json();
     assert.equal(regBody.ok, true);
     assert.ok(typeof regBody.sessionToken === 'string', 'sessionToken is returned');
+    assert.ok(typeof regBody.id === 'string', 'id is returned');
 
     const list = await ctx.app.inject({ method: 'GET', url: '/agents' });
-    const agents = list.json();
-    assert.equal(agents.length, 1);
-    assert.equal(agents[0].name, 'agent-1');
-    assert.equal(agents[0].worktree, '/tmp/wt1');
-    assert.equal(agents[0].planDoc, 'plan.md');
-    assert.equal(agents[0].status, 'idle');
+    const agentsList = list.json();
+    assert.equal(agentsList.length, 1);
+    assert.equal(agentsList[0].name, 'agent-1');
+    assert.equal(agentsList[0].worktree, '/tmp/wt1');
+    assert.equal(agentsList[0].planDoc, 'plan.md');
+    assert.equal(agentsList[0].status, 'idle');
   });
 
   it('POST /agents/register with same name is an upsert', async () => {
@@ -62,12 +63,12 @@ describe('agents routes (drizzle)', () => {
     });
 
     const list = await ctx.app.inject({ method: 'GET', url: '/agents' });
-    const agents = list.json();
-    assert.equal(agents.length, 1);
-    assert.equal(agents[0].worktree, '/tmp/wt2');
+    const agentsList = list.json();
+    assert.equal(agentsList.length, 1);
+    assert.equal(agentsList[0].worktree, '/tmp/wt2');
   });
 
-  it('POST /agents/:name/status updates status', async () => {
+  it('POST /agents/:name/status updates status with a valid value', async () => {
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/register',
@@ -77,20 +78,55 @@ describe('agents routes (drizzle)', () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/agents/agent-1/status',
-      payload: { status: 'building' },
+      payload: { status: 'working' },
     });
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.json(), { ok: true });
 
     const list = await ctx.app.inject({ method: 'GET', url: '/agents' });
-    assert.equal(list.json()[0].status, 'building');
+    assert.equal(list.json()[0].status, 'working');
+  });
+
+  it('POST /agents/:name/status rejects invalid status values', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/agent-1/status',
+      payload: { status: 'banana' },
+    });
+    assert.equal(res.statusCode, 400);
+    const body = res.json();
+    assert.equal(body.error, 'invalid_status');
+    assert.ok(Array.isArray(body.allowed));
+  });
+
+  it('POST /agents/:name/status rejects deleted status', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/agent-1/status',
+      payload: { status: 'deleted' },
+    });
+    assert.equal(res.statusCode, 400);
+    const body = res.json();
+    assert.equal(body.error, 'invalid_status');
   });
 
   it('POST /agents/:name/status for non-existent agent returns 404', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/agents/no-such-agent/status',
-      payload: { status: 'building' },
+      payload: { status: 'working' },
     });
     assert.equal(res.statusCode, 404);
   });
@@ -117,7 +153,7 @@ describe('agents routes (drizzle)', () => {
     assert.equal(res.statusCode, 404);
   });
 
-  it('DELETE /agents/:name (first call) sets status to stopping and leaves row', async () => {
+  it('DELETE /agents/:name soft-deletes (sets status to deleted)', async () => {
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/register',
@@ -126,50 +162,61 @@ describe('agents routes (drizzle)', () => {
 
     const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
     assert.equal(del.statusCode, 200);
-    assert.deepEqual(del.json(), { ok: true, stopping: true });
+    assert.deepEqual(del.json(), { ok: true, deleted: true });
 
-    // Agent should still exist with status 'stopping'
-    const get = await ctx.app.inject({ method: 'GET', url: '/agents/agent-1' });
-    assert.equal(get.statusCode, 200);
-    assert.equal(get.json().status, 'stopping');
-  });
-
-  it('DELETE /agents/:name (second call) hard-deletes the row', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
-    });
-
-    // First call — sets stopping
-    await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
-
-    // Second call — hard-delete
-    const del2 = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
-    assert.equal(del2.statusCode, 200);
-    assert.deepEqual(del2.json(), { ok: true });
-
-    // Agent should be gone
-    const get = await ctx.app.inject({ method: 'GET', url: '/agents/agent-1' });
-    assert.equal(get.statusCode, 404);
-  });
-
-  it('DELETE /agents/:name releases file ownership on first call', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
-    });
-
-    // First call sets stopping and releases files — should not error
-    const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
-    assert.equal(del.statusCode, 200);
-    assert.equal(del.json().stopping, true);
+    // Agent should still exist with status 'deleted'
+    const row = await ctx.db.select().from(agents).where(eq(agents.name, 'agent-1'));
+    assert.equal(row.length, 1);
+    assert.equal(row[0].status, 'deleted');
   });
 
   it('DELETE /agents/:name returns 404 for unknown agent', async () => {
     const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/ghost' });
     assert.equal(del.statusCode, 404);
+  });
+
+  it('DELETE /agents/:name with valid sessionToken succeeds', async () => {
+    const reg = await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+    const { sessionToken } = reg.json();
+
+    const del = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/agents/agent-1?sessionToken=${sessionToken}`,
+    });
+    assert.equal(del.statusCode, 200);
+    assert.deepEqual(del.json(), { ok: true, deleted: true });
+  });
+
+  it('DELETE /agents/:name with mismatched sessionToken returns 409', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    const del = await ctx.app.inject({
+      method: 'DELETE',
+      url: '/agents/agent-1?sessionToken=wrong-token-value',
+    });
+    assert.equal(del.statusCode, 409);
+    const body = del.json();
+    assert.ok(body.error.includes('session token mismatch'));
+  });
+
+  it('DELETE /agents/:name without sessionToken skips the check', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
+    assert.equal(del.statusCode, 200);
+    assert.deepEqual(del.json(), { ok: true, deleted: true });
   });
 
   it('POST /agents/register with mode pump returns mode pump', async () => {
@@ -196,7 +243,7 @@ describe('agents routes (drizzle)', () => {
     assert.equal(res.json().mode, 'single');
   });
 
-  it('DELETE /agents deregisters all agents', async () => {
+  it('DELETE /agents soft-deletes all agents for the project', async () => {
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/register',
@@ -211,10 +258,14 @@ describe('agents routes (drizzle)', () => {
     const del = await ctx.app.inject({ method: 'DELETE', url: '/agents' });
     assert.equal(del.statusCode, 200);
     assert.equal(del.json().ok, true);
-    assert.equal(del.json().removed, 2);
+    assert.equal(del.json().deletedCount, 2);
 
-    const list = await ctx.app.inject({ method: 'GET', url: '/agents' });
-    assert.deepEqual(list.json(), []);
+    // Both agents still exist in DB with status 'deleted'
+    const rows = await ctx.db.select().from(agents);
+    assert.equal(rows.length, 2);
+    for (const row of rows) {
+      assert.equal(row.status, 'deleted');
+    }
   });
 });
 
@@ -353,13 +404,23 @@ describe('DELETE /agents task release (drizzle)', () => {
     await ctx.cleanup();
   });
 
+  /** Register an agent and return its UUID */
+  async function registerAgent(name: string): Promise<string> {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name, worktree: '/tmp/wt1' },
+    });
+    return res.json().id;
+  }
+
   /** Create a task directly via DB */
-  async function createTask(title: string, status: string = 'pending', claimedBy: string | null = null): Promise<number> {
+  async function createTask(title: string, status: string = 'pending', claimedByAgentId: string | null = null): Promise<number> {
     const rows = await ctx.db.insert(tasks).values({
       title,
       status,
-      claimedBy,
-      claimedAt: claimedBy ? sql`now()` : null,
+      claimedByAgentId,
+      claimedAt: claimedByAgentId ? sql`now()` : null,
       projectId: 'default',
     }).returning();
     return rows[0].id;
@@ -371,39 +432,29 @@ describe('DELETE /agents task release (drizzle)', () => {
     return rows[0];
   }
 
-  it('DELETE /agents/:name (first call) releases claimed tasks to pending', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
-    });
-
-    const taskId = await createTask('task-1', 'claimed', 'agent-1');
+  it('DELETE /agents/:name releases claimed tasks to pending', async () => {
+    const agentId = await registerAgent('agent-1');
+    const taskId = await createTask('task-1', 'claimed', agentId);
 
     // Verify task is claimed
     const before = await getTask(taskId);
     assert.equal(before.status, 'claimed');
-    assert.equal(before.claimedBy, 'agent-1');
+    assert.equal(before.claimedByAgentId, agentId);
 
-    // First DELETE — sets stopping and releases tasks
+    // DELETE soft-deletes and releases tasks
     const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
     assert.equal(del.statusCode, 200);
-    assert.equal(del.json().stopping, true);
+    assert.equal(del.json().deleted, true);
 
     // Verify task reverted to pending with no claimant
     const after = await getTask(taskId);
     assert.equal(after.status, 'pending');
-    assert.equal(after.claimedBy, null);
+    assert.equal(after.claimedByAgentId, null);
   });
 
   it('DELETE /agents (bulk) releases claimed tasks to pending', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
-    });
-
-    const taskId = await createTask('bulk-task', 'claimed', 'agent-1');
+    const agentId = await registerAgent('agent-1');
+    const taskId = await createTask('bulk-task', 'claimed', agentId);
 
     // Bulk DELETE all agents
     const del = await ctx.app.inject({ method: 'DELETE', url: '/agents' });
@@ -413,58 +464,26 @@ describe('DELETE /agents task release (drizzle)', () => {
     // Verify task reverted to pending
     const after = await getTask(taskId);
     assert.equal(after.status, 'pending');
-    assert.equal(after.claimedBy, null);
+    assert.equal(after.claimedByAgentId, null);
   });
 
-  it('DELETE /agents/:name (first call) releases in_progress tasks to pending', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
-    });
-
-    const taskId = await createTask('in-progress-task', 'in_progress', 'agent-1');
+  it('DELETE /agents/:name releases in_progress tasks to pending', async () => {
+    const agentId = await registerAgent('agent-1');
+    const taskId = await createTask('in-progress-task', 'in_progress', agentId);
 
     // Verify task is in_progress
     const before = await getTask(taskId);
     assert.equal(before.status, 'in_progress');
-    assert.equal(before.claimedBy, 'agent-1');
+    assert.equal(before.claimedByAgentId, agentId);
 
-    // First DELETE — sets stopping and releases tasks
+    // DELETE soft-deletes and releases tasks
     const del = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
     assert.equal(del.statusCode, 200);
-    assert.equal(del.json().stopping, true);
+    assert.equal(del.json().deleted, true);
 
     // Verify task reverted to pending with no claimant
     const after = await getTask(taskId);
     assert.equal(after.status, 'pending');
-    assert.equal(after.claimedBy, null);
-  });
-
-  it('DELETE /agents/:name is idempotent — first sets stopping, second hard-deletes', async () => {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
-    });
-
-    // First DELETE — sets stopping
-    const del1 = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
-    assert.equal(del1.statusCode, 200);
-    assert.deepEqual(del1.json(), { ok: true, stopping: true });
-
-    // Agent still exists with stopping status
-    const get1 = await ctx.app.inject({ method: 'GET', url: '/agents/agent-1' });
-    assert.equal(get1.statusCode, 200);
-    assert.equal(get1.json().status, 'stopping');
-
-    // Second DELETE — hard-deletes
-    const del2 = await ctx.app.inject({ method: 'DELETE', url: '/agents/agent-1' });
-    assert.equal(del2.statusCode, 200);
-    assert.deepEqual(del2.json(), { ok: true });
-
-    // Agent is gone
-    const get2 = await ctx.app.inject({ method: 'GET', url: '/agents/agent-1' });
-    assert.equal(get2.statusCode, 404);
+    assert.equal(after.claimedByAgentId, null);
   });
 });

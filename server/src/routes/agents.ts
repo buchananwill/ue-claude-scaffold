@@ -36,6 +36,10 @@ export function formatAgent(row: AgentRow) {
   };
 }
 
+const ALLOWED_STATUSES = ['idle', 'working', 'done', 'error', 'paused', 'stopping'] as const;
+type AllowedStatus = (typeof ALLOWED_STATUSES)[number];
+const ALLOWED_STATUS_SET = new Set<string>(ALLOWED_STATUSES);
+
 const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   const { config } = opts;
 
@@ -50,7 +54,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     const sessionToken = randomBytes(16).toString('hex');
     const db = getDb();
 
-    await agentsQ.register(db, {
+    const newAgent = await agentsQ.register(db, {
       name,
       worktree,
       planDoc: planDoc ?? null,
@@ -70,11 +74,10 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
         createdBy: name,
         projectId,
       });
-      await roomsQ.addMember(db, roomId, name);
-      await roomsQ.addMember(db, roomId, 'user');
+      await roomsQ.addMember(db, roomId, newAgent.id);
     }
 
-    return { ok: true, sessionToken };
+    return { ok: true, id: newAgent.id, sessionToken: newAgent.sessionToken };
   });
 
   fastify.get<{
@@ -87,12 +90,12 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     return rows.map(formatAgent);
   });
 
-  // GET /agents/:name — fetch a single agent by name
+  // GET /agents/:name -- fetch a single agent by name
   fastify.get<{
     Params: { name: string };
   }>('/agents/:name', async (request, reply) => {
     const db = getDb();
-    const row = await agentsQ.getByName(db, request.params.name);
+    const row = await agentsQ.getByName(db, request.projectId, request.params.name);
     if (!row) {
       return reply.notFound(`Agent '${request.params.name}' not registered`);
     }
@@ -106,63 +109,79 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     const { name } = request.params;
     const { status } = request.body;
     const db = getDb();
-    const agent = await agentsQ.getByName(db, name);
+
+    if (status === 'deleted') {
+      return reply.code(400).send({
+        error: 'invalid_status',
+        allowed: ALLOWED_STATUSES,
+        message: 'Cannot set status to deleted via this endpoint',
+      });
+    }
+
+    if (!ALLOWED_STATUS_SET.has(status)) {
+      return reply.code(400).send({
+        error: 'invalid_status',
+        allowed: ALLOWED_STATUSES,
+      });
+    }
+
+    const agent = await agentsQ.getByName(db, request.projectId, name);
     if (!agent) {
       return reply.notFound(`Agent '${name}' not registered`);
     }
-    await agentsQ.updateStatus(db, name, status);
+    await agentsQ.updateStatus(db, request.projectId, name, status as agentsQ.AgentStatus);
     return { ok: true };
   });
 
-  // DELETE /agents/:name — deregister a single agent
-  // First call (operator): sets status to 'stopping', releases file ownership.
-  // Second call (container self-deregister): hard-deletes the row.
+  // DELETE /agents/:name -- soft-delete a single agent
   fastify.delete<{
     Params: { name: string };
+    Querystring: { sessionToken?: string };
   }>('/agents/:name', async (request, reply) => {
     const { name } = request.params;
+    const { sessionToken } = request.query;
     const db = getDb();
-    const agent = await agentsQ.getByName(db, name);
+    const agent = await agentsQ.getByName(db, request.projectId, name);
     if (!agent) {
       return reply.notFound(`Agent '${name}' not registered`);
     }
 
-    if (agent.status === 'stopping') {
-      // Second call — container acknowledging stop; hard-delete the row
-      await db.transaction(async (tx) => {
-        await agentsQ.hardDelete(tx as any, name);
-        await filesQ.releaseByClaimant(tx as any, name);
+    if (sessionToken && agent.sessionToken !== sessionToken) {
+      fastify.log.warn(
+        { agent: name, projectId: request.projectId },
+        'DELETE /agents/:name session token mismatch',
+      );
+      return reply.code(409).send({
+        error: 'session token mismatch — another container has taken over this agent slot',
       });
-      return { ok: true };
     }
 
-    // First call — operator initiating shutdown; set status to stopping
     await db.transaction(async (tx) => {
-      await agentsQ.softDelete(tx as any, name);
-      await filesQ.releaseByClaimant(tx as any, name);
-      await tasksLifecycleQ.releaseByAgent(tx as any, name);
+      await agentsQ.softDelete(tx as any, request.projectId, name);
+      await filesQ.releaseByClaimantAgentId(tx as any, request.projectId, agent.id);
+      await tasksLifecycleQ.releaseByAgent(tx as any, request.projectId, agent.id);
     });
-    return { ok: true, stopping: true };
+    return { ok: true, deleted: true };
   });
 
-  // DELETE /agents — deregister all agents (e.g. server restart cleanup)
-  fastify.delete('/agents', async () => {
+  // DELETE /agents -- soft-delete all agents for the project
+  fastify.delete('/agents', async (request) => {
     const db = getDb();
     const result = await db.transaction(async (tx) => {
-      const count = await agentsQ.deleteAll(tx as any);
-      await filesQ.releaseAll(tx as any);
-      await tasksLifecycleQ.releaseAllActive(tx as any);
+      const count = await agentsQ.deleteAllForProject(tx as any, request.projectId);
+      await filesQ.releaseAll(tx as any, request.projectId);
+      await tasksLifecycleQ.releaseAllActive(tx as any, request.projectId);
       return count;
     });
-    return { ok: true, removed: result };
+    return { ok: true, deletedCount: result };
   });
 
-  // POST /agents/:name/sync — merge seed branch into agent's branch
+  // POST /agents/:name/sync -- merge seed branch into agent's branch
   fastify.post<{ Params: { name: string } }>('/agents/:name/sync', async (request, reply) => {
     const { name } = request.params;
     const db = getDb();
 
-    const agent = await agentsQ.getWorktreeInfo(db, name);
+    const agent = await agentsQ.getWorktreeInfo(db, request.projectId, name);
     if (!agent) {
       return reply.notFound(`Agent '${name}' not found`);
     }
