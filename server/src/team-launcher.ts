@@ -176,18 +176,7 @@ export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult
   const { projectId, teamId, briefPath, teamsDir, project, db } = opts;
   const bareRepoPath = project.bareRepoPath;
 
-  // 0. Validate briefPath is safe before passing to git cat-file
-  if (
-    !briefPath ||
-    briefPath.includes('..') ||
-    briefPath.includes('\0') ||
-    briefPath.startsWith('/') ||
-    !/^[a-zA-Z0-9_.\/\-]{1,512}$/.test(briefPath)
-  ) {
-    throw new Error(`Invalid briefPath: '${briefPath}' — must be a relative path without '..' or special characters`);
-  }
-
-  // 1. Validate brief exists on seed branch
+  // 1. Validate brief exists on seed branch (includes briefPath format validation)
   validateBriefOnSeedBranch(bareRepoPath, projectId, briefPath, project.seedBranch);
 
   // 2. Load and validate team definition

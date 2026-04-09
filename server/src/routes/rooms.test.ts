@@ -44,7 +44,7 @@ describe('rooms CRUD', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
-    await ctx.app.register(roomsPlugin, { config: createTestConfig() });
+    await ctx.app.register(roomsPlugin);
     // Seed agents used in tests
     await seedAgent(ctx, 'alice');
     await seedAgent(ctx, 'bob');
@@ -78,6 +78,16 @@ describe('rooms CRUD', () => {
     assert.ok(members.includes('alice'));
     assert.ok(members.includes('bob'));
     assert.ok(members.includes('carol'));
+  });
+
+  it('POST /rooms — invalid id returns 400', async () => {
+    const res = await createRoom(ctx, { id: 'bad id!', name: 'Test', type: 'group' });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('POST /rooms — name exceeding 256 characters returns 400', async () => {
+    const res = await createRoom(ctx, { id: 'r-long', name: 'x'.repeat(257), type: 'group' });
+    assert.equal(res.statusCode, 400);
   });
 
   it('POST /rooms — invalid type returns 400', async () => {
@@ -210,7 +220,7 @@ describe('chat messages', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
-    await ctx.app.register(roomsPlugin, { config: createTestConfig() });
+    await ctx.app.register(roomsPlugin);
     // Seed agents used in tests
     await seedAgent(ctx, 'alice');
     await seedAgent(ctx, 'bob');
@@ -377,6 +387,16 @@ describe('chat messages', () => {
     assert.equal(res.statusCode, 404);
   });
 
+  it('GET /rooms/:id/messages?since=abc returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/rooms/r1/messages?since=abc' });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('GET /rooms/:id/messages?before=-1 returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/rooms/r1/messages?before=-1' });
+    assert.equal(res.statusCode, 400);
+  });
+
   it('GET /rooms/:id/messages — limit parameter works', async () => {
     for (let i = 0; i < 5; i++) {
       await ctx.app.inject({
@@ -478,7 +498,7 @@ describe('chat message broadcast', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(agentsPlugin, { config: createTestConfig() });
-    await ctx.app.register(roomsPlugin, { config: createTestConfig() });
+    await ctx.app.register(roomsPlugin);
   });
 
   afterEach(async () => {

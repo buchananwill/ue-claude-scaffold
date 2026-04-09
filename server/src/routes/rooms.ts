@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { getDb } from '../drizzle-instance.js';
 import * as roomsQ from '../queries/rooms.js';
 import * as chatQ from '../queries/chat.js';
@@ -8,6 +8,11 @@ import { rooms, roomMembers, chatMessages, agents } from '../schema/tables.js';
 
 const ROOM_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
+/**
+ * Parse a cursor query parameter for message pagination.
+ * Returns `undefined` if absent, `NaN` if present but invalid,
+ * or a non-negative safe integer otherwise.
+ */
 function parseMessageCursor(raw: string | undefined): number | undefined {
   if (!raw) return undefined;
   const n = Number(raw);
@@ -15,6 +20,19 @@ function parseMessageCursor(raw: string | undefined): number | undefined {
     return NaN; // sentinel — caller checks with Number.isNaN
   }
   return n;
+}
+
+/** Route-level guard: verify the room belongs to the requesting project. */
+function assertProjectMatch(
+  room: { projectId: string },
+  requestProjectId: string,
+  reply: FastifyReply,
+): boolean {
+  if (room.projectId !== requestProjectId) {
+    reply.code(404).send({ error: 'not_found' });
+    return false;
+  }
+  return true;
 }
 
 const roomsPlugin: FastifyPluginAsync = async (fastify) => {
@@ -31,7 +49,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (!id || !ROOM_ID_RE.test(id)) {
       return reply.badRequest('id must match /^[a-zA-Z0-9_-]{1,64}$/');
     }
-    if (!name || name.length > 256) {
+    if (!name || name.trim().length === 0 || name.length > 256) {
       return reply.badRequest('name is required and must be at most 256 characters');
     }
 
@@ -105,6 +123,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (!room) {
       return reply.notFound(`Room '${request.params.id}' not found`);
     }
+    if (!assertProjectMatch(room, request.projectId, reply)) return;
 
     // Get join dates with agent names
     const memberRows = await db.select({
@@ -136,6 +155,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (!room) {
       return reply.notFound(`Room '${id}' not found`);
     }
+    if (!assertProjectMatch(room, request.projectId, reply)) return;
 
     const presenceRows = await roomsQ.getPresence(db, id);
     return {
@@ -153,6 +173,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (!room) {
       return reply.notFound(`Room '${request.params.id}' not found`);
     }
+    if (!assertProjectMatch(room, request.projectId, reply)) return;
     await roomsQ.deleteRoom(db, request.params.id);
     return { ok: true };
   });
@@ -167,6 +188,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (!room) {
       return reply.notFound(`Room '${request.params.id}' not found`);
     }
+    if (!assertProjectMatch(room, request.projectId, reply)) return;
 
     for (const name of request.body.members) {
       const agent = await agentsQ.getByName(db, request.projectId, name);
@@ -188,6 +210,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (!room) {
       return reply.notFound(`Room '${request.params.id}' not found`);
     }
+    if (!assertProjectMatch(room, request.projectId, reply)) return;
     const agent = await agentsQ.getByName(db, request.projectId, request.params.member);
     if (!agent) {
       return reply.code(404).send({ error: 'unknown_agent' });
@@ -210,6 +233,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (!room) {
       return reply.notFound(`Room '${id}' not found`);
     }
+    if (!assertProjectMatch(room, request.projectId, reply)) return;
 
     if (agentName) {
       // Agent flow: resolve agent, check membership
@@ -240,12 +264,24 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params;
     const { since, before, limit } = request.query;
     const pageSize = Math.min(Math.max(Number(limit) || 100, 1), 500);
+
+    // Validate cursors before any DB access
+    const sinceN = parseMessageCursor(since);
+    const beforeN = parseMessageCursor(before);
+    if (Number.isNaN(sinceN)) {
+      return reply.badRequest('since must be a non-negative safe integer');
+    }
+    if (Number.isNaN(beforeN)) {
+      return reply.badRequest('before must be a non-negative safe integer');
+    }
+
     const db = getDb();
 
     const room = await roomsQ.getRoom(db, id);
     if (!room) {
       return reply.notFound(`Room '${id}' not found`);
     }
+    if (!assertProjectMatch(room, request.projectId, reply)) return;
 
     const callerName = request.headers['x-agent-name'] as string | undefined;
     if (callerName) {
@@ -257,15 +293,6 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       if (!isMember) {
         return reply.code(403).send({ error: 'not_a_member' });
       }
-    }
-
-    const sinceN = parseMessageCursor(since);
-    const beforeN = parseMessageCursor(before);
-    if (Number.isNaN(sinceN)) {
-      return reply.badRequest('since must be a non-negative safe integer');
-    }
-    if (Number.isNaN(beforeN)) {
-      return reply.badRequest('before must be a non-negative safe integer');
     }
 
     const rows = await chatQ.getHistory(db, id, {
@@ -310,6 +337,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
           LEFT JOIN ${agents} ON ${agents.id} = ${chatMessages.authorAgentId}
           INNER JOIN ${rooms} ON ${rooms.id} = ${chatMessages.roomId}
           WHERE ${chatMessages.roomId} = ${roomFilter}
+            AND ${rooms.projectId} = ${request.projectId}
           ORDER BY ${chatMessages.createdAt}
         `)
       : await db.execute(sql`
@@ -325,6 +353,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
           FROM ${chatMessages}
           LEFT JOIN ${agents} ON ${agents.id} = ${chatMessages.authorAgentId}
           INNER JOIN ${rooms} ON ${rooms.id} = ${chatMessages.roomId}
+          WHERE ${rooms.projectId} = ${request.projectId}
           ORDER BY ${chatMessages.roomId}, ${chatMessages.createdAt}
         `);
 
