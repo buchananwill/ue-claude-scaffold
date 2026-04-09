@@ -6,3 +6,6 @@ export function firstOrThrow<T>(rows: T[]): T {
   if (rows.length === 0) throw new Error('Insert returned no rows');
   return rows[0];
 }
+
+/** Task statuses that represent actively-held work (claimed or running). */
+export const ACTIVE_STATUSES = ['claimed', 'in_progress'] as const;

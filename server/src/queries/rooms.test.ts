@@ -49,15 +49,15 @@ describe('rooms queries', () => {
 
     const members = await roomQ.getMembers(db, 'room-1');
     assert.equal(members.length, 2);
-    assert.ok(members.includes('agent-1'));
-    assert.ok(members.includes('agent-2'));
+    assert.ok(members.some(m => m.agentId === 'agent-1'));
+    assert.ok(members.some(m => m.agentId === 'agent-2'));
   });
 
   it('should remove a member', async () => {
     await roomQ.removeMember(db, 'room-1', 'agent-2');
     const members = await roomQ.getMembers(db, 'room-1');
     assert.equal(members.length, 1);
-    assert.ok(members.includes('agent-1'));
+    assert.ok(members.some(m => m.agentId === 'agent-1'));
   });
 
   it('should list rooms', async () => {
@@ -81,7 +81,9 @@ describe('rooms queries', () => {
 
   it('should get presence with agent status', async () => {
     // Register an agent so presence can join against it
+    const { v7: uuidv7 } = await import('uuid');
     await db.insert(agents).values({
+      id: uuidv7(),
       name: 'agent-1',
       worktree: '/tmp/agent-1',
       status: 'idle',

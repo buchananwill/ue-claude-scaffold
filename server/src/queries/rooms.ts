@@ -110,9 +110,9 @@ export async function removeMember(db: DbOrTx, roomId: string, agentId: string):
     .where(and(eq(roomMembers.roomId, roomId), eq(roomMembers.agentId, agentId)));
 }
 
-export async function getMembers(db: DbOrTx, roomId: string): Promise<Array<{ agentId: string; name: string }>> {
+export async function getMembers(db: DbOrTx, roomId: string): Promise<Array<{ agentId: string; name: string; joinedAt: Date | null }>> {
   return db
-    .select({ agentId: roomMembers.agentId, name: agents.name })
+    .select({ agentId: roomMembers.agentId, name: agents.name, joinedAt: roomMembers.joinedAt })
     .from(roomMembers)
     .innerJoin(agents, eq(agents.id, roomMembers.agentId))
     .where(eq(roomMembers.roomId, roomId))

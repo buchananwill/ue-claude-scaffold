@@ -1,7 +1,8 @@
-import { eq, and, sql, type SQL } from 'drizzle-orm';
+import { eq, and, sql, inArray, type SQL } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
 import type { DrizzleDb, DbOrTx } from '../drizzle-instance.js';
 import type { TaskDbRow } from './tasks-core.js';
+import { ACTIVE_STATUSES } from './query-helpers.js';
 
 export async function claim(db: DrizzleDb, projectId: string, id: number, agentId: string): Promise<boolean> {
   const rows = await db
@@ -46,7 +47,7 @@ async function finalize(
       and(
         eq(tasks.id, id),
         eq(tasks.projectId, projectId),
-        sql`${tasks.status} IN ('claimed', 'in_progress')`,
+        inArray(tasks.status, [...ACTIVE_STATUSES]),
       ),
     )
     .returning();
@@ -73,7 +74,7 @@ export async function release(db: DrizzleDb, projectId: string, id: number): Pro
       and(
         eq(tasks.id, id),
         eq(tasks.projectId, projectId),
-        sql`${tasks.status} IN ('claimed', 'in_progress')`,
+        inArray(tasks.status, [...ACTIVE_STATUSES]),
       ),
     )
     .returning();
@@ -167,7 +168,7 @@ export async function releaseByAgent(db: DbOrTx, projectId: string, agentId: str
       and(
         eq(tasks.projectId, projectId),
         eq(tasks.claimedByAgentId, agentId),
-        sql`${tasks.status} IN ('claimed', 'in_progress')`,
+        inArray(tasks.status, [...ACTIVE_STATUSES]),
       ),
     );
 }
@@ -183,7 +184,7 @@ export async function releaseAllActive(db: DbOrTx, projectId: string): Promise<v
     .where(
       and(
         eq(tasks.projectId, projectId),
-        sql`${tasks.status} IN ('claimed', 'in_progress')`,
+        inArray(tasks.status, [...ACTIVE_STATUSES]),
       ),
     );
 }

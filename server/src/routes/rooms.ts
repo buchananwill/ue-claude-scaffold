@@ -1,10 +1,11 @@
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
-import { getDb } from '../drizzle-instance.js';
+import { getDb, type DrizzleDb } from '../drizzle-instance.js';
 import * as roomsQ from '../queries/rooms.js';
+import type { RoomRow } from '../queries/rooms.js';
 import * as chatQ from '../queries/chat.js';
 import * as agentsQ from '../queries/agents.js';
-import { sql, eq } from 'drizzle-orm';
-import { rooms, roomMembers, chatMessages, agents } from '../schema/tables.js';
+import { sql } from 'drizzle-orm';
+import { rooms, chatMessages, agents } from '../schema/tables.js';
 
 const ROOM_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
@@ -22,17 +23,21 @@ function parseMessageCursor(raw: string | undefined): number | undefined {
   return n;
 }
 
-/** Route-level guard: verify the room belongs to the requesting project. */
-function assertProjectMatch(
-  room: { projectId: string },
-  requestProjectId: string,
+/**
+ * Fetch a room by ID, verify it exists and belongs to the requesting project.
+ * Sends the appropriate error response and returns null when the room is
+ * missing or belongs to a different project.
+ */
+async function requireRoom(
+  db: DrizzleDb,
+  id: string,
+  projectId: string,
   reply: FastifyReply,
-): boolean {
-  if (room.projectId !== requestProjectId) {
-    reply.code(404).send({ error: 'not_found' });
-    return false;
-  }
-  return true;
+): Promise<RoomRow | null> {
+  const room = await roomsQ.getRoom(db, id);
+  if (!room) { reply.notFound('room not found'); return null; }
+  if (room.projectId !== projectId) { reply.code(404).send({ error: 'not_found' }); return null; }
+  return room;
 }
 
 const roomsPlugin: FastifyPluginAsync = async (fastify) => {
@@ -114,20 +119,10 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     Params: { id: string };
   }>('/rooms/:id', async (request, reply) => {
     const db = getDb();
-    const room = await roomsQ.getRoom(db, request.params.id);
-    if (!room) {
-      return reply.notFound(`Room '${request.params.id}' not found`);
-    }
-    if (!assertProjectMatch(room, request.projectId, reply)) return;
+    const room = await requireRoom(db, request.params.id, request.projectId, reply);
+    if (!room) return;
 
-    // Get join dates with agent names
-    const memberRows = await db.select({
-      agentId: roomMembers.agentId,
-      joinedAt: roomMembers.joinedAt,
-      name: agents.name,
-    }).from(roomMembers)
-      .innerJoin(agents, eq(agents.id, roomMembers.agentId))
-      .where(eq(roomMembers.roomId, room.id));
+    const memberRows = await roomsQ.getMembers(db, room.id);
 
     return {
       id: room.id,
@@ -146,11 +141,8 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params;
     const db = getDb();
 
-    const room = await roomsQ.getRoom(db, id);
-    if (!room) {
-      return reply.notFound(`Room '${id}' not found`);
-    }
-    if (!assertProjectMatch(room, request.projectId, reply)) return;
+    const room = await requireRoom(db, id, request.projectId, reply);
+    if (!room) return;
 
     const presenceRows = await roomsQ.getPresence(db, id);
     return {
@@ -164,11 +156,8 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     Params: { id: string };
   }>('/rooms/:id', async (request, reply) => {
     const db = getDb();
-    const room = await roomsQ.getRoom(db, request.params.id);
-    if (!room) {
-      return reply.notFound(`Room '${request.params.id}' not found`);
-    }
-    if (!assertProjectMatch(room, request.projectId, reply)) return;
+    const room = await requireRoom(db, request.params.id, request.projectId, reply);
+    if (!room) return;
     await roomsQ.deleteRoom(db, request.params.id);
     return { ok: true };
   });
@@ -179,11 +168,8 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     Body: { members: string[] };
   }>('/rooms/:id/members', async (request, reply) => {
     const db = getDb();
-    const room = await roomsQ.getRoom(db, request.params.id);
-    if (!room) {
-      return reply.notFound(`Room '${request.params.id}' not found`);
-    }
-    if (!assertProjectMatch(room, request.projectId, reply)) return;
+    const room = await requireRoom(db, request.params.id, request.projectId, reply);
+    if (!room) return;
 
     for (const name of request.body.members) {
       const agent = await agentsQ.getByName(db, request.projectId, name);
@@ -201,11 +187,8 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     Params: { id: string; member: string };
   }>('/rooms/:id/members/:member', async (request, reply) => {
     const db = getDb();
-    const room = await roomsQ.getRoom(db, request.params.id);
-    if (!room) {
-      return reply.notFound(`Room '${request.params.id}' not found`);
-    }
-    if (!assertProjectMatch(room, request.projectId, reply)) return;
+    const room = await requireRoom(db, request.params.id, request.projectId, reply);
+    if (!room) return;
     const agent = await agentsQ.getByName(db, request.projectId, request.params.member);
     if (!agent) {
       return reply.code(404).send({ error: 'unknown_agent' });
@@ -231,11 +214,8 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.badRequest('content must be at most 65536 characters');
     }
 
-    const room = await roomsQ.getRoom(db, id);
-    if (!room) {
-      return reply.notFound(`Room '${id}' not found`);
-    }
-    if (!assertProjectMatch(room, request.projectId, reply)) return;
+    const room = await requireRoom(db, id, request.projectId, reply);
+    if (!room) return;
 
     if (agentName) {
       // Agent flow: resolve agent, check membership
@@ -279,11 +259,8 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
 
     const db = getDb();
 
-    const room = await roomsQ.getRoom(db, id);
-    if (!room) {
-      return reply.notFound(`Room '${id}' not found`);
-    }
-    if (!assertProjectMatch(room, request.projectId, reply)) return;
+    const room = await requireRoom(db, id, request.projectId, reply);
+    if (!room) return;
 
     const callerName = request.headers['x-agent-name'] as string | undefined;
     if (callerName) {
@@ -324,40 +301,30 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (roomFilter && !ROOM_ID_RE.test(roomFilter)) {
       return reply.badRequest('Invalid room filter');
     }
-    const rows = roomFilter
-      ? await db.execute(sql`
-          SELECT
-            ${rooms.name} AS room_name,
-            ${chatMessages.roomId} AS "roomId",
-            COALESCE(
-              ${agents.name},
-              CASE ${chatMessages.authorType} WHEN 'operator' THEN 'operator' WHEN 'system' THEN 'system' ELSE 'unknown' END
-            ) AS sender,
-            ${chatMessages.content},
-            to_char(${chatMessages.createdAt}, 'MM-DD HH24:MI') AS time
-          FROM ${chatMessages}
-          LEFT JOIN ${agents} ON ${agents.id} = ${chatMessages.authorAgentId}
-          INNER JOIN ${rooms} ON ${rooms.id} = ${chatMessages.roomId}
-          WHERE ${chatMessages.roomId} = ${roomFilter}
-            AND ${rooms.projectId} = ${request.projectId}
-          ORDER BY ${chatMessages.createdAt}
-        `)
-      : await db.execute(sql`
-          SELECT
-            ${rooms.name} AS room_name,
-            ${chatMessages.roomId} AS "roomId",
-            COALESCE(
-              ${agents.name},
-              CASE ${chatMessages.authorType} WHEN 'operator' THEN 'operator' WHEN 'system' THEN 'system' ELSE 'unknown' END
-            ) AS sender,
-            ${chatMessages.content},
-            to_char(${chatMessages.createdAt}, 'MM-DD HH24:MI') AS time
-          FROM ${chatMessages}
-          LEFT JOIN ${agents} ON ${agents.id} = ${chatMessages.authorAgentId}
-          INNER JOIN ${rooms} ON ${rooms.id} = ${chatMessages.roomId}
-          WHERE ${rooms.projectId} = ${request.projectId}
-          ORDER BY ${chatMessages.roomId}, ${chatMessages.createdAt}
-        `);
+    const whereClause = roomFilter
+      ? sql`WHERE ${chatMessages.roomId} = ${roomFilter} AND ${rooms.projectId} = ${request.projectId}`
+      : sql`WHERE ${rooms.projectId} = ${request.projectId}`;
+
+    const orderClause = roomFilter
+      ? sql`ORDER BY ${chatMessages.createdAt}`
+      : sql`ORDER BY ${chatMessages.roomId}, ${chatMessages.createdAt}`;
+
+    const rows = await db.execute(sql`
+      SELECT
+        ${rooms.name} AS room_name,
+        ${chatMessages.roomId} AS "roomId",
+        COALESCE(
+          ${agents.name},
+          CASE ${chatMessages.authorType} WHEN 'operator' THEN 'operator' WHEN 'system' THEN 'system' ELSE 'unknown' END
+        ) AS sender,
+        ${chatMessages.content},
+        to_char(${chatMessages.createdAt}, 'MM-DD HH24:MI') AS time
+      FROM ${chatMessages}
+      LEFT JOIN ${agents} ON ${agents.id} = ${chatMessages.authorAgentId}
+      INNER JOIN ${rooms} ON ${rooms.id} = ${chatMessages.roomId}
+      ${whereClause}
+      ${orderClause}
+    `);
 
     type Row = { room_name: string; roomId: string; sender: string; content: string; time: string };
     const typedRows = rows.rows as Row[];

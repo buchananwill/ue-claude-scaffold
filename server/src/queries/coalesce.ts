@@ -2,8 +2,7 @@ import { eq, and, sql, isNotNull, count as countFn, inArray } from 'drizzle-orm'
 import { tasks, files, agents } from '../schema/tables.js';
 import type { DrizzleDb, DbOrTx } from '../drizzle-instance.js';
 import * as filesQ from './files.js';
-
-const ACTIVE_STATUSES = ['claimed', 'in_progress'] as const;
+import { ACTIVE_STATUSES } from './query-helpers.js';
 
 export async function countActiveTasks(db: DrizzleDb, projectId: string): Promise<number> {
   const rows = await db
