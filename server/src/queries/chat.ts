@@ -1,9 +1,6 @@
 import { eq, and, gt, lt, desc, asc, sql } from 'drizzle-orm';
 import { chatMessages, roomMembers, agents } from '../schema/tables.js';
-import type { DrizzleDb, DrizzleTx } from '../drizzle-instance.js';
-
-/** Accept either a full DB instance or a transaction client. */
-type DbOrTx = DrizzleDb | DrizzleTx;
+import type { DbOrTx } from '../drizzle-instance.js';
 
 export interface SendMessageOpts {
   roomId: string;
@@ -13,7 +10,15 @@ export interface SendMessageOpts {
   replyTo?: number | null;
 }
 
-export async function sendMessage(db: DbOrTx, opts: SendMessageOpts) {
+export async function sendMessage(db: DbOrTx, opts: SendMessageOpts): Promise<{
+  id: number;
+  roomId: string;
+  authorType: string;
+  authorAgentId: string | null;
+  content: string;
+  replyTo: number | null;
+  createdAt: Date | null;
+}> {
   const rows = await db
     .insert(chatMessages)
     .values({
@@ -33,20 +38,28 @@ export interface GetHistoryOpts {
   limit?: number;
 }
 
-const senderColumn = sql`COALESCE(${agents.name}, CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' END)`.as('sender');
+export async function getHistory(db: DbOrTx, roomId: string, opts: GetHistoryOpts = {}): Promise<Array<{
+  id: number;
+  roomId: string;
+  authorType: string;
+  authorAgentId: string | null;
+  content: string;
+  replyTo: number | null;
+  createdAt: Date | null;
+  sender: unknown;
+}>> {
+  const senderColumn = sql`COALESCE(${agents.name}, CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' END, 'unknown')`.as('sender');
 
-const historySelect = {
-  id: chatMessages.id,
-  roomId: chatMessages.roomId,
-  authorType: chatMessages.authorType,
-  authorAgentId: chatMessages.authorAgentId,
-  content: chatMessages.content,
-  replyTo: chatMessages.replyTo,
-  createdAt: chatMessages.createdAt,
-  sender: senderColumn,
-} as const;
-
-export async function getHistory(db: DbOrTx, roomId: string, opts: GetHistoryOpts = {}) {
+  const historySelect = {
+    id: chatMessages.id,
+    roomId: chatMessages.roomId,
+    authorType: chatMessages.authorType,
+    authorAgentId: chatMessages.authorAgentId,
+    content: chatMessages.content,
+    replyTo: chatMessages.replyTo,
+    createdAt: chatMessages.createdAt,
+    sender: senderColumn,
+  } as const;
   const pageSize = Math.min(Math.max(opts.limit ?? 100, 1), 500);
 
   const baseQuery = db

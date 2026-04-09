@@ -1,10 +1,7 @@
 import { eq, and, ne, desc } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { rooms, roomMembers, agents } from '../schema/tables.js';
-import type { DrizzleDb, DrizzleTx } from '../drizzle-instance.js';
-
-/** Accept either a full DB instance or a transaction client. */
-type DbOrTx = DrizzleDb | DrizzleTx;
+import type { DbOrTx } from '../drizzle-instance.js';
 
 export interface CreateRoomOpts {
   id: string;
@@ -14,7 +11,14 @@ export interface CreateRoomOpts {
   projectId?: string;
 }
 
-export async function createRoom(db: DbOrTx, opts: CreateRoomOpts) {
+export async function createRoom(db: DbOrTx, opts: CreateRoomOpts): Promise<{
+  id: string;
+  projectId: string;
+  name: string;
+  type: string;
+  createdBy: string;
+  createdAt: Date | null;
+}> {
   const rows = await db
     .insert(rooms)
     .values({
@@ -28,7 +32,14 @@ export async function createRoom(db: DbOrTx, opts: CreateRoomOpts) {
   return rows[0];
 }
 
-export async function getRoom(db: DbOrTx, id: string) {
+export async function getRoom(db: DbOrTx, id: string): Promise<{
+  id: string;
+  projectId: string;
+  name: string;
+  type: string;
+  createdBy: string;
+  createdAt: Date | null;
+} | null> {
   const rows = await db.select().from(rooms).where(eq(rooms.id, id));
   return rows[0] ?? null;
 }
@@ -90,7 +101,14 @@ export async function listRooms(db: DbOrTx, opts: ListRoomsOpts = {}): Promise<A
   }
 
   return db
-    .select()
+    .select({
+      id: rooms.id,
+      projectId: rooms.projectId,
+      name: rooms.name,
+      type: rooms.type,
+      createdBy: rooms.createdBy,
+      createdAt: rooms.createdAt,
+    })
     .from(rooms)
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(rooms.createdAt));
