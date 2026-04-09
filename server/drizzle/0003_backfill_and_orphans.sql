@@ -144,7 +144,8 @@ DELETE FROM "build_history" WHERE "project_id" NOT IN (SELECT "id" FROM "project
 DELETE FROM "messages" WHERE "project_id" NOT IN (SELECT "id" FROM "projects");
 -- ubt_lock and ubt_queue are host-level — NOT included in project_id orphan cleanup.
 
--- agents: soft-delete rather than remove, to preserve historical references
-UPDATE "agents" SET "status" = 'deleted'
+-- agents: hard-delete rows with orphaned project_id — these would block the
+-- agents_project_fk constraint added in 0004 which validates all existing rows.
+DELETE FROM "agents"
 WHERE "project_id" NOT IN (SELECT "id" FROM "projects");
 --> statement-breakpoint

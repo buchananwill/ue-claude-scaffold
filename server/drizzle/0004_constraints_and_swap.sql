@@ -1,3 +1,7 @@
+-- IMPORTANT: This migration drops columns that existing server code references.
+-- The server process MUST be stopped before applying this migration and must not
+-- be restarted until the corresponding query/route code changes are deployed.
+
 -- agents: swap PK
 ALTER TABLE "agents" ALTER COLUMN "id" SET NOT NULL;
 ALTER TABLE "agents" DROP CONSTRAINT "agents_pkey";
@@ -6,23 +10,23 @@ ALTER TABLE "agents" ADD CONSTRAINT "agents_project_name_unique" UNIQUE ("projec
 --> statement-breakpoint
 -- FK constraints on every referring table
 ALTER TABLE "tasks" ADD CONSTRAINT "tasks_claimed_by_agent_fk"
-  FOREIGN KEY ("claimed_by_agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
+  FOREIGN KEY ("claimed_by_agent_id") REFERENCES "public"."agents"("id") ON DELETE restrict ON UPDATE no action;
 ALTER TABLE "files" ADD CONSTRAINT "files_claimant_agent_fk"
-  FOREIGN KEY ("claimant_agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
+  FOREIGN KEY ("claimant_agent_id") REFERENCES "public"."agents"("id") ON DELETE restrict ON UPDATE no action;
 ALTER TABLE "build_history" ADD CONSTRAINT "build_history_agent_fk"
-  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
+  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE restrict ON UPDATE no action;
 ALTER TABLE "ubt_lock" ADD CONSTRAINT "ubt_lock_holder_agent_fk"
-  FOREIGN KEY ("holder_agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
+  FOREIGN KEY ("holder_agent_id") REFERENCES "public"."agents"("id") ON DELETE restrict ON UPDATE no action;
 ALTER TABLE "ubt_queue" ADD CONSTRAINT "ubt_queue_agent_fk"
-  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
+  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE restrict ON UPDATE no action;
 ALTER TABLE "messages" ADD CONSTRAINT "messages_agent_fk"
-  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
+  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE restrict ON UPDATE no action;
 ALTER TABLE "team_members" ADD CONSTRAINT "team_members_agent_fk"
-  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
+  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE restrict ON UPDATE no action;
 ALTER TABLE "room_members" ADD CONSTRAINT "room_members_agent_fk"
-  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
+  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE restrict ON UPDATE no action;
 ALTER TABLE "chat_messages" ADD CONSTRAINT "chat_messages_author_agent_fk"
-  FOREIGN KEY ("author_agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
+  FOREIGN KEY ("author_agent_id") REFERENCES "public"."agents"("id") ON DELETE restrict ON UPDATE no action;
 --> statement-breakpoint
 -- project_id FKs on 7 project-scoped data tables (absorbs plans/project-id-foreign-keys.md)
 -- UBT tables are host-level and do NOT get project_id FKs.
