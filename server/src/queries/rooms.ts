@@ -92,8 +92,12 @@ export async function listRooms(db: DbOrTx, opts: ListRoomsOpts = {}): Promise<R
     .orderBy(desc(rooms.createdAt));
 }
 
-export async function deleteRoom(db: DbOrTx, id: string): Promise<boolean> {
-  const rows = await db.delete(rooms).where(eq(rooms.id, id)).returning();
+export async function deleteRoom(db: DbOrTx, id: string, projectId?: string): Promise<boolean> {
+  const conditions = [eq(rooms.id, id)];
+  if (projectId) {
+    conditions.push(eq(rooms.projectId, projectId));
+  }
+  const rows = await db.delete(rooms).where(and(...conditions)).returning();
   return rows.length > 0;
 }
 

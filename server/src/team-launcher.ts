@@ -192,8 +192,8 @@ export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult
         throw new Error(`Team '${def.id}' already exists and is ${existing.status}`);
       }
       // Clean up dissolved team data before re-registration
-      await roomsQ.deleteRoom(tx, def.id);
-      await teamsQ.deleteTeam(tx, def.id);
+      await roomsQ.deleteRoom(tx, def.id, projectId);
+      await teamsQ.deleteTeam(tx, def.id, projectId);
     }
 
     // 4. Register team + room in DB

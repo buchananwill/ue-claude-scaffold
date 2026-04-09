@@ -160,7 +160,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     const db = getDb();
     const room = await requireRoom(db, request.params.id, request.projectId, reply);
     if (!room) return;
-    await roomsQ.deleteRoom(db, request.params.id);
+    await roomsQ.deleteRoom(db, request.params.id, request.projectId);
     return { ok: true };
   });
 

@@ -77,8 +77,8 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
             throw Object.assign(new Error(`Team '${id}' already exists and is not dissolved`), { statusCode: 409 });
           }
           // Clean up old team data
-          await roomsQ.deleteRoom(tx, id);
-          await teamsQ.deleteTeam(tx, id);
+          await roomsQ.deleteRoom(tx, id, request.projectId);
+          await teamsQ.deleteTeam(tx, id, request.projectId);
         }
 
         await teamsQ.createWithRoom(tx, {
@@ -161,7 +161,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     if (!team) {
       return reply.notFound(`Team '${request.params.id}' not found`);
     }
-    await teamsQ.dissolve(db, request.params.id);
+    await teamsQ.dissolve(db, request.params.id, request.projectId);
     return { ok: true };
   });
 
@@ -183,9 +183,9 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
         return reply.badRequest(`Invalid status '${status}'. Must be one of: ${VALID_STATUSES.join(', ')}`);
       }
       if (status === 'dissolved') {
-        await teamsQ.dissolve(db, request.params.id);
+        await teamsQ.dissolve(db, request.params.id, request.projectId);
       } else {
-        await teamsQ.updateStatus(db, request.params.id, status);
+        await teamsQ.updateStatus(db, request.params.id, request.projectId, status);
       }
     }
 
@@ -201,7 +201,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
   // POST /teams/:id/launch — server-side team launch
   fastify.post<{
     Params: { id: string };
-    Body: { projectId?: string; briefPath: string };
+    Body: { briefPath: string };
   }>('/teams/:id/launch', {
     schema: {
       params: {
@@ -215,7 +215,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
   }, async (request, reply) => {
     const teamId = request.params.id;
     const { briefPath } = request.body;
-    const projectId = request.body.projectId ?? request.projectId;
+    const projectId = request.projectId;
     const db = getDb();
 
     if (!briefPath) {

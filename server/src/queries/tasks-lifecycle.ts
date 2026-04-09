@@ -24,7 +24,7 @@ export async function updateProgress(db: DrizzleDb, projectId: string, id: numbe
       status: 'in_progress',
       progressLog: sql`COALESCE(${tasks.progressLog}, '') || now()::text || ': ' || ${progress} || chr(10)`,
     })
-    .where(and(eq(tasks.id, id), eq(tasks.projectId, projectId)))
+    .where(and(eq(tasks.id, id), eq(tasks.projectId, projectId), inArray(tasks.status, [...ACTIVE_STATUSES])))
     .returning();
   return rows.length > 0;
 }

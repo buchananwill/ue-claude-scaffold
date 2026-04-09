@@ -90,23 +90,23 @@ export async function list(db: DbOrTx, opts: ListOpts = {}) {
     .orderBy(desc(teams.createdAt));
 }
 
-export async function dissolve(db: DbOrTx, id: string) {
+export async function dissolve(db: DbOrTx, id: string, projectId: string) {
   await db
     .update(teams)
     .set({ status: 'dissolved', dissolvedAt: sql`now()` })
-    .where(eq(teams.id, id));
+    .where(and(eq(teams.id, id), eq(teams.projectId, projectId)));
 }
 
-export async function updateStatus(db: DbOrTx, id: string, status: string) {
-  await db.update(teams).set({ status }).where(eq(teams.id, id));
+export async function updateStatus(db: DbOrTx, id: string, projectId: string, status: string) {
+  await db.update(teams).set({ status }).where(and(eq(teams.id, id), eq(teams.projectId, projectId)));
 }
 
 export async function updateDeliverable(db: DbOrTx, id: string, deliverable: string) {
   await db.update(teams).set({ deliverable }).where(eq(teams.id, id));
 }
 
-export async function deleteTeam(db: DbOrTx, id: string): Promise<boolean> {
-  const rows = await db.delete(teams).where(eq(teams.id, id)).returning();
+export async function deleteTeam(db: DbOrTx, id: string, projectId: string): Promise<boolean> {
+  const rows = await db.delete(teams).where(and(eq(teams.id, id), eq(teams.projectId, projectId))).returning();
   return rows.length > 0;
 }
 
