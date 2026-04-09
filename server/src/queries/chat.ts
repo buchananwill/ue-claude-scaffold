@@ -5,6 +5,12 @@ import type { DbOrTx } from '../drizzle-instance.js';
 const VALID_AUTHOR_TYPES = ['agent', 'operator', 'system'] as const;
 type AuthorType = (typeof VALID_AUTHOR_TYPES)[number];
 
+// TODO: extract to shared query helpers
+function firstOrThrow<T>(rows: T[]): T {
+  if (rows.length === 0) throw new Error('Insert returned no rows');
+  return rows[0];
+}
+
 export interface SendMessageOpts {
   roomId: string;
   authorType: AuthorType;
@@ -43,8 +49,7 @@ export async function sendMessage(db: DbOrTx, opts: SendMessageOpts): Promise<{
       replyTo: opts.replyTo ?? null,
     })
     .returning();
-  if (rows.length === 0) throw new Error('Insert returned no rows');
-  return rows[0];
+  return firstOrThrow(rows);
 }
 
 export interface GetHistoryOpts {

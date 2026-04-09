@@ -3,6 +3,21 @@ import { v7 as uuidv7 } from 'uuid';
 import { rooms, roomMembers, agents } from '../schema/tables.js';
 import type { DbOrTx } from '../drizzle-instance.js';
 
+export type RoomRow = {
+  id: string;
+  projectId: string;
+  name: string;
+  type: string;
+  createdBy: string;
+  createdAt: Date | null;
+};
+
+// TODO: extract to shared query helpers
+function firstOrThrow<T>(rows: T[]): T {
+  if (rows.length === 0) throw new Error('Insert returned no rows');
+  return rows[0];
+}
+
 export interface CreateRoomOpts {
   id: string;
   name: string;
@@ -11,14 +26,7 @@ export interface CreateRoomOpts {
   projectId?: string;
 }
 
-export async function createRoom(db: DbOrTx, opts: CreateRoomOpts): Promise<{
-  id: string;
-  projectId: string;
-  name: string;
-  type: string;
-  createdBy: string;
-  createdAt: Date | null;
-}> {
+export async function createRoom(db: DbOrTx, opts: CreateRoomOpts): Promise<RoomRow> {
   const rows = await db
     .insert(rooms)
     .values({
@@ -29,18 +37,10 @@ export async function createRoom(db: DbOrTx, opts: CreateRoomOpts): Promise<{
       projectId: opts.projectId ?? 'default',
     })
     .returning();
-  if (rows.length === 0) throw new Error('Insert returned no rows');
-  return rows[0];
+  return firstOrThrow(rows);
 }
 
-export async function getRoom(db: DbOrTx, id: string): Promise<{
-  id: string;
-  projectId: string;
-  name: string;
-  type: string;
-  createdBy: string;
-  createdAt: Date | null;
-} | null> {
+export async function getRoom(db: DbOrTx, id: string): Promise<RoomRow | null> {
   const rows = await db.select().from(rooms).where(eq(rooms.id, id));
   return rows[0] ?? null;
 }
@@ -50,14 +50,16 @@ export interface ListRoomsOpts {
   projectId?: string;
 }
 
-export async function listRooms(db: DbOrTx, opts: ListRoomsOpts = {}): Promise<Array<{
-  id: string;
-  projectId: string;
-  name: string;
-  type: string;
-  createdBy: string;
-  createdAt: Date | null;
-}>> {
+export async function listRooms(db: DbOrTx, opts: ListRoomsOpts = {}): Promise<RoomRow[]> {
+  const roomSelect = {
+    id: rooms.id,
+    projectId: rooms.projectId,
+    name: rooms.name,
+    type: rooms.type,
+    createdBy: rooms.createdBy,
+    createdAt: rooms.createdAt,
+  };
+
   if (opts.member) {
     // Resolve agent name to agent ID first
     const agentConditions = opts.projectId
@@ -77,14 +79,7 @@ export async function listRooms(db: DbOrTx, opts: ListRoomsOpts = {}): Promise<A
     const agentId = agentRows[0].id;
 
     const rows = await db
-      .select({
-        id: rooms.id,
-        projectId: rooms.projectId,
-        name: rooms.name,
-        type: rooms.type,
-        createdBy: rooms.createdBy,
-        createdAt: rooms.createdAt,
-      })
+      .select(roomSelect)
       .from(rooms)
       .innerJoin(roomMembers, eq(rooms.id, roomMembers.roomId))
       .where(
@@ -102,14 +97,7 @@ export async function listRooms(db: DbOrTx, opts: ListRoomsOpts = {}): Promise<A
   }
 
   return db
-    .select({
-      id: rooms.id,
-      projectId: rooms.projectId,
-      name: rooms.name,
-      type: rooms.type,
-      createdBy: rooms.createdBy,
-      createdAt: rooms.createdAt,
-    })
+    .select(roomSelect)
     .from(rooms)
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(desc(rooms.createdAt));
