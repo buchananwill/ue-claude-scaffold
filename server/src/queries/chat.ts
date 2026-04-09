@@ -19,6 +19,11 @@ export async function sendMessage(db: DbOrTx, opts: SendMessageOpts): Promise<{
   replyTo: number | null;
   createdAt: Date | null;
 }> {
+  const VALID_AUTHOR_TYPES = ['agent', 'operator', 'system'] as const;
+  if (!VALID_AUTHOR_TYPES.includes(opts.authorType as (typeof VALID_AUTHOR_TYPES)[number])) {
+    throw new Error(`Invalid authorType: ${opts.authorType}`);
+  }
+
   if (opts.authorType === 'agent' && opts.authorAgentId == null) {
     throw new Error("authorAgentId is required when authorType is 'agent'");
   }
