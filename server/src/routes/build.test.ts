@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import buildPlugin, { isUbtContentionResult } from './build.js';
 import { agents } from '../schema/tables.js';
+import { v7 as uuidv7 } from 'uuid';
 
 describe('build routes', () => {
   let ctx: DrizzleTestContext;
@@ -186,8 +187,9 @@ process.exit(0);
     mkdirSync(agentDir);
     execSync('git init', { cwd: agentDir, stdio: 'ignore' });
 
-    // Register agent directly via Drizzle
+    // Register agent directly via Drizzle (id is required)
     await ctx.db.insert(agents).values({
+      id: uuidv7(),
       name: 'test-agent',
       worktree: 'docker/default/test-agent',
       projectId: 'default',
@@ -214,6 +216,7 @@ process.exit(0);
     execSync('git init', { cwd: agentDir, stdio: 'ignore' });
 
     await ctx.db.insert(agents).values({
+      id: uuidv7(),
       name: 'test-agent',
       worktree: 'docker/default/test-agent',
       projectId: 'default',

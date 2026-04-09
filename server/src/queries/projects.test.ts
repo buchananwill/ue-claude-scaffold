@@ -5,7 +5,8 @@ import type { DrizzleDb } from '../drizzle-instance.js';
 import * as projectsQ from './projects.js';
 import { isValidProjectId } from '../branch-naming.js';
 import { agents } from '../schema/tables.js';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
+import { v7 as uuidv7 } from 'uuid';
 
 describe('projects queries', () => {
   let tdb: TestDb;
@@ -143,6 +144,7 @@ describe('projects queries', () => {
   it('should detect referencing data when agents exist', async () => {
     // Insert an agent referencing proj-1
     await db.insert(agents).values({
+      id: uuidv7(),
       name: 'test-agent',
       projectId: 'proj-1',
       worktree: 'docker/test',

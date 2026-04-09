@@ -5,6 +5,7 @@ import { createTestDb, type TestDb } from './test-utils.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 import { agents } from '../schema/tables.js';
 import * as roomQ from './rooms.js';
+import * as chatQ from './chat.js';
 
 // Fixed UUIDs for deterministic test references
 const AGENT_1_ID = uuidv7();
@@ -52,7 +53,7 @@ describe('rooms queries', () => {
     assert.equal(room, null);
   });
 
-  it('should add and get members', async () => {
+  it('should add and get members (agent UUIDs)', async () => {
     await roomQ.addMember(db, 'room-1', AGENT_1_ID);
     await roomQ.addMember(db, 'room-1', AGENT_2_ID);
     // Adding same member again should be ignored (ON CONFLICT DO NOTHING)
@@ -62,6 +63,11 @@ describe('rooms queries', () => {
     assert.equal(members.length, 2);
     assert.ok(members.some(m => m.agentId === AGENT_1_ID));
     assert.ok(members.some(m => m.agentId === AGENT_2_ID));
+  });
+
+  it('should check isAgentMember', async () => {
+    assert.equal(await chatQ.isAgentMember(db, 'room-1', AGENT_1_ID), true);
+    assert.equal(await chatQ.isAgentMember(db, 'room-1', uuidv7()), false);
   });
 
   it('should remove a member', async () => {
@@ -91,7 +97,6 @@ describe('rooms queries', () => {
   });
 
   it('should get presence with agent status', async () => {
-    // agent-1 was seeded in before() — no need to insert again
     const presence = await roomQ.getPresence(db, 'room-1');
     assert.equal(presence.length, 1);
     assert.equal(presence[0].name, 'agent-1');
@@ -99,11 +104,11 @@ describe('rooms queries', () => {
     assert.equal(presence[0].status, 'idle');
   });
 
-  it('should delete a room', async () => {
-    const deleted = await roomQ.deleteRoom(db, 'room-2');
+  it('should delete a room (with projectId)', async () => {
+    const deleted = await roomQ.deleteRoom(db, 'room-2', 'default');
     assert.equal(deleted, true);
 
-    const deleted2 = await roomQ.deleteRoom(db, 'room-2');
+    const deleted2 = await roomQ.deleteRoom(db, 'room-2', 'default');
     assert.equal(deleted2, false);
   });
 });

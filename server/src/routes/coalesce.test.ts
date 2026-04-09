@@ -2,8 +2,8 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import { createTestConfig } from '../test-helper.js';
-import { tasks, files } from '../schema/tables.js';
-import { eq, sql } from 'drizzle-orm';
+import { tasks, files, agents } from '../schema/tables.js';
+import { eq, and, sql } from 'drizzle-orm';
 import agentsPlugin from './agents.js';
 import filesPlugin from './files.js';
 import coalescePlugin from './coalesce.js';
@@ -52,11 +52,20 @@ describe('coalesce routes (drizzle)', () => {
     return taskId;
   }
 
-  /** Claim a task and set file ownership directly */
-  async function claimTask(taskId: number, agent: string, taskFiles?: string[]) {
+  /** Look up agent UUID by name */
+  async function getAgentId(agentName: string): Promise<string> {
+    const rows = await ctx.db.select().from(agents)
+      .where(and(eq(agents.name, agentName), eq(agents.projectId, 'default')));
+    return rows[0].id;
+  }
+
+  /** Claim a task and set file ownership directly using agent UUID */
+  async function claimTask(taskId: number, agentName: string, taskFiles?: string[]) {
+    const agentId = await getAgentId(agentName);
+
     await ctx.db.update(tasks).set({
       status: 'claimed',
-      claimedBy: agent,
+      claimedByAgentId: agentId ?? null,
       claimedAt: sql`now()`,
     }).where(eq(tasks.id, taskId));
 
@@ -64,7 +73,7 @@ describe('coalesce routes (drizzle)', () => {
     if (taskFiles?.length) {
       for (const filePath of taskFiles) {
         await ctx.db.update(files).set({
-          claimant: agent,
+          claimantAgentId: agentId ?? null,
           claimedAt: sql`now()`,
         }).where(eq(files.path, filePath));
       }
@@ -131,10 +140,11 @@ describe('coalesce routes (drizzle)', () => {
     const taskId = await createTask('In-flight task');
     await claimTask(taskId, 'pump-1');
 
+    const pump1Id = await getAgentId('pump-1');
     const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
     const body = res.json();
     assert.equal(body.inFlightTasks.length, 1);
-    assert.equal(body.inFlightTasks[0].agent, 'pump-1');
+    assert.equal(body.inFlightTasks[0].agent, pump1Id);
     assert.equal(body.inFlightTasks[0].taskId, taskId);
     assert.equal(body.inFlightTasks[0].title, 'In-flight task');
   });

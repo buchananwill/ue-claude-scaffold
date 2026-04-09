@@ -4,6 +4,7 @@ import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-h
 import projectsPlugin from './projects.js';
 import { agents } from '../schema/tables.js';
 import { eq } from 'drizzle-orm';
+import { v7 as uuidv7 } from 'uuid';
 
 describe('projects routes', () => {
   let ctx: DrizzleTestContext;
@@ -166,6 +167,7 @@ describe('projects routes', () => {
   it('DELETE /projects/:id returns 409 when data exists', async () => {
     // Insert an agent referencing test-proj
     await ctx.db.insert(agents).values({
+      id: uuidv7(),
       name: 'del-test-agent',
       projectId: 'test-proj',
       worktree: 'docker/test',

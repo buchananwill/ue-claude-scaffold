@@ -2,6 +2,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestDb, type TestDb } from './test-utils.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
+import { projects } from '../schema/tables.js';
 import * as taskFilesQ from './task-files.js';
 import * as tasksCore from './tasks-core.js';
 
@@ -13,6 +14,9 @@ describe('task-files queries', () => {
   before(async () => {
     tdb = await createTestDb();
     db = tdb.db;
+
+    // Create project for FK
+    await db.insert(projects).values({ id: 'proj-f', name: 'Project F' }).onConflictDoNothing();
 
     // Create a task to link files to
     const task = await tasksCore.insert(db, {
