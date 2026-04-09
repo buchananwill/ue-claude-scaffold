@@ -3,8 +3,8 @@ import { getDb } from '../drizzle-instance.js';
 import * as roomsQ from '../queries/rooms.js';
 import * as chatQ from '../queries/chat.js';
 import * as agentsQ from '../queries/agents.js';
-import { sql, count as countFn, eq } from 'drizzle-orm';
-import { rooms, roomMembers, chatMessages } from '../schema/tables.js';
+import { sql, eq } from 'drizzle-orm';
+import { rooms, roomMembers, chatMessages, agents } from '../schema/tables.js';
 
 const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   // POST /rooms — create a room
@@ -61,9 +61,14 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.notFound(`Room '${request.params.id}' not found`);
     }
 
-    const members = await roomsQ.getMembers(db, room.id);
-    // Get join dates
-    const memberRows = await db.select().from(roomMembers).where(eq(roomMembers.roomId, room.id));
+    // Get join dates with agent names
+    const memberRows = await db.select({
+      agentId: roomMembers.agentId,
+      joinedAt: roomMembers.joinedAt,
+      name: agents.name,
+    }).from(roomMembers)
+      .innerJoin(agents, eq(agents.id, roomMembers.agentId))
+      .where(eq(roomMembers.roomId, room.id));
 
     return {
       id: room.id,
@@ -71,7 +76,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       type: room.type,
       createdBy: room.createdBy,
       createdAt: room.createdAt,
-      members: memberRows.map(m => ({ member: m.member, joinedAt: m.joinedAt })),
+      members: memberRows.map(m => ({ member: m.name, joinedAt: m.joinedAt })),
     };
   });
 
@@ -118,8 +123,12 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.notFound(`Room '${request.params.id}' not found`);
     }
 
-    for (const m of request.body.members) {
-      await roomsQ.addMember(db, request.params.id, m);
+    for (const name of request.body.members) {
+      const agent = await agentsQ.getByName(db, request.projectId, name);
+      if (!agent) {
+        return reply.code(404).send({ error: 'unknown_agent' });
+      }
+      await roomsQ.addMember(db, request.params.id, agent.id);
     }
 
     return { ok: true };
@@ -134,7 +143,11 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (!room) {
       return reply.notFound(`Room '${request.params.id}' not found`);
     }
-    await roomsQ.removeMember(db, request.params.id, request.params.member);
+    const agent = await agentsQ.getByName(db, request.projectId, request.params.member);
+    if (!agent) {
+      return reply.code(404).send({ error: 'unknown_agent' });
+    }
+    await roomsQ.removeMember(db, request.params.id, agent.id);
     return { ok: true };
   });
 
@@ -143,34 +156,34 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     Params: { id: string };
     Body: { content: string; replyTo?: number };
   }>('/rooms/:id/messages', async (request, reply) => {
-    let sender = request.headers['x-agent-name'] as string | undefined;
+    const agentName = request.headers['x-agent-name'] as string | undefined;
     const db = getDb();
-
-    if (!sender) {
-      // Resolve sender from session token (Bearer or query param) when header is missing
-      const auth = request.headers.authorization;
-      const token = auth?.startsWith('Bearer ') ? auth.slice(7) : (request.query as Record<string, string>).token;
-      if (token) {
-        const match = await agentsQ.getByToken(db, token);
-        sender = match?.name;
-      }
-      sender ??= 'user';
-    }
     const { id } = request.params;
     const { content, replyTo } = request.body;
-    fastify.log.info({ sender, roomId: id }, 'room message POST');
 
     const room = await roomsQ.getRoom(db, id);
     if (!room) {
       return reply.notFound(`Room '${id}' not found`);
     }
 
-    const membership = await chatQ.isMember(db, id, sender);
-    if (!membership) {
-      return reply.code(403).send({ error: 'not_a_member' });
+    if (agentName) {
+      // Agent flow: resolve agent, check membership
+      const agent = await agentsQ.getByName(db, request.projectId, agentName);
+      if (!agent) {
+        return reply.code(403).send({ error: 'unknown_agent' });
+      }
+      const isMember = await chatQ.isAgentMember(db, id, agent.id);
+      if (!isMember) {
+        return reply.code(403).send({ error: 'not_a_member' });
+      }
+      fastify.log.info({ sender: agentName, roomId: id }, 'room message POST');
+      const msg = await chatQ.sendMessage(db, { roomId: id, authorType: 'agent', authorAgentId: agent.id, content, replyTo: replyTo ?? null });
+      return { ok: true, id: msg.id };
     }
 
-    const msg = await chatQ.sendMessage(db, { roomId: id, sender, content, replyTo: replyTo ?? null });
+    // Operator flow: skip membership check
+    fastify.log.info({ sender: 'operator', roomId: id }, 'room message POST');
+    const msg = await chatQ.sendMessage(db, { roomId: id, authorType: 'operator', authorAgentId: null, content, replyTo: replyTo ?? null });
     return { ok: true, id: msg.id };
   });
 
@@ -189,10 +202,14 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.notFound(`Room '${id}' not found`);
     }
 
-    const caller = request.headers['x-agent-name'] as string | undefined;
-    if (caller) {
-      const membership = await chatQ.isMember(db, id, caller);
-      if (!membership) {
+    const callerName = request.headers['x-agent-name'] as string | undefined;
+    if (callerName) {
+      const agent = await agentsQ.getByName(db, request.projectId, callerName);
+      if (!agent) {
+        return reply.code(403).send({ error: 'unknown_agent' });
+      }
+      const isMember = await chatQ.isAgentMember(db, id, agent.id);
+      if (!isMember) {
         return reply.code(403).send({ error: 'not_a_member' });
       }
     }
@@ -219,23 +236,39 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   }>('/transcript', async (request, reply) => {
     const db = getDb();
 
-    // Use raw SQL for the transcript query since it joins rooms + chat_messages with formatting
+    // Use raw SQL for the transcript query since it joins rooms + chat_messages + agents with formatting
     const roomFilter = request.query.room;
     const rows = roomFilter
       ? await db.execute(sql`
-          SELECT r.name AS room_name, cm.room_id AS "roomId", cm.sender, cm.content,
-                 to_char(cm.created_at, 'MM-DD HH24:MI') AS time
-          FROM chat_messages cm
-          JOIN rooms r ON r.id = cm.room_id
-          WHERE cm.room_id = ${roomFilter}
-          ORDER BY cm.created_at
+          SELECT
+            ${rooms.name} AS room_name,
+            ${chatMessages.roomId} AS "roomId",
+            COALESCE(
+              ${agents.name},
+              CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' END
+            ) AS sender,
+            ${chatMessages.content},
+            to_char(${chatMessages.createdAt}, 'MM-DD HH24:MI') AS time
+          FROM ${chatMessages}
+          LEFT JOIN ${agents} ON ${agents.id} = ${chatMessages.authorAgentId}
+          INNER JOIN ${rooms} ON ${rooms.id} = ${chatMessages.roomId}
+          WHERE ${chatMessages.roomId} = ${roomFilter}
+          ORDER BY ${chatMessages.createdAt}
         `)
       : await db.execute(sql`
-          SELECT r.name AS room_name, cm.room_id AS "roomId", cm.sender, cm.content,
-                 to_char(cm.created_at, 'MM-DD HH24:MI') AS time
-          FROM chat_messages cm
-          JOIN rooms r ON r.id = cm.room_id
-          ORDER BY cm.room_id, cm.created_at
+          SELECT
+            ${rooms.name} AS room_name,
+            ${chatMessages.roomId} AS "roomId",
+            COALESCE(
+              ${agents.name},
+              CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' END
+            ) AS sender,
+            ${chatMessages.content},
+            to_char(${chatMessages.createdAt}, 'MM-DD HH24:MI') AS time
+          FROM ${chatMessages}
+          LEFT JOIN ${agents} ON ${agents.id} = ${chatMessages.authorAgentId}
+          INNER JOIN ${rooms} ON ${rooms.id} = ${chatMessages.roomId}
+          ORDER BY ${chatMessages.roomId}, ${chatMessages.createdAt}
         `);
 
     type Row = { room_name: string; roomId: string; sender: string; content: string; time: string };

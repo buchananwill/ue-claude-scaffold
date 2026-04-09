@@ -185,24 +185,29 @@ export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult
       await teamsQ.deleteTeam(tx, def.id);
     }
 
-    // 4. Register team + room in DB (uses the createWithRoom helper)
-    await teamsQ.createWithRoom(tx, {
+    // 4. Register team + room in DB
+    // Note: team_members and room_members require agent UUIDs (FK to agents table),
+    // but agents are not yet registered at team launch time. Create the team and room
+    // without members; members will be added when agents register and join the room.
+    await teamsQ.create(tx, {
       id: def.id,
       name: def.name,
       briefPath,
       projectId,
+    });
+    await roomsQ.createRoom(tx, {
+      id: def.id,
+      name: def.name,
+      type: 'group',
       createdBy: 'user',
-      members: def.members.map(m => ({
-        agentName: m.agentName,
-        role: m.role,
-        isLeader: m.isLeader,
-      })),
+      projectId,
     });
 
     // 5. Post brief path as the first room message
     await chatQ.sendMessage(tx, {
       roomId,
-      sender: 'user',
+      authorType: 'operator',
+      authorAgentId: null,
       content: `Brief: \`${briefPath}\` -- read this file from your workspace to begin.`,
     });
   });
