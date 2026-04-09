@@ -7,7 +7,7 @@ export interface ListOpts {
   unclaimed?: boolean;
 }
 
-export async function list(db: DrizzleDb, projectId: string, opts?: ListOpts) {
+export async function list(db: DrizzleDb, projectId: string, opts?: ListOpts): Promise<(typeof files.$inferSelect)[]> {
   const conditions = [eq(files.projectId, projectId)];
 
   if (opts?.claimantAgentId) {
@@ -23,14 +23,14 @@ export async function list(db: DrizzleDb, projectId: string, opts?: ListOpts) {
     .orderBy(asc(files.path));
 }
 
-export async function releaseByClaimantAgentId(db: DrizzleDb, projectId: string, agentId: string) {
+export async function releaseByClaimantAgentId(db: DrizzleDb, projectId: string, agentId: string): Promise<void> {
   await db
     .update(files)
     .set({ claimantAgentId: null, claimedAt: null })
     .where(and(eq(files.projectId, projectId), eq(files.claimantAgentId, agentId)));
 }
 
-export async function releaseAll(db: DrizzleDb, projectId: string) {
+export async function releaseAll(db: DrizzleDb, projectId: string): Promise<void> {
   await db
     .update(files)
     .set({ claimantAgentId: null, claimedAt: null })

@@ -57,7 +57,7 @@ export async function clearLockAndPromote(projectId: string = 'default'): Promis
   const db = getDb();
   return db.transaction(async (tx) => {
     await ubtQ.releaseLock(tx as any, projectId);
-    const next = await ubtQ.dequeue(tx as any, projectId);
+    const next = await ubtQ.dequeue(tx as any);
     if (next) {
       await ubtQ.acquireLock(tx as any, next.agent, next.priority, projectId);
       return { promoted: next.agent };

@@ -50,7 +50,7 @@ export async function enqueue(
   return rows[0].id;
 }
 
-export async function dequeue(db: DrizzleDb, hostId: string = 'local') {
+export async function dequeue(db: DrizzleDb) {
   // Atomic delete+return via subquery — avoids TOCTOU race under concurrent access
   const rows = await db.execute<{
     id: number;
