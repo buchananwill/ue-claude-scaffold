@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import { createTestConfig } from '../test-helper.js';
-import { tasks, agents } from '../schema/tables.js';
+import { tasks, agents, projects } from '../schema/tables.js';
 import { eq, sql } from 'drizzle-orm';
 import agentsPlugin from './agents.js';
 
@@ -229,6 +229,44 @@ describe('agents routes (drizzle)', () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/agents/pump-agent' });
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().mode, 'pump');
+  });
+
+  it('GET /agents/:name returns 404 for agent in a different project', async () => {
+    // Create both projects so the FK on agents is satisfied
+    await ctx.db.insert(projects).values({ id: 'proj-a', name: 'Project A' }).onConflictDoNothing();
+    await ctx.db.insert(projects).values({ id: 'proj-b', name: 'Project B' }).onConflictDoNothing();
+
+    // Register agent under project proj-a
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      headers: { 'x-project-id': 'proj-a' },
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    // Request with project proj-b should not find it
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/agents/agent-1',
+      headers: { 'x-project-id': 'proj-b' },
+    });
+    assert.equal(res.statusCode, 404);
+  });
+
+  it('DELETE /agents called twice returns deletedCount 0 on second call', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+    });
+
+    const first = await ctx.app.inject({ method: 'DELETE', url: '/agents' });
+    assert.equal(first.statusCode, 200);
+    assert.equal(first.json().deletedCount, 1);
+
+    const second = await ctx.app.inject({ method: 'DELETE', url: '/agents' });
+    assert.equal(second.statusCode, 200);
+    assert.deepEqual(second.json(), { ok: true, deletedCount: 0 });
   });
 
   it('POST /agents/register without mode defaults to single', async () => {

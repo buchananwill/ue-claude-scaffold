@@ -1,6 +1,6 @@
 import { eq, and, sql, type SQL } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
+import type { DrizzleDb, DbOrTx } from '../drizzle-instance.js';
 import type { TaskDbRow } from './tasks-core.js';
 
 export async function claim(db: DrizzleDb, projectId: string, id: number, agentId: string): Promise<boolean> {
@@ -155,7 +155,7 @@ export async function integrateAll(
   return integrateWhere(db, projectId, []);
 }
 
-export async function releaseByAgent(db: DrizzleDb, projectId: string, agentId: string): Promise<void> {
+export async function releaseByAgent(db: DbOrTx, projectId: string, agentId: string): Promise<void> {
   await db
     .update(tasks)
     .set({
@@ -172,7 +172,7 @@ export async function releaseByAgent(db: DrizzleDb, projectId: string, agentId: 
     );
 }
 
-export async function releaseAllActive(db: DrizzleDb, projectId: string): Promise<void> {
+export async function releaseAllActive(db: DbOrTx, projectId: string): Promise<void> {
   await db
     .update(tasks)
     .set({

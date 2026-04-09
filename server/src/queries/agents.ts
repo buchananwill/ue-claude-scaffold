@@ -1,13 +1,17 @@
 import { eq, ne, and, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { agents } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
+import type { DrizzleDb, DbOrTx } from '../drizzle-instance.js';
 
 export type AgentRow = typeof agents.$inferSelect;
+
+/** Agent row with sessionToken omitted — safe for external consumption. */
+export type AgentPublicRow = Omit<AgentRow, 'sessionToken'>;
 
 export type AgentStatus = 'idle' | 'working' | 'done' | 'error' | 'paused' | 'stopping' | 'deleted';
 export type AgentMode = 'single' | 'pump';
 
+/** All valid statuses including 'deleted' — used for DB-level validation. */
 const VALID_STATUSES: Set<string> = new Set<AgentStatus>(['idle', 'working', 'done', 'error', 'paused', 'stopping', 'deleted']);
 const VALID_MODES: Set<string> = new Set<AgentMode>(['single', 'pump']);
 
@@ -80,25 +84,54 @@ export async function register(db: DrizzleDb, opts: RegisterOpts): Promise<Regis
         sessionToken,
       },
     })
-    .returning({ id: agents.id, sessionToken: agents.sessionToken });
+    .returning();
 
   const row = rows[0];
-  return { id: row.id, sessionToken: row.sessionToken ?? sessionToken ?? '' };
+  const resolvedToken = row.sessionToken ?? sessionToken;
+  if (!resolvedToken) {
+    throw new Error('register: sessionToken is unexpectedly null after upsert');
+  }
+  return { id: row.id, sessionToken: resolvedToken };
 }
+
+/** Columns to select for public agent rows (excludes sessionToken). */
+const publicColumns = {
+  id: agents.id,
+  name: agents.name,
+  projectId: agents.projectId,
+  worktree: agents.worktree,
+  planDoc: agents.planDoc,
+  status: agents.status,
+  mode: agents.mode,
+  registeredAt: agents.registeredAt,
+  containerHost: agents.containerHost,
+} as const;
 
 /**
  * Returns agents, optionally filtered by project.
  * When called without projectId, returns all agents across all projects.
  * @internal The unscoped path is intended for administrative use only.
  */
-export async function getAll(db: DrizzleDb, projectId?: string): Promise<AgentRow[]> {
+export async function getAll(db: DrizzleDb, projectId?: string): Promise<AgentPublicRow[]> {
   if (projectId) {
-    return db.select().from(agents).where(eq(agents.projectId, projectId));
+    return db.select(publicColumns).from(agents).where(eq(agents.projectId, projectId));
   }
-  return db.select().from(agents);
+  return db.select(publicColumns).from(agents);
 }
 
-export async function getByName(db: DrizzleDb, projectId: string, name: string): Promise<AgentRow | null> {
+export async function getByName(db: DrizzleDb, projectId: string, name: string): Promise<AgentPublicRow | null> {
+  const rows = await db
+    .select(publicColumns)
+    .from(agents)
+    .where(byProjectAndName(projectId, name));
+  return rows[0] ?? null;
+}
+
+/**
+ * Like getByName but returns the full AgentRow including sessionToken.
+ * Use only when token verification is needed (e.g. DELETE with sessionToken check).
+ */
+export async function getByNameFull(db: DrizzleDb, projectId: string, name: string): Promise<AgentRow | null> {
   const rows = await db
     .select()
     .from(agents)
@@ -106,15 +139,15 @@ export async function getByName(db: DrizzleDb, projectId: string, name: string):
   return rows[0] ?? null;
 }
 
-export async function getByIdInProject(db: DrizzleDb, projectId: string, id: string): Promise<AgentRow | null> {
+export async function getByIdInProject(db: DrizzleDb, projectId: string, id: string): Promise<AgentPublicRow | null> {
   const rows = await db
-    .select()
+    .select(publicColumns)
     .from(agents)
     .where(and(eq(agents.id, id), eq(agents.projectId, projectId)));
   return rows[0] ?? null;
 }
 
-export async function updateStatus(db: DrizzleDb, projectId: string, name: string, status: AgentStatus): Promise<void> {
+export async function updateStatus(db: DbOrTx, projectId: string, name: string, status: AgentStatus): Promise<void> {
   if (!VALID_STATUSES.has(status)) {
     throw new Error(`Invalid agent status: ${status}`);
   }
@@ -125,15 +158,15 @@ export async function updateStatus(db: DrizzleDb, projectId: string, name: strin
     .where(byProjectAndName(projectId, name));
 }
 
-export async function softDelete(db: DrizzleDb, projectId: string, name: string): Promise<void> {
+export async function softDelete(db: DbOrTx, projectId: string, name: string): Promise<void> {
   await updateStatus(db, projectId, name, 'deleted');
 }
 
-export async function stopAgent(db: DrizzleDb, projectId: string, name: string): Promise<void> {
+export async function stopAgent(db: DbOrTx, projectId: string, name: string): Promise<void> {
   await updateStatus(db, projectId, name, 'stopping');
 }
 
-export async function deleteAllForProject(db: DrizzleDb, projectId: string): Promise<number> {
+export async function deleteAllForProject(db: DbOrTx, projectId: string): Promise<number> {
   const rows = await db
     .update(agents)
     .set({ status: 'deleted' })

@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { getDb } from '../drizzle-instance.js';
 import * as agentsQ from '../queries/agents.js';
+import type { AgentPublicRow } from '../queries/agents.js';
 import * as roomsQ from '../queries/rooms.js';
 import * as filesQ from '../queries/files.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
@@ -12,7 +13,8 @@ import { resolveProject } from '../resolve-project.js';
 
 interface AgentsOpts { config: ScaffoldConfig }
 
-export interface AgentRow {
+/** HTTP-response shape for a single agent. */
+export interface AgentResponse {
   name: string;
   worktree: string;
   planDoc: string | null;
@@ -23,7 +25,7 @@ export interface AgentRow {
   projectId: string;
 }
 
-export function formatAgent(row: AgentRow) {
+export function formatAgent(row: AgentPublicRow): AgentResponse {
   return {
     name: row.name,
     worktree: row.worktree,
@@ -36,6 +38,10 @@ export function formatAgent(row: AgentRow) {
   };
 }
 
+/**
+ * Statuses that can be set via POST /agents/:name/status.
+ * Intentionally excludes 'deleted' — deletion goes through DELETE endpoints.
+ */
 const ALLOWED_STATUSES = ['idle', 'working', 'done', 'error', 'paused', 'stopping'] as const;
 type AllowedStatus = (typeof ALLOWED_STATUSES)[number];
 const ALLOWED_STATUS_SET = new Set<string>(ALLOWED_STATUSES);
@@ -80,13 +86,9 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     return { ok: true, id: newAgent.id, sessionToken: newAgent.sessionToken };
   });
 
-  fastify.get<{
-    Querystring: { project?: string };
-  }>('/agents', async (request) => {
-    const { project } = request.query;
-    const projectId = project || request.projectId;
+  fastify.get('/agents', async (request) => {
     const db = getDb();
-    const rows = await agentsQ.getAll(db, projectId);
+    const rows = await agentsQ.getAll(db, request.projectId);
     return rows.map(formatAgent);
   });
 
@@ -114,7 +116,6 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
       return reply.code(400).send({
         error: 'invalid_status',
         allowed: ALLOWED_STATUSES,
-        message: 'Cannot set status to deleted via this endpoint',
       });
     }
 
@@ -133,7 +134,8 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     return { ok: true };
   });
 
-  // DELETE /agents/:name -- soft-delete a single agent
+  // DELETE /agents/:name -- soft-delete a single agent.
+  // sessionToken is optional — omitting it allows operator-level deletion without a token.
   fastify.delete<{
     Params: { name: string };
     Querystring: { sessionToken?: string };
@@ -141,7 +143,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     const { name } = request.params;
     const { sessionToken } = request.query;
     const db = getDb();
-    const agent = await agentsQ.getByName(db, request.projectId, name);
+    const agent = await agentsQ.getByNameFull(db, request.projectId, name);
     if (!agent) {
       return reply.notFound(`Agent '${name}' not registered`);
     }
@@ -157,20 +159,21 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     }
 
     await db.transaction(async (tx) => {
-      await agentsQ.softDelete(tx as any, request.projectId, name);
-      await filesQ.releaseByClaimantAgentId(tx as any, request.projectId, agent.id);
-      await tasksLifecycleQ.releaseByAgent(tx as any, request.projectId, agent.id);
+      await agentsQ.softDelete(tx, request.projectId, name);
+      await filesQ.releaseByClaimantAgentId(tx, request.projectId, agent.id);
+      await tasksLifecycleQ.releaseByAgent(tx, request.projectId, agent.id);
     });
     return { ok: true, deleted: true };
   });
 
-  // DELETE /agents -- soft-delete all agents for the project
+  // DELETE /agents -- soft-delete all agents for the project.
+  // No sessionToken required — this is an operator-level bulk action.
   fastify.delete('/agents', async (request) => {
     const db = getDb();
     const result = await db.transaction(async (tx) => {
-      const count = await agentsQ.deleteAllForProject(tx as any, request.projectId);
-      await filesQ.releaseAll(tx as any, request.projectId);
-      await tasksLifecycleQ.releaseAllActive(tx as any, request.projectId);
+      const count = await agentsQ.deleteAllForProject(tx, request.projectId);
+      await filesQ.releaseAll(tx, request.projectId);
+      await tasksLifecycleQ.releaseAllActive(tx, request.projectId);
       return count;
     });
     return { ok: true, deletedCount: result };
