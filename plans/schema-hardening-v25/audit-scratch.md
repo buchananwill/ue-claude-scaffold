@@ -13,10 +13,12 @@ file:line that reads or writes it.
 ### Writes (SET / INSERT)
 
 - `server/src/queries/tasks-lifecycle.ts:10` -- `claimedBy: agent` (claim task)
-- `server/src/queries/tasks-lifecycle.ts:71` -- `claimedBy: null` (complete task)
-- `server/src/queries/tasks-lifecycle.ts:89` -- `claimedBy: null` (fail task)
-- `server/src/queries/tasks-lifecycle.ts:177` -- `claimedBy: null` (release tasks by agent)
-- `server/src/queries/tasks-lifecycle.ts:193` -- `claimedBy: null` (release all tasks)
+- `server/src/queries/tasks-lifecycle.ts:71` -- `claimedBy: null` (release task — sets status back to `'pending'`)
+- `server/src/queries/tasks-lifecycle.ts:89` -- `claimedBy: null` (reset task — sets status back to `'pending'`, clears completedAt/result/progressLog)
+
+**Note**: `complete()` (line 30) and `fail()` (line 48) do NOT clear `claimedBy`. After completion or failure, the `claimedBy` value is preserved, recording which agent completed/failed the task. This is materially important for Phase 2 migration — the FK reference must remain valid even for completed/failed rows, and any migration must not null out `claimedBy` on those statuses.
+- `server/src/queries/tasks-lifecycle.ts:177` -- `claimedBy: null` (releaseByAgent — only affects rows WHERE `claimedBy = agent` AND status IN `('claimed', 'in_progress')`)
+- `server/src/queries/tasks-lifecycle.ts:193` -- `claimedBy: null` (releaseAllActive — only affects rows WHERE status IN `('claimed', 'in_progress')`; does NOT touch completed/failed/integrated rows)
 
 ### Reads (SELECT / WHERE)
 
@@ -83,8 +85,8 @@ file:line that reads or writes it.
 ### Raw SQL
 
 - `server/src/queries/tasks-claim.ts:12` -- `f.claimant IS NULL`
-- `server/src/queries/tasks-claim.ts:21` -- `f2.claimant IS NOT NULL AND f2.claimant != ${agent}`
-- `server/src/queries/tasks-claim.ts:61-62` -- `f.claimant IS NOT NULL AND f.claimant != ${agent}`
+- `server/src/queries/tasks-claim.ts:21` -- `f2.claimant IS NOT NULL AND f2.claimant != ${agent}` (**Safe**: uses Drizzle's `sql` tagged template which auto-parameterises `${agent}` — not a raw JS template literal, no SQL injection risk)
+- `server/src/queries/tasks-claim.ts:61-62` -- `f.claimant IS NOT NULL AND f.claimant != ${agent}` (**Safe**: same Drizzle `sql` tagged template)
 - `server/src/queries/test-utils.ts:102` -- DDL string: `"claimant" text`
 
 ### Test files
@@ -231,34 +233,7 @@ file:line that reads or writes it.
 
 ---
 
-## 7. `messages.claimedBy` (column `claimed_by`)
-
-**Schema**: `server/src/schema/tables.ts:70` -- `claimedBy: text('claimed_by')`
-**Index**: `server/src/schema/tables.ts:78` -- `index('idx_messages_claimed').on(table.claimedBy)`
-
-### Writes
-
-- `server/src/queries/messages.ts:119` -- `.set({ claimedBy, claimedAt: ... })` (claim message)
-
-### Reads
-
-- `server/src/queries/messages.ts:120` -- WHERE: `isNull(messages.claimedBy)` (only claim if unclaimed)
-
-### Route / response layer
-
-- `server/src/routes/messages.ts:11,39` -- `claimedBy: string | null` in interface, mapped in format
-
-### Test files
-
-- (no explicit tests found asserting `messages.claimedBy` directly; claim flow tested via `/messages/:id/claim` endpoint)
-
-### Raw SQL
-
-- `server/src/queries/test-utils.ts:68,76` -- DDL strings: `"claimed_by" text`, index on `claimed_by`
-
----
-
-## 8. `roomMembers.member` (column `member`)
+## 7. `roomMembers.member` (column `member`)
 
 **Schema**: `server/src/schema/tables.ts:149` -- `member: text('member').notNull()`
 **PK**: `server/src/schema/tables.ts:152` -- `primaryKey({ columns: [table.roomId, table.member] })`
@@ -293,7 +268,7 @@ file:line that reads or writes it.
 
 ---
 
-## 9. `teamMembers.agentName` (column `agent_name`)
+## 8. `teamMembers.agentName` (column `agent_name`)
 
 **Schema**: `server/src/schema/tables.ts:198` -- `agentName: text('agent_name').notNull()`
 **PK**: `server/src/schema/tables.ts:202` -- `primaryKey({ columns: [table.teamId, table.agentName] })`
@@ -334,7 +309,7 @@ file:line that reads or writes it.
 
 ---
 
-## 10. `chatMessages.sender` (column `sender`)
+## 9. `chatMessages.sender` (column `sender`)
 
 **Schema**: `server/src/schema/tables.ts:159` -- `sender: text('sender').notNull()`
 
@@ -373,3 +348,34 @@ Rationale:
 4. No code path treats it as a free-form text field.
 
 This means Phase 2 should add a proper `agentId` UUID FK column and migrate `fromAgent` to reference `agents.id`.
+
+---
+
+## Appendix A: Additional Observations (not migration targets)
+
+### `messages.claimedBy` (column `claimed_by`)
+
+This column is NOT one of the 9 spec-required migration targets. It is documented here for completeness only — it should NOT drive migration steps in Phase 2.
+
+**Schema**: `server/src/schema/tables.ts:70` -- `claimedBy: text('claimed_by')`
+**Index**: `server/src/schema/tables.ts:78` -- `index('idx_messages_claimed').on(table.claimedBy)`
+
+**Writes**:
+- `server/src/queries/messages.ts:119` -- `.set({ claimedBy, claimedAt: ... })` (claim message)
+
+**Reads**:
+- `server/src/queries/messages.ts:120` -- WHERE: `isNull(messages.claimedBy)` (only claim if unclaimed)
+
+**Route / response layer**:
+- `server/src/routes/messages.ts:11,39` -- `claimedBy: string | null` in interface, mapped in format
+
+**Raw SQL**:
+- `server/src/queries/test-utils.ts:68,76` -- DDL strings: `"claimed_by" text`, index on `claimed_by`
+
+---
+
+## Appendix B: Dependency Rationale — `uuid@^11` for v7
+
+The plan title references "UUID v7". The `uuid` npm package (v11+) is needed specifically for **v7 time-ordered UUIDs**, which embed a millisecond-precision timestamp in the high bits. This gives B-tree index locality for time-series queries (new rows cluster near the end of the index) while retaining global uniqueness.
+
+Node.js `crypto.randomUUID()` only generates **v4 random UUIDs**, which scatter randomly across index space and offer no time-ordering. Since this plan's goal is to replace text agent-name PKs with proper UUID PKs that also serve as efficient index keys, v7 is the correct choice and `crypto.randomUUID()` is insufficient. This justifies the external dependency.
