@@ -59,8 +59,8 @@ export async function clearLockAndPromote(): Promise<{ promoted?: string }> {
     await ubtQ.releaseLock(tx as any);
     const next = await ubtQ.dequeue(tx as any);
     if (next) {
-      await ubtQ.acquireLock(tx as any, next.agent_id, next.priority);
-      return { promoted: next.agent_id };
+      await ubtQ.acquireLock(tx as any, next.agentId, next.priority);
+      return { promoted: next.agentId };
     }
     return {};
   });

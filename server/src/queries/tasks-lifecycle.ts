@@ -1,6 +1,7 @@
 import { eq, and, sql } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
+import type { TaskDbRow } from './tasks-core.js';
 
 export async function claim(db: DrizzleDb, projectId: string, id: number, agentId: string): Promise<boolean> {
   const rows = await db
@@ -176,7 +177,7 @@ export async function integrateAll(
   return result;
 }
 
-export async function releaseByAgent(db: DrizzleDb, projectId: string, agentId: string) {
+export async function releaseByAgent(db: DrizzleDb, projectId: string, agentId: string): Promise<void> {
   await db
     .update(tasks)
     .set({
@@ -193,7 +194,7 @@ export async function releaseByAgent(db: DrizzleDb, projectId: string, agentId: 
     );
 }
 
-export async function releaseAllActive(db: DrizzleDb, projectId: string) {
+export async function releaseAllActive(db: DrizzleDb, projectId: string): Promise<void> {
   await db
     .update(tasks)
     .set({
@@ -209,7 +210,7 @@ export async function releaseAllActive(db: DrizzleDb, projectId: string) {
     );
 }
 
-export async function getCompletedByAgent(db: DrizzleDb, projectId: string, agentId: string) {
+export async function getCompletedByAgent(db: DrizzleDb, projectId: string, agentId: string): Promise<TaskDbRow[]> {
   return db
     .select()
     .from(tasks)
@@ -222,7 +223,7 @@ export async function getCompletedByAgent(db: DrizzleDb, projectId: string, agen
     );
 }
 
-export async function getAllCompleted(db: DrizzleDb, projectId: string) {
+export async function getAllCompleted(db: DrizzleDb, projectId: string): Promise<TaskDbRow[]> {
   return db
     .select()
     .from(tasks)

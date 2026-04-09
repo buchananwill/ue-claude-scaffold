@@ -10,7 +10,7 @@ export async function countActiveTasks(db: DrizzleDb, projectId: string): Promis
   const rows = await db
     .select({ count: countFn() })
     .from(tasks)
-    .where(and(inArray(tasks.status, ACTIVE_STATUSES), eq(tasks.projectId, projectId)));
+    .where(and(inArray(tasks.status, [...ACTIVE_STATUSES]), eq(tasks.projectId, projectId)));
   return Number(rows[0].count);
 }
 
@@ -21,7 +21,7 @@ export async function countActiveTasksForAgent(db: DrizzleDb, projectId: string,
     .where(
       and(
         eq(tasks.claimedByAgentId, agentId),
-        inArray(tasks.status, ACTIVE_STATUSES),
+        inArray(tasks.status, [...ACTIVE_STATUSES]),
         eq(tasks.projectId, projectId),
       ),
     );
@@ -73,7 +73,7 @@ export async function getInFlightTasks(db: DrizzleDb, projectId: string): Promis
       claimedByAgentId: tasks.claimedByAgentId,
     })
     .from(tasks)
-    .where(and(inArray(tasks.status, ACTIVE_STATUSES), eq(tasks.projectId, projectId)));
+    .where(and(inArray(tasks.status, [...ACTIVE_STATUSES]), eq(tasks.projectId, projectId)));
 }
 
 export async function releaseAllFiles(db: DbOrTx, projectId: string): Promise<void> {

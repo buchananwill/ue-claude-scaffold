@@ -55,9 +55,9 @@ export async function enqueue(
 
 export async function dequeue(db: DrizzleDb): Promise<{
   id: number;
-  agent_id: string;
+  agentId: string;
   priority: number;
-  requested_at: Date;
+  requestedAt: Date;
 } | null> {
   // Atomic delete+return via subquery — avoids TOCTOU race under concurrent access
   const rows = await db.execute<{
@@ -74,7 +74,9 @@ export async function dequeue(db: DrizzleDb): Promise<{
     )
     RETURNING *
   `);
-  return rows.rows[0] ?? null;
+  const row = rows.rows[0];
+  if (!row) return null;
+  return { id: row.id, agentId: row.agent_id, priority: row.priority, requestedAt: row.requested_at };
 }
 
 export async function getQueue(db: DrizzleDb): Promise<UbtQueueRow[]> {
@@ -98,7 +100,10 @@ export async function getQueuePosition(
   return Number(rows[0].count);
 }
 
-export async function findInQueue(db: DrizzleDb, agentId: string): Promise<{ id: number; priority: number | null } | null> {
+export async function findInQueue(
+  db: DrizzleDb,
+  agentId: string,
+): Promise<{ id: number; priority: number | null } | null> {
   const rows = await db
     .select({ id: ubtQueue.id, priority: ubtQueue.priority })
     .from(ubtQueue)
