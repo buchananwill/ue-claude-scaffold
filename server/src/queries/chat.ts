@@ -2,9 +2,12 @@ import { eq, and, gt, lt, desc, asc, sql } from 'drizzle-orm';
 import { chatMessages, roomMembers, agents } from '../schema/tables.js';
 import type { DbOrTx } from '../drizzle-instance.js';
 
+const VALID_AUTHOR_TYPES = ['agent', 'operator', 'system'] as const;
+type AuthorType = (typeof VALID_AUTHOR_TYPES)[number];
+
 export interface SendMessageOpts {
   roomId: string;
-  authorType: 'agent' | 'operator' | 'system';
+  authorType: AuthorType;
   authorAgentId: string | null;
   content: string;
   replyTo?: number | null;
@@ -19,8 +22,7 @@ export async function sendMessage(db: DbOrTx, opts: SendMessageOpts): Promise<{
   replyTo: number | null;
   createdAt: Date | null;
 }> {
-  const VALID_AUTHOR_TYPES = ['agent', 'operator', 'system'] as const;
-  if (!VALID_AUTHOR_TYPES.includes(opts.authorType as (typeof VALID_AUTHOR_TYPES)[number])) {
+  if (!VALID_AUTHOR_TYPES.includes(opts.authorType)) {
     throw new Error(`Invalid authorType: ${opts.authorType}`);
   }
 
@@ -61,6 +63,7 @@ export async function getHistory(db: DbOrTx, roomId: string, opts: GetHistoryOpt
   createdAt: Date | null;
   sender: string;
 }>> {
+  // Column references only; no user input interpolated
   const senderColumn = sql<string>`COALESCE(${agents.name}, CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' ELSE NULL END, 'unknown')`.as('sender');
 
   const historySelect = {
