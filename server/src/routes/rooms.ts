@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
+import type { ScaffoldConfig } from '../config.js';
 import { getDb } from '../drizzle-instance.js';
 import * as roomsQ from '../queries/rooms.js';
 import * as chatQ from '../queries/chat.js';
@@ -6,12 +7,17 @@ import * as agentsQ from '../queries/agents.js';
 import { sql, eq } from 'drizzle-orm';
 import { rooms, roomMembers, chatMessages, agents } from '../schema/tables.js';
 
-const roomsPlugin: FastifyPluginAsync = async (fastify) => {
+interface RoomsOpts {
+  config: ScaffoldConfig;
+}
+
+const roomsPlugin: FastifyPluginAsync<RoomsOpts> = async (fastify, { config }) => {
   // POST /rooms — create a room
   fastify.post<{
     Body: { id: string; name: string; type: 'group' | 'direct'; members?: string[] };
   }>('/rooms', async (request, reply) => {
-    const caller = (request.headers['x-agent-name'] as string | undefined) ?? 'user';
+    const agentName = request.headers['x-agent-name'] as string | undefined;
+    const caller = agentName ?? 'operator';
     const { id, name, type, members } = request.body;
     const db = getDb();
 
@@ -20,11 +26,25 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     await roomsQ.createRoom(db, { id, name, type, createdBy: caller, projectId: request.projectId });
-    await roomsQ.addMember(db, id, caller);
-    if (members) {
-      for (const m of members) {
-        await roomsQ.addMember(db, id, m);
+
+    // If caller is an agent, resolve UUID and add as member
+    if (agentName) {
+      const callerAgent = await agentsQ.getByName(db, request.projectId, agentName);
+      if (!callerAgent) {
+        return reply.code(403).send({ error: 'unknown_agent' });
       }
+      await roomsQ.addMember(db, id, callerAgent.id);
+    }
+    // If no X-Agent-Name (operator), skip adding creator as member (implicit access)
+
+    if (members) {
+      await Promise.all(members.map(async (m) => {
+        const agent = await agentsQ.getByName(db, request.projectId, m);
+        if (!agent) {
+          throw fastify.httpErrors.notFound(`Unknown agent: ${m}`);
+        }
+        await roomsQ.addMember(db, id, agent.id);
+      }));
     }
 
     return { ok: true, id };
@@ -38,14 +58,14 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     const rows = await roomsQ.listRooms(db, { member: request.query.member, projectId: request.projectId });
 
     // Compute member counts
-    return Promise.all(rows.map(async (r: any) => {
+    return Promise.all(rows.map(async (r) => {
       const members = await roomsQ.getMembers(db, r.id);
       return {
         id: r.id,
         name: r.name,
         type: r.type,
-        createdBy: r.createdBy ?? r.created_by,
-        createdAt: r.createdAt ?? r.created_at,
+        createdBy: r.createdBy,
+        createdAt: r.createdAt,
         memberCount: members.length,
       };
     }));
@@ -220,7 +240,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       limit: pageSize,
     });
 
-    return rows.map((r: any) => ({
+    return rows.map((r) => ({
       id: r.id,
       roomId: r.roomId,
       sender: r.sender,
@@ -245,7 +265,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
             ${chatMessages.roomId} AS "roomId",
             COALESCE(
               ${agents.name},
-              CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' END
+              CASE ${chatMessages.authorType} WHEN 'operator' THEN 'operator' WHEN 'system' THEN 'system' ELSE 'unknown' END
             ) AS sender,
             ${chatMessages.content},
             to_char(${chatMessages.createdAt}, 'MM-DD HH24:MI') AS time
@@ -261,7 +281,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
             ${chatMessages.roomId} AS "roomId",
             COALESCE(
               ${agents.name},
-              CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' END
+              CASE ${chatMessages.authorType} WHEN 'operator' THEN 'operator' WHEN 'system' THEN 'system' ELSE 'unknown' END
             ) AS sender,
             ${chatMessages.content},
             to_char(${chatMessages.createdAt}, 'MM-DD HH24:MI') AS time

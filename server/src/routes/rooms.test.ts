@@ -2,10 +2,22 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
-import { rooms, roomMembers } from '../schema/tables.js';
+import { rooms, roomMembers, agents as agentsTable } from '../schema/tables.js';
 import { eq } from 'drizzle-orm';
 import roomsPlugin from './rooms.js';
 import agentsPlugin from './agents.js';
+import { v7 as uuidv7 } from 'uuid';
+
+/** Insert a bare-minimum agent row directly into the DB. */
+async function seedAgent(ctx: DrizzleTestContext, name: string) {
+  await ctx.db.insert(agentsTable).values({
+    id: uuidv7(),
+    name,
+    worktree: `/tmp/wt-${name}`,
+    status: 'idle',
+    projectId: 'default',
+  }).onConflictDoNothing();
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helper: create a room via inject                                   */
@@ -32,7 +44,11 @@ describe('rooms CRUD', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
-    await ctx.app.register(roomsPlugin);
+    await ctx.app.register(roomsPlugin, { config: createTestConfig() });
+    // Seed agents used in tests
+    await seedAgent(ctx, 'alice');
+    await seedAgent(ctx, 'bob');
+    await seedAgent(ctx, 'carol');
   });
 
   afterEach(async () => {
@@ -194,12 +210,16 @@ describe('chat messages', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
-    await ctx.app.register(roomsPlugin);
+    await ctx.app.register(roomsPlugin, { config: createTestConfig() });
+    // Seed agents used in tests
+    await seedAgent(ctx, 'alice');
+    await seedAgent(ctx, 'bob');
+    await seedAgent(ctx, 'eve');
     // Create a room with alice and bob as members
     await ctx.app.inject({
       method: 'POST',
       url: '/rooms',
-      payload: { id: 'r1', name: 'Test Room', type: 'group', members: ['alice', 'bob'] },
+      payload: { id: 'r1', name: 'Test Room', type: 'group', members: ['bob'] },
       headers: { 'x-agent-name': 'alice' },
     });
   });
@@ -232,28 +252,12 @@ describe('chat messages', () => {
     assert.equal(res.statusCode, 403);
   });
 
-  it('POST /rooms/:id/messages — no header: sender defaults to "user", 403 if "user" not member', async () => {
-    // "user" is not a member of r1 (members: alice, bob)
+  it('POST /rooms/:id/messages — no header: operator flow, 200 (implicit access)', async () => {
+    // No X-Agent-Name header means operator — implicit access, no membership check
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/rooms/r1/messages',
-      payload: { content: 'hi' },
-    });
-    assert.equal(res.statusCode, 403);
-  });
-
-  it('POST /rooms/:id/messages — no header: 200 if "user" is a member', async () => {
-    // Add "user" to room
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/rooms/r1/members',
-      payload: { members: ['user'] },
-    });
-
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/rooms/r1/messages',
-      payload: { content: 'from user' },
+      payload: { content: 'hi from operator' },
     });
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().ok, true);
@@ -420,16 +424,20 @@ describe('auto-direct-room on agent registration', () => {
     assert.equal(roomRows[0].name, 'Direct: agent-1');
   });
 
-  it('direct room has members [agent-name, "user"]', async () => {
+  it('direct room has the agent as a member', async () => {
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/register',
       payload: { name: 'agent-1', worktree: '/tmp/wt1' },
     });
 
-    const memberRows = await ctx.db.select().from(roomMembers).where(eq(roomMembers.roomId, 'agent-1-direct'));
-    const memberNames = memberRows.map(m => m.member).sort();
-    assert.deepEqual(memberNames, ['agent-1', 'user']);
+    const memberRows = await ctx.db
+      .select({ name: agentsTable.name })
+      .from(roomMembers)
+      .innerJoin(agentsTable, eq(agentsTable.id, roomMembers.agentId))
+      .where(eq(roomMembers.roomId, 'agent-1-direct'));
+    const memberNames = memberRows.map(m => m.name).sort();
+    assert.deepEqual(memberNames, ['agent-1']);
   });
 
   it('re-registering same agent does NOT duplicate the room', async () => {
@@ -470,7 +478,7 @@ describe('chat message broadcast', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     await ctx.app.register(agentsPlugin, { config: createTestConfig() });
-    await ctx.app.register(roomsPlugin);
+    await ctx.app.register(roomsPlugin, { config: createTestConfig() });
   });
 
   afterEach(async () => {
@@ -486,20 +494,18 @@ describe('chat message broadcast', () => {
       payload: { name: 'agent-1', worktree: '/tmp/wt1' },
     });
 
-    // Create room with user and agent-1
+    // Create room with agent-1 as member (operator creates, no x-agent-name)
     await ctx.app.inject({
       method: 'POST',
       url: '/rooms',
       payload: { id: 'r-bc1', name: 'Broadcast Test 1', type: 'group', members: ['agent-1'] },
-      headers: { 'x-agent-name': 'user' },
     });
 
-    // Post message as user — broadcast should skip agent-1 (no container_host)
+    // Post message as operator — broadcast should skip agent-1 (no container_host)
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/rooms/r-bc1/messages',
       payload: { content: 'hello agent' },
-      headers: { 'x-agent-name': 'user' },
     });
 
     assert.equal(res.statusCode, 200);
@@ -516,20 +522,18 @@ describe('chat message broadcast', () => {
       payload: { name: 'agent-2', worktree: '/tmp/wt2', containerHost: '127.0.0.1' },
     });
 
-    // Create room with user and agent-2
+    // Create room with agent-2 as member (operator creates)
     await ctx.app.inject({
       method: 'POST',
       url: '/rooms',
       payload: { id: 'r-bc2', name: 'Broadcast Test 2', type: 'group', members: ['agent-2'] },
-      headers: { 'x-agent-name': 'user' },
     });
 
-    // Post message as user — broadcast fires fetch to 127.0.0.1:8788 which should fail silently
+    // Post message as operator — broadcast fires fetch to 127.0.0.1:8788 which should fail silently
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/rooms/r-bc2/messages',
       payload: { content: 'hello unreachable' },
-      headers: { 'x-agent-name': 'user' },
     });
 
     assert.equal(res.statusCode, 200);
@@ -539,20 +543,25 @@ describe('chat message broadcast', () => {
   });
 
   it('message POST succeeds when member is unregistered (pending)', async () => {
-    // Create room with a member that has no agent registration at all
+    // Register ghost-agent so it can be added as a member
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name: 'ghost-agent', worktree: '/tmp/wt-ghost' },
+    });
+
+    // Create room with ghost-agent as member (operator creates)
     await ctx.app.inject({
       method: 'POST',
       url: '/rooms',
       payload: { id: 'r-bc3', name: 'Broadcast Test 3', type: 'group', members: ['ghost-agent'] },
-      headers: { 'x-agent-name': 'user' },
     });
 
-    // Post message as user — broadcast should see ghost-agent with NULL container_host and skip
+    // Post message as operator — broadcast should see ghost-agent with NULL container_host and skip
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/rooms/r-bc3/messages',
       payload: { content: 'hello ghost' },
-      headers: { 'x-agent-name': 'user' },
     });
 
     assert.equal(res.statusCode, 200);
