@@ -16,13 +16,13 @@ All Drizzle schema changes live here. No migration files yet, no query code, no 
    - Add a table-level `unique('agents_project_name_unique').on(table.projectId, table.name)` using the `(table) => [...]` callback form already used by `files`, `taskFiles`, `taskDependencies`, `roomMembers`, and `teamMembers` in the same file.
    - Add a comment above `status` enumerating the valid values: `idle | working | done | error | paused | stopping | deleted`.
    - Ensure `sessionToken` still has `.unique()` (it should — do not remove).
-3. Add `.references(() => projects.id)` on the `project_id` column of all 9 data tables: `agents`, `ubtLock`, `ubtQueue`, `buildHistory`, `messages`, `tasks`, `files`, `rooms`, `teams`. Drop the `.default('default')` on each. The FK makes an implicit default unsafe; tests that relied on the default must pass an explicit `projectId` (updated in Phase 12).
+3. Add `.references(() => projects.id)` on the `project_id` column of the 7 project-scoped data tables: `agents`, `buildHistory`, `messages`, `tasks`, `files`, `rooms`, `teams`. Drop the `.default('default')` on each. The FK makes an implicit default unsafe; tests that relied on the default must pass an explicit `projectId` (updated in Phase 12). **Do NOT add a project_id FK on `ubtLock` or `ubtQueue`** — UBT is host-level, not project-scoped (see `_index.md` design decision).
 4. Replace every text column that references an agent by name with a `uuid` FK to `agents.id`:
    - `tasks.claimedBy` (`text`, nullable) → `claimedByAgentId: uuid('claimed_by_agent_id').references(() => agents.id, { onDelete: 'restrict' })`, nullable.
    - `files.claimant` (`text`, nullable) → `claimantAgentId: uuid('claimant_agent_id').references(() => agents.id, { onDelete: 'restrict' })`, nullable.
    - `buildHistory.agent` (`text`, not nullable) → `agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'restrict' })`.
-   - `ubtLock.holder` (`text`, nullable) → `holderAgentId: uuid('holder_agent_id').references(() => agents.id, { onDelete: 'restrict' })`, nullable.
-   - `ubtQueue.agent` (`text`, not nullable) → `agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'restrict' })`.
+   - `ubtLock.holder` (`text`, nullable) → `holderAgentId: uuid('holder_agent_id').references(() => agents.id, { onDelete: 'restrict' })`, nullable. Additionally, change the `ubtLock` PK from `projectId: text('project_id').primaryKey()` to `hostId: text('host_id').primaryKey().default('local')`. Remove `project_id` entirely — `ubtLock` is a host-level singleton, not project-scoped. Update the table comment from "singleton mutex per project" to "host-level singleton mutex (one lock per UBT host)".
+   - `ubtQueue.agent` (`text`, not nullable) → `agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'restrict' })`. Remove `projectId` from `ubtQueue` entirely — the queue is global across all projects. Update the table comment from "FIFO with priority" to "global FIFO with priority (all agents, all projects)".
    - `teamMembers.agentName` → `agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'restrict' })`. Update the composite PK from `(team_id, agent_name)` to `(team_id, agent_id)`.
 5. For `messages.agent` and `build_history.agent` specifically — historical audit columns. Keep the old `agent text` column as a display-only legacy field for pre-migration rows, and add a new nullable `agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'restrict' })` column alongside. New writes populate `agentId`; the old column is retained untouched. Apply the same treatment to both tables. (For `messages.agent`, use the referential-vs-label decision recorded in Phase 1's audit; if the audit found it to be a free-form label, skip the rename and only add the new nullable `agentId` column.)
 6. Apply the agent-only `room_members` change:
@@ -44,7 +44,7 @@ All Drizzle schema changes live here. No migration files yet, no query code, no 
 
 - `server/src/schema/tables.ts` imports `uuid` from `drizzle-orm/pg-core`.
 - The `agents` table has `id: uuid('id').primaryKey()` as its first field, no `.primaryKey()` on `name`, and a table-level `unique('agents_project_name_unique').on(projectId, name)`.
-- All 9 data tables have `project_id` with `.references(() => projects.id)` and no `.default('default')`.
+- All 7 project-scoped data tables have `project_id` with `.references(() => projects.id)` and no `.default('default')`. `ubtLock` has `hostId` PK (no `projectId`); `ubtQueue` has no `projectId` column.
 - Every cross-table agent reference is a `uuid` column with `.references(() => agents.id, { onDelete: 'restrict' })`.
 - `messages.agent` and `build_history.agent` retain their old `text` columns (historical audit exception) and carry new nullable `agent_id uuid` columns alongside.
 - `room_members` has `id uuid PK`, `agent_id uuid NOT NULL FK`, `unique(room_id, agent_id)`, and no `member` column.

@@ -26,6 +26,7 @@ The `drizzle-kit generate` output is a draft reference, not the final artifact â
    ALTER TABLE files ADD COLUMN claimant_agent_id uuid;
    ALTER TABLE build_history ADD COLUMN agent_id uuid;
    ALTER TABLE ubt_lock ADD COLUMN holder_agent_id uuid;
+   ALTER TABLE ubt_lock ADD COLUMN host_id text DEFAULT 'local';
    ALTER TABLE ubt_queue ADD COLUMN agent_id uuid;
    ALTER TABLE messages ADD COLUMN agent_id uuid;
    ALTER TABLE team_members ADD COLUMN agent_id uuid;
@@ -77,15 +78,13 @@ The `drizzle-kit generate` output is a draft reference, not the final artifact â
    UPDATE files SET claimant = NULL, claimed_at = NULL
    WHERE claimant IS NOT NULL AND claimant_agent_id IS NULL;
 
-   -- STEP 4: Backfill ubt_lock.holder_agent_id. Live-state orphan policy: release the lock.
-   UPDATE ubt_lock SET holder_agent_id = a.id
-   FROM agents a
-   WHERE ubt_lock.holder = a.name;
+   -- STEP 4: UBT lock is host-level, not project-scoped. Clear the lock table â€”
+   -- lock state is transient and will be lazily re-created on the next build request.
+   -- This also eliminates any per-project rows left over from the old schema.
+   DELETE FROM ubt_lock;
 
-   UPDATE ubt_lock SET holder = NULL, acquired_at = NULL, priority = 0
-   WHERE holder IS NOT NULL AND holder_agent_id IS NULL;
-
-   -- STEP 5: Backfill ubt_queue.agent_id. Live-state orphan policy: DELETE the row.
+   -- STEP 5: Backfill ubt_queue.agent_id. Host-level queue â€” match by name only,
+   -- no project scoping. Live-state orphan policy: DELETE unresolvable rows.
    UPDATE ubt_queue SET agent_id = a.id
    FROM agents a
    WHERE ubt_queue.agent = a.name;
@@ -180,8 +179,7 @@ The `drizzle-kit generate` output is a draft reference, not the final artifact â
    DELETE FROM files WHERE project_id NOT IN (SELECT id FROM projects);
    DELETE FROM build_history WHERE project_id NOT IN (SELECT id FROM projects);
    DELETE FROM messages WHERE project_id NOT IN (SELECT id FROM projects);
-   DELETE FROM ubt_queue WHERE project_id NOT IN (SELECT id FROM projects);
-   DELETE FROM ubt_lock WHERE project_id NOT IN (SELECT id FROM projects);
+   -- ubt_lock and ubt_queue are host-level â€” NOT included in project_id orphan cleanup.
 
    -- agents: soft-delete rather than remove, to preserve historical references
    UPDATE agents SET status = 'deleted'
@@ -215,7 +213,8 @@ The `drizzle-kit generate` output is a draft reference, not the final artifact â
    ALTER TABLE chat_messages ADD CONSTRAINT chat_messages_author_agent_fk
      FOREIGN KEY (author_agent_id) REFERENCES agents(id) ON DELETE RESTRICT;
 
-   -- project_id FKs on all 9 data tables (absorbs plans/project-id-foreign-keys.md)
+   -- project_id FKs on 7 project-scoped data tables (absorbs plans/project-id-foreign-keys.md)
+   -- UBT tables are host-level and do NOT get project_id FKs.
    ALTER TABLE agents ALTER COLUMN project_id DROP DEFAULT;
    ALTER TABLE agents ADD CONSTRAINT agents_project_fk
      FOREIGN KEY (project_id) REFERENCES projects(id);
@@ -231,18 +230,21 @@ The `drizzle-kit generate` output is a draft reference, not the final artifact â
    ALTER TABLE build_history ALTER COLUMN project_id DROP DEFAULT;
    ALTER TABLE build_history ADD CONSTRAINT build_history_project_fk
      FOREIGN KEY (project_id) REFERENCES projects(id);
-   ALTER TABLE ubt_queue ALTER COLUMN project_id DROP DEFAULT;
-   ALTER TABLE ubt_queue ADD CONSTRAINT ubt_queue_project_fk
-     FOREIGN KEY (project_id) REFERENCES projects(id);
-   ALTER TABLE ubt_lock ALTER COLUMN project_id DROP DEFAULT;
-   ALTER TABLE ubt_lock ADD CONSTRAINT ubt_lock_project_fk
-     FOREIGN KEY (project_id) REFERENCES projects(id);
    ALTER TABLE rooms ALTER COLUMN project_id DROP DEFAULT;
    ALTER TABLE rooms ADD CONSTRAINT rooms_project_fk
      FOREIGN KEY (project_id) REFERENCES projects(id);
    ALTER TABLE teams ALTER COLUMN project_id DROP DEFAULT;
    ALTER TABLE teams ADD CONSTRAINT teams_project_fk
      FOREIGN KEY (project_id) REFERENCES projects(id);
+
+   -- ubt_lock: migrate PK from project_id to host_id (host-level singleton)
+   ALTER TABLE ubt_lock ALTER COLUMN host_id SET NOT NULL;
+   ALTER TABLE ubt_lock DROP CONSTRAINT ubt_lock_pkey;
+   ALTER TABLE ubt_lock ADD CONSTRAINT ubt_lock_pkey PRIMARY KEY (host_id);
+   ALTER TABLE ubt_lock DROP COLUMN project_id;
+
+   -- ubt_queue: remove project_id (global queue, not project-scoped)
+   ALTER TABLE ubt_queue DROP COLUMN project_id;
 
    -- NOT NULL on FK columns whose old text column was NOT NULL
    ALTER TABLE build_history ALTER COLUMN agent_id SET NOT NULL;
@@ -298,6 +300,6 @@ The `drizzle-kit generate` output is a draft reference, not the final artifact â
 - `server/drizzle/0003_backfill_and_orphans.sql` exists with the backfill and orphan-handling content.
 - `server/drizzle/0004_constraints_and_swap.sql` exists with the constraint and column-drop content.
 - `server/drizzle/meta/_journal.json` references the three files in numerical order after the existing 0000 and 0001 entries.
-- No migration file contains an unscoped `DELETE FROM <table>;` of non-orphaned data. Orphan deletions are gated by `WHERE project_id NOT IN (...)` or `WHERE agent_id IS NULL`.
-- The SQL is syntactically valid Postgres (statement terminators, balanced parentheses, quoted identifiers where needed). Do not run the migration yet â€” that is Phase 4.
+- No migration file contains an unscoped `DELETE FROM <table>;` of non-orphaned data â€” except `ubt_lock`, which is intentionally cleared (transient host-level state). Other orphan deletions are gated by `WHERE project_id NOT IN (...)` or `WHERE agent_id IS NULL`.
+- The SQL is syntactically valid Postgres (statement terminators, balanced parentheses, quoted identifiers where needed). Do not run the migration â€” that is the operator's responsibility in Phase 15, after all code phases are complete and merged.
 - Commit exists with the three files and the journal.

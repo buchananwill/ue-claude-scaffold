@@ -21,7 +21,7 @@ Gate phase. Run typecheck and the full test suite against the final code; update
 4. Update `CLAUDE.md` in the repo root:
    - In the "Server Code Conventions" section, add: agent identity is `agents.id` (UUID v7); `(project_id, name)` is a unique human-readable slot, not an identity. Every agent query must take an explicit `projectId`. Agents are soft-deleted via `status = 'deleted'`; hard deletion is a vacuum-class operation not performed in normal flow.
    - Under the `/agents/*` route listing, update the DELETE route description: single-phase soft-delete, optional `sessionToken` query parameter returns 409 on mismatch.
-   - Under the coordination server summary, add: FK constraints enforce cross-table integrity; `project_id` is a foreign key to `projects.id` on every data table.
+   - Under the coordination server summary, add: FK constraints enforce cross-table integrity; `project_id` is a foreign key to `projects.id` on every project-scoped data table. UBT tables (`ubt_lock`, `ubt_queue`) are host-level — keyed by `host_id`, no `project_id` column or FK.
    - Under the chat/rooms section (if present, else add it): `room_members` is agent-only; the operator authors messages without being a member; `chat_messages` carries an `author_type` discriminator (`agent` / `operator` / `system`).
 5. Delete `plans/project-id-foreign-keys.md`. Its intent is fully absorbed into this plan's Phase 3 (migration file 0003, the project-id orphan cleanup section) and Phase 3 file 0004 (the `project_id` FK additions).
 6. Delete `plans/schema-hardening-v25/audit-scratch.md`. Its content informed Phases 5–10 and is no longer load-bearing.

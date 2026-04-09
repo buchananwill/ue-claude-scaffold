@@ -1,4 +1,4 @@
-# Phase 14: Operator rebuild and smoke test
+# Phase 16: Operator rebuild and smoke test
 
 Operator-run verification. The orchestrator cannot rebuild Docker from inside a container; this phase is manual action items for the operator to execute in sequence. It is the authoritative check that the plan's stated goal — two same-named agents in different projects cannot stomp each other's data — actually holds in a running system.
 
@@ -12,8 +12,8 @@ Operator-run verification. The orchestrator cannot rebuild Docker from inside a 
 
 1. `cd container && docker compose build` on the agent image. Confirm the build succeeds and produces a fresh image containing the updated `container/lib/registration.sh` with the session-token DELETE change from Phase 11.
 2. Stop any existing containers: `./stop.sh` from the repo root. Confirm `docker ps` shows no `claude-*` containers.
-3. Snapshot the local PGlite data directory one more time: `cp -r <pglite-data-dir> <pglite-data-dir>.backup-pre-schema-hardening-smoke-$(date +%Y%m%d-%H%M%S)`. If Phase 4's migration was already run earlier and you're smoke-testing on a post-migration DB, this captures the post-migration baseline. If Phase 4 has not yet been applied to this DB, this is your pre-migration backup.
-4. Restart the coordination server: `cd server && npm run dev`. The migration runs at startup (or is already applied from Phase 4). Watch the console output for the three migration files (`0002_add_columns.sql`, `0003_backfill_and_orphans.sql`, `0004_constraints_and_swap.sql`) and confirm each applies cleanly or is already applied. If any fails, stop, restore the backup directory, investigate, and fix.
+3. Confirm Phase 15 (migration) has already been applied. The server should already be running on the post-migration schema from the Phase 15 operator step. If not, run Phase 15 first.
+4. Restart the coordination server if not already running: `cd server && npm run dev`. Confirm no migration errors on startup (all three files should show as already applied).
 5. Query the DB post-migration and assert:
    - `agents.id` is populated for every row (no NULLs).
    - `tasks.claimed_by` column does not exist; `tasks.claimed_by_agent_id` exists and is a valid FK.
