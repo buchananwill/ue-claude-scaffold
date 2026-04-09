@@ -3,10 +3,13 @@ import { v7 as uuidv7 } from 'uuid';
 import { agents } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 
-type AgentRow = typeof agents.$inferSelect;
+export type AgentRow = typeof agents.$inferSelect;
 
-const VALID_STATUSES = new Set(['idle', 'working', 'done', 'error', 'paused', 'stopping', 'deleted']);
-const VALID_MODES = new Set(['single', 'pump']);
+export type AgentStatus = 'idle' | 'working' | 'done' | 'error' | 'paused' | 'stopping' | 'deleted';
+export type AgentMode = 'single' | 'pump';
+
+const VALID_STATUSES: Set<string> = new Set<AgentStatus>(['idle', 'working', 'done', 'error', 'paused', 'stopping', 'deleted']);
+const VALID_MODES: Set<string> = new Set<AgentMode>(['single', 'pump']);
 
 function byProjectAndName(projectId: string, name: string) {
   return and(eq(agents.projectId, projectId), eq(agents.name, name));
@@ -17,7 +20,7 @@ export interface RegisterOpts {
   projectId: string;
   worktree: string;
   planDoc?: string | null;
-  mode?: string;
+  mode?: AgentMode;
   containerHost?: string | null;
   sessionToken?: string | null;
 }
@@ -32,6 +35,13 @@ export async function register(db: DrizzleDb, opts: RegisterOpts): Promise<void>
     containerHost = null,
     sessionToken = null,
   } = opts;
+
+  if (!name || name.length > 128) {
+    throw new Error('Invalid agent name');
+  }
+  if (!projectId || projectId.length > 128) {
+    throw new Error('Invalid projectId');
+  }
 
   if (!VALID_MODES.has(mode)) {
     throw new Error(`Invalid agent mode: ${mode}`);
@@ -65,6 +75,11 @@ export async function register(db: DrizzleDb, opts: RegisterOpts): Promise<void>
     });
 }
 
+/**
+ * Returns agents, optionally filtered by project.
+ * When called without projectId, returns all agents across all projects.
+ * @internal The unscoped path is intended for administrative use only.
+ */
 export async function getAll(db: DrizzleDb, projectId?: string): Promise<AgentRow[]> {
   if (projectId) {
     return db.select().from(agents).where(eq(agents.projectId, projectId));
@@ -88,7 +103,7 @@ export async function getByIdInProject(db: DrizzleDb, projectId: string, id: str
   return rows[0] ?? null;
 }
 
-export async function updateStatus(db: DrizzleDb, projectId: string, name: string, status: string): Promise<void> {
+export async function updateStatus(db: DrizzleDb, projectId: string, name: string, status: AgentStatus): Promise<void> {
   if (!VALID_STATUSES.has(status)) {
     throw new Error(`Invalid agent status: ${status}`);
   }
@@ -116,6 +131,11 @@ export async function deleteAllForProject(db: DrizzleDb, projectId: string): Pro
   return rows.length;
 }
 
+/**
+ * Looks up an agent by session token. Tokens are globally unique by construction.
+ * Note: Returns the full agent row including sessionToken. Callers that forward
+ * the result to HTTP responses must strip sensitive fields.
+ */
 export async function getByToken(db: DrizzleDb, sessionToken: string): Promise<AgentRow | null> {
   const rows = await db
     .select()
