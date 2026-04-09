@@ -6,47 +6,47 @@ ALTER TABLE "agents" ADD CONSTRAINT "agents_project_name_unique" UNIQUE ("projec
 --> statement-breakpoint
 -- FK constraints on every referring table
 ALTER TABLE "tasks" ADD CONSTRAINT "tasks_claimed_by_agent_fk"
-  FOREIGN KEY ("claimed_by_agent_id") REFERENCES "agents"("id") ON DELETE RESTRICT;
+  FOREIGN KEY ("claimed_by_agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
 ALTER TABLE "files" ADD CONSTRAINT "files_claimant_agent_fk"
-  FOREIGN KEY ("claimant_agent_id") REFERENCES "agents"("id") ON DELETE RESTRICT;
+  FOREIGN KEY ("claimant_agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
 ALTER TABLE "build_history" ADD CONSTRAINT "build_history_agent_fk"
-  FOREIGN KEY ("agent_id") REFERENCES "agents"("id") ON DELETE RESTRICT;
+  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
 ALTER TABLE "ubt_lock" ADD CONSTRAINT "ubt_lock_holder_agent_fk"
-  FOREIGN KEY ("holder_agent_id") REFERENCES "agents"("id") ON DELETE RESTRICT;
+  FOREIGN KEY ("holder_agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
 ALTER TABLE "ubt_queue" ADD CONSTRAINT "ubt_queue_agent_fk"
-  FOREIGN KEY ("agent_id") REFERENCES "agents"("id") ON DELETE RESTRICT;
+  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
 ALTER TABLE "messages" ADD CONSTRAINT "messages_agent_fk"
-  FOREIGN KEY ("agent_id") REFERENCES "agents"("id") ON DELETE RESTRICT;
+  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
 ALTER TABLE "team_members" ADD CONSTRAINT "team_members_agent_fk"
-  FOREIGN KEY ("agent_id") REFERENCES "agents"("id") ON DELETE RESTRICT;
+  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
 ALTER TABLE "room_members" ADD CONSTRAINT "room_members_agent_fk"
-  FOREIGN KEY ("agent_id") REFERENCES "agents"("id") ON DELETE RESTRICT;
+  FOREIGN KEY ("agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
 ALTER TABLE "chat_messages" ADD CONSTRAINT "chat_messages_author_agent_fk"
-  FOREIGN KEY ("author_agent_id") REFERENCES "agents"("id") ON DELETE RESTRICT;
+  FOREIGN KEY ("author_agent_id") REFERENCES "public"."agents"("id") ON DELETE RESTRICT ON UPDATE no action;
 --> statement-breakpoint
 -- project_id FKs on 7 project-scoped data tables (absorbs plans/project-id-foreign-keys.md)
 -- UBT tables are host-level and do NOT get project_id FKs.
 ALTER TABLE "agents" ALTER COLUMN "project_id" DROP DEFAULT;
 ALTER TABLE "agents" ADD CONSTRAINT "agents_project_fk"
-  FOREIGN KEY ("project_id") REFERENCES "projects"("id");
+  FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "tasks" ALTER COLUMN "project_id" DROP DEFAULT;
 ALTER TABLE "tasks" ADD CONSTRAINT "tasks_project_fk"
-  FOREIGN KEY ("project_id") REFERENCES "projects"("id");
+  FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "files" ALTER COLUMN "project_id" DROP DEFAULT;
 ALTER TABLE "files" ADD CONSTRAINT "files_project_fk"
-  FOREIGN KEY ("project_id") REFERENCES "projects"("id");
+  FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "messages" ALTER COLUMN "project_id" DROP DEFAULT;
 ALTER TABLE "messages" ADD CONSTRAINT "messages_project_fk"
-  FOREIGN KEY ("project_id") REFERENCES "projects"("id");
+  FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "build_history" ALTER COLUMN "project_id" DROP DEFAULT;
 ALTER TABLE "build_history" ADD CONSTRAINT "build_history_project_fk"
-  FOREIGN KEY ("project_id") REFERENCES "projects"("id");
+  FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "rooms" ALTER COLUMN "project_id" DROP DEFAULT;
 ALTER TABLE "rooms" ADD CONSTRAINT "rooms_project_fk"
-  FOREIGN KEY ("project_id") REFERENCES "projects"("id");
+  FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "teams" ALTER COLUMN "project_id" DROP DEFAULT;
 ALTER TABLE "teams" ADD CONSTRAINT "teams_project_fk"
-  FOREIGN KEY ("project_id") REFERENCES "projects"("id");
+  FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
 -- ubt_lock: migrate PK from project_id to host_id (host-level singleton)
 ALTER TABLE "ubt_lock" ALTER COLUMN "host_id" SET NOT NULL;
@@ -67,7 +67,7 @@ ALTER TABLE "team_members" ALTER COLUMN "agent_id" SET NOT NULL;
 --> statement-breakpoint
 -- team_members: swap PK from (team_id, agent_name) to (team_id, agent_id)
 ALTER TABLE "team_members" DROP CONSTRAINT "team_members_team_id_agent_name_pk";
-ALTER TABLE "team_members" ADD CONSTRAINT "team_members_pkey" PRIMARY KEY ("team_id", "agent_id");
+ALTER TABLE "team_members" ADD CONSTRAINT "team_members_team_id_agent_id_pk" PRIMARY KEY ("team_id", "agent_id");
 --> statement-breakpoint
 -- room_members: agent-only under Option D. Swap PK to surrogate id, enforce
 -- agent_id NOT NULL, add the (room_id, agent_id) unique constraint, drop the
@@ -75,12 +75,15 @@ ALTER TABLE "team_members" ADD CONSTRAINT "team_members_pkey" PRIMARY KEY ("team
 ALTER TABLE "room_members" ALTER COLUMN "id" SET NOT NULL;
 ALTER TABLE "room_members" ALTER COLUMN "agent_id" SET NOT NULL;
 ALTER TABLE "room_members" DROP CONSTRAINT "room_members_room_id_member_pk";
-ALTER TABLE "room_members" ADD CONSTRAINT "room_members_pkey" PRIMARY KEY ("id");
+ALTER TABLE "room_members" ADD CONSTRAINT "room_members_id_pk" PRIMARY KEY ("id");
 ALTER TABLE "room_members" ADD CONSTRAINT "room_members_room_agent_unique"
   UNIQUE ("room_id", "agent_id");
 ALTER TABLE "room_members" DROP COLUMN "member";
 --> statement-breakpoint
 -- chat_messages: enforce the author_type discriminator and its CHECK.
+-- Guard: ensure no system/operator rows have stale author_agent_id from between-migration inserts
+UPDATE "chat_messages" SET "author_agent_id" = NULL
+WHERE "author_type" IN ('operator', 'system') AND "author_agent_id" IS NOT NULL;
 ALTER TABLE "chat_messages" ALTER COLUMN "author_type" SET NOT NULL;
 ALTER TABLE "chat_messages" ADD CONSTRAINT "chat_messages_author_type_check"
   CHECK ("author_type" IN ('agent', 'operator', 'system'));

@@ -3,9 +3,11 @@ UPDATE "agents" SET "id" = gen_random_uuid() WHERE "id" IS NULL;
 --> statement-breakpoint
 -- STEP 1: Resolve duplicate (project_id, name) in agents before adding unique constraint.
 -- The PK bug allowed ON CONFLICT (name) DO UPDATE to overwrite rows; any residual
--- duplicates in the live DB would block the new unique constraint. Soft-delete all but
--- the most recently registered row per (project_id, name).
-UPDATE "agents" SET "status" = 'deleted' WHERE "id" IN (
+-- duplicates in the live DB would block the new unique constraint. Hard-delete all but
+-- the most recently registered row per (project_id, name). These are residual artifacts
+-- of the old PK bug and have no referential integrity value — soft-delete would still
+-- violate the UNIQUE constraint added in 0004.
+DELETE FROM "agents" WHERE "id" IN (
   SELECT "id" FROM (
     SELECT "id", ROW_NUMBER() OVER (
       PARTITION BY "project_id", "name" ORDER BY "registered_at" DESC NULLS LAST
