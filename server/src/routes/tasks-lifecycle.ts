@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { getDb } from '../drizzle-instance.js';
 import * as tasksCore from '../queries/tasks-core.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
+import * as agentsQ from '../queries/agents.js';
 import { existsInBareRepo, isCommittedInRepo } from '../git-utils.js';
 import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
@@ -130,7 +131,11 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
     }
 
     const db = getDb();
-    const result = await tasksLifecycleQ.integrateBatch(db, request.projectId, agent);
+    const agentRow = await agentsQ.getByName(db, request.projectId, agent);
+    if (!agentRow) {
+      return reply.notFound(`Agent '${agent}' not found in project '${request.projectId}'`);
+    }
+    const result = await tasksLifecycleQ.integrateBatch(db, request.projectId, agentRow.id);
     return { ok: true, count: result.count, ids: result.ids };
   });
 

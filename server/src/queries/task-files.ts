@@ -31,13 +31,13 @@ export async function deleteFilesForTask(db: DrizzleDb, taskId: number) {
 
 export async function claimFilesForAgent(
   db: DrizzleDb,
-  agent: string,
+  agentId: string,
   projectId: string,
   path: string,
 ): Promise<boolean> {
   const rows = await db
     .update(files)
-    .set({ claimantAgentId: agent, claimedAt: sql`now()` })
+    .set({ claimantAgentId: agentId, claimedAt: sql`now()` })
     .where(
       and(
         eq(files.projectId, projectId),
@@ -52,7 +52,7 @@ export async function claimFilesForAgent(
 export async function getFileConflicts(
   db: DrizzleDb,
   taskId: number,
-  agent: string,
+  agentId: string,
 ): Promise<{ path: string; claimant: string }[]> {
   const rows = await db
     .select({
@@ -73,7 +73,7 @@ export async function getFileConflicts(
       and(
         eq(taskFiles.taskId, taskId),
         sql`${files.claimantAgentId} IS NOT NULL`,
-        sql`${files.claimantAgentId} != ${agent}`,
+        sql`${files.claimantAgentId} != ${agentId}`,
       ),
     );
 
