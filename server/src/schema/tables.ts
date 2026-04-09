@@ -11,35 +11,40 @@ import {
   index,
   check,
   foreignKey,
+  uuid,
+  unique,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 // 1. agents
 export const agents = pgTable('agents', {
-  name: text('name').primaryKey(),
-  projectId: text('project_id').notNull().default('default'),
+  id: uuid('id').primaryKey(),
+  name: text('name').notNull(),
+  projectId: text('project_id').notNull().references(() => projects.id),
   worktree: text('worktree').notNull(),
   planDoc: text('plan_doc'),
+  // Valid values: idle | working | done | error | paused | stopping | deleted
   status: text('status').notNull().default('idle'),
   mode: text('mode').notNull().default('single'),
   registeredAt: timestamp('registered_at').defaultNow(),
   containerHost: text('container_host'),
   sessionToken: text('session_token').unique(),
-});
+}, (table) => [
+  unique('agents_project_name_unique').on(table.projectId, table.name),
+]);
 
-// 2. ubtLock — singleton mutex per project
+// 2. ubtLock — host-level singleton mutex (one lock per UBT host)
 export const ubtLock = pgTable('ubt_lock', {
-  projectId: text('project_id').primaryKey().default('default'),
-  holder: text('holder'),
+  hostId: text('host_id').primaryKey().default('local'),
+  holderAgentId: uuid('holder_agent_id').references(() => agents.id, { onDelete: 'restrict' }),
   acquiredAt: timestamp('acquired_at'),
   priority: integer('priority').default(0),
 });
 
-// 3. ubtQueue — FIFO with priority
+// 3. ubtQueue — global FIFO with priority (all agents, all projects)
 export const ubtQueue = pgTable('ubt_queue', {
   id: serial('id').primaryKey(),
-  projectId: text('project_id').notNull().default('default'),
-  agent: text('agent').notNull(),
+  agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'restrict' }),
   priority: integer('priority').default(0),
   requestedAt: timestamp('requested_at').defaultNow(),
 });
@@ -47,8 +52,9 @@ export const ubtQueue = pgTable('ubt_queue', {
 // 4. buildHistory
 export const buildHistory = pgTable('build_history', {
   id: serial('id').primaryKey(),
-  projectId: text('project_id').notNull().default('default'),
+  projectId: text('project_id').notNull().references(() => projects.id),
   agent: text('agent').notNull(),
+  agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'restrict' }),
   type: text('type').notNull(),
   startedAt: timestamp('started_at').notNull().defaultNow(),
   durationMs: integer('duration_ms'),
@@ -62,8 +68,9 @@ export const buildHistory = pgTable('build_history', {
 // 5. messages
 export const messages = pgTable('messages', {
   id: serial('id').primaryKey(),
-  projectId: text('project_id').notNull().default('default'),
+  projectId: text('project_id').notNull().references(() => projects.id),
   fromAgent: text('from_agent').notNull(),
+  agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'restrict' }),
   channel: text('channel').notNull(),
   type: text('type').notNull(),
   payload: jsonb('payload').notNull(),
@@ -81,7 +88,7 @@ export const messages = pgTable('messages', {
 // 6. tasks
 export const tasks = pgTable('tasks', {
   id: serial('id').primaryKey(),
-  projectId: text('project_id').notNull().default('default'),
+  projectId: text('project_id').notNull().references(() => projects.id),
   title: text('title').notNull(),
   description: text('description').default(''),
   sourcePath: text('source_path'),
@@ -89,7 +96,7 @@ export const tasks = pgTable('tasks', {
   status: text('status').notNull().default('pending'),
   priority: integer('priority').notNull().default(0),
   basePriority: integer('base_priority').notNull().default(0),
-  claimedBy: text('claimed_by'),
+  claimedByAgentId: uuid('claimed_by_agent_id').references(() => agents.id, { onDelete: 'restrict' }),
   claimedAt: timestamp('claimed_at'),
   completedAt: timestamp('completed_at'),
   result: jsonb('result'),
@@ -103,9 +110,9 @@ export const tasks = pgTable('tasks', {
 
 // 7. files
 export const files = pgTable('files', {
-  projectId: text('project_id').notNull().default('default'),
+  projectId: text('project_id').notNull().references(() => projects.id),
   path: text('path').notNull(),
-  claimant: text('claimant'),
+  claimantAgentId: uuid('claimant_agent_id').references(() => agents.id, { onDelete: 'restrict' }),
   claimedAt: timestamp('claimed_at'),
 }, (table) => [
   primaryKey({ columns: [table.projectId, table.path] }),
@@ -134,7 +141,7 @@ export const taskDependencies = pgTable('task_dependencies', {
 // 10. rooms
 export const rooms = pgTable('rooms', {
   id: text('id').primaryKey(),
-  projectId: text('project_id').notNull().default('default'),
+  projectId: text('project_id').notNull().references(() => projects.id),
   name: text('name').notNull(),
   type: text('type').notNull(),
   createdBy: text('created_by').notNull(),
@@ -145,18 +152,20 @@ export const rooms = pgTable('rooms', {
 
 // 11. roomMembers
 export const roomMembers = pgTable('room_members', {
+  id: uuid('id').primaryKey(),
   roomId: text('room_id').notNull().references(() => rooms.id, { onDelete: 'cascade' }),
-  member: text('member').notNull(),
+  agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'restrict' }),
   joinedAt: timestamp('joined_at').defaultNow(),
 }, (table) => [
-  primaryKey({ columns: [table.roomId, table.member] }),
+  unique('room_members_room_agent_unique').on(table.roomId, table.agentId),
 ]);
 
 // 12. chatMessages
 export const chatMessages = pgTable('chat_messages', {
   id: serial('id').primaryKey(),
   roomId: text('room_id').notNull().references(() => rooms.id, { onDelete: 'cascade' }),
-  sender: text('sender').notNull(),
+  authorType: text('author_type').notNull(),
+  authorAgentId: uuid('author_agent_id').references(() => agents.id, { onDelete: 'restrict' }),
   content: text('content').notNull(),
   replyTo: integer('reply_to'),
   createdAt: timestamp('created_at').defaultNow(),
@@ -168,7 +177,7 @@ export const chatMessages = pgTable('chat_messages', {
 // 13. teams
 export const teams = pgTable('teams', {
   id: text('id').primaryKey(),
-  projectId: text('project_id').notNull().default('default'),
+  projectId: text('project_id').notNull().references(() => projects.id),
   name: text('name').notNull(),
   briefPath: text('brief_path'),
   status: text('status').notNull().default('active'),
@@ -195,10 +204,10 @@ export const projects = pgTable('projects', {
 // 15. teamMembers
 export const teamMembers = pgTable('team_members', {
   teamId: text('team_id').notNull().references(() => teams.id, { onDelete: 'cascade' }),
-  agentName: text('agent_name').notNull(),
+  agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'restrict' }),
   role: text('role').notNull(),
   isLeader: boolean('is_leader').notNull().default(false),
 }, (table) => [
-  primaryKey({ columns: [table.teamId, table.agentName] }),
+  primaryKey({ columns: [table.teamId, table.agentId] }),
   uniqueIndex('idx_team_leader').on(table.teamId).where(sql`is_leader = true`),
 ]);
