@@ -9,7 +9,7 @@ export async function claimNextCandidate(
 ): Promise<{ id: number; newLocks: number }[]> {
   const rows = await db.execute(sql`
     SELECT t.id,
-      COUNT(CASE WHEN tf.file_path IS NOT NULL AND f.claimant IS NULL THEN 1 END) as new_locks
+      COUNT(CASE WHEN tf.file_path IS NOT NULL AND f.claimant_agent_id IS NULL THEN 1 END) as new_locks
     FROM tasks t
     LEFT JOIN task_files tf ON tf.task_id = t.id
     LEFT JOIN files f ON f.project_id = t.project_id AND f.path = tf.file_path
@@ -58,8 +58,8 @@ export async function countBlocked(db: DrizzleDb, projectId: string, agent: stri
     JOIN files f ON f.project_id = t.project_id AND f.path = tf.file_path
     WHERE t.status = 'pending'
       AND t.project_id = ${projectId}
-      AND f.claimant IS NOT NULL
-      AND f.claimant != ${agent}
+      AND f.claimant_agent_id IS NOT NULL
+      AND f.claimant_agent_id != ${agent}
   `);
   return Number((result.rows[0] as { count: string | number }).count);
 }

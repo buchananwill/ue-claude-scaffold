@@ -37,12 +37,12 @@ export async function claimFilesForAgent(
 ): Promise<boolean> {
   const rows = await db
     .update(files)
-    .set({ claimant: agent, claimedAt: sql`now()` })
+    .set({ claimantAgentId: agent, claimedAt: sql`now()` })
     .where(
       and(
         eq(files.projectId, projectId),
         eq(files.path, path),
-        isNull(files.claimant),
+        isNull(files.claimantAgentId),
       ),
     )
     .returning();
@@ -57,7 +57,7 @@ export async function getFileConflicts(
   const rows = await db
     .select({
       path: taskFiles.filePath,
-      claimant: files.claimant,
+      claimant: files.claimantAgentId,
     })
     .from(taskFiles)
     .innerJoin(tasks, eq(tasks.id, taskFiles.taskId))
@@ -71,8 +71,8 @@ export async function getFileConflicts(
     .where(
       and(
         eq(taskFiles.taskId, taskId),
-        sql`${files.claimant} IS NOT NULL`,
-        sql`${files.claimant} != ${agent}`,
+        sql`${files.claimantAgentId} IS NOT NULL`,
+        sql`${files.claimantAgentId} != ${agent}`,
       ),
     );
 
@@ -86,7 +86,7 @@ export async function getFileConflictsForTask(
   const rows = await db
     .select({
       path: taskFiles.filePath,
-      claimant: files.claimant,
+      claimant: files.claimantAgentId,
     })
     .from(taskFiles)
     .innerJoin(tasks, eq(tasks.id, taskFiles.taskId))
@@ -100,7 +100,7 @@ export async function getFileConflictsForTask(
     .where(
       and(
         eq(taskFiles.taskId, taskId),
-        sql`${files.claimant} IS NOT NULL`,
+        sql`${files.claimantAgentId} IS NOT NULL`,
       ),
     );
 

@@ -20,7 +20,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
     const { result } = request.body;
     const db = getDb();
 
-    const ok = await tasksLifecycleQ.complete(db, id, result);
+    const ok = await tasksLifecycleQ.complete(db, request.projectId, id, result);
     if (!ok) {
       return reply.conflict('task not in claimed or in_progress state');
     }
@@ -36,7 +36,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
     const { error } = request.body;
     const db = getDb();
 
-    const ok = await tasksLifecycleQ.fail(db, id, { error });
+    const ok = await tasksLifecycleQ.fail(db, request.projectId, id, { error });
     if (!ok) {
       return reply.conflict('task not in claimed or in_progress state');
     }
@@ -88,7 +88,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
       }
     }
 
-    const ok = await tasksLifecycleQ.reset(db, id);
+    const ok = await tasksLifecycleQ.reset(db, request.projectId, id);
     if (!ok) {
       return reply.conflict('task is no longer in a resettable state');
     }
@@ -110,7 +110,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
       return reply.badRequest('task must be in completed status to integrate');
     }
 
-    const ok = await tasksLifecycleQ.integrate(db, id);
+    const ok = await tasksLifecycleQ.integrate(db, request.projectId, id);
     if (!ok) {
       return reply.conflict('task status changed concurrently');
     }
@@ -130,14 +130,14 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
     }
 
     const db = getDb();
-    const result = await tasksLifecycleQ.integrateBatch(db, agent);
+    const result = await tasksLifecycleQ.integrateBatch(db, request.projectId, agent);
     return { ok: true, count: result.count, ids: result.ids };
   });
 
   // POST /tasks/integrate-all — mark all completed tasks as integrated
-  fastify.post('/tasks/integrate-all', async () => {
+  fastify.post('/tasks/integrate-all', async (request) => {
     const db = getDb();
-    const result = await tasksLifecycleQ.integrateAll(db);
+    const result = await tasksLifecycleQ.integrateAll(db, request.projectId);
     return { ok: true, count: result.count, ids: result.ids };
   });
 };

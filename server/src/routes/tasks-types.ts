@@ -39,7 +39,7 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     acceptance_criteria: row.acceptanceCriteria,
     status: row.status,
     priority: row.priority,
-    claimed_by: row.claimedBy,
+    claimed_by: row.claimedByAgentId,
     claimed_at: row.claimedAt ? String(row.claimedAt) : null,
     completed_at: row.completedAt ? String(row.completedAt) : null,
     result: row.result ?? null, // jsonb column — Drizzle returns unknown; parseResult handles coercion
@@ -50,7 +50,7 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     projectId: row.projectId,
     sourcePath: row.sourcePath,
     acceptanceCriteria: row.acceptanceCriteria,
-    claimedBy: row.claimedBy,
+    claimedBy: row.claimedByAgentId,
     claimedAt: row.claimedAt,
     completedAt: row.completedAt,
     basePriority: row.basePriority,

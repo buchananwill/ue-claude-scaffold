@@ -44,7 +44,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     }
     if (!bareRepo) return { valid: true };
 
-    const agentRow = await agentsQ.getWorktreeInfo(db, agent);
+    const agentRow = await agentsQ.getWorktreeInfo(db, taskProjectId, agent);
     const branch = agentRow?.worktree ?? seedBranch;
 
     if (existsInBareRepo(bareRepo, branch, sp)) {
@@ -63,8 +63,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
       return reply.badRequest('Invalid X-Agent-Name header format');
     }
     const db = getDb();
-    const agentProjectId = await agentsQ.getProjectId(db, agent);
-    const projectId = agentProjectId ?? 'default';
+    const projectId = request.projectId;
 
     // Query returns up to 10 candidates sorted by priority
     const candidates = await tasksClaimQ.claimNextCandidate(db, projectId, agent);
@@ -82,7 +81,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
       }
 
       // Claim the task
-      await tasksLifecycleQ.claim(db, candidate.id, agent);
+      await tasksLifecycleQ.claim(db, projectId, candidate.id, agent);
 
       // Claim its files
       const fileDeps = await taskFilesQ.getFilesForTask(db, candidate.id);
@@ -177,7 +176,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
       });
     }
 
-    const ok = await tasksLifecycleQ.claim(db, id, agent);
+    const ok = await tasksLifecycleQ.claim(db, request.projectId, id, agent);
 
     if (ok) {
       return { ok: true };
@@ -192,7 +191,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     const id = Number(request.params.id);
     const db = getDb();
 
-    const ok = await tasksLifecycleQ.release(db, id);
+    const ok = await tasksLifecycleQ.release(db, request.projectId, id);
     if (!ok) {
       return reply.conflict('task not in claimed or in_progress state');
     }
@@ -208,7 +207,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     const { progress } = request.body;
     const db = getDb();
 
-    const ok = await tasksLifecycleQ.updateProgress(db, id, progress);
+    const ok = await tasksLifecycleQ.updateProgress(db, request.projectId, id, progress);
     if (!ok) {
       return reply.conflict('task not in claimed or in_progress state');
     }

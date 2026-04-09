@@ -12,12 +12,12 @@ const filesPlugin: FastifyPluginAsync = async (fastify) => {
 
     const db = getDb();
     const rows = await filesQ.list(db, projectId, {
-      claimant: claimant || undefined,
+      claimantAgentId: claimant || undefined,
       unclaimed: unclaimed === 'true',
     });
     return rows.map((r) => ({
       path: r.path,
-      claimant: r.claimant,
+      claimant: r.claimantAgentId,
       claimedAt: r.claimedAt,
     }));
   });

@@ -7,6 +7,7 @@ import { launchTeam } from '../team-launcher.js';
 import { AGENT_NAME_RE } from '../branch-naming.js';
 import * as teamsQ from '../queries/teams.js';
 import * as roomsQ from '../queries/rooms.js';
+import * as agentsQ from '../queries/agents.js';
 
 const VALID_STATUSES = ['active', 'converging', 'dissolved'] as const;
 
@@ -58,6 +59,16 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       return reply.badRequest('Exactly one discussion leader is required');
     }
 
+    // Resolve agent names to UUIDs
+    const resolvedMembers: Array<{ agentId: string; role: string; isLeader?: boolean }> = [];
+    for (const m of members) {
+      const agentRow = await agentsQ.getByName(db, request.projectId, m.agentName);
+      if (!agentRow) {
+        return reply.badRequest(`Agent '${m.agentName}' not found in project '${request.projectId}'`);
+      }
+      resolvedMembers.push({ agentId: agentRow.id, role: m.role, isLeader: m.isLeader });
+    }
+
     try {
       await db.transaction(async (tx) => {
         const existing = await teamsQ.getById(tx, id);
@@ -76,7 +87,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
           briefPath: briefPath ?? null,
           projectId: request.projectId,
           createdBy: caller,
-          members,
+          members: resolvedMembers,
         });
       });
     } catch (err: unknown) {
@@ -134,7 +145,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       dissolvedAt: team.dissolvedAt,
       roomId: team.id,
       members: members.map(m => ({
-        agentName: m.agentName,
+        agentId: m.agentId,
         role: m.role,
         isLeader: m.isLeader,
       })),
