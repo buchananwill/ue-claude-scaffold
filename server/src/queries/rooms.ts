@@ -1,4 +1,5 @@
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, ne, desc } from 'drizzle-orm';
+import { v7 as uuidv7 } from 'uuid';
 import { rooms, roomMembers, agents } from '../schema/tables.js';
 import type { DrizzleDb, DrizzleTx } from '../drizzle-instance.js';
 
@@ -37,9 +38,32 @@ export interface ListRoomsOpts {
   projectId?: string;
 }
 
-export async function listRooms(db: DbOrTx, opts: ListRoomsOpts = {}) {
+export async function listRooms(db: DbOrTx, opts: ListRoomsOpts = {}): Promise<Array<{
+  id: string;
+  projectId: string;
+  name: string;
+  type: string;
+  createdBy: string;
+  createdAt: Date | null;
+}>> {
   if (opts.member) {
-    // JOIN room_members to filter by member
+    // Resolve agent name to agent ID first
+    const agentConditions = opts.projectId
+      ? and(eq(agents.name, opts.member), eq(agents.projectId, opts.projectId))
+      : eq(agents.name, opts.member);
+
+    const agentRows = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(agentConditions)
+      .limit(1);
+
+    if (agentRows.length === 0) {
+      return [];
+    }
+
+    const agentId = agentRows[0].id;
+
     const rows = await db
       .select({
         id: rooms.id,
@@ -53,8 +77,8 @@ export async function listRooms(db: DbOrTx, opts: ListRoomsOpts = {}) {
       .innerJoin(roomMembers, eq(rooms.id, roomMembers.roomId))
       .where(
         opts.projectId
-          ? and(eq(roomMembers.member, opts.member), eq(rooms.projectId, opts.projectId))
-          : eq(roomMembers.member, opts.member),
+          ? and(eq(roomMembers.agentId, agentId), eq(rooms.projectId, opts.projectId))
+          : eq(roomMembers.agentId, agentId),
       )
       .orderBy(desc(rooms.createdAt));
     return rows;
@@ -77,44 +101,44 @@ export async function deleteRoom(db: DbOrTx, id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-export async function addMember(db: DbOrTx, roomId: string, member: string) {
+export async function addMember(db: DbOrTx, roomId: string, agentId: string): Promise<void> {
   await db
     .insert(roomMembers)
-    .values({ roomId, member })
-    .onConflictDoNothing();
+    .values({ id: uuidv7(), roomId, agentId })
+    .onConflictDoNothing({ target: [roomMembers.roomId, roomMembers.agentId] });
 }
 
-export async function removeMember(db: DbOrTx, roomId: string, member: string) {
+export async function removeMember(db: DbOrTx, roomId: string, agentId: string): Promise<void> {
   await db
     .delete(roomMembers)
-    .where(and(eq(roomMembers.roomId, roomId), eq(roomMembers.member, member)));
+    .where(and(eq(roomMembers.roomId, roomId), eq(roomMembers.agentId, agentId)));
 }
 
-export async function getMembers(db: DbOrTx, roomId: string) {
-  const rows = await db
-    .select({ member: roomMembers.member })
+export async function getMembers(db: DbOrTx, roomId: string): Promise<Array<{ agentId: string; name: string }>> {
+  return db
+    .select({ agentId: roomMembers.agentId, name: agents.name })
     .from(roomMembers)
-    .where(eq(roomMembers.roomId, roomId));
-  return rows.map((r) => r.member);
+    .innerJoin(agents, eq(agents.id, roomMembers.agentId))
+    .where(eq(roomMembers.roomId, roomId))
+    .orderBy(agents.name);
 }
 
 export async function getPresence(db: DbOrTx, roomId: string) {
   const rows = await db
     .select({
-      member: roomMembers.member,
+      name: agents.name,
       joinedAt: roomMembers.joinedAt,
-      agentStatus: agents.status,
-      agentRegisteredAt: agents.registeredAt,
+      status: agents.status,
     })
     .from(roomMembers)
-    .leftJoin(agents, eq(agents.name, roomMembers.member))
-    .where(eq(roomMembers.roomId, roomId))
-    .orderBy(roomMembers.member);
+    .innerJoin(agents, eq(agents.id, roomMembers.agentId))
+    .where(and(eq(roomMembers.roomId, roomId), ne(agents.status, 'deleted')))
+    .orderBy(agents.name);
 
   return rows.map((r) => ({
-    name: r.member,
+    name: r.name,
     joinedAt: r.joinedAt,
-    online: r.agentStatus !== null,
-    status: r.agentStatus ?? 'not-registered',
+    online: true,
+    status: r.status,
   }));
 }
