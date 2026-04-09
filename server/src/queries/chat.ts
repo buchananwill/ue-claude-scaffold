@@ -1,15 +1,10 @@
 import { eq, and, gt, lt, desc, asc, sql } from 'drizzle-orm';
 import { chatMessages, roomMembers, agents } from '../schema/tables.js';
 import type { DbOrTx } from '../drizzle-instance.js';
+import { firstOrThrow } from './query-helpers.js';
 
 const VALID_AUTHOR_TYPES = ['agent', 'operator', 'system'] as const;
 type AuthorType = (typeof VALID_AUTHOR_TYPES)[number];
-
-// TODO: extract to shared query helpers
-function firstOrThrow<T>(rows: T[]): T {
-  if (rows.length === 0) throw new Error('Insert returned no rows');
-  return rows[0];
-}
 
 export interface SendMessageOpts {
   roomId: string;

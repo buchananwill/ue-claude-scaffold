@@ -1,22 +1,11 @@
 import { eq, and, ne, desc } from 'drizzle-orm';
+import type { InferSelectModel } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import { rooms, roomMembers, agents } from '../schema/tables.js';
 import type { DbOrTx } from '../drizzle-instance.js';
+import { firstOrThrow } from './query-helpers.js';
 
-export type RoomRow = {
-  id: string;
-  projectId: string;
-  name: string;
-  type: string;
-  createdBy: string;
-  createdAt: Date | null;
-};
-
-// TODO: extract to shared query helpers
-function firstOrThrow<T>(rows: T[]): T {
-  if (rows.length === 0) throw new Error('Insert returned no rows');
-  return rows[0];
-}
+export type RoomRow = InferSelectModel<typeof rooms>;
 
 export interface CreateRoomOpts {
   id: string;
