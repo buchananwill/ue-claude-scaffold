@@ -101,8 +101,8 @@ export async function updateStatus(db: DbOrTx, id: string, projectId: string, st
   await db.update(teams).set({ status }).where(and(eq(teams.id, id), eq(teams.projectId, projectId)));
 }
 
-export async function updateDeliverable(db: DbOrTx, id: string, deliverable: string) {
-  await db.update(teams).set({ deliverable }).where(eq(teams.id, id));
+export async function updateDeliverable(db: DbOrTx, id: string, projectId: string, deliverable: string) {
+  await db.update(teams).set({ deliverable }).where(and(eq(teams.id, id), eq(teams.projectId, projectId)));
 }
 
 export async function deleteTeam(db: DbOrTx, id: string, projectId: string): Promise<boolean> {
