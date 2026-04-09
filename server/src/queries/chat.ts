@@ -19,6 +19,13 @@ export async function sendMessage(db: DbOrTx, opts: SendMessageOpts): Promise<{
   replyTo: number | null;
   createdAt: Date | null;
 }> {
+  if (opts.authorType === 'agent' && opts.authorAgentId == null) {
+    throw new Error("authorAgentId is required when authorType is 'agent'");
+  }
+  if (opts.authorType !== 'agent' && opts.authorAgentId != null) {
+    throw new Error("authorAgentId must be null when authorType is not 'agent'");
+  }
+
   const rows = await db
     .insert(chatMessages)
     .values({
@@ -49,7 +56,7 @@ export async function getHistory(db: DbOrTx, roomId: string, opts: GetHistoryOpt
   createdAt: Date | null;
   sender: string;
 }>> {
-  const senderColumn = sql<string>`COALESCE(${agents.name}, CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' END, 'unknown')`.as('sender');
+  const senderColumn = sql<string>`COALESCE(${agents.name}, CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' ELSE NULL END, 'unknown')`.as('sender');
 
   const historySelect = {
     id: chatMessages.id,
