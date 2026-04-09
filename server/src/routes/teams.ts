@@ -7,7 +7,7 @@ import { launchTeam } from '../team-launcher.js';
 import { AGENT_NAME_RE } from '../branch-naming.js';
 import * as teamsQ from '../queries/teams.js';
 import * as roomsQ from '../queries/rooms.js';
-import * as agentsQ from '../queries/agents.js';
+import { resolveAgentId } from './route-helpers.js';
 
 const VALID_STATUSES = ['active', 'converging', 'dissolved'] as const;
 
@@ -62,7 +62,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     // Resolve agent names to UUIDs
     const resolvedMembers: Array<{ agentId: string; role: string; isLeader?: boolean }> = [];
     for (const m of members) {
-      const agentRow = await agentsQ.getByName(db, request.projectId, m.agentName);
+      const agentRow = await resolveAgentId(db, request.projectId, m.agentName);
       if (!agentRow) {
         return reply.badRequest(`Agent '${m.agentName}' not found in project '${request.projectId}'`);
       }

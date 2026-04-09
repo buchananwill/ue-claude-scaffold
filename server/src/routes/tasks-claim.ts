@@ -9,6 +9,7 @@ import { existsInBareRepo } from '../git-utils.js';
 import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
 import { toTaskRow, type TaskRow } from './tasks-types.js';
+import { resolveAgentId } from './route-helpers.js';
 import {
   type TasksOpts,
   blockersForTask,
@@ -66,7 +67,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     const projectId = request.projectId;
 
     // Resolve agent name to UUID for columns that store UUIDs (claimant_agent_id, claimed_by_agent_id)
-    const agentRow = await agentsQ.getByName(db, projectId, agentName);
+    const agentRow = await resolveAgentId(db, projectId, agentName);
     if (!agentRow) {
       return reply.notFound(`Agent '${agentName}' not found in project '${projectId}'`);
     }
@@ -138,7 +139,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     const db = getDb();
 
     // Resolve agent name to UUID for columns that store UUIDs
-    const agentRow = await agentsQ.getByName(db, request.projectId, agentName);
+    const agentRow = await resolveAgentId(db, request.projectId, agentName);
     if (!agentRow) {
       return reply.notFound(`Agent '${agentName}' not found in project '${request.projectId}'`);
     }

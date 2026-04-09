@@ -66,8 +66,8 @@ describe('task-files queries', () => {
     assert.ok(!conflicts.some((c) => c.path === 'src/main.cpp'));
   });
 
-  it('should get all file locks for task', async () => {
-    const locks = await taskFilesQ.getFileConflictsForTask(db, taskId);
+  it('should get all file locks for task (no exclusion)', async () => {
+    const locks = await taskFilesQ.getFileConflicts(db, taskId);
     assert.ok(locks.some((l) => l.path === 'src/main.cpp'));
   });
 

@@ -4,7 +4,7 @@ import * as agentsQ from '../queries/agents.js';
 import * as tasksCore from '../queries/tasks-core.js';
 import * as msgQ from '../queries/messages.js';
 import { formatAgent } from './agents.js';
-import { formatTask, type TaskRow } from './tasks-types.js';
+import { formatTask, toTaskRow } from './tasks-types.js';
 import { formatMessage } from './messages.js';
 
 const MESSAGE_LIMIT = 200;
@@ -54,9 +54,7 @@ const statusPlugin: FastifyPluginAsync = async (fastify) => {
     return {
       agents: agentRows.map(formatAgent),
       tasks: {
-        // Cast needed: Drizzle returns camelCase fields but TaskRow declares snake_case as required;
-        // formatTask's pick() helper handles both naming conventions.
-        items: taskRows.map((r) => formatTask(r as unknown as TaskRow)),
+        items: taskRows.map((r) => formatTask(toTaskRow(r))),
         total: taskTotal,
       },
       messages: messageRows.map(formatMessage),

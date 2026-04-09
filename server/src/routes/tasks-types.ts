@@ -2,59 +2,38 @@ import type { TaskDbRow } from '../queries/tasks-core.js';
 
 export interface TaskRow {
   id: number;
-  project_id: string;
+  projectId: string;
   title: string;
   description: string;
-  source_path: string | null;
-  acceptance_criteria: string | null;
+  sourcePath: string | null;
+  acceptanceCriteria: string | null;
   status: string;
   priority: number;
-  claimed_by: string | null;
-  claimed_at: string | null;
-  completed_at: string | null;
+  claimedBy: string | null;
+  claimedAt: string | Date | null;
+  completedAt: string | Date | null;
   result: unknown;
-  base_priority: number;
-  progress_log: string | null;
-  created_at: string;
-  // Drizzle (camelCase) variants
-  projectId?: string;
-  sourcePath?: string | null;
-  acceptanceCriteria?: string | null;
-  claimedBy?: string | null;
-  claimedAt?: string | Date | null;
-  completedAt?: string | Date | null;
-  basePriority?: number;
-  progressLog?: string | null;
-  createdAt?: string | Date | null;
+  basePriority: number;
+  progressLog: string | null;
+  createdAt: string | Date | null;
 }
 
 /** Convert a Drizzle TaskDbRow to the TaskRow shape used by formatTask. */
 export function toTaskRow(row: TaskDbRow): TaskRow {
   return {
     id: row.id,
-    project_id: row.projectId,
+    projectId: row.projectId,
     title: row.title,
     description: row.description ?? '',
-    source_path: row.sourcePath,
-    acceptance_criteria: row.acceptanceCriteria,
-    status: row.status,
-    priority: row.priority,
-    // API-compat: external consumers see "claimed_by"; internal column is claimedByAgentId
-    claimed_by: row.claimedByAgentId,
-    claimed_at: row.claimedAt ? String(row.claimedAt) : null,
-    completed_at: row.completedAt ? String(row.completedAt) : null,
-    result: row.result ?? null, // jsonb column — Drizzle returns unknown; parseResult handles coercion
-    base_priority: row.basePriority,
-    progress_log: row.progressLog,
-    created_at: row.createdAt ? String(row.createdAt) : '',
-    // Also set camelCase variants for pick() compatibility
-    projectId: row.projectId,
     sourcePath: row.sourcePath,
     acceptanceCriteria: row.acceptanceCriteria,
+    status: row.status,
+    priority: row.priority,
     // API-compat: external consumers see "claimedBy"; internal column is claimedByAgentId
     claimedBy: row.claimedByAgentId,
     claimedAt: row.claimedAt,
     completedAt: row.completedAt,
+    result: row.result ?? null, // jsonb column — Drizzle returns unknown; parseResult handles coercion
     basePriority: row.basePriority,
     progressLog: row.progressLog,
     createdAt: row.createdAt,
@@ -70,15 +49,8 @@ function parseResult(raw: unknown): unknown {
   return null;
 }
 
-/** Pick the camelCase field if the key exists on the object, otherwise fall back to snake_case. */
-function pick<T>(row: Record<string, unknown>, camel: string, snake: string): T {
-  if (camel in row) return row[camel] as T;
-  return row[snake] as T;
-}
-
 export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[], blockedBy?: number[], blockReasons?: string[]) {
-  const r = row as unknown as Record<string, unknown>;
-  const result = parseResult(pick(r, 'result', 'result'));
+  const result = parseResult(row.result);
   const completedBy = (() => {
     if (!result || typeof result !== 'object') return null;
     return (result as Record<string, unknown>).agent as string ?? null;
@@ -88,8 +60,8 @@ export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[],
     id: row.id,
     title: row.title,
     description: row.description,
-    sourcePath: pick<string | null>(r, 'sourcePath', 'source_path'),
-    acceptanceCriteria: pick<string | null>(r, 'acceptanceCriteria', 'acceptance_criteria'),
+    sourcePath: row.sourcePath,
+    acceptanceCriteria: row.acceptanceCriteria,
     status: row.status,
     priority: row.priority,
     files: files ?? [],
@@ -97,13 +69,13 @@ export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[],
     blockedBy: blockedBy ?? [],
     blockReasons: blockReasons ?? [],
     // API-compat: external consumers see "claimedBy"; internal column is claimedByAgentId
-    claimedBy: pick<string | null>(r, 'claimedBy', 'claimed_by'),
-    claimedAt: pick<string | Date | null>(r, 'claimedAt', 'claimed_at'),
-    completedAt: pick<string | Date | null>(r, 'completedAt', 'completed_at'),
+    claimedBy: row.claimedBy,
+    claimedAt: row.claimedAt,
+    completedAt: row.completedAt,
     result,
     completedBy,
-    progressLog: pick<string | null>(r, 'progressLog', 'progress_log'),
-    createdAt: pick<string | Date | null>(r, 'createdAt', 'created_at'),
-    projectId: pick<string>(r, 'projectId', 'project_id'),
+    progressLog: row.progressLog,
+    createdAt: row.createdAt,
+    projectId: row.projectId,
   };
 }
