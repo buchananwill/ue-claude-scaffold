@@ -17,6 +17,7 @@ const filesPlugin: FastifyPluginAsync = async (fastify) => {
     });
     return rows.map((r) => ({
       path: r.path,
+      // API-compat: external consumers see "claimant"; internal column is claimantAgentId
       claimant: r.claimantAgentId,
       claimedAt: r.claimedAt,
     }));

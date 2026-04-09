@@ -62,7 +62,7 @@ describe('tasks-claim queries', () => {
     });
 
     it('should return candidates in correct order for agent-a', async () => {
-      const candidates = await tasksClaim.claimNextCandidate(db, 'claim-proj', 'agent-a');
+      const candidates = await tasksClaim.claimNextCandidate(db, 'claim-proj', 'agent-a', 'agent-a');
 
       // Expected ordering for agent-a:
       // 1. T2: has dep completed by agent-a (affinity=0), 0 new locks, prio 5
@@ -89,7 +89,7 @@ describe('tasks-claim queries', () => {
     });
 
     it('should allow agent-b to see T3 (owns the file)', async () => {
-      const candidates = await tasksClaim.claimNextCandidate(db, 'claim-proj', 'agent-b');
+      const candidates = await tasksClaim.claimNextCandidate(db, 'claim-proj', 'agent-b', 'agent-b');
       const hasT3 = candidates.some((c) => c.id === t3);
       assert.ok(hasT3, 'T3 should be available to agent-b (owns the file)');
     });

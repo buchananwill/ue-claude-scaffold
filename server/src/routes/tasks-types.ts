@@ -39,6 +39,7 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     acceptance_criteria: row.acceptanceCriteria,
     status: row.status,
     priority: row.priority,
+    // API-compat: external consumers see "claimed_by"; internal column is claimedByAgentId
     claimed_by: row.claimedByAgentId,
     claimed_at: row.claimedAt ? String(row.claimedAt) : null,
     completed_at: row.completedAt ? String(row.completedAt) : null,
@@ -50,6 +51,7 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     projectId: row.projectId,
     sourcePath: row.sourcePath,
     acceptanceCriteria: row.acceptanceCriteria,
+    // API-compat: external consumers see "claimedBy"; internal column is claimedByAgentId
     claimedBy: row.claimedByAgentId,
     claimedAt: row.claimedAt,
     completedAt: row.completedAt,
@@ -94,6 +96,7 @@ export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[],
     dependsOn: dependsOn ?? [],
     blockedBy: blockedBy ?? [],
     blockReasons: blockReasons ?? [],
+    // API-compat: external consumers see "claimedBy"; internal column is claimedByAgentId
     claimedBy: pick<string | null>(r, 'claimedBy', 'claimed_by'),
     claimedAt: pick<string | Date | null>(r, 'claimedAt', 'claimed_at'),
     completedAt: pick<string | Date | null>(r, 'completedAt', 'completed_at'),

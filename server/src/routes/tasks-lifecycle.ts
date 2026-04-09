@@ -58,9 +58,9 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
       return reply.conflict('task can only be reset when completed, failed, or cycle');
     }
 
-    const sp = row.sourcePath ?? (row as any).source_path;
+    const sp = row.sourcePath;
     if (sp && row.status !== 'cycle') {
-      const taskProjectId = row.projectId ?? (row as any).project_id ?? 'default';
+      const taskProjectId = row.projectId ?? 'default';
       let project;
       try {
         project = await resolveProject(config, db, taskProjectId);

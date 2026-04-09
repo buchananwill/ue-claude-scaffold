@@ -57,6 +57,7 @@ export async function getFileConflicts(
   const rows = await db
     .select({
       path: taskFiles.filePath,
+      // API-compat: external consumers see "claimant"; internal column is claimantAgentId
       claimant: files.claimantAgentId,
     })
     .from(taskFiles)
@@ -86,6 +87,7 @@ export async function getFileConflictsForTask(
   const rows = await db
     .select({
       path: taskFiles.filePath,
+      // API-compat: external consumers see "claimant"; internal column is claimantAgentId
       claimant: files.claimantAgentId,
     })
     .from(taskFiles)
