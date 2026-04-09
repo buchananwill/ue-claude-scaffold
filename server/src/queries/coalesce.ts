@@ -1,8 +1,8 @@
-import { eq, and, sql, isNotNull, count as countFn, inArray } from 'drizzle-orm';
+import { eq, and, isNotNull, count as countFn, inArray, notInArray } from 'drizzle-orm';
 import { tasks, files, agents } from '../schema/tables.js';
 import type { DrizzleDb, DbOrTx } from '../drizzle-instance.js';
 import * as filesQ from './files.js';
-import { ACTIVE_STATUSES } from './query-helpers.js';
+import { ACTIVE_STATUSES, INACTIVE_AGENT_STATUSES } from './query-helpers.js';
 
 export async function countActiveTasks(db: DrizzleDb, projectId: string): Promise<number> {
   const rows = await db
@@ -58,7 +58,7 @@ export async function pausePumpAgents(db: DrizzleDb, projectId: string): Promise
       and(
         eq(agents.mode, 'pump'),
         eq(agents.projectId, projectId),
-        sql`${agents.status} NOT IN ('stopping', 'done', 'error', 'paused')`,
+        notInArray(agents.status, [...INACTIVE_AGENT_STATUSES]),
       ),
     );
 }

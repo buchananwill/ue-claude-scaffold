@@ -35,8 +35,10 @@ async function requireRoom(
   reply: FastifyReply,
 ): Promise<RoomRow | null> {
   const room = await roomsQ.getRoom(db, id);
-  if (!room) { reply.notFound('room not found'); return null; }
-  if (room.projectId !== projectId) { reply.code(404).send({ error: 'not_found' }); return null; }
+  if (!room || room.projectId !== projectId) {
+    reply.notFound(`room '${id}' not found`);
+    return null;
+  }
   return room;
 }
 

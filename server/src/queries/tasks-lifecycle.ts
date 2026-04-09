@@ -2,7 +2,7 @@ import { eq, and, sql, inArray, type SQL } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
 import type { DrizzleDb, DbOrTx } from '../drizzle-instance.js';
 import type { TaskDbRow } from './tasks-core.js';
-import { ACTIVE_STATUSES } from './query-helpers.js';
+import { ACTIVE_STATUSES, TERMINAL_STATUSES } from './query-helpers.js';
 
 export async function claim(db: DrizzleDb, projectId: string, id: number, agentId: string): Promise<boolean> {
   const rows = await db
@@ -96,7 +96,7 @@ export async function reset(db: DrizzleDb, projectId: string, id: number): Promi
       and(
         eq(tasks.id, id),
         eq(tasks.projectId, projectId),
-        sql`${tasks.status} IN ('completed', 'failed', 'cycle')`,
+        inArray(tasks.status, [...TERMINAL_STATUSES]),
       ),
     )
     .returning();
