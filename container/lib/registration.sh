@@ -126,16 +126,16 @@ _shutdown() {
             --max-time 5 >/dev/null 2>&1 || true
     fi
     # Deregister the agent (append session token if valid)
-    local delete_url="${SERVER_URL}/agents/${AGENT_NAME}"
+    local DELETE_URL="${SERVER_URL}/agents/${AGENT_NAME}"
     if [[ "${SESSION_TOKEN:-}" =~ ^[0-9a-f]{32}$ ]]; then
-        delete_url="${delete_url}?sessionToken=${SESSION_TOKEN}"
+        DELETE_URL="${DELETE_URL}?sessionToken=${SESSION_TOKEN}"
     fi
-    local delete_response
-    delete_response=$(_curl_server -s -w "%{http_code}" -X DELETE "$delete_url" \
-        --max-time 5 2>/dev/null) || delete_response="000"
-    local delete_status="${delete_response: -3}"
-    if [[ "$delete_status" == "409" ]]; then
-        echo "WARN: DELETE returned 409 — another container has taken over this agent slot"
+    local DELETE_RESPONSE DELETE_STATUS
+    DELETE_RESPONSE=$(_curl_server -s -w "\n%{http_code}" -X DELETE "$DELETE_URL" \
+        --max-time 5 2>/dev/null) || DELETE_RESPONSE=$'\n000'
+    DELETE_STATUS="${DELETE_RESPONSE##*$'\n'}"
+    if [ "$DELETE_STATUS" = "409" ]; then
+        echo "WARNING: DELETE returned 409 — another container has taken over this agent slot" >&2
     fi
 }
 
