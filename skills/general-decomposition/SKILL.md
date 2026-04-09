@@ -23,6 +23,7 @@ Language- or framework-specific group types (e.g. UE UCLASS, USTRUCT, processor 
 Flag logic blocks that appear more than once in the same file with only minor variation:
 - **Duplicated blocks** — identical or near-identical code in two or more places. Recommend extraction to a named helper. Quote the repeated logic and name the proposed function.
 - **Semantic inversions** — method pairs whose bodies are structurally identical but differ only in a scalar, sign, direction, or enum value (e.g., `GoBack()` / `GoForward()` differing only in `+1` / `-1`). Recommend merging into a single parameterised method.
+- **Do NOT** use `const_cast` as a de-duping approach. APIs must still respect const-correctness. 
 
 ## Hand-Rolled Algorithms
 
