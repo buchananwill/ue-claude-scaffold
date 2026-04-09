@@ -76,6 +76,7 @@ namespace Resort
 - **IWYU** (Include What You Use) — never include `Engine.h` or similarly broad headers. Keep `.h` minimal; heavy includes go in `.cpp`.
 - **Avoid `FORCEINLINE`** unless profiling proves it helps. The compiler inlines better.
 - **Avoid `mutable`** — it should be rare and well-justified.
+- **Never** use `const_cast`. Code must respect const-correctness at all times.
 - **Variadic templates** over C-style varargs. Correct: `void Func(T... Args);` — Wrong: `void Func(T Args...);`
 - **Self-documenting code over comments.** Don't comment what the code does — rename to make intent obvious. Comment *why* when the reason isn't self-evident.
 - **Never return `const` by value** — it inhibits move semantics.

@@ -27,6 +27,10 @@ Flag manual loops that replicate well-known UE library functions. Common example
 
 Name the specific replacement and cite the header.
 
+## Const/Non-Const Overload Pairs
+
+When two methods differ only in const qualification, recommend a private template helper or factoring the shared logic into a separate function. **Never recommend `const_cast` delegation** — `const_cast` is banned in this codebase. The C++ lint hook will block it.
+
 ## Extraction Is Free
 
 Do not withhold extraction suggestions due to perceived function-call overhead:

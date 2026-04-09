@@ -49,7 +49,7 @@ Consider destruction ordering — subsystem teardown, world cleanup, editor hot-
 
 For each changed function, constructor, or callback:
 - **Trace pointer lifetimes**: where does the pointer come from, where is it stored, what owns it, when does the owner die?
-- **Check GC rooting**: every `UObject*` member must be `UPROPERTY()` or otherwise rooted.
+- **Check GC rooting**: every `TObjectPtr<UObject>` member must be `UPROPERTY()`. No raw pointer fields.
 - **Check thread context**: is this called from game thread only, or can it run on background threads?
 - **Check move correctness**: every `MoveTemp` call should actually move, and the moved-from variable should not be used after.
 
