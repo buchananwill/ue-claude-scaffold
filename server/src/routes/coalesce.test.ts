@@ -73,9 +73,9 @@ describe('coalesce routes (drizzle)', () => {
       status: 'claimed',
       claimedByAgentId: agentId ?? null,
       claimedAt: sql`now()`,
-    }).where(eq(tasks.id, taskId));
+    }).where(and(eq(tasks.id, taskId), eq(tasks.projectId, 'default')));
 
-    // Set file claimant — scoped by projectId to match the insert pattern
+    // Set task and file claimant — both scoped by projectId to match the insert pattern
     if (taskFiles?.length) {
       for (const filePath of taskFiles) {
         await ctx.db.update(files).set({
