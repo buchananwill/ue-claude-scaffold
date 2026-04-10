@@ -21,7 +21,7 @@ DELETE FROM "agents" WHERE "id" IN (
 UPDATE "tasks" SET "claimed_by_agent_id" = "a"."id"
 FROM "agents" "a"
 WHERE "tasks"."claimed_by" = "a"."name" AND "tasks"."project_id" = "a"."project_id" AND "a"."status" != 'deleted';
-
+--> statement-breakpoint
 UPDATE "tasks" SET
   "claimed_by" = NULL,
   "claimed_at" = NULL,
@@ -33,7 +33,7 @@ WHERE "claimed_by" IS NOT NULL AND "claimed_by_agent_id" IS NULL
 UPDATE "files" SET "claimant_agent_id" = "a"."id"
 FROM "agents" "a"
 WHERE "files"."claimant" = "a"."name" AND "files"."project_id" = "a"."project_id" AND "a"."status" != 'deleted';
-
+--> statement-breakpoint
 UPDATE "files" SET "claimant" = NULL, "claimed_at" = NULL
 WHERE "claimant" IS NOT NULL AND "claimant_agent_id" IS NULL;
 --> statement-breakpoint
@@ -48,7 +48,7 @@ DELETE FROM "ubt_lock";
 UPDATE "ubt_queue" SET "agent_id" = "a"."id"
 FROM "agents" "a"
 WHERE "ubt_queue"."agent" = "a"."name" AND "ubt_queue"."project_id" = "a"."project_id" AND "a"."status" != 'deleted';
-
+--> statement-breakpoint
 DELETE FROM "ubt_queue" WHERE "agent_id" IS NULL;
 --> statement-breakpoint
 -- STEP 6: Backfill team_members.agent_id. Membership orphan policy: DELETE the row.
@@ -58,7 +58,7 @@ WHERE "team_members"."agent_name" = "a"."name"
   AND "team_members"."team_id" = "t"."id"
   AND "t"."project_id" = "a"."project_id"
   AND "a"."status" != 'deleted';
-
+--> statement-breakpoint
 DELETE FROM "team_members" WHERE "agent_id" IS NULL;
 --> statement-breakpoint
 -- STEP 7: Backfill room_members.agent_id. Under Option D, room_members becomes
@@ -72,8 +72,9 @@ WHERE "room_members"."member" = "a"."name"
   AND "r"."project_id" = "a"."project_id"
   AND "room_members"."member" != 'user'
   AND "a"."status" != 'deleted';
-
+--> statement-breakpoint
 DELETE FROM "room_members" WHERE "member" = 'user';
+--> statement-breakpoint
 DELETE FROM "room_members" WHERE "agent_id" IS NULL;
 --> statement-breakpoint
 -- STEP 8: Backfill chat_messages.author_type and author_agent_id from the
@@ -88,10 +89,10 @@ WHERE "cm"."sender" = "a"."name"
   AND "r"."project_id" = "a"."project_id"
   AND "cm"."sender" != 'user'
   AND "a"."status" != 'deleted';
-
+--> statement-breakpoint
 UPDATE "chat_messages" SET "author_type" = 'operator'
 WHERE "sender" = 'user' AND "author_type" IS NULL;
-
+--> statement-breakpoint
 -- Historical orphan policy for chat_messages: any row whose old `sender`
 -- referenced a since-deleted agent is classified as 'system'. The original
 -- sender name is lost, which is acceptable for a handful of pre-migration
@@ -106,7 +107,6 @@ WHERE "author_type" IS NULL;
 UPDATE "messages" SET "agent_id" = "a"."id"
 FROM "agents" "a"
 WHERE "messages"."from_agent" = "a"."name" AND "messages"."project_id" = "a"."project_id" AND "a"."status" != 'deleted';
--- No orphan cleanup — NULLs are expected and retained.
 --> statement-breakpoint
 -- STEP 10: Backfill build_history.agent_id. Historical orphan policy as above.
 UPDATE "build_history" SET "agent_id" = "a"."id"
@@ -119,33 +119,38 @@ WHERE "build_history"."agent" = "a"."name" AND "build_history"."project_id" = "a
 DELETE FROM "team_members" WHERE "team_id" IN (
   SELECT "id" FROM "teams" WHERE "project_id" NOT IN (SELECT "id" FROM "projects")
 );
+--> statement-breakpoint
 DELETE FROM "teams" WHERE "project_id" NOT IN (SELECT "id" FROM "projects");
-
+--> statement-breakpoint
 DELETE FROM "room_members" WHERE "room_id" IN (
   SELECT "id" FROM "rooms" WHERE "project_id" NOT IN (SELECT "id" FROM "projects")
 );
+--> statement-breakpoint
 DELETE FROM "chat_messages" WHERE "room_id" IN (
   SELECT "id" FROM "rooms" WHERE "project_id" NOT IN (SELECT "id" FROM "projects")
 );
+--> statement-breakpoint
 DELETE FROM "rooms" WHERE "project_id" NOT IN (SELECT "id" FROM "projects");
-
+--> statement-breakpoint
 DELETE FROM "task_files" WHERE "task_id" IN (
   SELECT "id" FROM "tasks" WHERE "project_id" NOT IN (SELECT "id" FROM "projects")
 );
+--> statement-breakpoint
 DELETE FROM "task_dependencies" WHERE "task_id" IN (
   SELECT "id" FROM "tasks" WHERE "project_id" NOT IN (SELECT "id" FROM "projects")
 ) OR "depends_on" IN (
   SELECT "id" FROM "tasks" WHERE "project_id" NOT IN (SELECT "id" FROM "projects")
 );
+--> statement-breakpoint
 DELETE FROM "tasks" WHERE "project_id" NOT IN (SELECT "id" FROM "projects");
-
+--> statement-breakpoint
 DELETE FROM "files" WHERE "project_id" NOT IN (SELECT "id" FROM "projects");
+--> statement-breakpoint
 DELETE FROM "build_history" WHERE "project_id" NOT IN (SELECT "id" FROM "projects");
+--> statement-breakpoint
 DELETE FROM "messages" WHERE "project_id" NOT IN (SELECT "id" FROM "projects");
--- ubt_lock and ubt_queue are host-level — NOT included in project_id orphan cleanup.
-
+--> statement-breakpoint
 -- agents: hard-delete rows with orphaned project_id — these would block the
 -- agents_project_fk constraint added in 0004 which validates all existing rows.
 DELETE FROM "agents"
 WHERE "project_id" NOT IN (SELECT "id" FROM "projects");
---> statement-breakpoint
