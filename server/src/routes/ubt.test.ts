@@ -9,7 +9,7 @@ describe('ubt routes (drizzle)', () => {
   let ctx: DrizzleTestContext;
   const config = createTestConfig();
   /** Agent UUID cache, populated by registerAgent. */
-  const agentIds: Record<string, string> = {};
+  let agentIds: Record<string, string>;
 
   async function registerAgent(name: string) {
     const res = await ctx.app.inject({
@@ -21,6 +21,7 @@ describe('ubt routes (drizzle)', () => {
   }
 
   beforeEach(async () => {
+    agentIds = {};
     ctx = await createDrizzleTestApp();
     await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(ubtPlugin, { config });

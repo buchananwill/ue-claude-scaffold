@@ -41,16 +41,31 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       return reply.badRequest('Invalid team id — must match ^[a-zA-Z0-9_-]{1,64}$');
     }
 
+    // Validate briefPath if provided — no path traversal
+    if (briefPath != null) {
+      if (briefPath.startsWith('/')) {
+        return reply.badRequest('briefPath must be a relative path');
+      }
+      const segments = briefPath.split('/');
+      if (segments.some(s => s === '.' || s === '..')) {
+        return reply.badRequest('briefPath must not contain . or .. segments');
+      }
+      if (!BRIEF_PATH_RE.test(briefPath)) {
+        return reply.badRequest('briefPath contains invalid characters');
+      }
+    }
+
     // Validate each member's agentName and role
     for (const m of members) {
+      const safeName = m.agentName.slice(0, 64);
       if (!AGENT_NAME_RE.test(m.agentName)) {
-        return reply.badRequest(`Invalid agentName '${m.agentName}' — must match ^[a-zA-Z0-9_-]{1,64}$`);
+        return reply.badRequest(`Invalid agentName '${safeName}' — must match ^[a-zA-Z0-9_-]{1,64}$`);
       }
       if (!m.role || m.role.trim().length === 0) {
-        return reply.badRequest(`Member '${m.agentName}' has an empty role`);
+        return reply.badRequest(`Member '${safeName}' has an empty role`);
       }
       if (!ROLE_RE.test(m.role)) {
-        return reply.badRequest(`Member '${m.agentName}' has an invalid role — must match ^[a-zA-Z0-9 _-]{1,128}$`);
+        return reply.badRequest(`Member '${safeName}' has an invalid role — must match ^[a-zA-Z0-9 _-]{1,128}$`);
       }
     }
 

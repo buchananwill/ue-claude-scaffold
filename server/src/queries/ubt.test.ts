@@ -102,7 +102,8 @@ describe('ubt queries', () => {
   it('should get queue position', async () => {
     const found = await ubtQ.findInQueue(db, agentCId);
     assert.ok(found);
-    const pos = await ubtQ.getQueuePosition(db, found.id, found.priority!);
+    assert.notEqual(found.priority, null, 'priority must not be null');
+    const pos = await ubtQ.getQueuePosition(db, found.id, found.priority ?? 0);
     assert.equal(typeof pos, 'number');
     assert.ok(pos >= 1);
   });
