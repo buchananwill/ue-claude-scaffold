@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
-import { createTestConfig } from '../test-helper.js';
+import { createTestConfig, registerAgent } from '../test-helper.js';
 import agentsPlugin from './agents.js';
 import ubtPlugin, { sweepStaleLock } from './ubt.js';
 
@@ -11,23 +11,14 @@ describe('ubt routes (drizzle)', () => {
   /** Agent UUID cache, populated by registerAgent. */
   let agentIds: Record<string, string>;
 
-  async function registerAgent(name: string) {
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name, worktree: `/tmp/${name}` },
-    });
-    agentIds[name] = res.json().id;
-  }
-
   beforeEach(async () => {
     agentIds = {};
     ctx = await createDrizzleTestApp();
     await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(ubtPlugin, { config });
     // Pre-register agents used across most UBT tests
-    await registerAgent('agent-1');
-    await registerAgent('agent-2');
+    agentIds['agent-1'] = await registerAgent(ctx.app, 'agent-1');
+    agentIds['agent-2'] = await registerAgent(ctx.app, 'agent-2');
   });
 
   afterEach(async () => {

@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestConfig } from '../test-helper.js';
+import { createTestConfig, registerAgent } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import tasksPlugin from './tasks.js';
 import agentsPlugin from './agents.js';
@@ -8,26 +8,17 @@ import agentsPlugin from './agents.js';
 describe('tasks-claim routes', () => {
   let ctx: DrizzleTestContext;
 
-  /** Register an agent by name so resolveAgent succeeds during claim routes. */
-  async function registerAgent(name: string) {
-    await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name, worktree: `/tmp/${name}` },
-    });
-  }
-
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     const config = createTestConfig();
     await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
     // Pre-register agents used across tests
-    await registerAgent('agent-1');
-    await registerAgent('agent-2');
-    await registerAgent('agent-other');
-    await registerAgent('agent-requester');
-    await registerAgent('unknown');
+    await registerAgent(ctx.app, 'agent-1');
+    await registerAgent(ctx.app, 'agent-2');
+    await registerAgent(ctx.app, 'agent-other');
+    await registerAgent(ctx.app, 'agent-requester');
+    await registerAgent(ctx.app, 'unknown');
   });
 
   afterEach(async () => {

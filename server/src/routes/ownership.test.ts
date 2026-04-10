@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestConfig } from '../test-helper.js';
+import { createTestConfig, registerAgent } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import tasksPlugin from './tasks.js';
 import filesPlugin from './files.js';
@@ -10,25 +10,17 @@ describe('file write ownership', () => {
   let ctx: DrizzleTestContext;
   const agentIds: Record<string, string> = {};
 
-  /** Register an agent by name, cache its UUID. */
-  async function registerAgent(name: string) {
-    const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name, worktree: `/tmp/${name}` },
-    });
-    agentIds[name] = res.json().id;
-  }
-
   beforeEach(async () => {
+    // Reset agentIds for each test
+    for (const key of Object.keys(agentIds)) delete agentIds[key];
     ctx = await createDrizzleTestApp();
     const config = createTestConfig();
     await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
     await ctx.app.register(filesPlugin);
-    await registerAgent('agent-1');
-    await registerAgent('agent-2');
-    await registerAgent('agent-3');
+    agentIds['agent-1'] = await registerAgent(ctx.app, 'agent-1');
+    agentIds['agent-2'] = await registerAgent(ctx.app, 'agent-2');
+    agentIds['agent-3'] = await registerAgent(ctx.app, 'agent-3');
   });
 
   afterEach(async () => {

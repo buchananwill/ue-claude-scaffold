@@ -17,6 +17,28 @@ const BRIEF_PATH_RE = /^[a-zA-Z0-9_./-]+$/;
 /** Regex for safe role values — alphanumeric, spaces, hyphens, underscores, 1-128 chars. */
 const ROLE_RE = /^[a-zA-Z0-9 _-]{1,128}$/;
 
+/**
+ * Validate a briefPath value — no absolute paths, no dot-prefixed segments,
+ * only safe characters. Sends a 400 reply on failure.
+ * @returns `true` if the path is invalid (caller should `return`), `false` if OK.
+ */
+function validateBriefPath(briefPath: string, reply: import('fastify').FastifyReply): boolean {
+  if (briefPath.startsWith('/')) {
+    reply.badRequest('briefPath must be a relative path');
+    return true;
+  }
+  const segments = briefPath.split('/');
+  if (segments.some(s => s.startsWith('.'))) {
+    reply.badRequest('briefPath must not contain dot-prefixed segments');
+    return true;
+  }
+  if (!BRIEF_PATH_RE.test(briefPath)) {
+    reply.badRequest('briefPath contains invalid characters');
+    return true;
+  }
+  return false;
+}
+
 interface TeamsOpts {
   config: ScaffoldConfig;
 }
@@ -43,16 +65,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
 
     // Validate briefPath if provided — no path traversal
     if (briefPath != null) {
-      if (briefPath.startsWith('/')) {
-        return reply.badRequest('briefPath must be a relative path');
-      }
-      const segments = briefPath.split('/');
-      if (segments.some(s => s.startsWith('.'))) {
-        return reply.badRequest('briefPath must not contain dot-prefixed segments');
-      }
-      if (!BRIEF_PATH_RE.test(briefPath)) {
-        return reply.badRequest('briefPath contains invalid characters');
-      }
+      if (validateBriefPath(briefPath, reply)) return;
     }
 
     // Validate each member's agentName and role
@@ -239,16 +252,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     }
 
     // Safety B3: Validate briefPath — no path traversal
-    if (briefPath.startsWith('/')) {
-      return reply.badRequest('briefPath must be a relative path');
-    }
-    const segments = briefPath.split('/');
-    if (segments.some(s => s.startsWith('.'))) {
-      return reply.badRequest('briefPath must not contain dot-prefixed segments');
-    }
-    if (!BRIEF_PATH_RE.test(briefPath)) {
-      return reply.badRequest('briefPath contains invalid characters');
-    }
+    if (validateBriefPath(briefPath, reply)) return;
 
     let project;
     try {
