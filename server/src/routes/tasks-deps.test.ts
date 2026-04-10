@@ -10,6 +10,8 @@ import { sql } from 'drizzle-orm';
 import tasksPlugin from './tasks.js';
 import agentsPlugin from './agents.js';
 
+type TaskListBody = { tasks: Array<Record<string, unknown>>; total: number };
+
 describe('tasks with bare repo and agents', () => {
   let ctx: DrizzleTestContext;
   let tmpBareRepo: string;
@@ -67,7 +69,7 @@ describe('tasks with bare repo and agents', () => {
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
   });
 
   // ── Task Dependencies ────────────────────────────────────────────────
@@ -512,18 +514,18 @@ describe('tasks with bare repo and agents', () => {
 
       const list = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
       assert.equal(list.statusCode, 200);
-      const listBody = list.json() as any;
+      const listBody = list.json() as TaskListBody;
       const tasks = listBody.tasks;
       assert.equal(tasks.length, 2);
 
       // Independent task should have empty arrays
-      const indepTask = tasks.find((t: any) => t.title === 'Independent');
+      const indepTask = tasks.find((t: Record<string, unknown>) => t.title === 'Independent');
       assert.ok(indepTask);
       assert.deepEqual(indepTask.dependsOn, []);
       assert.deepEqual(indepTask.blockedBy, []);
 
       // Dependent task should have populated arrays
-      const depTask = tasks.find((t: any) => t.title === 'Has dependency');
+      const depTask = tasks.find((t: Record<string, unknown>) => t.title === 'Has dependency');
       assert.ok(depTask);
       assert.deepEqual(depTask.dependsOn, [indepId]);
       assert.deepEqual(depTask.blockedBy, [indepId]);
@@ -885,7 +887,7 @@ describe('tasks with bare repo and agents', () => {
         const depId = r2.json().id;
 
         const list = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
-        const listBody = list.json() as any;
+        const listBody = list.json() as TaskListBody;
         const tasks = listBody.tasks;
         assert.equal(tasks.length, 2);
 
@@ -895,13 +897,16 @@ describe('tasks with bare repo and agents', () => {
         }
 
         // Independent task should have no block reasons
-        const indTask = tasks.find((t: any) => t.id === indId);
+        const indTask = tasks.find((t: Record<string, unknown>) => t.id === indId);
+        assert.ok(indTask, 'independent task not found in list');
         assert.deepEqual(indTask.blockReasons, []);
 
         // Dependent task should show blocked
-        const depTask = tasks.find((t: any) => t.id === depId);
-        assert.ok(depTask.blockReasons.length > 0);
-        assert.ok(depTask.blockReasons.some((r: string) => r.includes('blocked by incomplete task(s)')));
+        const depTask = tasks.find((t: Record<string, unknown>) => t.id === depId);
+        assert.ok(depTask, 'dependent task not found in list');
+        const depReasons = depTask.blockReasons as string[];
+        assert.ok(depReasons.length > 0);
+        assert.ok(depReasons.some((r: string) => r.includes('blocked by incomplete task(s)')));
       });
 
       it('block reasons disappear after the blocking condition is resolved', async () => {
@@ -1308,7 +1313,7 @@ describe('tasks with bare repo and agents', () => {
         sql`INSERT INTO tasks (title, status) VALUES ('Integrated task', 'integrated') RETURNING id, status`
       );
       assert.equal(result.rows.length, 1);
-      assert.equal((result.rows[0] as any).status, 'integrated');
+      assert.equal((result.rows[0] as Record<string, unknown>).status, 'integrated');
     });
 
     it('accepts cycle status on direct insert', async () => {
@@ -1316,7 +1321,7 @@ describe('tasks with bare repo and agents', () => {
         sql`INSERT INTO tasks (title, status) VALUES ('Cycle task', 'cycle') RETURNING id, status`
       );
       assert.equal(result.rows.length, 1);
-      assert.equal((result.rows[0] as any).status, 'cycle');
+      assert.equal((result.rows[0] as Record<string, unknown>).status, 'cycle');
     });
 
     it('rejects invalid status values', async () => {
@@ -1595,9 +1600,9 @@ describe('tasks with bare repo and agents', () => {
         });
       }
 
-      const res = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks', headers: { 'x-project-id': 'default' } });
       assert.equal(res.statusCode, 200);
-      const body = res.json() as any;
+      const body = res.json() as TaskListBody;
       assert.equal(body.tasks.length, 20);
       assert.equal(body.total, 25);
     });
@@ -1612,31 +1617,31 @@ describe('tasks with bare repo and agents', () => {
         });
       }
 
-      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?offset=100' , headers: { 'x-project-id': 'default' }});
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?offset=100', headers: { 'x-project-id': 'default' } });
       assert.equal(res.statusCode, 200);
-      const body = res.json() as any;
+      const body = res.json() as TaskListBody;
       assert.equal(body.tasks.length, 0);
       assert.equal(body.total, 3);
     });
 
     it('negative offset is clamped to 0', async () => {
-      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'A' } , headers: { 'x-project-id': 'default' }});
-      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'B' } , headers: { 'x-project-id': 'default' }});
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'A' }, headers: { 'x-project-id': 'default' } });
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'B' }, headers: { 'x-project-id': 'default' } });
 
-      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?offset=-5' , headers: { 'x-project-id': 'default' }});
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?offset=-5', headers: { 'x-project-id': 'default' } });
       assert.equal(res.statusCode, 200);
-      const body = res.json() as any;
+      const body = res.json() as TaskListBody;
       assert.equal(body.tasks.length, 2);
       assert.equal(body.total, 2);
     });
 
     it('limit=0 is clamped to 1', async () => {
-      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'A' } , headers: { 'x-project-id': 'default' }});
-      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'B' } , headers: { 'x-project-id': 'default' }});
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'A' }, headers: { 'x-project-id': 'default' } });
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'B' }, headers: { 'x-project-id': 'default' } });
 
-      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=0' , headers: { 'x-project-id': 'default' }});
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=0', headers: { 'x-project-id': 'default' } });
       assert.equal(res.statusCode, 200);
-      const body = res.json() as any;
+      const body = res.json() as TaskListBody;
       assert.equal(body.tasks.length, 1);
       assert.equal(body.total, 2);
     });
@@ -1681,7 +1686,7 @@ describe('tasks with bare repo and agents', () => {
         headers: { 'x-project-id': 'default' },
       });
       assert.equal(page1.statusCode, 200);
-      const body1 = page1.json() as any;
+      const body1 = page1.json() as TaskListBody;
       assert.equal(body1.tasks.length, 2);
       assert.equal(body1.total, 3);
 
@@ -1692,7 +1697,7 @@ describe('tasks with bare repo and agents', () => {
         headers: { 'x-project-id': 'default' },
       });
       assert.equal(page2.statusCode, 200);
-      const body2 = page2.json() as any;
+      const body2 = page2.json() as TaskListBody;
       assert.equal(body2.tasks.length, 1);
       assert.equal(body2.total, 3);
     });

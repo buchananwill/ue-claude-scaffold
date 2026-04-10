@@ -56,7 +56,7 @@ describe('build routes', () => {
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
   });
 
   it('POST /build returns the correct response shape', async () => {
@@ -134,7 +134,7 @@ describe('build route branch resolution', () => {
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
   });
 
   it('defaults to docker/default/current-root when no agent is registered', async () => {
@@ -254,7 +254,7 @@ describe('build route x-agent-name validation', () => {
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
   });
 
   it('POST /build rejects malformed x-agent-name with path traversal', async () => {

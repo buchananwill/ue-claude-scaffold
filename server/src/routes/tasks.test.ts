@@ -5,6 +5,8 @@ import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-h
 import tasksPlugin from './tasks.js';
 import agentsPlugin from './agents.js';
 
+type TaskListBody = { tasks: Array<Record<string, unknown>>; total: number };
+
 describe('tasks routes', () => {
   let ctx: DrizzleTestContext;
 
@@ -57,9 +59,9 @@ describe('tasks routes', () => {
       headers: { 'x-project-id': 'default' },
     });
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 200);
-    const body = res.json() as any;
+    const body = res.json() as TaskListBody;
     const tasks = body.tasks;
     assert.equal(body.total, 2);
     assert.equal(tasks.length, 2);
@@ -89,9 +91,9 @@ describe('tasks routes', () => {
       headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
     });
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 200);
-    const body = res.json() as any;
+    const body = res.json() as TaskListBody;
     const tasks = body.tasks;
     assert.equal(body.total, 1);
     assert.equal(tasks.length, 1);
@@ -100,160 +102,160 @@ describe('tasks routes', () => {
   });
 
   it('GET /tasks supports limit and offset pagination', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T1' } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T2' } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T3' } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T1' }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T2' }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T3' }, headers: { 'x-project-id': 'default' }});
 
-    const page1 = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=2&offset=0' , headers: { 'x-project-id': 'default' }});
-    const body1 = page1.json() as any;
+    const page1 = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=2&offset=0', headers: { 'x-project-id': 'default' }});
+    const body1 = page1.json() as TaskListBody;
     assert.equal(body1.tasks.length, 2);
     assert.equal(body1.total, 3);
 
-    const page2 = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=2&offset=2' , headers: { 'x-project-id': 'default' }});
-    const body2 = page2.json() as any;
+    const page2 = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=2&offset=2', headers: { 'x-project-id': 'default' } });
+    const body2 = page2.json() as TaskListBody;
     assert.equal(body2.tasks.length, 1);
     assert.equal(body2.total, 3);
   });
 
   it('GET /tasks with multi-status filter', async () => {
     // Create tasks, then manually change one status via direct claim
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending1' } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending2' } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending1' }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending2' }, headers: { 'x-project-id': 'default' }});
 
     // Get all with status=pending
-    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending' , headers: { 'x-project-id': 'default' }});
-    const body1 = res1.json() as any;
+    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending', headers: { 'x-project-id': 'default' }});
+    const body1 = res1.json() as TaskListBody;
     assert.equal(body1.tasks.length, 2);
     assert.equal(body1.total, 2);
 
     // Multi-status: pending,completed (only pending exist)
-    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,completed' , headers: { 'x-project-id': 'default' }});
-    const body2 = res2.json() as any;
+    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,completed', headers: { 'x-project-id': 'default' } });
+    const body2 = res2.json() as TaskListBody;
     assert.equal(body2.tasks.length, 2);
     assert.equal(body2.total, 2);
   });
 
   it('GET /tasks with priority filter', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 }, headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,2' , headers: { 'x-project-id': 'default' }});
-    const body = res.json() as any;
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,2', headers: { 'x-project-id': 'default' }});
+    const body = res.json() as TaskListBody;
     assert.equal(body.tasks.length, 2);
     assert.equal(body.total, 2);
-    const priorities = body.tasks.map((t: any) => t.priority);
+    const priorities = body.tasks.map((t: Record<string, unknown>) => t.priority);
     assert.ok(priorities.includes(0));
     assert.ok(priorities.includes(2));
   });
 
   it('GET /tasks with sort and dir', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA', priority: 1 } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ', priority: 2 } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM', priority: 0 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA', priority: 1 }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ', priority: 2 }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM', priority: 0 }, headers: { 'x-project-id': 'default' }});
 
     // Sort by title ascending
-    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=asc' , headers: { 'x-project-id': 'default' }});
-    const body1 = res1.json() as any;
+    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=asc', headers: { 'x-project-id': 'default' }});
+    const body1 = res1.json() as TaskListBody;
     assert.equal(body1.tasks[0].title, 'AAA');
     assert.equal(body1.tasks[1].title, 'MMM');
     assert.equal(body1.tasks[2].title, 'ZZZ');
 
     // Sort by title descending
-    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=desc' , headers: { 'x-project-id': 'default' }});
-    const body2 = res2.json() as any;
+    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=desc', headers: { 'x-project-id': 'default' } });
+    const body2 = res2.json() as TaskListBody;
     assert.equal(body2.tasks[0].title, 'ZZZ');
     assert.equal(body2.tasks[2].title, 'AAA');
   });
 
   it('GET /tasks with invalid sort column returns 400', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=bogus' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=bogus', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     const body = res.json();
     assert.ok(body.message.includes('Invalid sort column'));
   });
 
   it('GET /tasks with invalid dir returns 400', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=sideways' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=sideways', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     const body = res.json();
     assert.ok(body.message.includes('Invalid dir'));
   });
 
   it('GET /tasks with agent filter', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned1' } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned2' } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned1' }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned2' }, headers: { 'x-project-id': 'default' }});
 
     // Filter by __unassigned__ (both tasks have null claimedBy)
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=__unassigned__' , headers: { 'x-project-id': 'default' }});
-    const body = res.json() as any;
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=__unassigned__', headers: { 'x-project-id': 'default' }});
+    const body = res.json() as TaskListBody;
     assert.equal(body.tasks.length, 2);
     assert.equal(body.total, 2);
   });
 
   it('GET /tasks priority filter returns 400 for non-numeric values', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 }, headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,abc' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,abc', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('Invalid priority'));
   });
 
   it('GET /tasks priority filter returns 400 for trailing comma (empty segment)', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 }, headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('empty segments'));
   });
 
   it('GET /tasks priority filter returns 400 for leading comma (empty segment)', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 }, headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=,1' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=,1', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('empty segments'));
   });
 
   it('GET /tasks with dir but no sort returns 400', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?dir=asc' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?dir=asc', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('dir requires sort'));
   });
 
   it('GET /tasks with sort but no dir defaults to ascending', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ' } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA' } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM' } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ' }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA' }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM' }, headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 200);
-    const body = res.json() as any;
+    const body = res.json() as TaskListBody;
     assert.equal(body.tasks[0].title, 'AAA');
     assert.equal(body.tasks[1].title, 'MMM');
     assert.equal(body.tasks[2].title, 'ZZZ');
   });
 
   it('GET /tasks with invalid status returns 400', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=bogus' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=bogus', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('Invalid status value'));
   });
 
   it('GET /tasks status filter returns 400 for empty segments', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('empty segments'));
   });
 
   it('GET /tasks agent filter returns 400 for empty segments', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=,agent-1' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=,agent-1', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('empty segments'));
   });
 
   it('GET /tasks agent filter returns 400 for invalid agent name', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=../bad' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=../bad', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('Invalid agent name'));
   });
@@ -280,12 +282,12 @@ describe('tasks routes', () => {
   });
 
   it('GET /tasks filtered total matches filtered count, not global count', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } , headers: { 'x-project-id': 'default' }});
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 }, headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 }, headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=1' , headers: { 'x-project-id': 'default' }});
-    const body = res.json() as any;
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=1', headers: { 'x-project-id': 'default' }});
+    const body = res.json() as TaskListBody;
     assert.equal(body.tasks.length, 1);
     assert.equal(body.total, 1); // not 3!
   });
@@ -312,7 +314,7 @@ describe('tasks routes', () => {
   });
 
   it('GET /tasks/:id returns 404 for missing task', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks/99999' , headers: { 'x-project-id': 'default' }});
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks/99999', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 404);
   });
 
@@ -619,8 +621,8 @@ describe('tasks routes', () => {
     assert.equal(res.statusCode, 400);
 
     // No tasks should have been created
-    const list = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
-    assert.equal((list.json() as any).tasks.length, 0);
+    const list = await ctx.app.inject({ method: 'GET', url: '/tasks', headers: { 'x-project-id': 'default' }});
+    assert.equal((list.json() as TaskListBody).tasks.length, 0);
   });
 
   it('batch with ?replan=true returns replan summary', async () => {
@@ -761,8 +763,8 @@ describe('tasks routes', () => {
       assert.equal(body.deleted, 2);
 
       // Verify the pending task still exists
-      const listRes = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
-      const listBody = listRes.json() as any;
+      const listRes = await ctx.app.inject({ method: 'GET', url: '/tasks', headers: { 'x-project-id': 'default' }});
+      const listBody = listRes.json() as TaskListBody;
       assert.equal(listBody.total, 1);
       assert.equal(listBody.tasks[0].title, 'Still pending');
     });
@@ -841,7 +843,7 @@ describe('tasks routes', () => {
         url: '/tasks',
         headers: { 'x-project-id': 'alpha' },
       });
-      const alphaId = (alphaList.json() as any).tasks[0].id;
+      const alphaId = (alphaList.json() as TaskListBody).tasks[0].id;
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${alphaId}/claim`,
@@ -859,7 +861,7 @@ describe('tasks routes', () => {
         url: '/tasks',
         headers: { 'x-project-id': 'beta' },
       });
-      const betaId = (betaList.json() as any).tasks[0].id;
+      const betaId = (betaList.json() as TaskListBody).tasks[0].id;
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${betaId}/claim`,
@@ -887,7 +889,7 @@ describe('tasks routes', () => {
         url: '/tasks?status=completed',
         headers: { 'x-project-id': 'beta' },
       });
-      assert.equal((betaAfter.json() as any).total, 1);
+      assert.equal((betaAfter.json() as TaskListBody).total, 1);
     });
   });
 
