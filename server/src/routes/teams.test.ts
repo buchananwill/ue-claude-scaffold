@@ -414,7 +414,7 @@ describe('POST /teams/:id/launch', () => {
       payload: { briefPath: '../secret' },
     });
     assert.equal(res.statusCode, 400);
-    assert.ok(res.json().message.includes('..'));
+    assert.ok(res.json().message.includes('dot-prefixed'));
   });
 
   it('returns 400 for absolute briefPath', async () => {

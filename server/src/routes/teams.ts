@@ -47,8 +47,8 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
         return reply.badRequest('briefPath must be a relative path');
       }
       const segments = briefPath.split('/');
-      if (segments.some(s => s === '.' || s === '..')) {
-        return reply.badRequest('briefPath must not contain . or .. segments');
+      if (segments.some(s => s.startsWith('.'))) {
+        return reply.badRequest('briefPath must not contain dot-prefixed segments');
       }
       if (!BRIEF_PATH_RE.test(briefPath)) {
         return reply.badRequest('briefPath contains invalid characters');
@@ -243,8 +243,8 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       return reply.badRequest('briefPath must be a relative path');
     }
     const segments = briefPath.split('/');
-    if (segments.some(s => s === '.' || s === '..')) {
-      return reply.badRequest('briefPath must not contain . or .. segments');
+    if (segments.some(s => s.startsWith('.'))) {
+      return reply.badRequest('briefPath must not contain dot-prefixed segments');
     }
     if (!BRIEF_PATH_RE.test(briefPath)) {
       return reply.badRequest('briefPath contains invalid characters');
