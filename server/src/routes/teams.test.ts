@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
-import { createTestConfig } from '../test-helper.js';
+import { createTestConfig, registerAgent } from '../test-helper.js';
 import roomsPlugin from './rooms.js';
 import teamsPlugin from './teams.js';
 import agentsPlugin from './agents.js';
@@ -9,11 +9,7 @@ import agentsPlugin from './agents.js';
 /** Register standard test agents ('alice', 'bob', 'a', 'b', 'orchestrator', 'user'). */
 async function registerTestAgents(app: import('fastify').FastifyInstance) {
   for (const name of ['alice', 'bob', 'a', 'b', 'orchestrator', 'user']) {
-    await app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      payload: { name, worktree: `/tmp/${name}` },
-    });
+    await registerAgent(app, name);
   }
 }
 

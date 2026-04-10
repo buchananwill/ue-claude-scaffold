@@ -361,7 +361,7 @@ describe('tasks-lifecycle routes', () => {
 
       const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=integrated' });
       assert.equal(res.statusCode, 200);
-      const body = res.json() as any;
+      const body = res.json<{ tasks: Array<Record<string, unknown>>; total: number }>();
       const tasks = body.tasks;
       assert.equal(tasks.length, 1);
       assert.equal(tasks[0].status, 'integrated');

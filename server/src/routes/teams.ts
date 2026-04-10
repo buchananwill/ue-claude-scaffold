@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ScaffoldConfig } from '../config.js';
 import { getDb } from '../drizzle-instance.js';
 import { resolveProject } from '../resolve-project.js';
@@ -18,11 +18,11 @@ const BRIEF_PATH_RE = /^[a-zA-Z0-9_./-]+$/;
 const ROLE_RE = /^[a-zA-Z0-9 _-]{1,128}$/;
 
 /**
- * Validate a briefPath value — no absolute paths, no dot-prefixed segments,
+ * Reject an invalid briefPath value — no absolute paths, no dot-prefixed segments,
  * only safe characters. Sends a 400 reply on failure.
  * @returns `true` if the path is invalid (caller should `return`), `false` if OK.
  */
-function validateBriefPath(briefPath: string, reply: import('fastify').FastifyReply): boolean {
+function rejectInvalidBriefPath(briefPath: string, reply: FastifyReply): boolean {
   if (briefPath.startsWith('/')) {
     reply.badRequest('briefPath must be a relative path');
     return true;
@@ -65,7 +65,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
 
     // Validate briefPath if provided — no path traversal
     if (briefPath != null) {
-      if (validateBriefPath(briefPath, reply)) return;
+      if (rejectInvalidBriefPath(briefPath, reply)) return;
     }
 
     // Validate each member's agentName and role
@@ -252,7 +252,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     }
 
     // Safety B3: Validate briefPath — no path traversal
-    if (validateBriefPath(briefPath, reply)) return;
+    if (rejectInvalidBriefPath(briefPath, reply)) return;
 
     let project;
     try {

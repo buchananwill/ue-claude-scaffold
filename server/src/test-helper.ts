@@ -21,6 +21,9 @@ export async function registerAgent(
     payload: { name, worktree: `/tmp/${name}` },
     headers,
   });
+  if (res.statusCode !== 200) {
+    throw new Error(`registerAgent('${name}') failed: ${res.statusCode} ${res.body}`);
+  }
   return res.json().id;
 }
 
