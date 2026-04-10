@@ -8,8 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import buildPlugin, { isUbtContentionResult } from './build.js';
-import { agents } from '../schema/tables.js';
-import { v7 as uuidv7 } from 'uuid';
+import agentsPlugin from './agents.js';
 
 describe('build routes', () => {
   let ctx: DrizzleTestContext;
@@ -59,6 +58,7 @@ process.exit(0);
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
+      headers: { 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -73,6 +73,7 @@ process.exit(0);
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/test',
+      headers: { 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -138,6 +139,7 @@ process.exit(0);
       },
     });
 
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(buildPlugin, { config });
   });
 
@@ -155,7 +157,7 @@ process.exit(0);
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
-      headers: { 'x-agent-name': 'unknown-agent' },
+      headers: { 'x-agent-name': 'unknown-agent', 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -171,6 +173,7 @@ process.exit(0);
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
+      headers: { 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -187,18 +190,18 @@ process.exit(0);
     mkdirSync(agentDir);
     execSync('git init', { cwd: agentDir, stdio: 'ignore' });
 
-    // Register agent directly via Drizzle (id is required)
-    await ctx.db.insert(agents).values({
-      id: uuidv7(),
-      name: 'test-agent',
-      worktree: 'docker/default/test-agent',
-      projectId: 'default',
+    // Register agent via route
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      headers: { 'x-project-id': 'default' },
+      payload: { name: 'test-agent', worktree: 'docker/default/test-agent' },
     });
 
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
-      headers: { 'x-agent-name': 'test-agent' },
+      headers: { 'x-agent-name': 'test-agent', 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -215,17 +218,18 @@ process.exit(0);
     mkdirSync(agentDir);
     execSync('git init', { cwd: agentDir, stdio: 'ignore' });
 
-    await ctx.db.insert(agents).values({
-      id: uuidv7(),
-      name: 'test-agent',
-      worktree: 'docker/default/test-agent',
-      projectId: 'default',
+    // Register agent via route
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      headers: { 'x-project-id': 'default' },
+      payload: { name: 'test-agent', worktree: 'docker/default/test-agent' },
     });
 
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/test',
-      headers: { 'x-agent-name': 'test-agent' },
+      headers: { 'x-agent-name': 'test-agent', 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -286,7 +290,7 @@ process.exit(0);
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
-      headers: { 'x-agent-name': '../../evil' },
+      headers: { 'x-agent-name': '../../evil', 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -299,7 +303,7 @@ process.exit(0);
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/test',
-      headers: { 'x-agent-name': '../../evil' },
+      headers: { 'x-agent-name': '../../evil', 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);

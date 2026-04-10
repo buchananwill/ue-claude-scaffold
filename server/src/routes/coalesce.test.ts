@@ -28,6 +28,7 @@ describe('coalesce routes (drizzle)', () => {
     return ctx.app.inject({
       method: 'POST',
       url: '/agents/register',
+      headers: { 'x-project-id': 'default' },
       payload: { name, worktree: `/tmp/${name}`, mode },
     });
   }
@@ -86,7 +87,7 @@ describe('coalesce routes (drizzle)', () => {
     await createTask('Pending task 1');
     await createTask('Pending task 2');
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status', headers: { 'x-project-id': 'default' } });
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.equal(body.canCoalesce, true);
@@ -98,7 +99,7 @@ describe('coalesce routes (drizzle)', () => {
     const taskId = await createTask('Active task');
     await claimTask(taskId, 'pump-1');
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status', headers: { 'x-project-id': 'default' } });
     const body = res.json();
     assert.equal(body.canCoalesce, false);
     assert.ok(body.reason.includes('task'));
@@ -109,10 +110,11 @@ describe('coalesce routes (drizzle)', () => {
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/pump-1/status',
+      headers: { 'x-project-id': 'default' },
       payload: { status: 'working' },
     });
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status', headers: { 'x-project-id': 'default' } });
     const body = res.json();
     assert.equal(body.canCoalesce, false);
     assert.ok(body.reason.includes('pump-1'));
@@ -122,16 +124,16 @@ describe('coalesce routes (drizzle)', () => {
     await registerAgent('pump-1');
     await registerAgent('pump-2');
 
-    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
+    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause', headers: { 'x-project-id': 'default' } });
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.ok(body.paused.includes('pump-1'));
     assert.ok(body.paused.includes('pump-2'));
     assert.deepEqual(body.inFlightTasks, []);
 
-    const a1 = await ctx.app.inject({ method: 'GET', url: '/agents/pump-1' });
+    const a1 = await ctx.app.inject({ method: 'GET', url: '/agents/pump-1', headers: { 'x-project-id': 'default' } });
     assert.equal(a1.json().status, 'paused');
-    const a2 = await ctx.app.inject({ method: 'GET', url: '/agents/pump-2' });
+    const a2 = await ctx.app.inject({ method: 'GET', url: '/agents/pump-2', headers: { 'x-project-id': 'default' } });
     assert.equal(a2.json().status, 'paused');
   });
 
@@ -141,7 +143,7 @@ describe('coalesce routes (drizzle)', () => {
     await claimTask(taskId, 'pump-1');
 
     const pump1Id = await getAgentId('pump-1');
-    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
+    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause', headers: { 'x-project-id': 'default' } });
     const body = res.json();
     assert.equal(body.inFlightTasks.length, 1);
     assert.equal(body.inFlightTasks[0].agent, pump1Id);
@@ -158,26 +160,27 @@ describe('coalesce routes (drizzle)', () => {
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/pump-1/status',
+      headers: { 'x-project-id': 'default' },
       payload: { status: 'paused' },
     });
 
-    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/release' });
+    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/release', headers: { 'x-project-id': 'default' } });
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.equal(body.releasedFiles, 2);
     assert.ok(body.resumedAgents.includes('pump-1'));
 
     // Verify files are cleared
-    const filesRes = await ctx.app.inject({ method: 'GET', url: '/files?claimant=pump-1' });
+    const filesRes = await ctx.app.inject({ method: 'GET', url: '/files?claimant=pump-1', headers: { 'x-project-id': 'default' } });
     assert.equal(filesRes.json().length, 0);
 
     // Verify agent is idle
-    const agentRes = await ctx.app.inject({ method: 'GET', url: '/agents/pump-1' });
+    const agentRes = await ctx.app.inject({ method: 'GET', url: '/agents/pump-1', headers: { 'x-project-id': 'default' } });
     assert.equal(agentRes.json().status, 'idle');
   });
 
   it('GET /coalesce/status with zero agents returns canCoalesce true and empty agents', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status', headers: { 'x-project-id': 'default' } });
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.equal(body.canCoalesce, true);
@@ -191,7 +194,7 @@ describe('coalesce routes (drizzle)', () => {
     const taskId = await createTask('Task with files', ['Source/X.cpp', 'Source/Y.cpp']);
     await claimTask(taskId, 'pump-1', ['Source/X.cpp', 'Source/Y.cpp']);
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status', headers: { 'x-project-id': 'default' } });
     const body = res.json();
     const agent = body.agents.find((a: { name: string }) => a.name === 'pump-1');
     assert.ok(agent);
@@ -200,7 +203,7 @@ describe('coalesce routes (drizzle)', () => {
   });
 
   it('POST /coalesce/pause with no pump agents returns empty arrays', async () => {
-    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
+    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause', headers: { 'x-project-id': 'default' } });
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.deepEqual(body.paused, []);
@@ -210,17 +213,17 @@ describe('coalesce routes (drizzle)', () => {
   it('POST /coalesce/pause is idempotent', async () => {
     await registerAgent('pump-1');
 
-    const res1 = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
+    const res1 = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause', headers: { 'x-project-id': 'default' } });
     assert.equal(res1.statusCode, 200);
     const body1 = res1.json();
     assert.ok(body1.paused.includes('pump-1'));
 
     // Second call should succeed without errors
-    const res2 = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
+    const res2 = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause', headers: { 'x-project-id': 'default' } });
     assert.equal(res2.statusCode, 200);
 
     // Agent should still be paused after two calls
-    const agentRes = await ctx.app.inject({ method: 'GET', url: '/agents/pump-1' });
+    const agentRes = await ctx.app.inject({ method: 'GET', url: '/agents/pump-1', headers: { 'x-project-id': 'default' } });
     assert.equal(agentRes.json().status, 'paused');
   });
 
@@ -228,18 +231,18 @@ describe('coalesce routes (drizzle)', () => {
     await registerAgent('pump-1', 'pump');
     await registerAgent('single-1', 'single');
 
-    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
+    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/pause', headers: { 'x-project-id': 'default' } });
     const body = res.json();
 
     assert.ok(body.paused.includes('pump-1'));
     assert.ok(!body.paused.includes('single-1'));
 
-    const singleRes = await ctx.app.inject({ method: 'GET', url: '/agents/single-1' });
+    const singleRes = await ctx.app.inject({ method: 'GET', url: '/agents/single-1', headers: { 'x-project-id': 'default' } });
     assert.equal(singleRes.json().status, 'idle');
   });
 
   it('POST /coalesce/release with no claimed files and no paused agents returns zeros', async () => {
-    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/release' });
+    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/release', headers: { 'x-project-id': 'default' } });
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.equal(body.releasedFiles, 0);
@@ -255,9 +258,9 @@ describe('coalesce routes (drizzle)', () => {
     await claimTask(t2, 'pump-2', ['Source/B.cpp']);
 
     // Pause both agents
-    await ctx.app.inject({ method: 'POST', url: '/coalesce/pause' });
+    await ctx.app.inject({ method: 'POST', url: '/coalesce/pause', headers: { 'x-project-id': 'default' } });
 
-    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/release' });
+    const res = await ctx.app.inject({ method: 'POST', url: '/coalesce/release', headers: { 'x-project-id': 'default' } });
     const body = res.json();
 
     assert.equal(body.releasedFiles, 2);
@@ -266,15 +269,15 @@ describe('coalesce routes (drizzle)', () => {
     assert.ok(body.resumedAgents.includes('pump-2'));
 
     // Verify all files cleared
-    const f1 = await ctx.app.inject({ method: 'GET', url: '/files?claimant=pump-1' });
+    const f1 = await ctx.app.inject({ method: 'GET', url: '/files?claimant=pump-1', headers: { 'x-project-id': 'default' } });
     assert.equal(f1.json().length, 0);
-    const f2 = await ctx.app.inject({ method: 'GET', url: '/files?claimant=pump-2' });
+    const f2 = await ctx.app.inject({ method: 'GET', url: '/files?claimant=pump-2', headers: { 'x-project-id': 'default' } });
     assert.equal(f2.json().length, 0);
 
     // Verify both agents idle
-    const a1 = await ctx.app.inject({ method: 'GET', url: '/agents/pump-1' });
+    const a1 = await ctx.app.inject({ method: 'GET', url: '/agents/pump-1', headers: { 'x-project-id': 'default' } });
     assert.equal(a1.json().status, 'idle');
-    const a2 = await ctx.app.inject({ method: 'GET', url: '/agents/pump-2' });
+    const a2 = await ctx.app.inject({ method: 'GET', url: '/agents/pump-2', headers: { 'x-project-id': 'default' } });
     assert.equal(a2.json().status, 'idle');
   });
 
@@ -283,10 +286,11 @@ describe('coalesce routes (drizzle)', () => {
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/single-1/status',
+      headers: { 'x-project-id': 'default' },
       payload: { status: 'working' },
     });
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/coalesce/status', headers: { 'x-project-id': 'default' } });
     const body = res.json();
     assert.equal(body.canCoalesce, true);
   });
@@ -300,6 +304,7 @@ describe('coalesce routes (drizzle)', () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/coalesce/drain',
+      headers: { 'x-project-id': 'default' },
       payload: { timeout: 5 },
     });
     assert.equal(res.statusCode, 200);
@@ -322,6 +327,7 @@ describe('coalesce routes (drizzle)', () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/coalesce/drain',
+      headers: { 'x-project-id': 'default' },
       payload: { timeout: 1 },
     });
     const body = res.json();
@@ -339,6 +345,7 @@ describe('coalesce routes (drizzle)', () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/coalesce/drain',
+      headers: { 'x-project-id': 'default' },
       payload: { timeout: 1 },
     });
     const body = res.json();
@@ -363,6 +370,7 @@ describe('coalesce routes (drizzle)', () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/coalesce/drain',
+      headers: { 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -374,7 +382,7 @@ describe('coalesce routes (drizzle)', () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/coalesce/drain',
-      // No payload, no Content-Type header — triggers the (request.body ?? {}) guard
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();

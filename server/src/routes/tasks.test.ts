@@ -866,11 +866,13 @@ describe('tasks with bare repo and agents', () => {
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/register',
+      headers: { 'x-project-id': 'default' },
       payload: { name: 'agent-1', worktree: '/tmp/wt1' },
     });
     await ctx.app.inject({
       method: 'POST',
       url: '/agents/register',
+      headers: { 'x-project-id': 'default' },
       payload: { name: 'agent-2', worktree: '/tmp/wt2' },
     });
   });
