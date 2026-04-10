@@ -4,16 +4,16 @@
  * Validates a team definition, registers the team + room, posts the brief,
  * sets up agent branch refs, and returns a launch plan for the shell caller.
  */
-import { spawnSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
-import path from 'node:path';
-import type { DrizzleDb } from './drizzle-instance.js';
-import type { MergedProjectConfig } from './config.js';
-import { seedBranchFor, AGENT_NAME_RE } from './branch-naming.js';
-import { ensureAgentBranch } from './branch-ops.js';
-import * as teamsQ from './queries/teams.js';
-import * as roomsQ from './queries/rooms.js';
-import * as chatQ from './queries/chat.js';
+import { spawnSync } from "node:child_process";
+import { readFileSync, existsSync } from "node:fs";
+import path from "node:path";
+import type { DrizzleDb } from "./drizzle-instance.js";
+import type { MergedProjectConfig } from "./config.js";
+import { seedBranchFor, AGENT_NAME_RE } from "./branch-naming.js";
+import { ensureAgentBranch } from "./branch-ops.js";
+import * as teamsQ from "./queries/teams.js";
+import * as roomsQ from "./queries/rooms.js";
+import * as chatQ from "./queries/chat.js";
 
 /** A member entry from the team definition JSON file. */
 export interface TeamDefMember {
@@ -21,14 +21,14 @@ export interface TeamDefMember {
   role: string;
   agentType: string;
   isLeader?: boolean;
-  hooks?: { buildIntercept?: boolean; cppLint?: boolean };
+  hooks?: { buildIntercept?: boolean; cppLint?: boolean; jsLint?: boolean };
 }
 
 /** The shape of a team definition JSON file on disk. */
 export interface TeamDef {
   id: string;
   name: string;
-  hooks?: { buildIntercept?: boolean; cppLint?: boolean };
+  hooks?: { buildIntercept?: boolean; cppLint?: boolean; jsLint?: boolean };
   members: TeamDefMember[];
 }
 
@@ -52,7 +52,7 @@ export interface LaunchMember {
   branch: string;
   role: string;
   isLeader: boolean;
-  hooks: { buildIntercept: boolean; cppLint: boolean };
+  hooks: { buildIntercept: boolean; cppLint: boolean; jsLint: boolean };
 }
 
 /** The result of a successful launchTeam() call. */
@@ -74,23 +74,32 @@ export function validateBriefOnSeedBranch(
   // Validate briefPath is safe before passing to git cat-file
   if (
     !briefPath ||
-    briefPath.includes('..') ||
-    briefPath.includes('\0') ||
-    briefPath.startsWith('/') ||
+    briefPath.includes("..") ||
+    briefPath.includes("\0") ||
+    briefPath.startsWith("/") ||
     !/^[a-zA-Z0-9_.\/\-]{1,512}$/.test(briefPath)
   ) {
-    throw new Error(`Invalid briefPath: '${briefPath}' — must be a relative path without '..' or special characters`);
+    throw new Error(
+      `Invalid briefPath: '${briefPath}' — must be a relative path without '..' or special characters`,
+    );
   }
 
-  const branch = seedBranchFor(projectId, seedBranchOverride ? { seedBranch: seedBranchOverride } : undefined);
-  const result = spawnSync('git', ['cat-file', '-e', `${branch}:${briefPath}`], {
-    cwd: bareRepoPath,
-    timeout: 5000,
-  });
+  const branch = seedBranchFor(
+    projectId,
+    seedBranchOverride ? { seedBranch: seedBranchOverride } : undefined,
+  );
+  const result = spawnSync(
+    "git",
+    ["cat-file", "-e", `${branch}:${briefPath}`],
+    {
+      cwd: bareRepoPath,
+      timeout: 5000,
+    },
+  );
   if (result.status !== 0) {
     throw new Error(
       `Brief not found on ${branch}: ${briefPath}. ` +
-      `Commit the brief in the exterior repo and sync with POST /sync/plans first.`
+        `Commit the brief in the exterior repo and sync with POST /sync/plans first.`,
     );
   }
 }
@@ -100,7 +109,9 @@ export function validateBriefOnSeedBranch(
  */
 export function loadTeamDef(teamsDir: string, teamId: string): TeamDef {
   if (!AGENT_NAME_RE.test(teamId)) {
-    throw new Error(`Invalid teamId '${teamId}' — must match ^[a-zA-Z0-9_-]{1,64}$`);
+    throw new Error(
+      `Invalid teamId '${teamId}' — must match ^[a-zA-Z0-9_-]{1,64}$`,
+    );
   }
   const defPath = path.join(teamsDir, `${teamId}.json`);
   if (!existsSync(defPath)) {
@@ -109,7 +120,7 @@ export function loadTeamDef(teamsDir: string, teamId: string): TeamDef {
 
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(defPath, 'utf-8'));
+    raw = JSON.parse(readFileSync(defPath, "utf-8"));
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Invalid team definition JSON: ${msg}`);
@@ -117,36 +128,60 @@ export function loadTeamDef(teamsDir: string, teamId: string): TeamDef {
 
   // Cast is validated by the structural checks below
   const def = raw as TeamDef;
-  if (!def.id || !def.name || !Array.isArray(def.members) || def.members.length === 0) {
-    throw new Error(`Team definition is missing required fields (id, name, members)`);
+  if (
+    !def.id ||
+    !def.name ||
+    !Array.isArray(def.members) ||
+    def.members.length === 0
+  ) {
+    throw new Error(
+      `Team definition is missing required fields (id, name, members)`,
+    );
   }
 
   // Validate exactly one leader
-  const leaders = def.members.filter(m => m.isLeader);
+  const leaders = def.members.filter((m) => m.isLeader);
   if (leaders.length !== 1) {
-    throw new Error(`Exactly one discussion leader is required (found ${leaders.length})`);
+    throw new Error(
+      `Exactly one discussion leader is required (found ${leaders.length})`,
+    );
   }
 
   // Validate no duplicate agent names
-  const names = def.members.map(m => m.agentName);
+  const names = def.members.map((m) => m.agentName);
   const dupes = names.filter((n, i) => names.indexOf(n) !== i);
   if (dupes.length > 0) {
-    throw new Error(`Duplicate member agentName: ${[...new Set(dupes)].join(', ')}`);
+    throw new Error(
+      `Duplicate member agentName: ${[...new Set(dupes)].join(", ")}`,
+    );
   }
 
   // Validate each member has required fields and valid formats
   for (const m of def.members) {
-    if (!m.agentName) throw new Error('Team member missing required field: agentName');
+    if (!m.agentName)
+      throw new Error("Team member missing required field: agentName");
     if (!AGENT_NAME_RE.test(m.agentName)) {
-      throw new Error(`Team member agentName '${m.agentName}' contains invalid characters`);
+      throw new Error(
+        `Team member agentName '${m.agentName}' contains invalid characters`,
+      );
     }
-    if (!m.agentType) throw new Error(`Team member '${m.agentName}' missing required field: agentType`);
+    if (!m.agentType)
+      throw new Error(
+        `Team member '${m.agentName}' missing required field: agentType`,
+      );
     if (!AGENT_NAME_RE.test(m.agentType)) {
-      throw new Error(`Team member '${m.agentName}' has invalid agentType '${m.agentType}' — must match ^[a-zA-Z0-9_-]{1,64}$`);
+      throw new Error(
+        `Team member '${m.agentName}' has invalid agentType '${m.agentType}' — must match ^[a-zA-Z0-9_-]{1,64}$`,
+      );
     }
-    if (!m.role) throw new Error(`Team member '${m.agentName}' missing required field: role`);
+    if (!m.role)
+      throw new Error(
+        `Team member '${m.agentName}' missing required field: role`,
+      );
     if (!/^[a-zA-Z0-9 _-]{1,128}$/.test(m.role)) {
-      throw new Error(`Team member '${m.agentName}' role '${m.role}' contains invalid characters (only alphanumeric, spaces, underscores, hyphens allowed)`);
+      throw new Error(
+        `Team member '${m.agentName}' role '${m.role}' contains invalid characters (only alphanumeric, spaces, underscores, hyphens allowed)`,
+      );
     }
   }
 
@@ -157,13 +192,17 @@ export function loadTeamDef(teamsDir: string, teamId: string): TeamDef {
  * Resolve hook settings for a member, cascading team-level defaults with member overrides.
  */
 function resolveHooks(
-  teamHooks: TeamDef['hooks'],
-  memberHooks: TeamDefMember['hooks'],
-): { buildIntercept: boolean; cppLint: boolean } {
-  const defaults = { buildIntercept: true, cppLint: true };
+  teamHooks: TeamDef["hooks"],
+  memberHooks: TeamDefMember["hooks"],
+): { buildIntercept: boolean; cppLint: boolean; jsLint: boolean } {
+  const defaults = { buildIntercept: true, cppLint: true, jsLint: false };
   return {
-    buildIntercept: memberHooks?.buildIntercept ?? teamHooks?.buildIntercept ?? defaults.buildIntercept,
+    buildIntercept:
+      memberHooks?.buildIntercept ??
+      teamHooks?.buildIntercept ??
+      defaults.buildIntercept,
     cppLint: memberHooks?.cppLint ?? teamHooks?.cppLint ?? defaults.cppLint,
+    jsLint: memberHooks?.jsLint ?? teamHooks?.jsLint ?? defaults.jsLint,
   };
 }
 
@@ -172,12 +211,19 @@ function resolveHooks(
  *
  * This is the server-side logic that replaces the shell-based team launch block.
  */
-export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult> {
+export async function launchTeam(
+  opts: LaunchTeamOpts,
+): Promise<LaunchTeamResult> {
   const { projectId, teamId, briefPath, teamsDir, project, db } = opts;
   const bareRepoPath = project.bareRepoPath;
 
   // 1. Validate brief exists on seed branch (includes briefPath format validation)
-  validateBriefOnSeedBranch(bareRepoPath, projectId, briefPath, project.seedBranch);
+  validateBriefOnSeedBranch(
+    bareRepoPath,
+    projectId,
+    briefPath,
+    project.seedBranch,
+  );
 
   // 2. Load and validate team definition
   const def = loadTeamDef(teamsDir, teamId);
@@ -188,8 +234,10 @@ export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult
   await db.transaction(async (tx) => {
     const existing = await teamsQ.getById(tx, def.id, projectId);
     if (existing) {
-      if (existing.status !== 'dissolved') {
-        throw new Error(`Team '${def.id}' already exists and is ${existing.status}`);
+      if (existing.status !== "dissolved") {
+        throw new Error(
+          `Team '${def.id}' already exists and is ${existing.status}`,
+        );
       }
       // Clean up dissolved team data before re-registration
       await roomsQ.deleteRoom(tx, def.id, projectId);
@@ -209,15 +257,15 @@ export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult
     await roomsQ.createRoom(tx, {
       id: def.id,
       name: def.name,
-      type: 'group',
-      createdBy: 'operator',
+      type: "group",
+      createdBy: "operator",
       projectId,
     });
 
     // 5. Post brief path as the first room message
     await chatQ.sendMessage(tx, {
       roomId,
-      authorType: 'operator',
+      authorType: "operator",
       authorAgentId: null,
       content: `Brief: \`${briefPath}\` -- read this file from your workspace to begin.`,
     });

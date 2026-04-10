@@ -21,6 +21,7 @@ services:
       - WORKER_SINGLE_TASK=${WORKER_SINGLE_TASK:-true}
       - HOOK_BUILD_INTERCEPT=${HOOK_BUILD_INTERCEPT:-false}
       - HOOK_CPP_LINT=${HOOK_CPP_LINT:-false}
+      - HOOK_JS_LINT=${HOOK_JS_LINT:-false}
       - PROJECT_ID=${PROJECT_ID:-default}
       - CHAT_ROOM=${CHAT_ROOM:-}
       - TEAM_ROLE=${TEAM_ROLE:-}

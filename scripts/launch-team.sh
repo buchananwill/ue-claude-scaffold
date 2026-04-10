@@ -106,6 +106,7 @@ while IFS= read -r member; do
   _IS_LEADER=$(echo "$member" | jq -r '.isLeader')
   _HOOK_BUILD=$(echo "$member" | jq -r '.hooks.buildIntercept')
   _HOOK_LINT=$(echo "$member" | jq -r '.hooks.cppLint')
+  _HOOK_JS_LINT=$(echo "$member" | jq -r '.hooks.jsLint')
 
   # Stop existing container if running
   (cd "$SCRIPT_DIR/container" && \
@@ -130,6 +131,7 @@ while IFS= read -r member; do
     WORKER_MODE=false \
     HOOK_BUILD_INTERCEPT="$_HOOK_BUILD" \
     HOOK_CPP_LINT="$_HOOK_LINT" \
+    HOOK_JS_LINT="$_HOOK_JS_LINT" \
     "${COMPOSE_CMD[@]}" --project-name "claude-${PROJECT_ID}-${_NAME}" up --build --detach)
 
   echo "  Launched $_NAME (role: $_ROLE, type: $_TYPE, leader: $_IS_LEADER)"

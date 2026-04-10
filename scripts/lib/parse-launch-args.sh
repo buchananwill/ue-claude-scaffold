@@ -63,6 +63,7 @@ _parse_launch_args() {
   _CLI_BRIEF=""
   _CLI_HOOK_BUILD=""
   _CLI_HOOK_LINT=""
+  _CLI_HOOK_JS_LINT=""
   _CLI_PROMPT=""
   _CLI_NO_AGENT=false
 
@@ -104,9 +105,9 @@ _parse_launch_args() {
         fi
         ;;
       --hooks)
-        _CLI_HOOK_BUILD="true"; _CLI_HOOK_LINT="true"; shift ;;
+        _CLI_HOOK_BUILD="true"; _CLI_HOOK_LINT="true"; _CLI_HOOK_JS_LINT="true"; shift ;;
       --no-hooks)
-        _CLI_HOOK_BUILD="false"; _CLI_HOOK_LINT="false"; shift ;;
+        _CLI_HOOK_BUILD="false"; _CLI_HOOK_LINT="false"; _CLI_HOOK_JS_LINT="false"; shift ;;
       --prompt)
         _CLI_PROMPT="$2"; shift 2 ;;
       --no-agent)

@@ -42,6 +42,7 @@ _resolve_project_config() {
 
   PROJECT_HOOK_BUILD=""
   PROJECT_HOOK_LINT=""
+  PROJECT_HOOK_JS_LINT=""
   PROJECT_AGENT_TYPE=""
   PROJECT_SEED_BRANCH=""
 
@@ -61,6 +62,7 @@ _resolve_project_config() {
     LOGS_PATH=$(jq -r --arg id "$project_id" '.projects[$id].logsPath // empty' "$_cfg")
     PROJECT_HOOK_BUILD=$(jq -r --arg id "$project_id" '.projects[$id].hooks.buildIntercept // empty' "$_cfg")
     PROJECT_HOOK_LINT=$(jq -r --arg id "$project_id" '.projects[$id].hooks.cppLint // empty' "$_cfg")
+    PROJECT_HOOK_JS_LINT=$(jq -r --arg id "$project_id" '.projects[$id].hooks.jsLint // empty' "$_cfg")
     PROJECT_AGENT_TYPE=$(jq -r --arg id "$project_id" '.projects[$id].agentType // empty' "$_cfg")
     PROJECT_SEED_BRANCH=$(jq -r --arg id "$project_id" '.projects[$id].seedBranch // empty' "$_cfg")
   elif [[ "$project_id" == "default" ]]; then
@@ -79,6 +81,7 @@ _resolve_project_config() {
     LOGS_PATH="$(jq -r '.logs.path // empty' "$_cfg")"
     PROJECT_HOOK_BUILD=$(jq -r '.hooks.buildIntercept // empty' "$_cfg")
     PROJECT_HOOK_LINT=$(jq -r '.hooks.cppLint // empty' "$_cfg")
+    PROJECT_HOOK_JS_LINT=$(jq -r '.hooks.jsLint // empty' "$_cfg")
     PROJECT_SEED_BRANCH=$(jq -r '.tasks.seedBranch // empty' "$_cfg")
   else
     local _available
@@ -92,7 +95,7 @@ _resolve_project_config() {
     exit 1
   fi
 
-  _validate_hook_values "scaffold.config.json" "$PROJECT_HOOK_BUILD" "$PROJECT_HOOK_LINT"
+  _validate_hook_values "scaffold.config.json" "$PROJECT_HOOK_BUILD" "$PROJECT_HOOK_LINT" "$PROJECT_HOOK_JS_LINT"
 
   if [[ -z "$LOGS_PATH" ]]; then
     LOGS_PATH="$script_dir/logs"

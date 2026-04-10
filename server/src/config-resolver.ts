@@ -3,8 +3,8 @@
  * into a flat, shell-script-friendly shape with sensible defaults.
  */
 
-import { getProject, type ScaffoldConfig } from './config.js';
-import { seedBranchFor } from './branch-naming.js';
+import { getProject, type ScaffoldConfig } from "./config.js";
+import { seedBranchFor } from "./branch-naming.js";
 
 export interface ResolvedProjectConfig {
   projectId: string;
@@ -26,6 +26,7 @@ export interface ResolvedProjectConfig {
   hooks: {
     buildIntercept: string | null;
     cppLint: string | null;
+    jsLint: string | null;
   };
 }
 
@@ -67,6 +68,7 @@ export function resolveProjectConfig(
     hooks: {
       buildIntercept: null, // No hooks in current config schema; placeholder for future
       cppLint: null,
+      jsLint: null,
     },
   };
 }

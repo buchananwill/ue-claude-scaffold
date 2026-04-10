@@ -36,7 +36,8 @@
 
   "hooks": {
     "buildIntercept": true,
-    "cppLint": true
+    "cppLint": true,
+    "jsLint": false
   },
 
   "container": {
@@ -67,7 +68,10 @@
       },
       "plugins": {
         "stagingCopies": [
-          { "source": "D:\\Path\\To\\Voxel\\Plugin", "relativeDest": "Plugins/Voxel" }
+          {
+            "source": "D:\\Path\\To\\Voxel\\Plugin",
+            "relativeDest": "Plugins/Voxel"
+          }
         ]
       },
       "stagingWorktreeRoot": "D:\\Staging\\my-ue-game",

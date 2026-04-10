@@ -104,6 +104,13 @@ _setup_hooks() {
       *) echo "ERROR: HOOK_CPP_LINT must be 'true' or 'false', got '${HOOK_CPP_LINT}'" >&2; exit 1 ;;
     esac
 
+    # JS/TS lint+format is orthogonal to access scope
+    HOOK_JS_LINT="${HOOK_JS_LINT:-false}"
+    case "${HOOK_JS_LINT}" in
+      true|false) ;;
+      *) echo "ERROR: HOOK_JS_LINT must be 'true' or 'false', got '${HOOK_JS_LINT}'" >&2; exit 1 ;;
+    esac
+
     echo "Access scope: ${ACCESS_SCOPE} (buildIntercept=${HOOK_BUILD_INTERCEPT}, gitSync=${HOOK_GIT_SYNC}, readonly=${WORKSPACE_READONLY})"
 
     # Build the PreToolUse Bash matcher hooks array
@@ -126,8 +133,13 @@ _setup_hooks() {
     fi
 
     POST_MATCHERS="[]"
+    if [ "${HOOK_JS_LINT}" = "true" ]; then
+        POST_MATCHERS=$(jq -n --argjson m "$POST_MATCHERS" \
+            '$m + [{"matcher":"Edit","hooks":[{"type":"command","command":"bash /claude-hooks/lint-format.sh"}]},{"matcher":"Write","hooks":[{"type":"command","command":"bash /claude-hooks/lint-format.sh"}]}]')
+    fi
     if [ "${HOOK_GIT_SYNC}" = "true" ]; then
-        POST_MATCHERS=$(jq -n '[{"matcher":"Bash","hooks":[{"type":"command","command":"bash /claude-hooks/push-after-commit.sh"}]}]')
+        POST_MATCHERS=$(jq -n --argjson m "$POST_MATCHERS" \
+            '$m + [{"matcher":"Bash","hooks":[{"type":"command","command":"bash /claude-hooks/push-after-commit.sh"}]}]')
     fi
 
     # Write the final settings file
@@ -135,7 +147,7 @@ _setup_hooks() {
         'if ($post | length) > 0 then {"hooks":{"PreToolUse":$pre,"PostToolUse":$post}} else {"hooks":{"PreToolUse":$pre}} end' \
         > /home/claude/.claude/settings.json
 
-    echo "Hook settings: buildIntercept=${HOOK_BUILD_INTERCEPT}, cppLint=${HOOK_CPP_LINT}, gitSync=${HOOK_GIT_SYNC}"
+    echo "Hook settings: buildIntercept=${HOOK_BUILD_INTERCEPT}, cppLint=${HOOK_CPP_LINT}, jsLint=${HOOK_JS_LINT}, gitSync=${HOOK_GIT_SYNC}"
     echo ""
     echo "── Resolved hook settings.json ──"
     cat /home/claude/.claude/settings.json

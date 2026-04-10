@@ -1,16 +1,17 @@
 // Stateless computation endpoint. No auth required — relies on network isolation.
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync } from "fastify";
 // ajv ships as CJS; under NodeNext module resolution the default import is
 // the namespace object, not the class directly.  Access the class via .default.
-import AjvModule from 'ajv';
+import AjvModule from "ajv";
 const Ajv = AjvModule.default;
-import { resolveHooks, type HookResolutionInput } from '../hook-resolution.js';
+import { resolveHooks, type HookResolutionInput } from "../hook-resolution.js";
 
 const hookFlagsSchema = {
-  type: 'object',
+  type: "object",
   properties: {
-    buildIntercept: { type: ['boolean', 'null'] },
-    cppLint: { type: ['boolean', 'null'] },
+    buildIntercept: { type: ["boolean", "null"] },
+    cppLint: { type: ["boolean", "null"] },
+    jsLint: { type: ["boolean", "null"] },
   },
   additionalProperties: false,
 } as const;
@@ -25,24 +26,28 @@ const hooksPlugin: FastifyPluginAsync = async (fastify) => {
 
   fastify.post<{
     Body: HookResolutionInput;
-  }>('/hooks/resolve', {
-    schema: {
-      body: {
-        type: 'object',
-        required: ['hasBuildScript'],
-        properties: {
-          hasBuildScript: { type: 'boolean' },
-          projectHooks: hookFlagsSchema,
-          teamHooks: hookFlagsSchema,
-          memberHooks: hookFlagsSchema,
-          cliOverride: hookFlagsSchema,
+  }>(
+    "/hooks/resolve",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["hasBuildScript"],
+          properties: {
+            hasBuildScript: { type: "boolean" },
+            projectHooks: hookFlagsSchema,
+            teamHooks: hookFlagsSchema,
+            memberHooks: hookFlagsSchema,
+            cliOverride: hookFlagsSchema,
+          },
+          additionalProperties: false,
         },
-        additionalProperties: false,
       },
     },
-  }, async (request) => {
-    return resolveHooks(request.body);
-  });
+    async (request) => {
+      return resolveHooks(request.body);
+    },
+  );
 };
 
 export default hooksPlugin;

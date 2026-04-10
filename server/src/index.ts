@@ -1,8 +1,13 @@
-import Fastify from 'fastify';
-import sensible from '@fastify/sensible';
-import { loadConfig } from './config.js';
-import { initDrizzle, closeDrizzle, getDbStatus, getDb } from './drizzle-instance.js';
-import projectIdPlugin from './plugins/project-id.js';
+import Fastify from "fastify";
+import sensible from "@fastify/sensible";
+import { loadConfig } from "./config.js";
+import {
+  initDrizzle,
+  closeDrizzle,
+  getDbStatus,
+  getDb,
+} from "./drizzle-instance.js";
+import projectIdPlugin from "./plugins/project-id.js";
 import {
   healthPlugin,
   agentsPlugin,
@@ -25,30 +30,37 @@ import {
   tasksIngestPlugin,
   exitClassifyPlugin,
   statusPlugin,
-} from './routes/index.js';
-import { sweepStaleLock } from './routes/ubt.js';
-import { seedFromConfig } from './queries/projects.js';
+} from "./routes/index.js";
+import { sweepStaleLock } from "./routes/ubt.js";
+import { seedFromConfig } from "./queries/projects.js";
 
 const config = loadConfig();
-const pgliteDataDir = './data/pglite';
+const pgliteDataDir = "./data/pglite";
 await initDrizzle({ pgliteDataDir });
 
 // Seed projects from config into DB (INSERT-only, skip existing)
 {
   const db = getDb();
-  const projectEntries = Object.entries(config.resolvedProjects).map(([id, proj]) => ({
-    id,
-    name: proj.name,
-  }));
-  const { inserted, skipped, invalid } = await seedFromConfig(db, projectEntries);
+  const projectEntries = Object.entries(config.resolvedProjects).map(
+    ([id, proj]) => ({
+      id,
+      name: proj.name,
+    }),
+  );
+  const { inserted, skipped, invalid } = await seedFromConfig(
+    db,
+    projectEntries,
+  );
   if (inserted.length > 0) {
-    console.log(`Seeded projects: ${inserted.join(', ')}`);
+    console.log(`Seeded projects: ${inserted.join(", ")}`);
   }
   if (skipped.length > 0) {
-    console.log(`Skipped existing projects: ${skipped.join(', ')}`);
+    console.log(`Skipped existing projects: ${skipped.join(", ")}`);
   }
   if (invalid.length > 0) {
-    console.error(`Invalid project IDs skipped during seed: ${invalid.join(', ')}`);
+    console.error(
+      `Invalid project IDs skipped during seed: ${invalid.join(", ")}`,
+    );
   }
 }
 
@@ -84,23 +96,27 @@ await server.register(statusPlugin);
 try {
   const address = await server.listen({
     port: config.server.port,
-    host: '0.0.0.0',
+    host: "0.0.0.0",
   });
   console.log(`Coordination server listening at ${address}`);
   const projectIds = Object.keys(config.resolvedProjects);
   if (projectIds.length > 1) {
-    console.log(`  Projects: ${projectIds.join(', ')}`);
+    console.log(`  Projects: ${projectIds.join(", ")}`);
   } else {
     const singleId = projectIds[0];
-    console.log(`  Project: ${config.resolvedProjects[singleId]?.name ?? singleId}`);
+    console.log(
+      `  Project: ${config.resolvedProjects[singleId]?.name ?? singleId}`,
+    );
   }
   const dbStatus = getDbStatus();
-  console.log(`  DB: ${dbStatus.backend}${dbStatus.backend === 'pglite' ? ` (${pgliteDataDir})` : ''}`);
+  console.log(
+    `  DB: ${dbStatus.backend}${dbStatus.backend === "pglite" ? ` (${pgliteDataDir})` : ""}`,
+  );
   console.log(`  UBT lock timeout: ${config.server.ubtLockTimeoutMs}ms`);
 
   setInterval(() => {
     sweepStaleLock().catch((err) => {
-      server.log.error(err, 'UBT stale-lock sweep failed');
+      server.log.error(err, "UBT stale-lock sweep failed");
     });
   }, 60_000);
 
@@ -112,8 +128,8 @@ try {
     process.exit(0);
   };
 
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 } catch (err) {
   server.log.error(err);
   process.exit(1);

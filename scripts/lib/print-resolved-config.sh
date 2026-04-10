@@ -14,7 +14,7 @@ readonly _LIB_PRINT_RESOLVED_CONFIG_LOADED=1
 #     AGENT_NAME, AGENT_BRANCH, ROOT_BRANCH, WORK_BRANCH, AGENT_TYPE,
 #     PROJECT_ID, MAX_TURNS, BARE_REPO_PATH, UE_ENGINE_PATH, SERVER_PORT,
 #     WORKER_MODE, WORKER_POLL_INTERVAL, WORKER_SINGLE_TASK, AGENT_MODE,
-#     LOG_VERBOSITY, HOOK_BUILD_INTERCEPT, HOOK_CPP_LINT,
+#     LOG_VERBOSITY, HOOK_BUILD_INTERCEPT, HOOK_CPP_LINT, HOOK_JS_LINT,
 #     _CLI_PARALLEL, _CLI_FRESH, SCRIPT_DIR
 _print_resolved_config() {
   echo ""
@@ -59,6 +59,7 @@ _print_resolved_config() {
   echo "  HOOKS:"
   echo "    buildIntercept: ${HOOK_BUILD_INTERCEPT:-}"
   echo "    cppLint:        ${HOOK_CPP_LINT:-}"
+  echo "    jsLint:         ${HOOK_JS_LINT:-}"
   if [ "${_CLI_PARALLEL:-0}" -ge 1 ] 2>/dev/null; then
     echo ""
     echo "Parallel agent branches:"

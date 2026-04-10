@@ -14,6 +14,7 @@
 export interface HookFlags {
   buildIntercept?: boolean | null;
   cppLint?: boolean | null;
+  jsLint?: boolean | null;
 }
 
 export interface HookResolutionInput {
@@ -27,13 +28,17 @@ export interface HookResolutionInput {
 export interface ResolvedHooks {
   buildIntercept: boolean;
   cppLint: boolean;
+  jsLint: boolean;
 }
 
 /**
  * Apply a cascade of overrides to a system default.
  * Each non-null/non-undefined value in the overrides list replaces the current result.
  */
-function cascadeFlag(systemDefault: boolean, ...overrides: (boolean | null | undefined)[]): boolean {
+function cascadeFlag(
+  systemDefault: boolean,
+  ...overrides: (boolean | null | undefined)[]
+): boolean {
   let result = systemDefault;
   for (const override of overrides) {
     if (override != null) result = override;
@@ -45,7 +50,8 @@ function cascadeFlag(systemDefault: boolean, ...overrides: (boolean | null | und
  * Resolve hook flags by applying the 5-level cascade.
  */
 export function resolveHooks(input: HookResolutionInput): ResolvedHooks {
-  const { hasBuildScript, projectHooks, teamHooks, memberHooks, cliOverride } = input;
+  const { hasBuildScript, projectHooks, teamHooks, memberHooks, cliOverride } =
+    input;
 
   return {
     buildIntercept: cascadeFlag(
@@ -61,6 +67,13 @@ export function resolveHooks(input: HookResolutionInput): ResolvedHooks {
       teamHooks?.cppLint,
       memberHooks?.cppLint,
       cliOverride?.cppLint,
+    ),
+    jsLint: cascadeFlag(
+      false,
+      projectHooks?.jsLint,
+      teamHooks?.jsLint,
+      memberHooks?.jsLint,
+      cliOverride?.jsLint,
     ),
   };
 }

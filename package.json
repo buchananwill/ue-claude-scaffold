@@ -3,5 +3,8 @@
   "version": "0.3.0",
   "description": "Run autonomous Claude Code agents in Docker containers against Unreal Engine projects",
   "private": true,
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "prettier": "^3.8.2"
+  }
 }

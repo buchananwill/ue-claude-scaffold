@@ -1,7 +1,7 @@
 #!/bin/bash
 # scripts/lib/resolve-hooks.sh -- Hook resolution cascade.
 #
-# Resolves HOOK_BUILD_INTERCEPT and HOOK_CPP_LINT from the cascade:
+# Resolves HOOK_BUILD_INTERCEPT, HOOK_CPP_LINT, and HOOK_JS_LINT from the cascade:
 #   system default -> project -> team -> member -> CLI override
 # Source this file; do not execute it directly.
 
@@ -24,9 +24,9 @@ _resolve_hook_value() {
 }
 
 # _resolve_hooks [member_json]
-#   Sets HOOK_BUILD_INTERCEPT and HOOK_CPP_LINT.
-#   Reads: PROJECT_ID, PROJECT_HOOK_BUILD, PROJECT_HOOK_LINT,
-#          _CLI_HOOK_BUILD, _CLI_HOOK_LINT, TEAM_DEF, SCRIPT_DIR
+#   Sets HOOK_BUILD_INTERCEPT, HOOK_CPP_LINT, and HOOK_JS_LINT.
+#   Reads: PROJECT_ID, PROJECT_HOOK_BUILD, PROJECT_HOOK_LINT, PROJECT_HOOK_JS_LINT,
+#          _CLI_HOOK_BUILD, _CLI_HOOK_LINT, _CLI_HOOK_JS_LINT, TEAM_DEF, SCRIPT_DIR
 _resolve_hooks() {
   local member_json="${1:-}"
   local _cfg="${SCRIPT_DIR}/scaffold.config.json"
@@ -40,22 +40,27 @@ _resolve_hooks() {
   fi
   local sys_lint="false"
 
+  local sys_js_lint="false"
+
   # Team-level overrides
-  local team_build="" team_lint=""
+  local team_build="" team_lint="" team_js_lint=""
   if [[ -n "${TEAM_DEF:-}" && -f "${TEAM_DEF:-}" ]]; then
     team_build=$(jq -r '.hooks.buildIntercept // empty' "$TEAM_DEF")
     team_lint=$(jq -r '.hooks.cppLint // empty' "$TEAM_DEF")
+    team_js_lint=$(jq -r '.hooks.jsLint // empty' "$TEAM_DEF")
   fi
-  _validate_hook_values "team definition" "$team_build" "$team_lint"
+  _validate_hook_values "team definition" "$team_build" "$team_lint" "$team_js_lint"
 
   # Per-member overrides
-  local member_build="" member_lint=""
+  local member_build="" member_lint="" member_js_lint=""
   if [[ -n "$member_json" ]]; then
     member_build=$(printf '%s' "$member_json" | jq -r '.hooks.buildIntercept // empty')
     member_lint=$(printf '%s' "$member_json" | jq -r '.hooks.cppLint // empty')
+    member_js_lint=$(printf '%s' "$member_json" | jq -r '.hooks.jsLint // empty')
   fi
-  _validate_hook_values "member definition" "$member_build" "$member_lint"
+  _validate_hook_values "member definition" "$member_build" "$member_lint" "$member_js_lint"
 
   HOOK_BUILD_INTERCEPT=$(_resolve_hook_value "$sys_build" "$PROJECT_HOOK_BUILD" "$team_build" "$member_build" "${_CLI_HOOK_BUILD:-}")
   HOOK_CPP_LINT=$(_resolve_hook_value "$sys_lint" "$PROJECT_HOOK_LINT" "$team_lint" "$member_lint" "${_CLI_HOOK_LINT:-}")
+  HOOK_JS_LINT=$(_resolve_hook_value "$sys_js_lint" "$PROJECT_HOOK_JS_LINT" "$team_js_lint" "$member_js_lint" "${_CLI_HOOK_JS_LINT:-}")
 }
