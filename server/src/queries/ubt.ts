@@ -115,6 +115,10 @@ export async function isAgentRegistered(db: DbOrTx, agentId: string): Promise<bo
   const rows = await db
     .select({ id: agents.id })
     .from(agents)
-    .where(and(eq(agents.id, agentId), ne(agents.status, 'stopping')));
+    .where(and(
+      eq(agents.id, agentId),
+      ne(agents.status, 'stopping'),
+      ne(agents.status, 'deleted'),
+    ));
   return rows.length > 0;
 }

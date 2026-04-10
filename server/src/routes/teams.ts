@@ -146,6 +146,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       roomId: team.id,
       members: members.map(m => ({
         agentId: m.agentId,
+        agentName: m.agentName,
         role: m.role,
         isLeader: m.isLeader,
       })),

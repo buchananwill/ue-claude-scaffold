@@ -29,6 +29,22 @@ CREATE TABLE "projects" (
 );
 
 INSERT INTO "projects" ("id", "name") VALUES ('default', 'Default Project');
+INSERT INTO "projects" ("id", "name") VALUES ('proj-a', 'Project A');
+INSERT INTO "projects" ("id", "name") VALUES ('proj-f', 'Project F');
+INSERT INTO "projects" ("id", "name") VALUES ('proj-x', 'Project X');
+INSERT INTO "projects" ("id", "name") VALUES ('proj-1', 'Project 1');
+INSERT INTO "projects" ("id", "name") VALUES ('dep-proj', 'Dep Project');
+INSERT INTO "projects" ("id", "name") VALUES ('list-test', 'List Test');
+INSERT INTO "projects" ("id", "name") VALUES ('count-test', 'Count Test');
+INSERT INTO "projects" ("id", "name") VALUES ('del-test', 'Del Test');
+INSERT INTO "projects" ("id", "name") VALUES ('replan', 'Replan Project');
+INSERT INTO "projects" ("id", "name") VALUES ('claim-proj', 'Claim Project');
+INSERT INTO "projects" ("id", "name") VALUES ('my-proj', 'My Project');
+INSERT INTO "projects" ("id", "name") VALUES ('since-proj', 'Since Project');
+INSERT INTO "projects" ("id", "name") VALUES ('limit-proj', 'Limit Project');
+INSERT INTO "projects" ("id", "name") VALUES ('header-proj', 'Header Project');
+INSERT INTO "projects" ("id", "name") VALUES ('alpha', 'Alpha');
+INSERT INTO "projects" ("id", "name") VALUES ('beta', 'Beta');
 
 CREATE TABLE "agents" (
   "id" uuid PRIMARY KEY NOT NULL,
@@ -198,4 +214,23 @@ export async function createTestDb(): Promise<TestDb> {
     db,
     close: async () => { await client.close(); },
   };
+}
+
+/**
+ * Insert a test agent into the database. Returns the UUID.
+ * The projectId must already exist in the projects table (seeded or inserted).
+ */
+export async function insertTestAgent(
+  db: DrizzleDb,
+  name: string,
+  projectId: string = 'default',
+): Promise<string> {
+  const id = crypto.randomUUID();
+  await db.insert(schema.agents).values({
+    id,
+    name,
+    projectId,
+    worktree: `/tmp/test-worktree-${name}`,
+  });
+  return id;
 }

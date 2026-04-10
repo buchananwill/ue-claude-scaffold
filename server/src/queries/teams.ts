@@ -1,6 +1,6 @@
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
-import { teams, teamMembers, rooms, roomMembers } from '../schema/tables.js';
+import { teams, teamMembers, rooms, roomMembers, agents } from '../schema/tables.js';
 import type { DbOrTx } from '../drizzle-instance.js';
 
 export interface CreateOpts {
@@ -114,10 +114,12 @@ export async function getMembers(db: DbOrTx, teamId: string) {
   return db
     .select({
       agentId: teamMembers.agentId,
+      agentName: agents.name,
       role: teamMembers.role,
       isLeader: teamMembers.isLeader,
     })
     .from(teamMembers)
+    .innerJoin(agents, eq(agents.id, teamMembers.agentId))
     .where(eq(teamMembers.teamId, teamId));
 }
 

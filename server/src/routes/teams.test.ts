@@ -4,6 +4,18 @@ import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-h
 import { createTestConfig } from '../test-helper.js';
 import roomsPlugin from './rooms.js';
 import teamsPlugin from './teams.js';
+import agentsPlugin from './agents.js';
+
+/** Register standard test agents ('alice', 'bob', 'a', 'b', 'orchestrator', 'user'). */
+async function registerTestAgents(app: import('fastify').FastifyInstance) {
+  for (const name of ['alice', 'bob', 'a', 'b', 'orchestrator', 'user']) {
+    await app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name, worktree: `/tmp/${name}` },
+    });
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helper: create a team via inject                                   */
@@ -41,8 +53,10 @@ describe('POST /teams', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
+    await ctx.app.register(agentsPlugin, { config: createTestConfig() });
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+    await registerTestAgents(ctx.app);
   });
 
   afterEach(async () => {
@@ -80,7 +94,7 @@ describe('POST /teams', () => {
     assert.equal(room.type, 'group');
   });
 
-  it('room contains all members plus "user"', async () => {
+  it('room contains all agent members (room_members is agent-only)', async () => {
     await createTeam(ctx, {
       id: 'team-3',
       name: 'Gamma Team',
@@ -93,7 +107,8 @@ describe('POST /teams', () => {
 
     const res = await ctx.app.inject({ method: 'GET', url: '/rooms/team-3' });
     const members = res.json().members.map((m: { member: string }) => m.member).sort();
-    assert.deepEqual(members, ['alice', 'bob', 'user']);
+    // room_members is agent-only; the operator authors messages without being a member
+    assert.deepEqual(members, ['alice', 'bob']);
   });
 
   it('returns 400 when zero leaders provided', async () => {
@@ -129,8 +144,10 @@ describe('GET /teams', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
+    await ctx.app.register(agentsPlugin, { config: createTestConfig() });
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+    await registerTestAgents(ctx.app);
   });
 
   afterEach(async () => {
@@ -182,8 +199,10 @@ describe('GET /teams/:id', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
+    await ctx.app.register(agentsPlugin, { config: createTestConfig() });
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+    await registerTestAgents(ctx.app);
   });
 
   afterEach(async () => {
@@ -236,8 +255,10 @@ describe('DELETE /teams/:id', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
+    await ctx.app.register(agentsPlugin, { config: createTestConfig() });
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+    await registerTestAgents(ctx.app);
   });
 
   afterEach(async () => {
@@ -288,8 +309,10 @@ describe('PATCH /teams/:id', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
+    await ctx.app.register(agentsPlugin, { config: createTestConfig() });
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+    await registerTestAgents(ctx.app);
   });
 
   afterEach(async () => {
@@ -364,8 +387,10 @@ describe('POST /teams/:id/launch', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
+    await ctx.app.register(agentsPlugin, { config: createTestConfig() });
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+    await registerTestAgents(ctx.app);
   });
 
   afterEach(async () => {
@@ -426,8 +451,10 @@ describe('POST /teams — input validation', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
+    await ctx.app.register(agentsPlugin, { config: createTestConfig() });
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+    await registerTestAgents(ctx.app);
   });
 
   afterEach(async () => {
@@ -494,8 +521,10 @@ describe('GET /teams — status filter validation', () => {
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
+    await ctx.app.register(agentsPlugin, { config: createTestConfig() });
     await ctx.app.register(roomsPlugin);
     await ctx.app.register(teamsPlugin, { config: createTestConfig() });
+    await registerTestAgents(ctx.app);
   });
 
   afterEach(async () => {

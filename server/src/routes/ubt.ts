@@ -3,6 +3,7 @@ import { getDb } from '../drizzle-instance.js';
 import * as ubtQ from '../queries/ubt.js';
 import * as buildsQ from '../queries/builds.js';
 import type { ScaffoldConfig } from '../config.js';
+import { resolveAgent } from './route-helpers.js';
 
 interface UbtOpts {
   config: ScaffoldConfig;
@@ -113,9 +114,16 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
 
   fastify.post<{
     Body: { agent: string; priority?: number };
-  }>('/ubt/acquire', async (request) => {
+  }>('/ubt/acquire', async (request, reply) => {
     const { agent, priority = 0 } = request.body;
     const db = getDb();
+
+    // Resolve agent name to UUID
+    const agentRow = await resolveAgent(db, request.projectId, agent);
+    if (!agentRow) {
+      return reply.notFound(`Agent '${agent}' not found in project '${request.projectId}'`);
+    }
+    const agentId = agentRow.id;
 
     // Pre-compute estimated build time outside the transaction to avoid
     // deadlock on single-connection backends (PGlite).
@@ -125,15 +133,15 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
       const lock = await ubtQ.getLock(tx);
 
       if (!lock || isStale(lock.acquiredAt)) {
-        await ubtQ.acquireLock(tx, agent, priority);
+        await ubtQ.acquireLock(tx, agentId, priority);
         return { granted: true };
       }
 
-      if (lock.holderAgentId === agent) {
+      if (lock.holderAgentId === agentId) {
         return { granted: true };
       }
 
-      const existing = await ubtQ.findInQueue(tx, agent);
+      const existing = await ubtQ.findInQueue(tx, agentId);
       if (existing) {
         const pos = await ubtQ.getQueuePosition(tx, existing.id, existing.priority ?? 0);
         return {
@@ -146,7 +154,7 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
         };
       }
 
-      const queueId = await ubtQ.enqueue(tx, agent, priority);
+      const queueId = await ubtQ.enqueue(tx, agentId, priority);
       const pos = await ubtQ.getQueuePosition(tx, queueId, priority);
 
       return {
@@ -162,9 +170,16 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
 
   fastify.post<{
     Body: { agent: string };
-  }>('/ubt/release', async (request) => {
+  }>('/ubt/release', async (request, reply) => {
     const { agent } = request.body;
     const db = getDb();
+
+    // Resolve agent name to UUID
+    const agentRow = await resolveAgent(db, request.projectId, agent);
+    if (!agentRow) {
+      return reply.notFound(`Agent '${agent}' not found in project '${request.projectId}'`);
+    }
+    const agentId = agentRow.id;
 
     const lock = await ubtQ.getLock(db);
 
@@ -172,7 +187,7 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
       return { ok: false, reason: 'not_held' };
     }
 
-    if (lock.holderAgentId !== agent) {
+    if (lock.holderAgentId !== agentId) {
       return { ok: false, reason: 'not_holder' };
     }
 

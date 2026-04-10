@@ -40,6 +40,7 @@ describe('GET /status', () => {
       name: 'status-agent-1',
       worktree: '/tmp/wt1',
       projectId: 'default',
+      sessionToken: crypto.randomUUID(),
     });
 
     await tasksCore.insert(db, {
@@ -79,6 +80,7 @@ describe('GET /status', () => {
       name: 'proj-agent',
       worktree: '/tmp/wt-proj',
       projectId: 'my-proj',
+      sessionToken: crypto.randomUUID(),
     });
 
     await tasksCore.insert(db, {
@@ -99,6 +101,7 @@ describe('GET /status', () => {
       name: 'default-agent',
       worktree: '/tmp/wt-default',
       projectId: 'default',
+      sessionToken: crypto.randomUUID(),
     });
 
     const res = await ctx.app.inject({
@@ -262,6 +265,7 @@ describe('GET /status', () => {
       name: 'header-proj-agent',
       worktree: '/tmp/wt-hp',
       projectId: 'header-proj',
+      sessionToken: crypto.randomUUID(),
     });
 
     // Use header, not query param

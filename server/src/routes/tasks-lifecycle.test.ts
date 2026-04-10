@@ -3,14 +3,27 @@ import assert from 'node:assert/strict';
 import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import tasksPlugin from './tasks.js';
+import agentsPlugin from './agents.js';
 
 describe('tasks-lifecycle routes', () => {
   let ctx: DrizzleTestContext;
 
+  async function registerAgent(name: string) {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name, worktree: `/tmp/${name}` },
+    });
+  }
+
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     const config = createTestConfig();
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
+    await registerAgent('agent-1');
+    await registerAgent('agent-2');
+    await registerAgent('nobody');
   });
 
   afterEach(async () => {

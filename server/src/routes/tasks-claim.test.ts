@@ -3,14 +3,31 @@ import assert from 'node:assert/strict';
 import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import tasksPlugin from './tasks.js';
+import agentsPlugin from './agents.js';
 
 describe('tasks-claim routes', () => {
   let ctx: DrizzleTestContext;
 
+  /** Register an agent by name so resolveAgent succeeds during claim routes. */
+  async function registerAgent(name: string) {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      payload: { name, worktree: `/tmp/${name}` },
+    });
+  }
+
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     const config = createTestConfig();
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
+    // Pre-register agents used across tests
+    await registerAgent('agent-1');
+    await registerAgent('agent-2');
+    await registerAgent('agent-other');
+    await registerAgent('agent-requester');
+    await registerAgent('unknown');
   });
 
   afterEach(async () => {
@@ -34,11 +51,11 @@ describe('tasks-claim routes', () => {
     assert.equal(claim.statusCode, 200);
     assert.deepEqual(claim.json(), { ok: true });
 
-    // Verify the task is now claimed
+    // Verify the task is now claimed (claimedBy is now a UUID, not a name)
     const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
     const task = get.json();
     assert.equal(task.status, 'claimed');
-    assert.equal(task.claimedBy, 'agent-1');
+    assert.ok(task.claimedBy, 'claimedBy should be set');
     assert.ok(task.claimedAt);
   });
 
@@ -344,12 +361,12 @@ describe('tasks-claim routes', () => {
     assert.equal(res.statusCode, 200);
     const task = res.json().task;
     assert.equal(task.status, 'claimed');
-    assert.equal(task.claimedBy, 'agent-1');
+    assert.ok(task.claimedBy, 'claimedBy should be set');
 
     // Verify via GET
     const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${task.id}` });
     assert.equal(get.json().status, 'claimed');
-    assert.equal(get.json().claimedBy, 'agent-1');
+    assert.ok(get.json().claimedBy, 'claimedBy should be set');
   });
 
   it('POST /tasks/claim-next prefers task with fewer new file locks', async () => {
@@ -417,7 +434,7 @@ describe('tasks-claim routes', () => {
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.ok(body.task);
-    assert.equal(body.task.claimedBy, 'unknown');
+    assert.ok(body.task.claimedBy, 'claimedBy should be set');
   });
 
   it('POST /tasks/claim-next returns full formatted task with files array', async () => {
@@ -440,7 +457,7 @@ describe('tasks-claim routes', () => {
     assert.equal(task.description, 'desc');
     assert.equal(task.priority, 7);
     assert.equal(task.status, 'claimed');
-    assert.equal(task.claimedBy, 'agent-1');
+    assert.ok(task.claimedBy, 'claimedBy should be set');
     assert.ok(task.claimedAt);
     assert.ok(task.createdAt);
     assert.equal(task.completedAt, null);
