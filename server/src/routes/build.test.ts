@@ -2,42 +2,47 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import buildPlugin, { isUbtContentionResult } from './build.js';
-import { agents } from '../schema/tables.js';
+import agentsPlugin from './agents.js';
+
+/** Shared setup for build test blocks: creates tmpDir, mock script, and base config. */
+function createBuildTestSetup() {
+  const tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-test-'));
+  const mockScriptPath = path.join(tmpDir, 'mock-build.js');
+  writeFileSync(
+    mockScriptPath,
+    `process.stdout.write('build output line\\n');
+process.stderr.write('build warning\\n');
+process.exit(0);
+`
+  );
+  const baseBuildConfig = {
+    scriptPath: `node ${mockScriptPath}`,
+    testScriptPath: `node ${mockScriptPath}`,
+    defaultTestFilters: ['TestFilter1'],
+    buildTimeoutMs: 660_000,
+    testTimeoutMs: 700_000,
+    ubtRetryCount: 5,
+    ubtRetryDelayMs: 30_000,
+  };
+  return { tmpDir, mockScriptPath, baseBuildConfig };
+}
 
 describe('build routes', () => {
   let ctx: DrizzleTestContext;
-  let mockScriptPath: string;
   let tmpDir: string;
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
-
-    tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-test-'));
-    mockScriptPath = path.join(tmpDir, 'mock-build.js');
-    writeFileSync(
-      mockScriptPath,
-      `process.stdout.write('build output line\\n');
-process.stderr.write('build warning\\n');
-process.exit(0);
-`
-    );
+    const setup = createBuildTestSetup();
+    tmpDir = setup.tmpDir;
 
     const config = createTestConfig({
-      build: {
-        scriptPath: `node ${mockScriptPath}`,
-        testScriptPath: `node ${mockScriptPath}`,
-        defaultTestFilters: ['TestFilter1'],
-        buildTimeoutMs: 660_000,
-        testTimeoutMs: 700_000,
-        ubtRetryCount: 5,
-        ubtRetryDelayMs: 30_000,
-      },
+      build: setup.baseBuildConfig,
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
@@ -51,13 +56,14 @@ process.exit(0);
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
   });
 
   it('POST /build returns the correct response shape', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
+      headers: { 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -72,6 +78,7 @@ process.exit(0);
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/test',
+      headers: { 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -85,23 +92,14 @@ process.exit(0);
 
 describe('build route branch resolution', () => {
   let ctx: DrizzleTestContext;
-  let mockScriptPath: string;
   let stagingRoot: string;
   let projectPath: string;
   let tmpDir: string;
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
-
-    tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-test-'));
-    mockScriptPath = path.join(tmpDir, 'mock-build.js');
-    writeFileSync(
-      mockScriptPath,
-      `process.stdout.write('build output line\\n');
-process.stderr.write('build warning\\n');
-process.exit(0);
-`
-    );
+    const setup = createBuildTestSetup();
+    tmpDir = setup.tmpDir;
 
     const bareRepoDir = path.join(tmpDir, 'bare.git');
     mkdirSync(bareRepoDir);
@@ -120,15 +118,7 @@ process.exit(0);
         path: projectPath,
         uprojectFile: path.join(projectPath, 'Test.uproject'),
       },
-      build: {
-        scriptPath: `node ${mockScriptPath}`,
-        testScriptPath: `node ${mockScriptPath}`,
-        defaultTestFilters: ['TestFilter1'],
-        buildTimeoutMs: 660_000,
-        testTimeoutMs: 700_000,
-        ubtRetryCount: 5,
-        ubtRetryDelayMs: 30_000,
-      },
+      build: setup.baseBuildConfig,
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
@@ -137,13 +127,14 @@ process.exit(0);
       },
     });
 
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(buildPlugin, { config });
   });
 
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
   });
 
   it('defaults to docker/default/current-root when no agent is registered', async () => {
@@ -154,7 +145,7 @@ process.exit(0);
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
-      headers: { 'x-agent-name': 'unknown-agent' },
+      headers: { 'x-agent-name': 'unknown-agent', 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -170,6 +161,7 @@ process.exit(0);
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
+      headers: { 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -186,17 +178,18 @@ process.exit(0);
     mkdirSync(agentDir);
     execSync('git init', { cwd: agentDir, stdio: 'ignore' });
 
-    // Register agent directly via Drizzle
-    await ctx.db.insert(agents).values({
-      name: 'test-agent',
-      worktree: 'docker/default/test-agent',
-      projectId: 'default',
+    // Register agent via route
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      headers: { 'x-project-id': 'default' },
+      payload: { name: 'test-agent', worktree: 'docker/default/test-agent' },
     });
 
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
-      headers: { 'x-agent-name': 'test-agent' },
+      headers: { 'x-agent-name': 'test-agent', 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -213,16 +206,18 @@ process.exit(0);
     mkdirSync(agentDir);
     execSync('git init', { cwd: agentDir, stdio: 'ignore' });
 
-    await ctx.db.insert(agents).values({
-      name: 'test-agent',
-      worktree: 'docker/default/test-agent',
-      projectId: 'default',
+    // Register agent via route
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      headers: { 'x-project-id': 'default' },
+      payload: { name: 'test-agent', worktree: 'docker/default/test-agent' },
     });
 
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/test',
-      headers: { 'x-agent-name': 'test-agent' },
+      headers: { 'x-agent-name': 'test-agent', 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -237,32 +232,15 @@ process.exit(0);
 
 describe('build route x-agent-name validation', () => {
   let ctx: DrizzleTestContext;
-  let mockScriptPath: string;
   let tmpDir: string;
 
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
-
-    tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-test-'));
-    mockScriptPath = path.join(tmpDir, 'mock-build.js');
-    writeFileSync(
-      mockScriptPath,
-      `process.stdout.write('build output line\\n');
-process.stderr.write('build warning\\n');
-process.exit(0);
-`
-    );
+    const setup = createBuildTestSetup();
+    tmpDir = setup.tmpDir;
 
     const config = createTestConfig({
-      build: {
-        scriptPath: `node ${mockScriptPath}`,
-        testScriptPath: `node ${mockScriptPath}`,
-        defaultTestFilters: ['TestFilter1'],
-        buildTimeoutMs: 660_000,
-        testTimeoutMs: 700_000,
-        ubtRetryCount: 5,
-        ubtRetryDelayMs: 30_000,
-      },
+      build: setup.baseBuildConfig,
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
@@ -276,14 +254,14 @@ process.exit(0);
   afterEach(async () => {
     await ctx.app.close();
     await ctx.cleanup();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
   });
 
   it('POST /build rejects malformed x-agent-name with path traversal', async () => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/build',
-      headers: { 'x-agent-name': '../../evil' },
+      headers: { 'x-agent-name': '../../evil', 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);
@@ -296,7 +274,7 @@ process.exit(0);
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/test',
-      headers: { 'x-agent-name': '../../evil' },
+      headers: { 'x-agent-name': '../../evil', 'x-project-id': 'default' },
       payload: {},
     });
     assert.equal(res.statusCode, 200);

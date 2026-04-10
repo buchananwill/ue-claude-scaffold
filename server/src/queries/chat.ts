@@ -1,28 +1,50 @@
-import { eq, and, gt, lt, desc, asc } from 'drizzle-orm';
-import { chatMessages, roomMembers } from '../schema/tables.js';
-import type { DrizzleDb, DrizzleTx } from '../drizzle-instance.js';
+import { eq, and, gt, lt, desc, asc, sql } from 'drizzle-orm';
+import { chatMessages, roomMembers, agents } from '../schema/tables.js';
+import type { DbOrTx } from '../drizzle-instance.js';
+import { firstOrThrow } from './query-helpers.js';
 
-/** Accept either a full DB instance or a transaction client. */
-type DbOrTx = DrizzleDb | DrizzleTx;
+const VALID_AUTHOR_TYPES = ['agent', 'operator', 'system'] as const;
+type AuthorType = (typeof VALID_AUTHOR_TYPES)[number];
 
 export interface SendMessageOpts {
   roomId: string;
-  sender: string;
+  authorType: AuthorType;
+  authorAgentId: string | null;
   content: string;
   replyTo?: number | null;
 }
 
-export async function sendMessage(db: DbOrTx, opts: SendMessageOpts) {
+export async function sendMessage(db: DbOrTx, opts: SendMessageOpts): Promise<{
+  id: number;
+  roomId: string;
+  authorType: string;
+  authorAgentId: string | null;
+  content: string;
+  replyTo: number | null;
+  createdAt: Date | null;
+}> {
+  if (!VALID_AUTHOR_TYPES.includes(opts.authorType)) {
+    throw new Error(`Invalid authorType: ${opts.authorType}`);
+  }
+
+  if (opts.authorType === 'agent' && opts.authorAgentId == null) {
+    throw new Error("authorAgentId is required when authorType is 'agent'");
+  }
+  if (opts.authorType !== 'agent' && opts.authorAgentId != null) {
+    throw new Error("authorAgentId must be null when authorType is not 'agent'");
+  }
+
   const rows = await db
     .insert(chatMessages)
     .values({
       roomId: opts.roomId,
-      sender: opts.sender,
+      authorType: opts.authorType,
+      authorAgentId: opts.authorAgentId,
       content: opts.content,
       replyTo: opts.replyTo ?? null,
     })
     .returning();
-  return rows[0];
+  return firstOrThrow(rows);
 }
 
 export interface GetHistoryOpts {
@@ -31,24 +53,45 @@ export interface GetHistoryOpts {
   limit?: number;
 }
 
-export async function getHistory(db: DbOrTx, roomId: string, opts: GetHistoryOpts = {}) {
+export async function getHistory(db: DbOrTx, roomId: string, opts: GetHistoryOpts = {}): Promise<Array<{
+  id: number;
+  roomId: string;
+  authorType: string;
+  authorAgentId: string | null;
+  content: string;
+  replyTo: number | null;
+  createdAt: Date | null;
+  sender: string;
+}>> {
+  // Column references only; no user input interpolated
+  const senderColumn = sql<string>`COALESCE(${agents.name}, CASE ${chatMessages.authorType} WHEN 'operator' THEN 'user' WHEN 'system' THEN 'system' ELSE NULL END, 'unknown')`.as('sender');
+
+  const historySelect = {
+    id: chatMessages.id,
+    roomId: chatMessages.roomId,
+    authorType: chatMessages.authorType,
+    authorAgentId: chatMessages.authorAgentId,
+    content: chatMessages.content,
+    replyTo: chatMessages.replyTo,
+    createdAt: chatMessages.createdAt,
+    sender: senderColumn,
+  } as const;
   const pageSize = Math.min(Math.max(opts.limit ?? 100, 1), 500);
 
+  const baseQuery = db
+    .select(historySelect)
+    .from(chatMessages)
+    .leftJoin(agents, eq(agents.id, chatMessages.authorAgentId));
+
   if (opts.after != null) {
-    // after cursor: WHERE id > after, ORDER BY id ASC, LIMIT
-    return db
-      .select()
-      .from(chatMessages)
+    return baseQuery
       .where(and(eq(chatMessages.roomId, roomId), gt(chatMessages.id, opts.after)))
       .orderBy(asc(chatMessages.id))
       .limit(pageSize);
   }
 
   if (opts.before != null) {
-    // before cursor: WHERE id < before, ORDER BY id DESC, LIMIT, then reverse
-    const rows = await db
-      .select()
-      .from(chatMessages)
+    const rows = await baseQuery
       .where(and(eq(chatMessages.roomId, roomId), lt(chatMessages.id, opts.before)))
       .orderBy(desc(chatMessages.id))
       .limit(pageSize);
@@ -56,10 +99,7 @@ export async function getHistory(db: DbOrTx, roomId: string, opts: GetHistoryOpt
     return rows;
   }
 
-  // latest: ORDER BY id DESC, LIMIT, then reverse
-  const rows = await db
-    .select()
-    .from(chatMessages)
+  const rows = await baseQuery
     .where(eq(chatMessages.roomId, roomId))
     .orderBy(desc(chatMessages.id))
     .limit(pageSize);
@@ -67,10 +107,10 @@ export async function getHistory(db: DbOrTx, roomId: string, opts: GetHistoryOpt
   return rows;
 }
 
-export async function isMember(db: DbOrTx, roomId: string, member: string): Promise<boolean> {
+export async function isAgentMember(db: DbOrTx, roomId: string, agentId: string): Promise<boolean> {
   const rows = await db
-    .select({ member: roomMembers.member })
+    .select({ agentId: roomMembers.agentId })
     .from(roomMembers)
-    .where(and(eq(roomMembers.roomId, roomId), eq(roomMembers.member, member)));
+    .where(and(eq(roomMembers.roomId, roomId), eq(roomMembers.agentId, agentId)));
   return rows.length > 0;
 }

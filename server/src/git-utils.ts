@@ -187,7 +187,7 @@ export async function mergeIntoAgentBranches(opts: {
 
   let agentNames: string[];
   if (targetAgents === '*') {
-    agentNames = await agentsQ.getActiveNames(db);
+    agentNames = await agentsQ.getActiveNames(db, projectId);
   } else {
     agentNames = targetAgents;
   }

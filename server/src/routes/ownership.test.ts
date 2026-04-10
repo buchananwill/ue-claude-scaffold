@@ -1,18 +1,26 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestConfig } from '../test-helper.js';
+import { createTestConfig, registerAgent } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import tasksPlugin from './tasks.js';
 import filesPlugin from './files.js';
+import agentsPlugin from './agents.js';
 
 describe('file write ownership', () => {
   let ctx: DrizzleTestContext;
+  const agentIds: Record<string, string> = {};
 
   beforeEach(async () => {
+    // Reset agentIds for each test
+    for (const key of Object.keys(agentIds)) delete agentIds[key];
     ctx = await createDrizzleTestApp();
     const config = createTestConfig();
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
     await ctx.app.register(filesPlugin);
+    agentIds['agent-1'] = await registerAgent(ctx.app, 'agent-1');
+    agentIds['agent-2'] = await registerAgent(ctx.app, 'agent-2');
+    agentIds['agent-3'] = await registerAgent(ctx.app, 'agent-3');
   });
 
   afterEach(async () => {
@@ -43,7 +51,7 @@ describe('file write ownership', () => {
     return res.json();
   }
 
-  it('agent-1 claims task with files [A, B] -> files show claimant = agent-1', async () => {
+  it('agent-1 claims task with files [A, B] -> files show claimant = agent-1 UUID', async () => {
     const taskId = await createTask('Task 1', ['Source/A.cpp', 'Source/B.cpp']);
     const res = await claimTask(taskId, 'agent-1');
     assert.equal(res.statusCode, 200);
@@ -52,7 +60,7 @@ describe('file write ownership', () => {
     const paths = files.map((f: { path: string }) => f.path).sort();
     assert.deepEqual(paths, ['Source/A.cpp', 'Source/B.cpp']);
     for (const f of files) {
-      assert.equal(f.claimant, 'agent-1');
+      assert.equal(f.claimant, agentIds['agent-1']);
     }
   });
 
@@ -66,7 +74,7 @@ describe('file write ownership', () => {
     const body = res.json();
     assert.equal(body.conflicts.length, 1);
     assert.equal(body.conflicts[0].file, 'Source/B.cpp');
-    assert.equal(body.conflicts[0].claimant, 'agent-1');
+    assert.equal(body.conflicts[0].claimant, agentIds['agent-1']);
   });
 
   it('agent-2 claims task with non-overlapping files -> succeeds', async () => {
@@ -110,7 +118,7 @@ describe('file write ownership', () => {
     const res = await claimTask(t2, 'agent-2');
     assert.equal(res.statusCode, 409);
     assert.equal(res.json().conflicts[0].file, 'Source/A.cpp');
-    assert.equal(res.json().conflicts[0].claimant, 'agent-1');
+    assert.equal(res.json().conflicts[0].claimant, agentIds['agent-1']);
   });
 
   it('task with no file dependencies -> no ownership check, always claimable', async () => {
@@ -179,7 +187,7 @@ describe('file write ownership', () => {
     const conflictFiles = body.conflicts.map((c: { file: string }) => c.file).sort();
     assert.deepEqual(conflictFiles, ['Source/A.cpp', 'Source/B.cpp']);
     for (const c of body.conflicts) {
-      assert.equal(c.claimant, 'agent-1');
+      assert.equal(c.claimant, agentIds['agent-1']);
     }
   });
 
@@ -216,7 +224,7 @@ describe('file write ownership', () => {
     const t3 = await createTask('Task 3', ['Source/A.cpp']);
     const res3 = await claimTask(t3, 'agent-3');
     assert.equal(res3.statusCode, 409);
-    assert.equal(res3.json().conflicts[0].claimant, 'agent-1');
+    assert.equal(res3.json().conflicts[0].claimant, agentIds['agent-1']);
 
     // agent-3 claims non-overlapping file -> succeeds
     const t4 = await createTask('Task 4', ['Source/C.cpp']);

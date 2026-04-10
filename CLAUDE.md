@@ -68,7 +68,7 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `GET /config/{projectId}` — resolved project configuration for shell scripts and containers
    - `POST /build`, `POST /test` — sync worktree from bare repo, run host-side build/test scripts, return structured `{success, exit_code, output, stderr}`
    - `GET /builds` — query build history with filtering
-   - `POST /agents/register`, `GET /agents`, `GET /agents/{name}`, `POST /agents/{name}/status`, `DELETE /agents/{name}`, `DELETE /agents` — agent lifecycle
+   - `POST /agents/register`, `GET /agents`, `GET /agents/{name}`, `POST /agents/{name}/status`, `DELETE /agents/{name}`, `DELETE /agents` — agent lifecycle. `DELETE /agents/{name}` performs a single-phase soft-delete (sets `status = 'deleted'`); optional `sessionToken` query parameter returns 409 on mismatch
    - `POST /agents/{name}/sync` — merge `docker/{project-id}/current-root` into `docker/{project-id}/{name}`; propagates plans to running containers
    - `POST /agents/{name}/branch` — branch setup operations (create, reset, verify agent branches)
    - `POST /agents/{name}/exit-classify` — classify agent exit codes and decide retry/stop/report
@@ -163,8 +163,10 @@ Agent type definitions live in `agents/` as markdown files. Each defines the age
 - Tests use Node.js built-in `node:test` + `node:assert/strict`
 - Test setup uses `server/src/drizzle-test-helper.ts` (creates isolated PGlite + Drizzle databases per test); `server/src/test-helper.ts` re-exports it and provides config helpers
 - DB schema is defined in `server/src/schema/tables.ts`; SQL migrations live in `server/drizzle/` and are applied via `npm run db:migrate` (which runs `src/migrate.ts`)
-- Agent identification via `X-Agent-Name` header on requests
+- Agent identification via `X-Agent-Name` header on requests. Agent identity is `agents.id` (UUID v7); `(project_id, name)` is a unique human-readable slot, not an identity. Every agent query must take an explicit `projectId`. Agents are soft-deleted via `status = 'deleted'`; hard deletion is a vacuum-class operation not performed in normal flow
 - Project scoping via `X-Project-Id` header; see `server/src/plugins/project-id.ts`. Branch naming helpers in `server/src/branch-naming.ts` (`seedBranchFor`, `agentBranchFor`)
+- FK constraints enforce cross-table integrity; `project_id` is a foreign key to `projects.id` on every project-scoped data table. UBT tables (`ubt_lock`, `ubt_queue`) are host-level — keyed by `host_id`, no `project_id` column or FK
+- `room_members` is agent-only; the operator authors messages without being a member. `chat_messages` carries an `author_type` discriminator (`agent` / `operator` / `system`)
 
 ### Configuration Split
 

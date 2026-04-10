@@ -35,8 +35,8 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
       coalesceQ.countClaimedFiles(db, projectId),
       Promise.all(agentRows.map(async (row) => {
         const [ownedFiles, agentActiveTasks] = await Promise.all([
-          coalesceQ.getOwnedFiles(db, row.name, projectId),
-          coalesceQ.countActiveTasksForAgent(db, row.name, projectId),
+          coalesceQ.getOwnedFiles(db, projectId, row.id),
+          coalesceQ.countActiveTasksForAgent(db, projectId, row.id),
         ]);
         return {
           name: row.name,
@@ -77,7 +77,7 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
     const pausedAgents = await coalesceQ.getPausedAgentNames(db, projectId);
     const inFlightRows = await coalesceQ.getInFlightTasks(db, projectId);
     const inFlightTasks = inFlightRows.map(r => ({
-      agent: r.claimedBy,
+      agent: r.claimedByAgentId,
       taskId: r.id,
       title: r.title,
     }));
@@ -139,7 +139,7 @@ const coalescePlugin: FastifyPluginAsync = async (fastify) => {
       ...(pollError ? { error: 'Drain polling interrupted; see server log for details.' } : {}),
       paused: pausedAgents,
       inFlightAtStart: inFlightRows.map(r => ({
-        agent: r.claimedBy,
+        agent: r.claimedByAgentId,
         taskId: r.id,
         title: r.title,
       })),

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ScaffoldConfig } from '../config.js';
 import { getDb } from '../drizzle-instance.js';
 import { resolveProject } from '../resolve-project.js';
@@ -7,6 +7,7 @@ import { launchTeam } from '../team-launcher.js';
 import { AGENT_NAME_RE } from '../branch-naming.js';
 import * as teamsQ from '../queries/teams.js';
 import * as roomsQ from '../queries/rooms.js';
+import { resolveAgent } from './route-helpers.js';
 
 const VALID_STATUSES = ['active', 'converging', 'dissolved'] as const;
 
@@ -15,6 +16,28 @@ const BRIEF_PATH_RE = /^[a-zA-Z0-9_./-]+$/;
 
 /** Regex for safe role values — alphanumeric, spaces, hyphens, underscores, 1-128 chars. */
 const ROLE_RE = /^[a-zA-Z0-9 _-]{1,128}$/;
+
+/**
+ * Reject an invalid briefPath value — no absolute paths, no dot-prefixed segments,
+ * only safe characters. Sends a 400 reply on failure.
+ * @returns `true` if the path is invalid (caller should `return`), `false` if OK.
+ */
+function rejectInvalidBriefPath(briefPath: string, reply: FastifyReply): boolean {
+  if (briefPath.startsWith('/')) {
+    reply.badRequest('briefPath must be a relative path');
+    return true;
+  }
+  const segments = briefPath.split('/');
+  if (segments.some(s => s.startsWith('.'))) {
+    reply.badRequest('briefPath must not contain dot-prefixed segments');
+    return true;
+  }
+  if (!BRIEF_PATH_RE.test(briefPath)) {
+    reply.badRequest('briefPath contains invalid characters');
+    return true;
+  }
+  return false;
+}
 
 interface TeamsOpts {
   config: ScaffoldConfig;
@@ -40,16 +63,22 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       return reply.badRequest('Invalid team id — must match ^[a-zA-Z0-9_-]{1,64}$');
     }
 
+    // Validate briefPath if provided — no path traversal
+    if (briefPath != null) {
+      if (rejectInvalidBriefPath(briefPath, reply)) return;
+    }
+
     // Validate each member's agentName and role
     for (const m of members) {
+      const safeName = m.agentName.slice(0, 64);
       if (!AGENT_NAME_RE.test(m.agentName)) {
-        return reply.badRequest(`Invalid agentName '${m.agentName}' — must match ^[a-zA-Z0-9_-]{1,64}$`);
+        return reply.badRequest(`Invalid agentName '${safeName}' — must match ^[a-zA-Z0-9_-]{1,64}$`);
       }
       if (!m.role || m.role.trim().length === 0) {
-        return reply.badRequest(`Member '${m.agentName}' has an empty role`);
+        return reply.badRequest(`Member '${safeName}' has an empty role`);
       }
       if (!ROLE_RE.test(m.role)) {
-        return reply.badRequest(`Member '${m.agentName}' has an invalid role — must match ^[a-zA-Z0-9 _-]{1,128}$`);
+        return reply.badRequest(`Member '${safeName}' has an invalid role — must match ^[a-zA-Z0-9 _-]{1,128}$`);
       }
     }
 
@@ -58,16 +87,26 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       return reply.badRequest('Exactly one discussion leader is required');
     }
 
+    // Resolve agent names to UUIDs
+    const resolvedMembers: Array<{ agentId: string; role: string; isLeader?: boolean }> = [];
+    for (const m of members) {
+      const agentRow = await resolveAgent(db, request.projectId, m.agentName);
+      if (!agentRow) {
+        return reply.badRequest(`Agent '${m.agentName}' not found in project '${request.projectId}'`);
+      }
+      resolvedMembers.push({ agentId: agentRow.id, role: m.role, isLeader: m.isLeader });
+    }
+
     try {
       await db.transaction(async (tx) => {
-        const existing = await teamsQ.getById(tx, id);
+        const existing = await teamsQ.getById(tx, id, request.projectId);
         if (existing) {
           if (existing.status !== 'dissolved') {
             throw Object.assign(new Error(`Team '${id}' already exists and is not dissolved`), { statusCode: 409 });
           }
           // Clean up old team data
-          await roomsQ.deleteRoom(tx, id);
-          await teamsQ.deleteTeam(tx, id);
+          await roomsQ.deleteRoom(tx, id, request.projectId);
+          await teamsQ.deleteTeam(tx, id, request.projectId);
         }
 
         await teamsQ.createWithRoom(tx, {
@@ -76,7 +115,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
           briefPath: briefPath ?? null,
           projectId: request.projectId,
           createdBy: caller,
-          members,
+          members: resolvedMembers,
         });
       });
     } catch (err: unknown) {
@@ -116,7 +155,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     Params: { id: string };
   }>('/teams/:id', async (request, reply) => {
     const db = getDb();
-    const team = await teamsQ.getById(db, request.params.id);
+    const team = await teamsQ.getById(db, request.params.id, request.projectId);
     if (!team) {
       return reply.notFound(`Team '${request.params.id}' not found`);
     }
@@ -134,6 +173,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       dissolvedAt: team.dissolvedAt,
       roomId: team.id,
       members: members.map(m => ({
+        agentId: m.agentId,
         agentName: m.agentName,
         role: m.role,
         isLeader: m.isLeader,
@@ -146,11 +186,11 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     Params: { id: string };
   }>('/teams/:id', async (request, reply) => {
     const db = getDb();
-    const team = await teamsQ.getById(db, request.params.id);
+    const team = await teamsQ.getById(db, request.params.id, request.projectId);
     if (!team) {
       return reply.notFound(`Team '${request.params.id}' not found`);
     }
-    await teamsQ.dissolve(db, request.params.id);
+    await teamsQ.dissolve(db, request.params.id, request.projectId);
     return { ok: true };
   });
 
@@ -160,7 +200,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     Body: { status?: string; deliverable?: string };
   }>('/teams/:id', async (request, reply) => {
     const db = getDb();
-    const team = await teamsQ.getById(db, request.params.id);
+    const team = await teamsQ.getById(db, request.params.id, request.projectId);
     if (!team) {
       return reply.notFound(`Team '${request.params.id}' not found`);
     }
@@ -172,9 +212,9 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
         return reply.badRequest(`Invalid status '${status}'. Must be one of: ${VALID_STATUSES.join(', ')}`);
       }
       if (status === 'dissolved') {
-        await teamsQ.dissolve(db, request.params.id);
+        await teamsQ.dissolve(db, request.params.id, request.projectId);
       } else {
-        await teamsQ.updateStatus(db, request.params.id, status);
+        await teamsQ.updateStatus(db, request.params.id, request.projectId, status);
       }
     }
 
@@ -182,7 +222,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
       if (typeof deliverable !== 'string' || deliverable.length > 65536) {
         return reply.badRequest('deliverable must be a string of at most 65536 characters');
       }
-      await teamsQ.updateDeliverable(db, request.params.id, deliverable);
+      await teamsQ.updateDeliverable(db, request.params.id, request.projectId, deliverable);
     }
 
     return { ok: true };
@@ -190,7 +230,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
   // POST /teams/:id/launch — server-side team launch
   fastify.post<{
     Params: { id: string };
-    Body: { projectId?: string; briefPath: string };
+    Body: { briefPath: string };
   }>('/teams/:id/launch', {
     schema: {
       params: {
@@ -204,7 +244,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
   }, async (request, reply) => {
     const teamId = request.params.id;
     const { briefPath } = request.body;
-    const projectId = request.body.projectId ?? request.projectId;
+    const projectId = request.projectId;
     const db = getDb();
 
     if (!briefPath) {
@@ -212,16 +252,7 @@ const teamsPlugin: FastifyPluginAsync<TeamsOpts> = async (fastify, opts) => {
     }
 
     // Safety B3: Validate briefPath — no path traversal
-    if (briefPath.startsWith('/')) {
-      return reply.badRequest('briefPath must be a relative path');
-    }
-    const segments = briefPath.split('/');
-    if (segments.some(s => s === '.' || s === '..')) {
-      return reply.badRequest('briefPath must not contain . or .. segments');
-    }
-    if (!BRIEF_PATH_RE.test(briefPath)) {
-      return reply.badRequest('briefPath contains invalid characters');
-    }
+    if (rejectInvalidBriefPath(briefPath, reply)) return;
 
     let project;
     try {

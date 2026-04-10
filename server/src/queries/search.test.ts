@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createTestDb, type TestDb } from './test-utils.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 import { tasks, messages, agents } from '../schema/tables.js';
+import { v7 as uuidv7 } from 'uuid';
 import * as searchQ from './search.js';
 
 describe('search queries', () => {
@@ -26,10 +27,10 @@ describe('search queries', () => {
       { fromAgent: 'agent-2', channel: 'progress', type: 'update', payload: { text: 'input refactored' }, projectId: 'default' },
     ]);
 
-    // Seed agents
+    // Seed agents (id is required)
     await db.insert(agents).values([
-      { name: 'render-agent', worktree: '/tmp/render', status: 'idle', mode: 'single', projectId: 'default' },
-      { name: 'input-agent', worktree: '/tmp/input', status: 'idle', mode: 'single', projectId: 'default' },
+      { id: uuidv7(), name: 'render-agent', worktree: '/tmp/render', status: 'idle', mode: 'single', projectId: 'default' },
+      { id: uuidv7(), name: 'input-agent', worktree: '/tmp/input', status: 'idle', mode: 'single', projectId: 'default' },
     ]);
   });
 

@@ -27,6 +27,9 @@ export type DrizzleTx =
   | Parameters<Parameters<DrizzlePgDb['transaction']>[0]>[0]
   | Parameters<Parameters<DrizzlePgliteDb['transaction']>[0]>[0];
 
+/** Union type accepted by query functions that work in both top-level and transactional contexts. */
+export type DbOrTx = DrizzleDb | DrizzleTx;
+
 let instance: DrizzleDb | null = null;
 let pgliteClient: PGlite | null = null;
 let pgPool: pg.Pool | null = null;

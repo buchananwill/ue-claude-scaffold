@@ -5,7 +5,8 @@ import type { DrizzleDb } from '../drizzle-instance.js';
 import * as projectsQ from './projects.js';
 import { isValidProjectId } from '../branch-naming.js';
 import { agents } from '../schema/tables.js';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
+import { v7 as uuidv7 } from 'uuid';
 
 describe('projects queries', () => {
   let tdb: TestDb;
@@ -32,14 +33,14 @@ describe('projects queries', () => {
 
   it('should create a project', async () => {
     const row = await projectsQ.create(db, {
-      id: 'proj-1',
+      id: 'proj-new-1',
       name: 'Project One',
       engineVersion: '5.4',
       seedBranch: 'docker/current-root',
       buildTimeoutMs: 600000,
       testTimeoutMs: 700000,
     });
-    assert.equal(row.id, 'proj-1');
+    assert.equal(row.id, 'proj-new-1');
     assert.equal(row.name, 'Project One');
     assert.equal(row.engineVersion, '5.4');
     assert.equal(row.seedBranch, 'docker/current-root');
@@ -49,9 +50,9 @@ describe('projects queries', () => {
   });
 
   it('should get a project by ID', async () => {
-    const row = await projectsQ.getById(db, 'proj-1');
+    const row = await projectsQ.getById(db, 'proj-new-1');
     assert.ok(row);
-    assert.equal(row.id, 'proj-1');
+    assert.equal(row.id, 'proj-new-1');
     assert.equal(row.name, 'Project One');
   });
 
@@ -69,7 +70,7 @@ describe('projects queries', () => {
   });
 
   it('should update a project', async () => {
-    const updated = await projectsQ.update(db, 'proj-1', {
+    const updated = await projectsQ.update(db, 'proj-new-1', {
       name: 'Updated Name',
       engineVersion: '5.5',
     });
@@ -86,9 +87,9 @@ describe('projects queries', () => {
   });
 
   it('should return existing row when update has no fields', async () => {
-    const result = await projectsQ.update(db, 'proj-1', {});
+    const result = await projectsQ.update(db, 'proj-new-1', {});
     assert.ok(result);
-    assert.equal(result.id, 'proj-1');
+    assert.equal(result.id, 'proj-new-1');
   });
 
   it('should delete a project', async () => {
@@ -143,6 +144,7 @@ describe('projects queries', () => {
   it('should detect referencing data when agents exist', async () => {
     // Insert an agent referencing proj-1
     await db.insert(agents).values({
+      id: uuidv7(),
       name: 'test-agent',
       projectId: 'proj-1',
       worktree: 'docker/test',

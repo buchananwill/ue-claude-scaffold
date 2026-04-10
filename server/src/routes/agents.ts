@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { getDb } from '../drizzle-instance.js';
 import * as agentsQ from '../queries/agents.js';
+import type { AgentPublicRow } from '../queries/agents.js';
 import * as roomsQ from '../queries/rooms.js';
 import * as filesQ from '../queries/files.js';
 import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
@@ -12,7 +13,8 @@ import { resolveProject } from '../resolve-project.js';
 
 interface AgentsOpts { config: ScaffoldConfig }
 
-export interface AgentRow {
+/** HTTP-response shape for a single agent. */
+export interface AgentResponse {
   name: string;
   worktree: string;
   planDoc: string | null;
@@ -23,7 +25,7 @@ export interface AgentRow {
   projectId: string;
 }
 
-export function formatAgent(row: AgentRow) {
+export function formatAgent(row: AgentPublicRow): AgentResponse {
   return {
     name: row.name,
     worktree: row.worktree,
@@ -35,6 +37,14 @@ export function formatAgent(row: AgentRow) {
     projectId: row.projectId ?? 'default',
   };
 }
+
+/**
+ * Statuses that can be set via POST /agents/:name/status.
+ * Intentionally excludes 'deleted' — deletion goes through DELETE endpoints.
+ */
+const ALLOWED_STATUSES = ['idle', 'working', 'done', 'error', 'paused', 'stopping'] as const;
+type AllowedStatus = (typeof ALLOWED_STATUSES)[number];
+const ALLOWED_STATUS_SET = new Set<string>(ALLOWED_STATUSES);
 
 const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   const { config } = opts;
@@ -50,7 +60,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     const sessionToken = randomBytes(16).toString('hex');
     const db = getDb();
 
-    await agentsQ.register(db, {
+    const newAgent = await agentsQ.register(db, {
       name,
       worktree,
       planDoc: planDoc ?? null,
@@ -70,29 +80,24 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
         createdBy: name,
         projectId,
       });
-      await roomsQ.addMember(db, roomId, name);
-      await roomsQ.addMember(db, roomId, 'user');
+      await roomsQ.addMember(db, roomId, newAgent.id);
     }
 
-    return { ok: true, sessionToken };
+    return { ok: true, id: newAgent.id, sessionToken: newAgent.sessionToken };
   });
 
-  fastify.get<{
-    Querystring: { project?: string };
-  }>('/agents', async (request) => {
-    const { project } = request.query;
-    const projectId = project || request.projectId;
+  fastify.get('/agents', async (request) => {
     const db = getDb();
-    const rows = await agentsQ.getAll(db, projectId);
+    const rows = await agentsQ.getAll(db, request.projectId);
     return rows.map(formatAgent);
   });
 
-  // GET /agents/:name — fetch a single agent by name
+  // GET /agents/:name -- fetch a single agent by name
   fastify.get<{
     Params: { name: string };
   }>('/agents/:name', async (request, reply) => {
     const db = getDb();
-    const row = await agentsQ.getByName(db, request.params.name);
+    const row = await agentsQ.getByName(db, request.projectId, request.params.name);
     if (!row) {
       return reply.notFound(`Agent '${request.params.name}' not registered`);
     }
@@ -106,63 +111,80 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     const { name } = request.params;
     const { status } = request.body;
     const db = getDb();
-    const agent = await agentsQ.getByName(db, name);
+
+    if (status === 'deleted') {
+      return reply.code(400).send({
+        error: 'invalid_status',
+        allowed: ALLOWED_STATUSES,
+      });
+    }
+
+    if (!ALLOWED_STATUS_SET.has(status)) {
+      return reply.code(400).send({
+        error: 'invalid_status',
+        allowed: ALLOWED_STATUSES,
+      });
+    }
+
+    const agent = await agentsQ.getByName(db, request.projectId, name);
     if (!agent) {
       return reply.notFound(`Agent '${name}' not registered`);
     }
-    await agentsQ.updateStatus(db, name, status);
+    await agentsQ.updateStatus(db, request.projectId, name, status as agentsQ.AgentStatus);
     return { ok: true };
   });
 
-  // DELETE /agents/:name — deregister a single agent
-  // First call (operator): sets status to 'stopping', releases file ownership.
-  // Second call (container self-deregister): hard-deletes the row.
+  // DELETE /agents/:name -- soft-delete a single agent.
+  // sessionToken is optional — omitting it allows operator-level deletion without a token.
   fastify.delete<{
     Params: { name: string };
+    Querystring: { sessionToken?: string };
   }>('/agents/:name', async (request, reply) => {
     const { name } = request.params;
+    const { sessionToken } = request.query;
     const db = getDb();
-    const agent = await agentsQ.getByName(db, name);
+    const agent = await agentsQ.getByNameFull(db, request.projectId, name);
     if (!agent) {
       return reply.notFound(`Agent '${name}' not registered`);
     }
 
-    if (agent.status === 'stopping') {
-      // Second call — container acknowledging stop; hard-delete the row
-      await db.transaction(async (tx) => {
-        await agentsQ.hardDelete(tx as any, name);
-        await filesQ.releaseByClaimant(tx as any, name);
+    if (sessionToken && agent.sessionToken !== sessionToken) {
+      fastify.log.warn(
+        { agent: name, projectId: request.projectId },
+        'DELETE /agents/:name session token mismatch',
+      );
+      return reply.code(409).send({
+        error: 'session token mismatch — another container has taken over this agent slot',
       });
-      return { ok: true };
     }
 
-    // First call — operator initiating shutdown; set status to stopping
     await db.transaction(async (tx) => {
-      await agentsQ.softDelete(tx as any, name);
-      await filesQ.releaseByClaimant(tx as any, name);
-      await tasksLifecycleQ.releaseByAgent(tx as any, name);
+      await agentsQ.softDelete(tx, request.projectId, name);
+      await filesQ.releaseByClaimantAgentId(tx, request.projectId, agent.id);
+      await tasksLifecycleQ.releaseByAgent(tx, request.projectId, agent.id);
     });
-    return { ok: true, stopping: true };
+    return { ok: true, deleted: true };
   });
 
-  // DELETE /agents — deregister all agents (e.g. server restart cleanup)
-  fastify.delete('/agents', async () => {
+  // DELETE /agents -- soft-delete all agents for the project.
+  // No sessionToken required — this is an operator-level bulk action.
+  fastify.delete('/agents', async (request) => {
     const db = getDb();
     const result = await db.transaction(async (tx) => {
-      const count = await agentsQ.deleteAll(tx as any);
-      await filesQ.releaseAll(tx as any);
-      await tasksLifecycleQ.releaseAllActive(tx as any);
+      const count = await agentsQ.deleteAllForProject(tx, request.projectId);
+      await filesQ.releaseAll(tx, request.projectId);
+      await tasksLifecycleQ.releaseAllActive(tx, request.projectId);
       return count;
     });
-    return { ok: true, removed: result };
+    return { ok: true, deletedCount: result };
   });
 
-  // POST /agents/:name/sync — merge seed branch into agent's branch
+  // POST /agents/:name/sync -- merge seed branch into agent's branch
   fastify.post<{ Params: { name: string } }>('/agents/:name/sync', async (request, reply) => {
     const { name } = request.params;
     const db = getDb();
 
-    const agent = await agentsQ.getWorktreeInfo(db, name);
+    const agent = await agentsQ.getWorktreeInfo(db, request.projectId, name);
     if (!agent) {
       return reply.notFound(`Agent '${name}' not found`);
     }

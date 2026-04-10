@@ -45,7 +45,7 @@ const SORTABLE_COLUMNS = {
   priority: tasks.priority,
   status: tasks.status,
   title: tasks.title,
-  claimedBy: tasks.claimedBy,
+  claimedBy: tasks.claimedByAgentId,
   createdAt: tasks.createdAt,
 } as const;
 
@@ -82,14 +82,14 @@ function buildFilterConditions(opts: { status?: string[]; agent?: string[]; prio
     const named = opts.agent.filter(a => a !== '__unassigned__');
     if (unassigned && named.length > 0) {
       // claimedBy IS NULL OR claimedBy IN (...)
-      conditions.push(or(isNull(tasks.claimedBy), inArray(tasks.claimedBy, named))!);
+      conditions.push(or(isNull(tasks.claimedByAgentId), inArray(tasks.claimedByAgentId, named))!);
     } else if (unassigned) {
-      conditions.push(isNull(tasks.claimedBy));
+      conditions.push(isNull(tasks.claimedByAgentId));
     } else {
       if (named.length === 1) {
-        conditions.push(eq(tasks.claimedBy, named[0]));
+        conditions.push(eq(tasks.claimedByAgentId, named[0]));
       } else {
-        conditions.push(inArray(tasks.claimedBy, named));
+        conditions.push(inArray(tasks.claimedByAgentId, named));
       }
     }
   }

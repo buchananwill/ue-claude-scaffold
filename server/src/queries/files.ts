@@ -1,19 +1,19 @@
-import { eq, and, asc, isNull, sql } from 'drizzle-orm';
+import { eq, and, asc, isNull, isNotNull } from 'drizzle-orm';
 import { files } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
+import type { DbOrTx } from '../drizzle-instance.js';
 
 export interface ListOpts {
-  claimant?: string;
+  claimantAgentId?: string;
   unclaimed?: boolean;
 }
 
-export async function list(db: DrizzleDb, projectId: string, opts?: ListOpts) {
+export async function list(db: DbOrTx, projectId: string, opts?: ListOpts): Promise<(typeof files.$inferSelect)[]> {
   const conditions = [eq(files.projectId, projectId)];
 
-  if (opts?.claimant) {
-    conditions.push(eq(files.claimant, opts.claimant));
+  if (opts?.claimantAgentId) {
+    conditions.push(eq(files.claimantAgentId, opts.claimantAgentId));
   } else if (opts?.unclaimed) {
-    conditions.push(isNull(files.claimant));
+    conditions.push(isNull(files.claimantAgentId));
   }
 
   return db
@@ -23,15 +23,16 @@ export async function list(db: DrizzleDb, projectId: string, opts?: ListOpts) {
     .orderBy(asc(files.path));
 }
 
-export async function releaseByClaimant(db: DrizzleDb, claimant: string) {
+export async function releaseByClaimantAgentId(db: DbOrTx, projectId: string, agentId: string): Promise<void> {
   await db
     .update(files)
-    .set({ claimant: null, claimedAt: null })
-    .where(eq(files.claimant, claimant));
+    .set({ claimantAgentId: null, claimedAt: null })
+    .where(and(eq(files.projectId, projectId), eq(files.claimantAgentId, agentId)));
 }
 
-export async function releaseAll(db: DrizzleDb) {
+export async function releaseAll(db: DbOrTx, projectId: string): Promise<void> {
   await db
     .update(files)
-    .set({ claimant: null, claimedAt: null });
+    .set({ claimantAgentId: null, claimedAt: null })
+    .where(and(eq(files.projectId, projectId), isNotNull(files.claimantAgentId)));
 }

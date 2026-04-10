@@ -360,7 +360,7 @@ describe('launchTeam', () => {
     assert.equal(result1.roomId, 'relaunch-team');
 
     // Dissolve the team
-    await teamsQ.dissolve(testDb.db, 'relaunch-team');
+    await teamsQ.dissolve(testDb.db, 'relaunch-team', 'test-proj');
     const dissolved = await teamsQ.getById(testDb.db, 'relaunch-team');
     assert.equal(dissolved!.status, 'dissolved');
 

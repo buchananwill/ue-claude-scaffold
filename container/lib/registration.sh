@@ -125,9 +125,18 @@ _shutdown() {
         _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/release" \
             --max-time 5 >/dev/null 2>&1 || true
     fi
-    # Deregister the agent
-    _curl_server -s -X DELETE "${SERVER_URL}/agents/${AGENT_NAME}" \
-        --max-time 5 >/dev/null 2>&1 || true
+    # Deregister the agent (append session token if valid)
+    local DELETE_URL="${SERVER_URL}/agents/${AGENT_NAME}"
+    if [[ "${SESSION_TOKEN:-}" =~ ^[0-9a-f]{32}$ ]]; then
+        DELETE_URL="${DELETE_URL}?sessionToken=${SESSION_TOKEN}"
+    fi
+    local DELETE_RESPONSE DELETE_STATUS
+    DELETE_RESPONSE=$(_curl_server -s -w "\n%{http_code}" -X DELETE "$DELETE_URL" \
+        --max-time 5 2>/dev/null) || DELETE_RESPONSE=$'\n000'
+    DELETE_STATUS="${DELETE_RESPONSE##*$'\n'}"
+    if [ "$DELETE_STATUS" = "409" ]; then
+        echo "WARNING: DELETE returned 409 — another container has taken over this agent slot" >&2
+    fi
 }
 
 _watch_for_stop() {

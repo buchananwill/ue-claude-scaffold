@@ -7,6 +7,7 @@ import * as compositionQ from './composition.js';
 import { getFilesForTask } from './task-files.js';
 import { getDepsForTask } from './task-deps.js';
 import * as fileQ from './files.js';
+import * as agentQ from './agents.js';
 
 describe('composition queries', () => {
   let tdb: TestDb;
@@ -44,13 +45,15 @@ describe('composition queries', () => {
   });
 
   it('should link files and claim for agent', async () => {
-    await compositionQ.linkFilesToTask(db, taskId, ['src/render.cpp'], 'default', 'agent-1');
+    // Register an agent to get a UUID
+    const reg = await agentQ.register(db, { name: 'agent-1', worktree: 'w1', projectId: 'default', sessionToken: 'comp-tok-1' });
+    await compositionQ.linkFilesToTask(db, taskId, ['src/render.cpp'], 'default', reg.id);
 
     const linkedFiles = await getFilesForTask(db, taskId);
     assert.ok(linkedFiles.includes('src/render.cpp'));
 
     // Check file was claimed
-    const allFiles = await fileQ.list(db, 'default', { claimant: 'agent-1' });
+    const allFiles = await fileQ.list(db, 'default', { claimantAgentId: reg.id });
     assert.ok(allFiles.some((f) => f.path === 'src/render.cpp'));
   });
 

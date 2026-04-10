@@ -1,92 +1,92 @@
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, inArray, type SQL } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
+import type { DrizzleDb, DbOrTx } from '../drizzle-instance.js';
+import type { TaskDbRow } from './tasks-core.js';
+import { ACTIVE_STATUSES, TERMINAL_STATUSES } from './query-helpers.js';
 
-export async function claim(db: DrizzleDb, id: number, agent: string): Promise<boolean> {
+export async function claim(db: DrizzleDb, projectId: string, id: number, agentId: string): Promise<boolean> {
   const rows = await db
     .update(tasks)
     .set({
       status: 'claimed',
-      claimedBy: agent,
+      claimedByAgentId: agentId,
       claimedAt: sql`now()`,
     })
-    .where(and(eq(tasks.id, id), eq(tasks.status, 'pending')))
+    .where(and(eq(tasks.id, id), eq(tasks.projectId, projectId), eq(tasks.status, 'pending')))
     .returning();
   return rows.length > 0;
 }
 
-export async function updateProgress(db: DrizzleDb, id: number, progress: string): Promise<boolean> {
+export async function updateProgress(db: DrizzleDb, projectId: string, id: number, progress: string): Promise<boolean> {
   const rows = await db
     .update(tasks)
     .set({
       status: 'in_progress',
       progressLog: sql`COALESCE(${tasks.progressLog}, '') || now()::text || ': ' || ${progress} || chr(10)`,
     })
-    .where(eq(tasks.id, id))
+    .where(and(eq(tasks.id, id), eq(tasks.projectId, projectId), inArray(tasks.status, [...ACTIVE_STATUSES])))
     .returning();
   return rows.length > 0;
 }
 
-export async function complete(db: DrizzleDb, id: number, result: unknown): Promise<boolean> {
+async function finalize(
+  db: DrizzleDb,
+  projectId: string,
+  id: number,
+  status: 'completed' | 'failed',
+  result: unknown,
+): Promise<boolean> {
   const rows = await db
     .update(tasks)
     .set({
-      status: 'completed',
+      status,
       completedAt: sql`now()`,
       result,
     })
     .where(
       and(
         eq(tasks.id, id),
-        sql`${tasks.status} IN ('claimed', 'in_progress')`,
+        eq(tasks.projectId, projectId),
+        inArray(tasks.status, [...ACTIVE_STATUSES]),
       ),
     )
     .returning();
   return rows.length > 0;
 }
 
-export async function fail(db: DrizzleDb, id: number, result: unknown): Promise<boolean> {
-  const rows = await db
-    .update(tasks)
-    .set({
-      status: 'failed',
-      completedAt: sql`now()`,
-      result,
-    })
-    .where(
-      and(
-        eq(tasks.id, id),
-        sql`${tasks.status} IN ('claimed', 'in_progress')`,
-      ),
-    )
-    .returning();
-  return rows.length > 0;
+export async function complete(db: DrizzleDb, projectId: string, id: number, result: unknown): Promise<boolean> {
+  return finalize(db, projectId, id, 'completed', result);
 }
 
-export async function release(db: DrizzleDb, id: number): Promise<boolean> {
+export async function fail(db: DrizzleDb, projectId: string, id: number, result: unknown): Promise<boolean> {
+  return finalize(db, projectId, id, 'failed', result);
+}
+
+export async function release(db: DrizzleDb, projectId: string, id: number): Promise<boolean> {
   const rows = await db
     .update(tasks)
     .set({
       status: 'pending',
-      claimedBy: null,
+      claimedByAgentId: null,
       claimedAt: null,
     })
     .where(
       and(
         eq(tasks.id, id),
-        sql`${tasks.status} IN ('claimed', 'in_progress')`,
+        eq(tasks.projectId, projectId),
+        inArray(tasks.status, [...ACTIVE_STATUSES]),
       ),
     )
     .returning();
   return rows.length > 0;
 }
 
-export async function reset(db: DrizzleDb, id: number): Promise<boolean> {
+export async function reset(db: DrizzleDb, projectId: string, id: number): Promise<boolean> {
   const rows = await db
     .update(tasks)
     .set({
       status: 'pending',
-      claimedBy: null,
+      claimedByAgentId: null,
       claimedAt: null,
       completedAt: null,
       result: null,
@@ -95,37 +95,39 @@ export async function reset(db: DrizzleDb, id: number): Promise<boolean> {
     .where(
       and(
         eq(tasks.id, id),
-        sql`${tasks.status} IN ('completed', 'failed', 'cycle')`,
+        eq(tasks.projectId, projectId),
+        inArray(tasks.status, [...TERMINAL_STATUSES]),
       ),
     )
     .returning();
   return rows.length > 0;
 }
 
-export async function integrate(db: DrizzleDb, id: number): Promise<boolean> {
+export async function integrate(db: DrizzleDb, projectId: string, id: number): Promise<boolean> {
   const rows = await db
     .update(tasks)
     .set({ status: 'integrated' })
-    .where(and(eq(tasks.id, id), eq(tasks.status, 'completed')))
+    .where(and(eq(tasks.id, id), eq(tasks.projectId, projectId), eq(tasks.status, 'completed')))
     .returning();
   return rows.length > 0;
 }
 
-export async function integrateBatch(
+async function integrateWhere(
   db: DrizzleDb,
-  agent: string,
+  projectId: string,
+  extraConditions: SQL[],
 ): Promise<{ count: number; ids: number[] }> {
-  // Use a transaction: select matching IDs, then update them
-  const result = await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
+    const where = and(
+      eq(tasks.projectId, projectId),
+      eq(tasks.status, 'completed'),
+      ...extraConditions,
+    );
+
     const matching = await tx
       .select({ id: tasks.id })
       .from(tasks)
-      .where(
-        and(
-          eq(tasks.status, 'completed'),
-          sql`${tasks.result}->>'agent' = ${agent}`,
-        ),
-      );
+      .where(where);
 
     const ids = matching.map((r) => r.id);
     if (ids.length === 0) return { count: 0, ids: [] };
@@ -133,84 +135,76 @@ export async function integrateBatch(
     await tx
       .update(tasks)
       .set({ status: 'integrated' })
-      .where(
-        and(
-          eq(tasks.status, 'completed'),
-          sql`${tasks.result}->>'agent' = ${agent}`,
-        ),
-      );
+      .where(where);
 
     return { count: ids.length, ids };
   });
+}
 
-  return result;
+export async function integrateBatch(
+  db: DrizzleDb,
+  projectId: string,
+  agentId: string,
+): Promise<{ count: number; ids: number[] }> {
+  return integrateWhere(db, projectId, [eq(tasks.claimedByAgentId, agentId)]);
 }
 
 export async function integrateAll(
   db: DrizzleDb,
+  projectId: string,
 ): Promise<{ count: number; ids: number[] }> {
-  const result = await db.transaction(async (tx) => {
-    const matching = await tx
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(eq(tasks.status, 'completed'));
-
-    const ids = matching.map((r) => r.id);
-    if (ids.length === 0) return { count: 0, ids: [] };
-
-    await tx
-      .update(tasks)
-      .set({ status: 'integrated' })
-      .where(eq(tasks.status, 'completed'));
-
-    return { count: ids.length, ids };
-  });
-
-  return result;
+  return integrateWhere(db, projectId, []);
 }
 
-export async function releaseByAgent(db: DrizzleDb, agent: string) {
+export async function releaseByAgent(db: DbOrTx, projectId: string, agentId: string): Promise<void> {
   await db
     .update(tasks)
     .set({
       status: 'pending',
-      claimedBy: null,
+      claimedByAgentId: null,
       claimedAt: null,
     })
     .where(
       and(
-        eq(tasks.claimedBy, agent),
-        sql`${tasks.status} IN ('claimed', 'in_progress')`,
+        eq(tasks.projectId, projectId),
+        eq(tasks.claimedByAgentId, agentId),
+        inArray(tasks.status, [...ACTIVE_STATUSES]),
       ),
     );
 }
 
-export async function releaseAllActive(db: DrizzleDb) {
+export async function releaseAllActive(db: DbOrTx, projectId: string): Promise<void> {
   await db
     .update(tasks)
     .set({
       status: 'pending',
-      claimedBy: null,
+      claimedByAgentId: null,
       claimedAt: null,
     })
-    .where(sql`${tasks.status} IN ('claimed', 'in_progress')`);
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        inArray(tasks.status, [...ACTIVE_STATUSES]),
+      ),
+    );
 }
 
-export async function getCompletedByAgent(db: DrizzleDb, agent: string) {
+export async function getCompletedByAgent(db: DrizzleDb, projectId: string, agentId: string): Promise<TaskDbRow[]> {
   return db
     .select()
     .from(tasks)
     .where(
       and(
+        eq(tasks.projectId, projectId),
         eq(tasks.status, 'completed'),
-        sql`${tasks.result}->>'agent' = ${agent}`,
+        eq(tasks.claimedByAgentId, agentId),
       ),
     );
 }
 
-export async function getAllCompleted(db: DrizzleDb) {
+export async function getAllCompleted(db: DrizzleDb, projectId: string): Promise<TaskDbRow[]> {
   return db
     .select()
     .from(tasks)
-    .where(eq(tasks.status, 'completed'));
+    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, 'completed')));
 }

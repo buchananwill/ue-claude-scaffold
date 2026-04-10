@@ -5,8 +5,8 @@ import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
 import { existsInBareRepo, isCommittedInRepo } from '../git-utils.js';
 import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
-import type { TaskRow } from './tasks-types.js';
 import type { TasksOpts } from './tasks-files.js';
+import { resolveAgent } from './route-helpers.js';
 
 const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
   const config = opts.config;
@@ -20,7 +20,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
     const { result } = request.body;
     const db = getDb();
 
-    const ok = await tasksLifecycleQ.complete(db, id, result);
+    const ok = await tasksLifecycleQ.complete(db, request.projectId, id, result);
     if (!ok) {
       return reply.conflict('task not in claimed or in_progress state');
     }
@@ -36,7 +36,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
     const { error } = request.body;
     const db = getDb();
 
-    const ok = await tasksLifecycleQ.fail(db, id, { error });
+    const ok = await tasksLifecycleQ.fail(db, request.projectId, id, { error });
     if (!ok) {
       return reply.conflict('task not in claimed or in_progress state');
     }
@@ -58,9 +58,9 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
       return reply.conflict('task can only be reset when completed, failed, or cycle');
     }
 
-    const sp = row.sourcePath ?? (row as any).source_path;
+    const sp = row.sourcePath;
     if (sp && row.status !== 'cycle') {
-      const taskProjectId = row.projectId ?? (row as any).project_id ?? 'default';
+      const taskProjectId = row.projectId ?? 'default';
       let project;
       try {
         project = await resolveProject(config, db, taskProjectId);
@@ -88,7 +88,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
       }
     }
 
-    const ok = await tasksLifecycleQ.reset(db, id);
+    const ok = await tasksLifecycleQ.reset(db, request.projectId, id);
     if (!ok) {
       return reply.conflict('task is no longer in a resettable state');
     }
@@ -110,7 +110,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
       return reply.badRequest('task must be in completed status to integrate');
     }
 
-    const ok = await tasksLifecycleQ.integrate(db, id);
+    const ok = await tasksLifecycleQ.integrate(db, request.projectId, id);
     if (!ok) {
       return reply.conflict('task status changed concurrently');
     }
@@ -130,14 +130,18 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
     }
 
     const db = getDb();
-    const result = await tasksLifecycleQ.integrateBatch(db, agent);
+    const agentRow = await resolveAgent(db, request.projectId, agent);
+    if (!agentRow) {
+      return reply.notFound(`Agent '${agent}' not found in project '${request.projectId}'`);
+    }
+    const result = await tasksLifecycleQ.integrateBatch(db, request.projectId, agentRow.id);
     return { ok: true, count: result.count, ids: result.ids };
   });
 
   // POST /tasks/integrate-all — mark all completed tasks as integrated
-  fastify.post('/tasks/integrate-all', async () => {
+  fastify.post('/tasks/integrate-all', async (request) => {
     const db = getDb();
-    const result = await tasksLifecycleQ.integrateAll(db);
+    const result = await tasksLifecycleQ.integrateAll(db, request.projectId);
     return { ok: true, count: result.count, ids: result.ids };
   });
 };

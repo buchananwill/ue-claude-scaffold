@@ -9,6 +9,7 @@ import { existsInBareRepo } from '../git-utils.js';
 import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
 import { toTaskRow, type TaskRow } from './tasks-types.js';
+import { resolveAgent } from './route-helpers.js';
 import {
   type TasksOpts,
   blockersForTask,
@@ -44,7 +45,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     }
     if (!bareRepo) return { valid: true };
 
-    const agentRow = await agentsQ.getWorktreeInfo(db, agent);
+    const agentRow = await agentsQ.getWorktreeInfo(db, taskProjectId, agent);
     const branch = agentRow?.worktree ?? seedBranch;
 
     if (existsInBareRepo(bareRepo, branch, sp)) {
@@ -58,16 +59,22 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
   }
 
   fastify.post('/tasks/claim-next', async (request, reply) => {
-    const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
-    if (agent !== 'unknown' && !AGENT_NAME_RE.test(agent)) {
+    const agentName = (request.headers['x-agent-name'] as string) ?? 'unknown';
+    if (agentName !== 'unknown' && !AGENT_NAME_RE.test(agentName)) {
       return reply.badRequest('Invalid X-Agent-Name header format');
     }
     const db = getDb();
-    const agentProjectId = await agentsQ.getProjectId(db, agent);
-    const projectId = agentProjectId ?? 'default';
+    const projectId = request.projectId;
+
+    // Resolve agent name to UUID for columns that store UUIDs (claimant_agent_id, claimed_by_agent_id)
+    const agentRow = await resolveAgent(db, projectId, agentName);
+    if (!agentRow) {
+      return reply.notFound(`Agent '${agentName}' not found in project '${projectId}'`);
+    }
+    const agentId = agentRow.id;
 
     // Query returns up to 10 candidates sorted by priority
-    const candidates = await tasksClaimQ.claimNextCandidate(db, projectId, agent);
+    const candidates = await tasksClaimQ.claimNextCandidate(db, projectId, agentId, agentName);
 
     const skippedSourcePath: number[] = [];
 
@@ -75,24 +82,24 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
       const taskRow = await tasksCore.getById(db, candidate.id);
       if (!taskRow) continue;
 
-      const spCheck = await validateSourcePathForClaim(taskRow, agent);
+      const spCheck = await validateSourcePathForClaim(taskRow, agentName);
       if (!spCheck.valid) {
         skippedSourcePath.push(candidate.id);
         continue;
       }
 
-      // Claim the task
-      await tasksLifecycleQ.claim(db, candidate.id, agent);
+      // Claim the task (lifecycle uses agentId for the UUID claimed_by_agent_id column)
+      await tasksLifecycleQ.claim(db, projectId, candidate.id, agentId);
 
-      // Claim its files
+      // Claim its files (uses agentId for the UUID claimant_agent_id column)
       const fileDeps = await taskFilesQ.getFilesForTask(db, candidate.id);
       const taskProjectId = taskRow.projectId ?? 'default';
       for (const fp of fileDeps) {
-        await taskFilesQ.claimFilesForAgent(db, agent, taskProjectId, fp);
+        await taskFilesQ.claimFilesForAgent(db, agentId, taskProjectId, fp);
       }
 
       const row = await tasksCore.getById(db, candidate.id);
-      const response: Record<string, unknown> = { task: await formatTaskWithFiles(toTaskRow(row!), agent, config) };
+      const response: Record<string, unknown> = { task: await formatTaskWithFiles(toTaskRow(row!), agentName, config) };
       if (skippedSourcePath.length > 0) {
         response.skippedSourcePath = skippedSourcePath;
       }
@@ -104,8 +111,8 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     if (pendingCount === 0 && skippedSourcePath.length === 0) {
       return { task: null, pending: 0, blocked: 0 };
     }
-    const blockedCount = await tasksClaimQ.countBlocked(db, projectId, agent);
-    const depBlockedCount = await tasksClaimQ.countDepBlocked(db, projectId, agent);
+    const blockedCount = await tasksClaimQ.countBlocked(db, projectId, agentId);
+    const depBlockedCount = await tasksClaimQ.countDepBlocked(db, projectId, agentName);
     const response: Record<string, unknown> = {
       task: null,
       pending: pendingCount,
@@ -125,11 +132,18 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     Params: { id: string };
   }>('/tasks/:id/claim', async (request, reply) => {
     const id = Number(request.params.id);
-    const agent = (request.headers['x-agent-name'] as string) ?? 'unknown';
-    if (agent !== 'unknown' && !AGENT_NAME_RE.test(agent)) {
+    const agentName = (request.headers['x-agent-name'] as string) ?? 'unknown';
+    if (agentName !== 'unknown' && !AGENT_NAME_RE.test(agentName)) {
       return reply.badRequest('Invalid X-Agent-Name header format');
     }
     const db = getDb();
+
+    // Resolve agent name to UUID for columns that store UUIDs
+    const agentRow = await resolveAgent(db, request.projectId, agentName);
+    if (!agentRow) {
+      return reply.notFound(`Agent '${agentName}' not found in project '${request.projectId}'`);
+    }
+    const agentId = agentRow.id;
 
     // Re-validate sourcePath against the bare repo before claiming
     const task = await tasksCore.getById(db, id);
@@ -140,7 +154,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
       return reply.conflict('task not pending');
     }
 
-    const spCheck = await validateSourcePathForClaim(task, agent);
+    const spCheck = await validateSourcePathForClaim(task, agentName);
     if (!spCheck.valid) {
       const sp = task.sourcePath!;
       const displayPath = sp.length > 256 ? sp.slice(0, 256) + '\u2026' : sp;
@@ -154,9 +168,10 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
       });
     }
 
-    const blockers = await blockersForTask(id, agent);
+    // blockersForTask uses agent name (compared against result->>'agent')
+    const blockers = await blockersForTask(id, agentName);
     if (blockers.length > 0) {
-      const blockReasons = (await blockReasonsForTask(toTaskRow(task), agent, config))
+      const blockReasons = (await blockReasonsForTask(toTaskRow(task), agentName, config))
         .filter(r => r.startsWith('blocked by'));
       return reply.code(409).send({
         statusCode: 409,
@@ -167,7 +182,8 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
       });
     }
 
-    const ownershipResult = await checkAndClaimFiles(id, agent);
+    // checkAndClaimFiles uses agentId (compared against claimant_agent_id UUID column)
+    const ownershipResult = await checkAndClaimFiles(id, agentId);
     if (ownershipResult !== null && ownershipResult.length > 0) {
       return reply.code(409).send({
         statusCode: 409,
@@ -177,7 +193,8 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
       });
     }
 
-    const ok = await tasksLifecycleQ.claim(db, id, agent);
+    // claim uses agentId for the UUID claimed_by_agent_id column
+    const ok = await tasksLifecycleQ.claim(db, request.projectId, id, agentId);
 
     if (ok) {
       return { ok: true };
@@ -192,7 +209,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     const id = Number(request.params.id);
     const db = getDb();
 
-    const ok = await tasksLifecycleQ.release(db, id);
+    const ok = await tasksLifecycleQ.release(db, request.projectId, id);
     if (!ok) {
       return reply.conflict('task not in claimed or in_progress state');
     }
@@ -206,9 +223,14 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
   }>('/tasks/:id/update', async (request, reply) => {
     const id = Number(request.params.id);
     const { progress } = request.body;
+
+    if (!progress || typeof progress !== 'string' || progress.length > 65536) {
+      return reply.badRequest('progress must be a non-empty string of at most 65536 characters');
+    }
+
     const db = getDb();
 
-    const ok = await tasksLifecycleQ.updateProgress(db, id, progress);
+    const ok = await tasksLifecycleQ.updateProgress(db, request.projectId, id, progress);
     if (!ok) {
       return reply.conflict('task not in claimed or in_progress state');
     }

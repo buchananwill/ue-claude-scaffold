@@ -15,6 +15,27 @@
       "when": 1775164079866,
       "tag": "0001_worried_marvex",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775746798055,
+      "tag": "0002_add_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1775746838055,
+      "tag": "0003_backfill_and_orphans",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1775746898055,
+      "tag": "0004_constraints_and_swap",
+      "breakpoints": true
     }
   ]
 }

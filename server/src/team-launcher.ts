@@ -71,6 +71,17 @@ export function validateBriefOnSeedBranch(
   briefPath: string,
   seedBranchOverride?: string | null,
 ): void {
+  // Validate briefPath is safe before passing to git cat-file
+  if (
+    !briefPath ||
+    briefPath.includes('..') ||
+    briefPath.includes('\0') ||
+    briefPath.startsWith('/') ||
+    !/^[a-zA-Z0-9_.\/\-]{1,512}$/.test(briefPath)
+  ) {
+    throw new Error(`Invalid briefPath: '${briefPath}' — must be a relative path without '..' or special characters`);
+  }
+
   const branch = seedBranchFor(projectId, seedBranchOverride ? { seedBranch: seedBranchOverride } : undefined);
   const result = spawnSync('git', ['cat-file', '-e', `${branch}:${briefPath}`], {
     cwd: bareRepoPath,
@@ -165,7 +176,7 @@ export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult
   const { projectId, teamId, briefPath, teamsDir, project, db } = opts;
   const bareRepoPath = project.bareRepoPath;
 
-  // 1. Validate brief exists on seed branch
+  // 1. Validate brief exists on seed branch (includes briefPath format validation)
   validateBriefOnSeedBranch(bareRepoPath, projectId, briefPath, project.seedBranch);
 
   // 2. Load and validate team definition
@@ -175,34 +186,39 @@ export async function launchTeam(opts: LaunchTeamOpts): Promise<LaunchTeamResult
   const roomId = def.id;
 
   await db.transaction(async (tx) => {
-    const existing = await teamsQ.getById(tx, def.id);
+    const existing = await teamsQ.getById(tx, def.id, projectId);
     if (existing) {
       if (existing.status !== 'dissolved') {
         throw new Error(`Team '${def.id}' already exists and is ${existing.status}`);
       }
       // Clean up dissolved team data before re-registration
-      await roomsQ.deleteRoom(tx, def.id);
-      await teamsQ.deleteTeam(tx, def.id);
+      await roomsQ.deleteRoom(tx, def.id, projectId);
+      await teamsQ.deleteTeam(tx, def.id, projectId);
     }
 
-    // 4. Register team + room in DB (uses the createWithRoom helper)
-    await teamsQ.createWithRoom(tx, {
+    // 4. Register team + room in DB
+    // Note: team_members and room_members require agent UUIDs (FK to agents table),
+    // but agents are not yet registered at team launch time. Create the team and room
+    // without members; members will be added when agents register and join the room.
+    await teamsQ.create(tx, {
       id: def.id,
       name: def.name,
       briefPath,
       projectId,
-      createdBy: 'user',
-      members: def.members.map(m => ({
-        agentName: m.agentName,
-        role: m.role,
-        isLeader: m.isLeader,
-      })),
+    });
+    await roomsQ.createRoom(tx, {
+      id: def.id,
+      name: def.name,
+      type: 'group',
+      createdBy: 'operator',
+      projectId,
     });
 
     // 5. Post brief path as the first room message
     await chatQ.sendMessage(tx, {
       roomId,
-      sender: 'user',
+      authorType: 'operator',
+      authorAgentId: null,
       content: `Brief: \`${briefPath}\` -- read this file from your workspace to begin.`,
     });
   });

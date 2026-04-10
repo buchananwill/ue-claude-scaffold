@@ -1,7 +1,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { sql } from 'drizzle-orm';
-import { createTestDb, type TestDb } from './test-utils.js';
+import { createTestDb, insertTestAgent, type TestDb } from './test-utils.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 import * as tasksClaim from './tasks-claim.js';
 import * as tasksCore from './tasks-core.js';
@@ -30,9 +30,12 @@ describe('tasks-claim queries', () => {
     // Task 5: priority 5, depends on Task 6 (pending = unmet dep, excluded)
     // Task 6: priority 1, no deps
     let t1: number, t2: number, t3: number, t4: number, t5: number, t6: number;
+    let agentAId: string, agentBId: string;
 
     before(async () => {
       const proj = 'claim-proj';
+      agentAId = await insertTestAgent(db, 'agent-a', proj);
+      agentBId = await insertTestAgent(db, 'agent-b', proj);
 
       const r1 = await tasksCore.insert(db, { title: 'T1 high prio', priority: 10, projectId: proj });
       const r2 = await tasksCore.insert(db, { title: 'T2 dep on T1', priority: 5, projectId: proj });
@@ -51,7 +54,7 @@ describe('tasks-claim queries', () => {
       // T3 has a file claimed by agent-b
       await taskFilesQ.insertFile(db, proj, 'conflicted.cpp');
       await taskFilesQ.linkFileToTask(db, t3, 'conflicted.cpp');
-      await taskFilesQ.claimFilesForAgent(db, 'agent-b', proj, 'conflicted.cpp');
+      await taskFilesQ.claimFilesForAgent(db, agentBId, proj, 'conflicted.cpp');
 
       // T5 depends on T6 (pending — unmet dep)
       await taskDepsQ.insertDep(db, t5, t6);
@@ -62,7 +65,7 @@ describe('tasks-claim queries', () => {
     });
 
     it('should return candidates in correct order for agent-a', async () => {
-      const candidates = await tasksClaim.claimNextCandidate(db, 'claim-proj', 'agent-a');
+      const candidates = await tasksClaim.claimNextCandidate(db, 'claim-proj', agentAId, 'agent-a');
 
       // Expected ordering for agent-a:
       // 1. T2: has dep completed by agent-a (affinity=0), 0 new locks, prio 5
@@ -89,7 +92,7 @@ describe('tasks-claim queries', () => {
     });
 
     it('should allow agent-b to see T3 (owns the file)', async () => {
-      const candidates = await tasksClaim.claimNextCandidate(db, 'claim-proj', 'agent-b');
+      const candidates = await tasksClaim.claimNextCandidate(db, 'claim-proj', agentBId, 'agent-b');
       const hasT3 = candidates.some((c) => c.id === t3);
       assert.ok(hasT3, 'T3 should be available to agent-b (owns the file)');
     });
@@ -104,7 +107,10 @@ describe('tasks-claim queries', () => {
 
     it('should count file-blocked tasks', async () => {
       // T3 is blocked for agent-a (file conflict from agent-b)
-      const c = await tasksClaim.countBlocked(db, 'claim-proj', 'agent-a');
+      // countBlocked takes agentId (UUID), not name
+      const agentARow = await db.execute(sql`SELECT id FROM agents WHERE name = 'agent-a' AND project_id = 'claim-proj'`);
+      const agentAId = (agentARow.rows[0] as { id: string }).id;
+      const c = await tasksClaim.countBlocked(db, 'claim-proj', agentAId);
       assert.equal(c, 1);
     });
 

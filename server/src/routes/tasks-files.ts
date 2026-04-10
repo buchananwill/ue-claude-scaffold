@@ -110,8 +110,8 @@ export async function blockReasonsForTask(row: TaskRow, agent: string, config: S
   const db = getDb();
   const reasons: string[] = [];
 
-  const sp = row.sourcePath ?? row.source_path;
-  const projectId = row.projectId ?? row.project_id;
+  const sp = row.sourcePath;
+  const projectId = row.projectId;
 
   // Missing sourcePath check
   if (sp) {
@@ -130,7 +130,7 @@ export async function blockReasonsForTask(row: TaskRow, agent: string, config: S
   }
 
   // File-lock conflicts
-  const conflicts = await taskFilesQ.getFileConflictsForTask(db, row.id);
+  const conflicts = await taskFilesQ.getFileConflicts(db, row.id);
   const nonNullConflicts = conflicts.filter(c => c.claimant !== null);
   if (nonNullConflicts.length > 0) {
     const byClaimant = new Map<string, string[]>();
@@ -169,21 +169,21 @@ export async function formatTaskWithFiles(row: TaskRow, agent: string, config: S
   return formatTask(row, files, deps, blockers, reasons);
 }
 
-export async function checkAndClaimFiles(taskId: number, agent: string): Promise<ConflictInfo[] | null> {
+export async function checkAndClaimFiles(taskId: number, agentId: string): Promise<ConflictInfo[] | null> {
   const db = getDb();
   const deps = await taskFilesQ.getFilesForTask(db, taskId);
   if (deps.length === 0) return null;
 
-  const conflictRows = await taskFilesQ.getFileConflicts(db, taskId, agent);
+  const conflictRows = await taskFilesQ.getFileConflicts(db, taskId, agentId);
 
   if (conflictRows.length > 0) {
-    return conflictRows.map(r => ({ file: r.path, claimant: r.claimant }));
+    return conflictRows.map(r => ({ file: r.path, claimant: r.claimant! }));
   }
 
   const taskRow = await tasksCore.getById(db, taskId);
   const projectId = taskRow?.projectId ?? 'default';
   for (const dep of deps) {
-    await taskFilesQ.claimFilesForAgent(db, agent, projectId, dep);
+    await taskFilesQ.claimFilesForAgent(db, agentId, projectId, dep);
   }
   return [];
 }

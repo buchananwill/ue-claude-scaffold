@@ -1,8 +1,9 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTestConfig } from '../test-helper.js';
+import { createTestConfig, registerAgent } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import tasksPlugin from './tasks.js';
+import agentsPlugin from './agents.js';
 
 describe('tasks-lifecycle routes', () => {
   let ctx: DrizzleTestContext;
@@ -10,7 +11,11 @@ describe('tasks-lifecycle routes', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     const config = createTestConfig();
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
+    await registerAgent(ctx.app, 'agent-1');
+    await registerAgent(ctx.app, 'agent-2');
+    await registerAgent(ctx.app, 'nobody');
   });
 
   afterEach(async () => {
@@ -232,6 +237,15 @@ describe('tasks-lifecycle routes', () => {
 
   // ── Phase 2: integrate endpoints ──────────────────────────────────────
 
+  /** Helper: create a task, claim it with the given agent, complete it, return the id. */
+  async function createCompletedTaskWithAgent(app: typeof ctx.app, agent: string) {
+    const post = await app.inject({ method: 'POST', url: '/tasks', payload: { title: `Task by ${agent}` } });
+    const id = post.json().id;
+    await app.inject({ method: 'POST', url: `/tasks/${id}/claim`, headers: { 'x-agent-name': agent } });
+    await app.inject({ method: 'POST', url: `/tasks/${id}/complete`, payload: { result: { summary: 'done', agent } } });
+    return id;
+  }
+
   describe('POST /tasks/:id/integrate', () => {
     /** Helper: create a task, claim it, complete it, return the id */
     async function createCompletedTask(app: typeof ctx.app, result: Record<string, unknown> = { summary: 'done', agent: 'agent-1' }) {
@@ -277,14 +291,6 @@ describe('tasks-lifecycle routes', () => {
   });
 
   describe('POST /tasks/integrate-batch', () => {
-    async function createCompletedTaskWithAgent(app: typeof ctx.app, agent: string) {
-      const post = await app.inject({ method: 'POST', url: '/tasks', payload: { title: `Task by ${agent}` } });
-      const id = post.json().id;
-      await app.inject({ method: 'POST', url: `/tasks/${id}/claim`, headers: { 'x-agent-name': agent } });
-      await app.inject({ method: 'POST', url: `/tasks/${id}/complete`, payload: { result: { summary: 'done', agent } } });
-      return id;
-    }
-
     it('integrates only the specified agent completed tasks', async () => {
       const id1 = await createCompletedTaskWithAgent(ctx.app, 'agent-1');
       const id2 = await createCompletedTaskWithAgent(ctx.app, 'agent-1');
@@ -318,14 +324,6 @@ describe('tasks-lifecycle routes', () => {
   });
 
   describe('POST /tasks/integrate-all', () => {
-    async function createCompletedTaskWithAgent(app: typeof ctx.app, agent: string) {
-      const post = await app.inject({ method: 'POST', url: '/tasks', payload: { title: `Task by ${agent}` } });
-      const id = post.json().id;
-      await app.inject({ method: 'POST', url: `/tasks/${id}/claim`, headers: { 'x-agent-name': agent } });
-      await app.inject({ method: 'POST', url: `/tasks/${id}/complete`, payload: { result: { summary: 'done', agent } } });
-      return id;
-    }
-
     it('integrates all completed tasks regardless of agent', async () => {
       const id1 = await createCompletedTaskWithAgent(ctx.app, 'agent-1');
       const id2 = await createCompletedTaskWithAgent(ctx.app, 'agent-2');
@@ -363,7 +361,7 @@ describe('tasks-lifecycle routes', () => {
 
       const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=integrated' });
       assert.equal(res.statusCode, 200);
-      const body = res.json() as any;
+      const body = res.json<{ tasks: Array<Record<string, unknown>>; total: number }>();
       const tasks = body.tasks;
       assert.equal(tasks.length, 1);
       assert.equal(tasks[0].status, 'integrated');

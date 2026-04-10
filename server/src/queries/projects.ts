@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { projects, agents, buildHistory, messages, tasks, files, ubtLock, ubtQueue, rooms, teams } from '../schema/tables.js';
+import { projects, agents, buildHistory, messages, tasks, files, rooms, teams } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 import { isValidProjectId } from '../branch-naming.js';
 
@@ -124,8 +124,6 @@ export async function hasReferencingData(db: DrizzleDb, projectId: string): Prom
     { table: messages, col: messages.projectId },
     { table: tasks, col: tasks.projectId },
     { table: files, col: files.projectId },
-    { table: ubtLock, col: ubtLock.projectId },
-    { table: ubtQueue, col: ubtQueue.projectId },
     { table: rooms, col: rooms.projectId },
     { table: teams, col: teams.projectId },
   ];

@@ -1,9 +1,7 @@
 import { eq, and, desc, sql } from 'drizzle-orm';
-import { teams, teamMembers, rooms, roomMembers } from '../schema/tables.js';
-import type { DrizzleDb, DrizzleTx } from '../drizzle-instance.js';
-
-/** Accept either a full DB instance or a transaction client. */
-type DbOrTx = DrizzleDb | DrizzleTx;
+import { v7 as uuidv7 } from 'uuid';
+import { teams, teamMembers, rooms, roomMembers, agents } from '../schema/tables.js';
+import type { DbOrTx } from '../drizzle-instance.js';
 
 export interface CreateOpts {
   id: string;
@@ -27,7 +25,7 @@ export async function create(db: DbOrTx, opts: CreateOpts) {
 
 export interface CreateWithRoomOpts extends CreateOpts {
   createdBy: string;
-  members: Array<{ agentName: string; role: string; isLeader?: boolean }>;
+  members: Array<{ agentId: string; role: string; isLeader?: boolean }>;
 }
 
 /**
@@ -39,7 +37,7 @@ export async function createWithRoom(db: DbOrTx, opts: CreateWithRoomOpts) {
 
   // Add team members
   for (const m of opts.members) {
-    await addMember(db, opts.id, m.agentName, m.role, m.isLeader);
+    await addMember(db, opts.id, m.agentId, m.role, m.isLeader);
   }
 
   // Create associated room
@@ -55,20 +53,18 @@ export async function createWithRoom(db: DbOrTx, opts: CreateWithRoomOpts) {
   for (const m of opts.members) {
     await db
       .insert(roomMembers)
-      .values({ roomId: opts.id, member: m.agentName })
+      .values({ id: uuidv7(), roomId: opts.id, agentId: m.agentId })
       .onConflictDoNothing();
   }
-  // Always add 'user' to the room
-  await db
-    .insert(roomMembers)
-    .values({ roomId: opts.id, member: 'user' })
-    .onConflictDoNothing();
-
   return team;
 }
 
-export async function getById(db: DbOrTx, id: string) {
-  const rows = await db.select().from(teams).where(eq(teams.id, id));
+export async function getById(db: DbOrTx, id: string, projectId?: string) {
+  const conditions = [eq(teams.id, id)];
+  if (projectId) {
+    conditions.push(eq(teams.projectId, projectId));
+  }
+  const rows = await db.select().from(teams).where(and(...conditions));
   return rows[0] ?? null;
 }
 
@@ -94,41 +90,43 @@ export async function list(db: DbOrTx, opts: ListOpts = {}) {
     .orderBy(desc(teams.createdAt));
 }
 
-export async function dissolve(db: DbOrTx, id: string) {
+export async function dissolve(db: DbOrTx, id: string, projectId: string) {
   await db
     .update(teams)
     .set({ status: 'dissolved', dissolvedAt: sql`now()` })
-    .where(eq(teams.id, id));
+    .where(and(eq(teams.id, id), eq(teams.projectId, projectId)));
 }
 
-export async function updateStatus(db: DbOrTx, id: string, status: string) {
-  await db.update(teams).set({ status }).where(eq(teams.id, id));
+export async function updateStatus(db: DbOrTx, id: string, projectId: string, status: string) {
+  await db.update(teams).set({ status }).where(and(eq(teams.id, id), eq(teams.projectId, projectId)));
 }
 
-export async function updateDeliverable(db: DbOrTx, id: string, deliverable: string) {
-  await db.update(teams).set({ deliverable }).where(eq(teams.id, id));
+export async function updateDeliverable(db: DbOrTx, id: string, projectId: string, deliverable: string) {
+  await db.update(teams).set({ deliverable }).where(and(eq(teams.id, id), eq(teams.projectId, projectId)));
 }
 
-export async function deleteTeam(db: DbOrTx, id: string): Promise<boolean> {
-  const rows = await db.delete(teams).where(eq(teams.id, id)).returning();
+export async function deleteTeam(db: DbOrTx, id: string, projectId: string): Promise<boolean> {
+  const rows = await db.delete(teams).where(and(eq(teams.id, id), eq(teams.projectId, projectId))).returning();
   return rows.length > 0;
 }
 
 export async function getMembers(db: DbOrTx, teamId: string) {
   return db
     .select({
-      agentName: teamMembers.agentName,
+      agentId: teamMembers.agentId,
+      agentName: agents.name,
       role: teamMembers.role,
       isLeader: teamMembers.isLeader,
     })
     .from(teamMembers)
+    .innerJoin(agents, eq(agents.id, teamMembers.agentId))
     .where(eq(teamMembers.teamId, teamId));
 }
 
 export async function addMember(
   db: DbOrTx,
   teamId: string,
-  agentName: string,
+  agentId: string,
   role: string,
   isLeader?: boolean,
 ) {
@@ -136,18 +134,18 @@ export async function addMember(
     .insert(teamMembers)
     .values({
       teamId,
-      agentName,
+      agentId,
       role,
       isLeader: isLeader ?? false,
     })
     .onConflictDoUpdate({
-      target: [teamMembers.teamId, teamMembers.agentName],
+      target: [teamMembers.teamId, teamMembers.agentId],
       set: { role, isLeader: isLeader ?? false },
     });
 }
 
-export async function removeMember(db: DbOrTx, teamId: string, agentName: string) {
+export async function removeMember(db: DbOrTx, teamId: string, agentId: string) {
   await db
     .delete(teamMembers)
-    .where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.agentName, agentName)));
+    .where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.agentId, agentId)));
 }

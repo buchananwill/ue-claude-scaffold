@@ -1,103 +1,94 @@
-import { eq, and, sql, isNotNull, count as countFn, inArray } from 'drizzle-orm';
+import { eq, and, isNotNull, count as countFn, inArray, notInArray } from 'drizzle-orm';
 import { tasks, files, agents } from '../schema/tables.js';
-import type { DrizzleDb, DrizzleTx } from '../drizzle-instance.js';
+import type { DrizzleDb, DbOrTx } from '../drizzle-instance.js';
+import * as filesQ from './files.js';
+import { ACTIVE_STATUSES, INACTIVE_AGENT_STATUSES } from './query-helpers.js';
 
-type DbOrTx = DrizzleDb | DrizzleTx;
-
-const ACTIVE_STATUSES = ['claimed', 'in_progress'] as const;
-
-export async function countActiveTasks(db: DrizzleDb, projectId?: string): Promise<number> {
-  const baseCond = inArray(tasks.status, ACTIVE_STATUSES);
+export async function countActiveTasks(db: DrizzleDb, projectId: string): Promise<number> {
   const rows = await db
     .select({ count: countFn() })
     .from(tasks)
-    .where(projectId ? and(baseCond, eq(tasks.projectId, projectId)) : baseCond);
+    .where(and(inArray(tasks.status, [...ACTIVE_STATUSES]), eq(tasks.projectId, projectId)));
   return Number(rows[0].count);
 }
 
-export async function countActiveTasksForAgent(db: DrizzleDb, agent: string, projectId?: string): Promise<number> {
-  const baseCond = and(
-    eq(tasks.claimedBy, agent),
-    inArray(tasks.status, ACTIVE_STATUSES),
-  );
+export async function countActiveTasksForAgent(db: DrizzleDb, projectId: string, agentId: string): Promise<number> {
   const rows = await db
     .select({ count: countFn() })
     .from(tasks)
-    .where(projectId ? and(baseCond, eq(tasks.projectId, projectId)) : baseCond);
+    .where(
+      and(
+        eq(tasks.claimedByAgentId, agentId),
+        inArray(tasks.status, [...ACTIVE_STATUSES]),
+        eq(tasks.projectId, projectId),
+      ),
+    );
   return Number(rows[0].count);
 }
 
-export async function countPendingTasks(db: DrizzleDb, projectId?: string): Promise<number> {
-  const baseCond = eq(tasks.status, 'pending');
+export async function countPendingTasks(db: DrizzleDb, projectId: string): Promise<number> {
   const rows = await db
     .select({ count: countFn() })
     .from(tasks)
-    .where(projectId ? and(baseCond, eq(tasks.projectId, projectId)) : baseCond);
+    .where(and(eq(tasks.status, 'pending'), eq(tasks.projectId, projectId)));
   return Number(rows[0].count);
 }
 
-export async function countClaimedFiles(db: DbOrTx, projectId?: string): Promise<number> {
-  const baseCond = isNotNull(files.claimant);
+export async function countClaimedFiles(db: DbOrTx, projectId: string): Promise<number> {
   const rows = await db
     .select({ count: countFn() })
     .from(files)
-    .where(projectId ? and(baseCond, eq(files.projectId, projectId)) : baseCond);
+    .where(and(isNotNull(files.claimantAgentId), eq(files.projectId, projectId)));
   return Number(rows[0].count);
 }
 
-export async function getOwnedFiles(db: DrizzleDb, agent: string, projectId?: string): Promise<string[]> {
-  const baseCond = eq(files.claimant, agent);
+export async function getOwnedFiles(db: DrizzleDb, projectId: string, agentId: string): Promise<string[]> {
   const rows = await db
     .select({ path: files.path })
     .from(files)
-    .where(projectId ? and(baseCond, eq(files.projectId, projectId)) : baseCond);
+    .where(and(eq(files.claimantAgentId, agentId), eq(files.projectId, projectId)));
   return rows.map((r) => r.path);
 }
 
-export async function pausePumpAgents(db: DrizzleDb, projectId?: string): Promise<void> {
-  const baseCond = and(
-    eq(agents.mode, 'pump'),
-    sql`${agents.status} NOT IN ('stopping', 'done', 'error', 'paused')`,
-  );
+export async function pausePumpAgents(db: DrizzleDb, projectId: string): Promise<void> {
   await db
     .update(agents)
     .set({ status: 'paused' })
-    .where(projectId ? and(baseCond, eq(agents.projectId, projectId)) : baseCond);
+    .where(
+      and(
+        eq(agents.mode, 'pump'),
+        eq(agents.projectId, projectId),
+        notInArray(agents.status, [...INACTIVE_AGENT_STATUSES]),
+      ),
+    );
 }
 
-export async function getInFlightTasks(db: DrizzleDb, projectId?: string): Promise<Array<{ id: number; title: string; claimedBy: string | null }>> {
-  const baseCond = inArray(tasks.status, ACTIVE_STATUSES);
+export async function getInFlightTasks(db: DrizzleDb, projectId: string): Promise<Array<{ id: number; title: string; claimedByAgentId: string | null }>> {
   return db
     .select({
       id: tasks.id,
       title: tasks.title,
-      claimedBy: tasks.claimedBy,
+      claimedByAgentId: tasks.claimedByAgentId,
     })
     .from(tasks)
-    .where(projectId ? and(baseCond, eq(tasks.projectId, projectId)) : baseCond);
+    .where(and(inArray(tasks.status, [...ACTIVE_STATUSES]), eq(tasks.projectId, projectId)));
 }
 
-export async function releaseAllFiles(db: DbOrTx, projectId?: string): Promise<void> {
-  const baseCond = isNotNull(files.claimant);
-  await db
-    .update(files)
-    .set({ claimant: null, claimedAt: null })
-    .where(projectId ? and(baseCond, eq(files.projectId, projectId)) : baseCond);
+export async function releaseAllFiles(db: DbOrTx, projectId: string): Promise<void> {
+  await filesQ.releaseAll(db, projectId);
 }
 
-export async function resumePausedAgents(db: DbOrTx, projectId?: string): Promise<void> {
-  const baseCond = eq(agents.status, 'paused');
+export async function resumePausedAgents(db: DbOrTx, projectId: string): Promise<void> {
   await db
     .update(agents)
     .set({ status: 'idle' })
-    .where(projectId ? and(baseCond, eq(agents.projectId, projectId)) : baseCond);
+    .where(and(eq(agents.status, 'paused'), eq(agents.projectId, projectId)));
 }
 
-export async function getPausedAgentNames(db: DbOrTx, projectId?: string): Promise<string[]> {
-  const baseCond = eq(agents.status, 'paused');
+export async function getPausedAgentNames(db: DbOrTx, projectId: string): Promise<string[]> {
   const rows = await db
     .select({ name: agents.name })
     .from(agents)
-    .where(projectId ? and(baseCond, eq(agents.projectId, projectId)) : baseCond);
+    .where(and(eq(agents.status, 'paused'), eq(agents.projectId, projectId)));
   return rows.map((r) => r.name);
 }

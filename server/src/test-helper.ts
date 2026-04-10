@@ -1,7 +1,31 @@
+import type { FastifyInstance } from 'fastify';
 import type { ScaffoldConfig } from './config.js';
 
 // Re-export the Drizzle test helper as the canonical test app factory
 export { createDrizzleTestApp, type DrizzleTestContext } from './drizzle-test-helper.js';
+
+/**
+ * Register an agent via POST /agents/register and return the agent UUID.
+ * Useful in route tests that need a registered agent for claim/ownership operations.
+ */
+export async function registerAgent(
+  app: FastifyInstance,
+  name: string,
+  projectId?: string,
+): Promise<string> {
+  const headers: Record<string, string> = {};
+  if (projectId) headers['x-project-id'] = projectId;
+  const res = await app.inject({
+    method: 'POST',
+    url: '/agents/register',
+    payload: { name, worktree: `/tmp/${name}` },
+    headers,
+  });
+  if (res.statusCode !== 200) {
+    throw new Error(`registerAgent('${name}') failed: ${res.statusCode} ${res.body}`);
+  }
+  return res.json().id;
+}
 
 export function createTestConfig(overrides?: Partial<ScaffoldConfig>): ScaffoldConfig {
   const base: ScaffoldConfig = {

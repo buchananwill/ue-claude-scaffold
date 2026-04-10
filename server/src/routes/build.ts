@@ -114,15 +114,7 @@ function resolveScript(scriptPath: string, extraArgs: string[]): { command: stri
 const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   const config = opts.config;
 
-  async function resolveProjectIdForAgent(agentName: string | undefined): Promise<string> {
-    if (agentName) {
-      return agentsQ.getProjectId(getDb(), agentName);
-    }
-    return 'default';
-  }
-
-  async function resolveProjectForAgent(agentName: string | undefined): Promise<{ project: ProjectConfig; projectId: string }> {
-    const projectId = await resolveProjectIdForAgent(agentName);
+  async function resolveProjectForAgent(projectId: string): Promise<{ project: ProjectConfig; projectId: string }> {
     try {
       const project = await resolveProject(config, getDb(), projectId);
       return { project, projectId };
@@ -131,18 +123,18 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     }
   }
 
-  async function checkLock(agentName: string | undefined, projectId: string): Promise<string | null> {
-    const lock = await ubtQ.getLock(getDb(), projectId);
-    if (!lock || !lock.holder) {
+  async function checkLock(agentName: string | undefined): Promise<string | null> {
+    const lock = await ubtQ.getLock(getDb());
+    if (!lock || !lock.holderAgentId) {
       return null;
     }
     if (isStale(lock.acquiredAt ? lock.acquiredAt.toISOString() : null)) {
       return null;
     }
-    if (lock.holder === agentName) {
+    if (lock.holderAgentId === agentName) {
       return null;
     }
-    return lock.holder;
+    return lock.holderAgentId;
   }
 
   function getStagingWorktree(agentName: string | undefined, project: ProjectConfig): string {
@@ -166,16 +158,15 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     }
   }
 
-  async function syncWorktree(agentName: string | undefined, project: ProjectConfig): Promise<'changed' | 'unchanged'> {
+  async function syncWorktree(agentName: string | undefined, projectId: string, project: ProjectConfig): Promise<'changed' | 'unchanged'> {
     const worktreePath = getStagingWorktree(agentName, project);
     const bareRepo = getBareRepoPath(project);
 
-    const projectId = await resolveProjectIdForAgent(agentName);
     const dbRow = await projectsQ.getById(getDb(), projectId);
     const proj = getProject(config, projectId, dbRow ?? undefined);
     let branch = seedBranchFor(projectId, proj);
     if (agentName) {
-      const agentRow = await agentsQ.getWorktreeInfo(getDb(), agentName);
+      const agentRow = await agentsQ.getWorktreeInfo(getDb(), projectId, agentName);
       if (agentRow?.worktree) {
         branch = agentRow.worktree;
       }
@@ -246,6 +237,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
    */
   async function prepareBuildOrTest(
     agentName: string | undefined,
+    projectId: string,
   ): Promise<
     | { ok: true; project: ProjectConfig; projectId: string; cwd: string }
     | { ok: false; result: SpawnResult }
@@ -257,8 +249,8 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       };
     }
 
-    const { project, projectId } = await resolveProjectForAgent(agentName);
-    const holder = await checkLock(agentName, projectId);
+    const { project } = await resolveProjectForAgent(projectId);
+    const holder = await checkLock(agentName);
     if (holder) {
       return {
         ok: false,
@@ -270,7 +262,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     }
 
     try {
-      await syncWorktree(agentName, project);
+      await syncWorktree(agentName, projectId, project);
     } catch (err) {
       return {
         ok: false,
@@ -294,7 +286,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     // network-isolated deployment (containers on the same host). If the server
     // is exposed to untrusted networks, agent identity must be authenticated.
     const agentName = request.headers['x-agent-name'] as string | undefined;
-    const prep = await prepareBuildOrTest(agentName);
+    const prep = await prepareBuildOrTest(agentName, request.projectId);
     if (!prep.ok) return prep.result;
     const { project, projectId, cwd } = prep;
 
@@ -323,7 +315,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     Body: { filters?: string[] };
   }>('/test', async (request) => {
     const agentName = request.headers['x-agent-name'] as string | undefined;
-    const prep = await prepareBuildOrTest(agentName);
+    const prep = await prepareBuildOrTest(agentName, request.projectId);
     if (!prep.ok) return prep.result;
     const { project, projectId, cwd } = prep;
 

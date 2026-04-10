@@ -2,6 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import { tasks, messages, agents } from '../schema/tables.js';
+import { v7 as uuidv7 } from 'uuid';
 import searchPlugin from './search.js';
 
 describe('search routes (drizzle)', () => {
@@ -72,6 +73,7 @@ describe('search routes (drizzle)', () => {
 
   it('finds agent by name', async () => {
     await ctx.db.insert(agents).values({
+      id: uuidv7(),
       name: 'builder-alpha',
       worktree: '/tmp/wt1',
       projectId: 'default',

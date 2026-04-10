@@ -395,7 +395,7 @@ describe('messages routes (drizzle)', () => {
     assert.equal(msgs.length, 4);
   });
 
-  it('?since=<id> returns all messages after cursor without limit', async () => {
+  it('?since=<id> returns all messages after cursor (up to default cap)', async () => {
     const ids: number[] = [];
     for (let i = 1; i <= 10; i++) {
       const r = await ctx.app.inject({
@@ -406,16 +406,36 @@ describe('messages routes (drizzle)', () => {
       ids.push(r.json().id);
     }
 
-    // Even with limit=2, since should return all after cursor
+    // Without explicit limit, since returns all remaining (up to 500 cap)
     const get = await ctx.app.inject({
       method: 'GET',
-      url: `/messages/pg?since=${ids[0]}&limit=2`,
+      url: `/messages/pg?since=${ids[0]}`,
     });
     const msgs = get.json();
-    // since ignores limit, returns all 9 remaining
     assert.equal(msgs.length, 9);
     assert.equal(msgs[0].payload, 'msg2');
     assert.equal(msgs[8].payload, 'msg10');
+  });
+
+  it('?since=<id>&limit=N caps results in polling mode', async () => {
+    const ids: number[] = [];
+    for (let i = 1; i <= 5; i++) {
+      const r = await ctx.app.inject({
+        method: 'POST',
+        url: '/messages',
+        payload: { channel: 'pgcap', type: 'info', payload: `m${i}` },
+      });
+      ids.push(r.json().id);
+    }
+
+    const get = await ctx.app.inject({
+      method: 'GET',
+      url: `/messages/pgcap?since=${ids[0]}&limit=2`,
+    });
+    const msgs = get.json();
+    assert.equal(msgs.length, 2);
+    assert.equal(msgs[0].payload, 'm2');
+    assert.equal(msgs[1].payload, 'm3');
   });
 
   it('POST /messages/:id/resolve sets result and resolved_at', async () => {
