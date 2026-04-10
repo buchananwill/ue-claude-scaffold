@@ -18,7 +18,11 @@ Address decomposition review findings W1 and W4 from Phase 12. W1: extract share
 
 ## Build & Test Results
 
-Pending initial build.
+- **Build**: SUCCESS (`npm run build` clean)
+- **build.test.ts**: 17 passed, 0 failed
+- **tasks.test.ts**: 49 passed, 1 failed (pre-existing: "scopes deletion to the requesting project" -- UUID vs agent-name mismatch, present in original combined file)
+- **tasks-deps.test.ts**: 48 passed, 6 failed (all pre-existing: same failures as original combined file -- full lifecycle claimedBy returning UUID, file-lock blockReasons, schema status INSERT failures with PGlite)
+- Verified by running original combined tasks.test.ts: 97 pass, 7 fail -- identical failure set (1 + 6 = 7).
 
 ## Open Questions / Risks
 
