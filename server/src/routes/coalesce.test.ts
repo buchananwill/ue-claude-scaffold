@@ -60,7 +60,12 @@ describe('coalesce routes (drizzle)', () => {
     return rows[0].id;
   }
 
-  /** Claim a task and set file ownership directly using agent UUID */
+  /**
+   * Claim a task and set file ownership directly using Drizzle updates.
+   * This is intentional state-setup for coalesce tests, not a test of the
+   * claim route — it bypasses route-level validation to put the DB into
+   * the exact state needed for coalesce scenarios.
+   */
   async function claimTask(taskId: number, agentName: string, taskFiles?: string[]) {
     const agentId = await getAgentId(agentName);
 
@@ -70,13 +75,13 @@ describe('coalesce routes (drizzle)', () => {
       claimedAt: sql`now()`,
     }).where(eq(tasks.id, taskId));
 
-    // Set file claimant
+    // Set file claimant — scoped by projectId to match the insert pattern
     if (taskFiles?.length) {
       for (const filePath of taskFiles) {
         await ctx.db.update(files).set({
           claimantAgentId: agentId ?? null,
           claimedAt: sql`now()`,
-        }).where(eq(files.path, filePath));
+        }).where(and(eq(files.path, filePath), eq(files.projectId, 'default')));
       }
     }
   }

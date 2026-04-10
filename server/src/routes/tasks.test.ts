@@ -16,7 +16,18 @@ describe('tasks routes', () => {
   beforeEach(async () => {
     ctx = await createDrizzleTestApp();
     const config = createTestConfig();
+    await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
+
+    // Register agents used by claim tests in this block
+    for (const name of ['agent-1', 'agent-lock', 'agent-resolver']) {
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/agents/register',
+        headers: { 'x-project-id': 'default' },
+        payload: { name, worktree: `/tmp/${name}` },
+      });
+    }
   });
 
   afterEach(async () => {
@@ -29,6 +40,7 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Build widget', description: 'Create the widget system' },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();
@@ -41,14 +53,16 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Task A' },
+      headers: { 'x-project-id': 'default' },
     });
     await ctx.app.inject({
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Task B' },
+      headers: { 'x-project-id': 'default' },
     });
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 200);
     const body = res.json() as any;
     const tasks = body.tasks;
@@ -64,21 +78,23 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Pending task' },
+      headers: { 'x-project-id': 'default' },
     });
     const r2 = await ctx.app.inject({
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Claimed task' },
+      headers: { 'x-project-id': 'default' },
     });
     const claimedId = r2.json().id;
 
     await ctx.app.inject({
       method: 'POST',
       url: `/tasks/${claimedId}/claim`,
-      headers: { 'x-agent-name': 'agent-1' },
+      headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
     });
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 200);
     const body = res.json() as any;
     const tasks = body.tasks;
@@ -89,16 +105,16 @@ describe('tasks routes', () => {
   });
 
   it('GET /tasks supports limit and offset pagination', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T1' } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T2' } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T3' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T1' } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T2' } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'T3' } , headers: { 'x-project-id': 'default' }});
 
-    const page1 = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=2&offset=0' });
+    const page1 = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=2&offset=0' , headers: { 'x-project-id': 'default' }});
     const body1 = page1.json() as any;
     assert.equal(body1.tasks.length, 2);
     assert.equal(body1.total, 3);
 
-    const page2 = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=2&offset=2' });
+    const page2 = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=2&offset=2' , headers: { 'x-project-id': 'default' }});
     const body2 = page2.json() as any;
     assert.equal(body2.tasks.length, 1);
     assert.equal(body2.total, 3);
@@ -106,28 +122,28 @@ describe('tasks routes', () => {
 
   it('GET /tasks with multi-status filter', async () => {
     // Create tasks, then manually change one status via direct claim
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending1' } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending2' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending1' } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending2' } , headers: { 'x-project-id': 'default' }});
 
     // Get all with status=pending
-    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending' });
+    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending' , headers: { 'x-project-id': 'default' }});
     const body1 = res1.json() as any;
     assert.equal(body1.tasks.length, 2);
     assert.equal(body1.total, 2);
 
     // Multi-status: pending,completed (only pending exist)
-    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,completed' });
+    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,completed' , headers: { 'x-project-id': 'default' }});
     const body2 = res2.json() as any;
     assert.equal(body2.tasks.length, 2);
     assert.equal(body2.total, 2);
   });
 
   it('GET /tasks with priority filter', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 } , headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,2' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,2' , headers: { 'x-project-id': 'default' }});
     const body = res.json() as any;
     assert.equal(body.tasks.length, 2);
     assert.equal(body.total, 2);
@@ -137,85 +153,85 @@ describe('tasks routes', () => {
   });
 
   it('GET /tasks with sort and dir', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA', priority: 1 } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ', priority: 2 } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM', priority: 0 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA', priority: 1 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ', priority: 2 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM', priority: 0 } , headers: { 'x-project-id': 'default' }});
 
     // Sort by title ascending
-    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=asc' });
+    const res1 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=asc' , headers: { 'x-project-id': 'default' }});
     const body1 = res1.json() as any;
     assert.equal(body1.tasks[0].title, 'AAA');
     assert.equal(body1.tasks[1].title, 'MMM');
     assert.equal(body1.tasks[2].title, 'ZZZ');
 
     // Sort by title descending
-    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=desc' });
+    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=desc' , headers: { 'x-project-id': 'default' }});
     const body2 = res2.json() as any;
     assert.equal(body2.tasks[0].title, 'ZZZ');
     assert.equal(body2.tasks[2].title, 'AAA');
   });
 
   it('GET /tasks with invalid sort column returns 400', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=bogus' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=bogus' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     const body = res.json();
     assert.ok(body.message.includes('Invalid sort column'));
   });
 
   it('GET /tasks with invalid dir returns 400', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=sideways' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title&dir=sideways' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     const body = res.json();
     assert.ok(body.message.includes('Invalid dir'));
   });
 
   it('GET /tasks with agent filter', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned1' } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned2' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned1' } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Unassigned2' } , headers: { 'x-project-id': 'default' }});
 
     // Filter by __unassigned__ (both tasks have null claimedBy)
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=__unassigned__' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=__unassigned__' , headers: { 'x-project-id': 'default' }});
     const body = res.json() as any;
     assert.equal(body.tasks.length, 2);
     assert.equal(body.total, 2);
   });
 
   it('GET /tasks priority filter returns 400 for non-numeric values', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } , headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,abc' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,abc' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('Invalid priority'));
   });
 
   it('GET /tasks priority filter returns 400 for trailing comma (empty segment)', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } , headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=0,' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('empty segments'));
   });
 
   it('GET /tasks priority filter returns 400 for leading comma (empty segment)', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } , headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=,1' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=,1' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('empty segments'));
   });
 
   it('GET /tasks with dir but no sort returns 400', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?dir=asc' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?dir=asc' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('dir requires sort'));
   });
 
   it('GET /tasks with sort but no dir defaults to ascending', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ' } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA' } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'ZZZ' } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'AAA' } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'MMM' } , headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?sort=title' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 200);
     const body = res.json() as any;
     assert.equal(body.tasks[0].title, 'AAA');
@@ -224,56 +240,56 @@ describe('tasks routes', () => {
   });
 
   it('GET /tasks with invalid status returns 400', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=bogus' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=bogus' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('Invalid status value'));
   });
 
   it('GET /tasks status filter returns 400 for empty segments', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('empty segments'));
   });
 
   it('GET /tasks agent filter returns 400 for empty segments', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=,agent-1' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=,agent-1' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('empty segments'));
   });
 
   it('GET /tasks agent filter returns 400 for invalid agent name', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=../bad' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agent=../bad' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('Invalid agent name'));
   });
 
   it('GET /tasks returns 400 when status filter exceeds 50 values', async () => {
     const statuses = Array.from({ length: 51 }, () => 'pending').join(',');
-    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?status=${statuses}` });
+    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?status=${statuses}` , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('Too many'));
   });
 
   it('GET /tasks returns 400 when agent filter exceeds 50 values', async () => {
     const agents = Array.from({ length: 51 }, (_, i) => `agent-${i}`).join(',');
-    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?agent=${agents}` });
+    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?agent=${agents}` , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('Too many'));
   });
 
   it('GET /tasks returns 400 when priority filter exceeds 50 values', async () => {
     const priorities = Array.from({ length: 51 }, (_, i) => String(i)).join(',');
-    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?priority=${priorities}` });
+    const res = await ctx.app.inject({ method: 'GET', url: `/tasks?priority=${priorities}` , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('Too many'));
   });
 
   it('GET /tasks filtered total matches filtered count, not global count', async () => {
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } });
-    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 } , headers: { 'x-project-id': 'default' }});
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P2', priority: 2 } , headers: { 'x-project-id': 'default' }});
 
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=1' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?priority=1' , headers: { 'x-project-id': 'default' }});
     const body = res.json() as any;
     assert.equal(body.tasks.length, 1);
     assert.equal(body.total, 1); // not 3!
@@ -284,10 +300,11 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'My task', description: 'Details here', priority: 5 },
+      headers: { 'x-project-id': 'default' },
     });
     const id = post.json().id;
 
-    const res = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const res = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 200);
     const task = res.json();
     assert.equal(task.id, id);
@@ -300,7 +317,7 @@ describe('tasks routes', () => {
   });
 
   it('GET /tasks/:id returns 404 for missing task', async () => {
-    const res = await ctx.app.inject({ method: 'GET', url: '/tasks/99999' });
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks/99999' , headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 404);
   });
 
@@ -311,6 +328,7 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Original title' },
+      headers: { 'x-project-id': 'default' },
     });
     const id = post.json().id;
 
@@ -318,11 +336,12 @@ describe('tasks routes', () => {
       method: 'PATCH',
       url: `/tasks/${id}`,
       payload: { title: 'Updated title' },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(patch.statusCode, 200);
     assert.deepEqual(patch.json(), { ok: true });
 
-    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
     const task = get.json();
     assert.equal(task.title, 'Updated title');
   });
@@ -332,6 +351,7 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Keep me', description: 'Original desc', priority: 3 },
+      headers: { 'x-project-id': 'default' },
     });
     const id = post.json().id;
 
@@ -339,10 +359,11 @@ describe('tasks routes', () => {
       method: 'PATCH',
       url: `/tasks/${id}`,
       payload: { priority: 10 },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(patch.statusCode, 200);
 
-    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
     const task = get.json();
     assert.equal(task.title, 'Keep me');
     assert.equal(task.description, 'Original desc');
@@ -354,6 +375,7 @@ describe('tasks routes', () => {
       method: 'PATCH',
       url: '/tasks/99999',
       payload: { title: 'Nope' },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(patch.statusCode, 404);
   });
@@ -363,19 +385,21 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Will be claimed' },
+      headers: { 'x-project-id': 'default' },
     });
     const id = post.json().id;
 
     await ctx.app.inject({
       method: 'POST',
       url: `/tasks/${id}/claim`,
-      headers: { 'x-agent-name': 'agent-1' },
+      headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
     });
 
     const patch = await ctx.app.inject({
       method: 'PATCH',
       url: `/tasks/${id}`,
       payload: { title: 'Too late' },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(patch.statusCode, 409);
   });
@@ -385,24 +409,27 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Will be completed' },
+      headers: { 'x-project-id': 'default' },
     });
     const id = post.json().id;
 
     await ctx.app.inject({
       method: 'POST',
       url: `/tasks/${id}/claim`,
-      headers: { 'x-agent-name': 'agent-1' },
+      headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
     });
     await ctx.app.inject({
       method: 'POST',
       url: `/tasks/${id}/complete`,
       payload: { result: { summary: 'Done' } },
+      headers: { 'x-project-id': 'default' },
     });
 
     const patch = await ctx.app.inject({
       method: 'PATCH',
       url: `/tasks/${id}`,
       payload: { title: 'Too late' },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(patch.statusCode, 409);
   });
@@ -412,6 +439,7 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Untouched' },
+      headers: { 'x-project-id': 'default' },
     });
     const id = post.json().id;
 
@@ -419,6 +447,7 @@ describe('tasks routes', () => {
       method: 'PATCH',
       url: `/tasks/${id}`,
       payload: { bogus: 'field' },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(patch.statusCode, 400);
   });
@@ -428,6 +457,7 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Has no source' },
+      headers: { 'x-project-id': 'default' },
     });
     const id = post.json().id;
 
@@ -435,11 +465,12 @@ describe('tasks routes', () => {
       method: 'PATCH',
       url: `/tasks/${id}`,
       payload: { sourcePath: null },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(patch.statusCode, 200);
     assert.deepEqual(patch.json(), { ok: true });
 
-    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
     assert.equal(get.json().sourcePath, null);
   });
 
@@ -453,11 +484,12 @@ describe('tasks routes', () => {
         title: 'With files',
         files: ['Source/Foo.cpp', 'Source/Foo.h'],
       },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(res.statusCode, 200);
     const { id } = res.json();
 
-    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
     const task = get.json();
     assert.deepEqual(task.files, ['Source/Foo.cpp', 'Source/Foo.h']);
   });
@@ -467,10 +499,11 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'No files' },
+      headers: { 'x-project-id': 'default' },
     });
     const { id } = res.json();
 
-    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
     assert.deepEqual(get.json().files, []);
   });
 
@@ -485,6 +518,7 @@ describe('tasks routes', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: `Bad path (${label})`, files },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 400, `Expected 400 for ${label} path`);
     }
@@ -495,10 +529,11 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Files test', files: ['A.cpp', 'B.h'] },
+      headers: { 'x-project-id': 'default' },
     });
     const { id } = post.json();
 
-    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
     const task = get.json();
     assert.equal(Array.isArray(task.files), true);
     assert.equal(task.files.length, 2);
@@ -511,6 +546,7 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Patch files', files: ['Old.cpp'] },
+      headers: { 'x-project-id': 'default' },
     });
     const { id } = post.json();
 
@@ -518,10 +554,11 @@ describe('tasks routes', () => {
       method: 'PATCH',
       url: `/tasks/${id}`,
       payload: { files: ['New.cpp', 'New.h'] },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(patch.statusCode, 200);
 
-    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
     const task = get.json();
     assert.deepEqual(task.files.sort(), ['New.cpp', 'New.h']);
   });
@@ -531,14 +568,15 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Delete me', files: ['Doomed.cpp'] },
+      headers: { 'x-project-id': 'default' },
     });
     const { id } = post.json();
 
-    const del = await ctx.app.inject({ method: 'DELETE', url: `/tasks/${id}` });
+    const del = await ctx.app.inject({ method: 'DELETE', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
     assert.equal(del.statusCode, 200);
 
     // Task gone
-    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+    const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
     assert.equal(get.statusCode, 404);
   });
 
@@ -553,6 +591,7 @@ describe('tasks routes', () => {
           { title: 'Batch 3' },
         ],
       },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();
@@ -560,13 +599,13 @@ describe('tasks routes', () => {
     assert.equal(body.ids.length, 3);
 
     // Verify files on each task
-    const get1 = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[0]}` });
+    const get1 = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[0]}` , headers: { 'x-project-id': 'default' }});
     assert.deepEqual(get1.json().files, ['Shared.cpp']);
 
-    const get2 = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[1]}` });
+    const get2 = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[1]}` , headers: { 'x-project-id': 'default' }});
     assert.deepEqual(get2.json().files.sort(), ['Only2.h', 'Shared.cpp']);
 
-    const get3 = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[2]}` });
+    const get3 = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[2]}` , headers: { 'x-project-id': 'default' }});
     assert.deepEqual(get3.json().files, []);
   });
 
@@ -580,11 +619,12 @@ describe('tasks routes', () => {
           { title: 'Bad task', files: ['../escape'] },
         ],
       },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(res.statusCode, 400);
 
     // No tasks should have been created
-    const list = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+    const list = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
     assert.equal((list.json() as any).tasks.length, 0);
   });
 
@@ -599,6 +639,7 @@ describe('tasks routes', () => {
           { title: 'Leaf', priority: 0, dependsOnIndex: [1] },
         ],
       },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();
@@ -613,7 +654,7 @@ describe('tasks routes', () => {
     assert.equal(body.replan.cycles.length, 0);
 
     // The root task's priority should have been recomputed by replan
-    const rootTask = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[0]}` });
+    const rootTask = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[0]}` , headers: { 'x-project-id': 'default' }});
     assert.equal(rootTask.statusCode, 200);
     // Priority was recomputed — just verify it's a number (replan may adjust it)
     assert.equal(typeof rootTask.json().priority, 'number');
@@ -628,6 +669,7 @@ describe('tasks routes', () => {
           { title: 'Solo task' },
         ],
       },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();
@@ -640,6 +682,7 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Test', source_path: 'snake_case_mistake' },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(res.statusCode, 400);
     assert.ok(res.json().message.includes('source_path'));
@@ -650,6 +693,7 @@ describe('tasks routes', () => {
       method: 'POST',
       url: '/tasks',
       payload: { title: 'Test' },
+      headers: { 'x-project-id': 'default' },
     });
     const { id } = post.json();
 
@@ -657,6 +701,7 @@ describe('tasks routes', () => {
       method: 'PATCH',
       url: `/tasks/${id}`,
       payload: { source_path: 'oops' },
+      headers: { 'x-project-id': 'default' },
     });
     assert.equal(patch.statusCode, 400);
     assert.ok(patch.json().message.includes('source_path'));
@@ -668,17 +713,20 @@ describe('tasks routes', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Done 1' },
+        headers: { 'x-project-id': 'default' },
       });
       const r2 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Done 2' },
+        headers: { 'x-project-id': 'default' },
       });
       // Also insert a pending task that should NOT be deleted
       await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Still pending' },
+        headers: { 'x-project-id': 'default' },
       });
 
       // Move two tasks to completed status via claim+complete lifecycle
@@ -687,29 +735,30 @@ describe('tasks routes', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${id1}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${id1}/complete`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
         payload: { result: { summary: 'done' } },
       });
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${id2}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${id2}/complete`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
         payload: { result: { summary: 'done' } },
       });
 
       const res = await ctx.app.inject({
         method: 'DELETE',
         url: '/tasks?status=completed',
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 200);
       const body = res.json();
@@ -717,7 +766,7 @@ describe('tasks routes', () => {
       assert.equal(body.deleted, 2);
 
       // Verify the pending task still exists
-      const listRes = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+      const listRes = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
       const listBody = listRes.json() as any;
       assert.equal(listBody.total, 1);
       assert.equal(listBody.tasks[0].title, 'Still pending');
@@ -727,6 +776,7 @@ describe('tasks routes', () => {
       const res = await ctx.app.inject({
         method: 'DELETE',
         url: '/tasks?status=bogus',
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 400);
       const body = res.json();
@@ -737,6 +787,7 @@ describe('tasks routes', () => {
       const res = await ctx.app.inject({
         method: 'DELETE',
         url: '/tasks',
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 400);
       const body = res.json();
@@ -747,6 +798,7 @@ describe('tasks routes', () => {
       const res = await ctx.app.inject({
         method: 'DELETE',
         url: '/tasks?status=claimed',
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 409);
       const body = res.json();
@@ -759,6 +811,20 @@ describe('tasks routes', () => {
     });
 
     it('scopes deletion to the requesting project', async () => {
+      // Register agent-1 in both projects so claim calls succeed
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/agents/register',
+        headers: { 'x-project-id': 'alpha' },
+        payload: { name: 'agent-1', worktree: '/tmp/agent-1' },
+      });
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/agents/register',
+        headers: { 'x-project-id': 'beta' },
+        payload: { name: 'agent-1', worktree: '/tmp/agent-1' },
+      });
+
       // Insert a task in project "alpha"
       await ctx.app.inject({
         method: 'POST',
@@ -875,6 +941,15 @@ describe('tasks with bare repo and agents', () => {
       headers: { 'x-project-id': 'default' },
       payload: { name: 'agent-2', worktree: '/tmp/wt2' },
     });
+    // Register additional agents used by blockReasons and lifecycle tests
+    for (const name of ['agent-lock', 'agent-resolver']) {
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/agents/register',
+        headers: { 'x-project-id': 'default' },
+        payload: { name, worktree: `/tmp/${name}` },
+      });
+    }
   });
 
   afterEach(async () => {
@@ -891,6 +966,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Dep A' },
+        headers: { 'x-project-id': 'default' },
       });
       const depId = r1.json().id;
 
@@ -898,11 +974,12 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Dep B', dependsOn: [depId] },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(r2.statusCode, 200);
       assert.equal(r2.json().ok, true);
 
-      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${r2.json().id}` });
+      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${r2.json().id}` , headers: { 'x-project-id': 'default' }});
       const task = get.json();
       assert.deepEqual(task.dependsOn, [depId]);
       assert.deepEqual(task.blockedBy, [depId]);
@@ -913,6 +990,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Bad dep', dependsOn: [99999] },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 400);
       assert.ok(res.json().message.includes('does not exist'));
@@ -923,6 +1001,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Blocker' },
+        headers: { 'x-project-id': 'default' },
       });
       const blockerId = r1.json().id;
 
@@ -930,12 +1009,13 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Blocked task', dependsOn: [blockerId] },
+        headers: { 'x-project-id': 'default' },
       });
 
       const claim = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 200);
       const body = claim.json();
@@ -948,6 +1028,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Prereq' },
+        headers: { 'x-project-id': 'default' },
       });
       const prereqId = r1.json().id;
 
@@ -955,6 +1036,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Dependent', dependsOn: [prereqId] },
+        headers: { 'x-project-id': 'default' },
       });
       const depTaskId = r2.json().id;
 
@@ -962,19 +1044,20 @@ describe('tasks with bare repo and agents', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${prereqId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${prereqId}/complete`,
         payload: { result: { done: true, agent: 'agent-1' } },
+        headers: { 'x-project-id': 'default' },
       });
 
       // Now claim-next as same agent should pick up the dependent task
       const claim = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 200);
       assert.ok(claim.json().task);
@@ -986,6 +1069,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Blocker for claim' },
+        headers: { 'x-project-id': 'default' },
       });
       const blockerId = r1.json().id;
 
@@ -993,13 +1077,14 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Cannot claim yet', dependsOn: [blockerId] },
+        headers: { 'x-project-id': 'default' },
       });
       const taskId = r2.json().id;
 
       const claim = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${taskId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 409);
       const body = claim.json();
@@ -1012,6 +1097,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Prereq for claim' },
+        headers: { 'x-project-id': 'default' },
       });
       const prereqId = r1.json().id;
 
@@ -1019,6 +1105,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Claimable after prereq', dependsOn: [prereqId] },
+        headers: { 'x-project-id': 'default' },
       });
       const taskId = r2.json().id;
 
@@ -1026,19 +1113,20 @@ describe('tasks with bare repo and agents', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${prereqId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${prereqId}/complete`,
         payload: { result: { done: true, agent: 'agent-1' } },
+        headers: { 'x-project-id': 'default' },
       });
 
       // Claim as same agent (agent-1) — branch-aware: dep completed by same agent is met
       const claim = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${taskId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 200);
       assert.deepEqual(claim.json(), { ok: true });
@@ -1055,16 +1143,17 @@ describe('tasks with bare repo and agents', () => {
             { title: 'Batch C', dependsOnIndex: [0, 1] },
           ],
         },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 200);
       const body = res.json();
       assert.equal(body.ids.length, 3);
 
       // Verify deps
-      const getB = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[1]}` });
+      const getB = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[1]}` , headers: { 'x-project-id': 'default' }});
       assert.deepEqual(getB.json().dependsOn, [body.ids[0]]);
 
-      const getC = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[2]}` });
+      const getC = await ctx.app.inject({ method: 'GET', url: `/tasks/${body.ids[2]}` , headers: { 'x-project-id': 'default' }});
       assert.deepEqual(getC.json().dependsOn.sort(), [body.ids[0], body.ids[1]].sort());
     });
 
@@ -1077,6 +1166,7 @@ describe('tasks with bare repo and agents', () => {
             { title: 'Self ref', dependsOnIndex: [0] },
           ],
         },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 400);
       assert.ok(res.json().message.includes('self'));
@@ -1087,6 +1177,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Parent' },
+        headers: { 'x-project-id': 'default' },
       });
       const parentId = r1.json().id;
 
@@ -1094,10 +1185,11 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Child', dependsOn: [parentId] },
+        headers: { 'x-project-id': 'default' },
       });
       const childId = r2.json().id;
 
-      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${childId}` });
+      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${childId}` , headers: { 'x-project-id': 'default' }});
       const task = get.json();
       assert.deepEqual(task.dependsOn, [parentId]);
       assert.deepEqual(task.blockedBy, [parentId]);
@@ -1106,19 +1198,20 @@ describe('tasks with bare repo and agents', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${parentId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${parentId}/complete`,
         payload: { result: { agent: 'agent-1' } },
+        headers: { 'x-project-id': 'default' },
       });
 
       // GET as agent-1 (who completed the parent) — blockedBy should be empty
       const get2 = await ctx.app.inject({
         method: 'GET',
         url: `/tasks/${childId}`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       const task2 = get2.json();
       assert.deepEqual(task2.dependsOn, [parentId]);
@@ -1130,6 +1223,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Dep X' },
+        headers: { 'x-project-id': 'default' },
       });
       const depX = r1.json().id;
 
@@ -1137,6 +1231,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Dep Y' },
+        headers: { 'x-project-id': 'default' },
       });
       const depY = r2.json().id;
 
@@ -1144,11 +1239,12 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Patchable', dependsOn: [depX] },
+        headers: { 'x-project-id': 'default' },
       });
       const taskId = r3.json().id;
 
       // Verify initial deps
-      const get1 = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+      const get1 = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` , headers: { 'x-project-id': 'default' }});
       assert.deepEqual(get1.json().dependsOn, [depX]);
 
       // Patch to new deps
@@ -1156,10 +1252,11 @@ describe('tasks with bare repo and agents', () => {
         method: 'PATCH',
         url: `/tasks/${taskId}`,
         payload: { dependsOn: [depY] },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(patch.statusCode, 200);
 
-      const get2 = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+      const get2 = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` , headers: { 'x-project-id': 'default' }});
       assert.deepEqual(get2.json().dependsOn, [depY]);
     });
 
@@ -1168,6 +1265,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Cycle A' },
+        headers: { 'x-project-id': 'default' },
       });
       const idA = r1.json().id;
 
@@ -1175,6 +1273,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Cycle B', dependsOn: [idA] },
+        headers: { 'x-project-id': 'default' },
       });
       const idB = r2.json().id;
 
@@ -1183,6 +1282,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'PATCH',
         url: `/tasks/${idA}`,
         payload: { dependsOn: [idB] },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(patch.statusCode, 400);
       assert.ok(patch.json().message.includes('Cycle detected'));
@@ -1190,8 +1290,8 @@ describe('tasks with bare repo and agents', () => {
 
     it('task with multiple deps where only some are completed remains blocked', async () => {
       // Create two prerequisite tasks
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 1' } });
-      const r2 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 2' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 1' } , headers: { 'x-project-id': 'default' }});
+      const r2 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 2' } , headers: { 'x-project-id': 'default' }});
       const dep1 = r1.json().id;
       const dep2 = r2.json().id;
 
@@ -1200,18 +1300,19 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Needs both', dependsOn: [dep1, dep2] },
+        headers: { 'x-project-id': 'default' },
       });
       const taskId = r3.json().id;
 
       // Complete only dep1 as agent-1
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/complete`, payload: { result: { done: true, agent: 'agent-1' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/complete`, payload: { result: { done: true, agent: 'agent-1' } } , headers: { 'x-project-id': 'default' }});
 
       // blockedBy (viewed as agent-1) should only contain dep2 now
       const get = await ctx.app.inject({
         method: 'GET',
         url: `/tasks/${taskId}`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       const task = get.json();
       assert.deepEqual(task.dependsOn.sort(), [dep1, dep2].sort());
@@ -1221,7 +1322,7 @@ describe('tasks with bare repo and agents', () => {
       const claim = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${taskId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 409);
       assert.deepEqual(claim.json().blockedBy, [dep2]);
@@ -1230,7 +1331,7 @@ describe('tasks with bare repo and agents', () => {
       const claimNext = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claimNext.statusCode, 200);
       assert.equal(claimNext.json().task.title, 'Dep 2');
@@ -1238,7 +1339,7 @@ describe('tasks with bare repo and agents', () => {
 
     it('full lifecycle: complete dependency then claim dependent task (same agent)', async () => {
       // Create prerequisite
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Prerequisite' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Prerequisite' } , headers: { 'x-project-id': 'default' }});
       const prereqId = r1.json().id;
 
       // Create dependent task
@@ -1246,6 +1347,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Dependent task', dependsOn: [prereqId] },
+        headers: { 'x-project-id': 'default' },
       });
       const depId = r2.json().id;
 
@@ -1253,20 +1355,20 @@ describe('tasks with bare repo and agents', () => {
       const claim1 = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${depId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim1.statusCode, 409);
 
       // Claim, update, complete the prerequisite as agent-1
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/update`, payload: { progress: 'Working on it' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/complete`, payload: { result: { summary: 'All done', agent: 'agent-1' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/update`, payload: { progress: 'Working on it' } , headers: { 'x-project-id': 'default' }});
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${prereqId}/complete`, payload: { result: { summary: 'All done', agent: 'agent-1' } } , headers: { 'x-project-id': 'default' }});
 
       // Now the dependent task should be claimable by the same agent
       const claim2 = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${depId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim2.statusCode, 200);
       assert.deepEqual(claim2.json(), { ok: true });
@@ -1275,7 +1377,7 @@ describe('tasks with bare repo and agents', () => {
       const get = await ctx.app.inject({
         method: 'GET',
         url: `/tasks/${depId}`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       const task = get.json();
       assert.equal(task.status, 'claimed');
@@ -1286,16 +1388,17 @@ describe('tasks with bare repo and agents', () => {
 
     it('GET /tasks list returns dependsOn and blockedBy for all tasks', async () => {
       // Create tasks: one independent, one with dependency
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Independent' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Independent' } , headers: { 'x-project-id': 'default' }});
       const indepId = r1.json().id;
 
       const r2 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Has dependency', dependsOn: [indepId] },
+        headers: { 'x-project-id': 'default' },
       });
 
-      const list = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+      const list = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
       assert.equal(list.statusCode, 200);
       const listBody = list.json() as any;
       const tasks = listBody.tasks;
@@ -1325,21 +1428,22 @@ describe('tasks with bare repo and agents', () => {
             { title: 'Chain C', dependsOnIndex: [1] },
           ],
         },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 200);
       const body = res.json();
       const [idA, idB, idC] = body.ids;
 
       // Verify the chain
-      const getA = await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` });
+      const getA = await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` , headers: { 'x-project-id': 'default' }});
       assert.deepEqual(getA.json().dependsOn, []);
       assert.deepEqual(getA.json().blockedBy, []);
 
-      const getB = await ctx.app.inject({ method: 'GET', url: `/tasks/${idB}` });
+      const getB = await ctx.app.inject({ method: 'GET', url: `/tasks/${idB}` , headers: { 'x-project-id': 'default' }});
       assert.deepEqual(getB.json().dependsOn, [idA]);
       assert.deepEqual(getB.json().blockedBy, [idA]);
 
-      const getC = await ctx.app.inject({ method: 'GET', url: `/tasks/${idC}` });
+      const getC = await ctx.app.inject({ method: 'GET', url: `/tasks/${idC}` , headers: { 'x-project-id': 'default' }});
       assert.deepEqual(getC.json().dependsOn, [idB]);
       assert.deepEqual(getC.json().blockedBy, [idB]);
 
@@ -1347,35 +1451,36 @@ describe('tasks with bare repo and agents', () => {
       const claim1 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim1.json().task.title, 'Chain A');
 
       // Complete directly from 'claimed' — the server permits this transition.
       // If status constraints are tightened in the future, add an /update step here.
       // Complete A, then B should become claimable but C should still be blocked
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${idA}/complete`, payload: { result: {} } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${idA}/complete`, payload: { result: {} } , headers: { 'x-project-id': 'default' }});
 
       const claim2 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-2' },
       });
       assert.equal(claim2.json().task.title, 'Chain B');
 
       // C is still blocked by B
-      const getC2 = await ctx.app.inject({ method: 'GET', url: `/tasks/${idC}` });
+      const getC2 = await ctx.app.inject({ method: 'GET', url: `/tasks/${idC}` , headers: { 'x-project-id': 'default' }});
       assert.deepEqual(getC2.json().blockedBy, [idB]);
     });
 
     it('PATCH /tasks/:id with dependsOn: [] clears dependencies and makes task claimable', async () => {
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Blocker' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Blocker' } , headers: { 'x-project-id': 'default' }});
       const blockerId = r1.json().id;
 
       const r2 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Was blocked', dependsOn: [blockerId] },
+        headers: { 'x-project-id': 'default' },
       });
       const taskId = r2.json().id;
 
@@ -1383,7 +1488,7 @@ describe('tasks with bare repo and agents', () => {
       const claim1 = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${taskId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim1.statusCode, 409);
 
@@ -1392,11 +1497,12 @@ describe('tasks with bare repo and agents', () => {
         method: 'PATCH',
         url: `/tasks/${taskId}`,
         payload: { dependsOn: [] },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(patch.statusCode, 200);
 
       // Verify dependencies are cleared
-      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` });
+      const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${taskId}` , headers: { 'x-project-id': 'default' }});
       assert.deepEqual(get.json().dependsOn, []);
       assert.deepEqual(get.json().blockedBy, []);
 
@@ -1404,7 +1510,7 @@ describe('tasks with bare repo and agents', () => {
       const claim2 = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${taskId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim2.statusCode, 200);
       assert.deepEqual(claim2.json(), { ok: true });
@@ -1415,6 +1521,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Bad', dependsOnIndex: [0] },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 400);
       assert.ok(res.json().message.includes('dependsOnIndex is only valid in POST /tasks/batch'));
@@ -1430,42 +1537,45 @@ describe('tasks with bare repo and agents', () => {
             { title: 'B', dependsOnIndex: [0] },
           ],
         },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 400);
       assert.ok(res.json().message.includes('Cycle detected'));
     });
 
     it('PATCH /tasks/:id with dependsOn containing self-reference returns 400', async () => {
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Self dep' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Self dep' } , headers: { 'x-project-id': 'default' }});
       const taskId = r1.json().id;
 
       const patch = await ctx.app.inject({
         method: 'PATCH',
         url: `/tasks/${taskId}`,
         payload: { dependsOn: [taskId] },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(patch.statusCode, 400);
       assert.ok(patch.json().message.includes('cannot depend on itself'));
     });
 
     it('claim-next depBlocked count reflects tasks blocked by dependencies', async () => {
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Blocker task' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Blocker task' } , headers: { 'x-project-id': 'default' }});
       const blockerId = r1.json().id;
 
       // Claim the blocker so it is no longer pending
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${blockerId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${blockerId}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
 
       // Create a task blocked by the dependency
       await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Dep blocked', dependsOn: [blockerId] },
+        headers: { 'x-project-id': 'default' },
       });
 
       const res = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-2' },
       });
       assert.equal(res.statusCode, 200);
       const body = res.json();
@@ -1481,10 +1591,11 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Clean task' },
+          headers: { 'x-project-id': 'default' },
         });
         const { id } = post.json();
 
-        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
         const task = get.json();
         assert.equal(task.status, 'pending');
         assert.deepEqual(task.blockReasons, []);
@@ -1496,12 +1607,13 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Locker', files: ['Widget.cpp', 'Widget.h'] },
+          headers: { 'x-project-id': 'default' },
         });
         const lockerId = r1.json().id;
         await ctx.app.inject({
           method: 'POST',
           url: `/tasks/${lockerId}/claim`,
-          headers: { 'x-agent-name': 'agent-1' },
+          headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
         });
 
         // Create a pending task that needs the same files
@@ -1509,10 +1621,11 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Blocked by files', files: ['Widget.cpp'] },
+          headers: { 'x-project-id': 'default' },
         });
         const blockedId = r2.json().id;
 
-        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${blockedId}` });
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${blockedId}` , headers: { 'x-project-id': 'default' }});
         const task = get.json();
         assert.equal(task.status, 'pending');
         assert.ok(task.blockReasons.length > 0);
@@ -1525,6 +1638,7 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Prereq' },
+          headers: { 'x-project-id': 'default' },
         });
         const prereqId = r1.json().id;
 
@@ -1532,10 +1646,11 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Dep task', dependsOn: [prereqId] },
+          headers: { 'x-project-id': 'default' },
         });
         const depTaskId = r2.json().id;
 
-        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${depTaskId}` });
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${depTaskId}` , headers: { 'x-project-id': 'default' }});
         const task = get.json();
         assert.equal(task.status, 'pending');
         assert.ok(task.blockReasons.length > 0);
@@ -1548,13 +1663,17 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Missing source task' },
+          headers: { 'x-project-id': 'default' },
         });
         const { id } = post.json();
 
-        // Bypass route validation by directly setting source_path in the DB
+        // Intentional: bypass route validation by directly setting source_path in the DB.
+        // This is the only way to set up the "missing sourcePath" condition because the
+        // POST /tasks route validates sourcePath before insertion — so this state is
+        // unreachable via the API but must be tested for the blockReasons logic.
         await ctx.db.execute(sql`UPDATE tasks SET source_path = 'plans/nonexistent.md' WHERE id = ${id}`);
 
-        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` , headers: { 'x-project-id': 'default' }});
         const task = get.json();
         assert.equal(task.status, 'pending');
         assert.ok(task.blockReasons.length > 0);
@@ -1567,6 +1686,7 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Done prereq' },
+          headers: { 'x-project-id': 'default' },
         });
         const prereqId = r1.json().id;
 
@@ -1574,15 +1694,16 @@ describe('tasks with bare repo and agents', () => {
         await ctx.app.inject({
           method: 'POST',
           url: `/tasks/${prereqId}/claim`,
-          headers: { 'x-agent-name': 'agent-1' },
+          headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
         });
         await ctx.app.inject({
           method: 'POST',
           url: `/tasks/${prereqId}/complete`,
           payload: { result: { done: true } },
+          headers: { 'x-project-id': 'default' },
         });
 
-        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${prereqId}` });
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${prereqId}` , headers: { 'x-project-id': 'default' }});
         const task = get.json();
         assert.equal(task.status, 'completed');
         assert.deepEqual(task.blockReasons, []);
@@ -1594,12 +1715,13 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'File locker', files: ['Shared.cpp'] },
+          headers: { 'x-project-id': 'default' },
         });
         const lockerId = r1.json().id;
         await ctx.app.inject({
           method: 'POST',
           url: `/tasks/${lockerId}/claim`,
-          headers: { 'x-agent-name': 'agent-lock' },
+          headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-lock' },
         });
 
         // Create an incomplete prereq task
@@ -1607,6 +1729,7 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Prereq task' },
+          headers: { 'x-project-id': 'default' },
         });
         const prereqId = r2.json().id;
 
@@ -1615,10 +1738,11 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Doubly blocked', files: ['Shared.cpp'], dependsOn: [prereqId] },
+          headers: { 'x-project-id': 'default' },
         });
         const blockedId = r3.json().id;
 
-        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${blockedId}` });
+        const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${blockedId}` , headers: { 'x-project-id': 'default' }});
         const task = get.json();
         assert.equal(task.status, 'pending');
         // Should have at least 2 reasons: file lock + dependency
@@ -1635,6 +1759,7 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Independent' },
+          headers: { 'x-project-id': 'default' },
         });
         const indId = r1.json().id;
 
@@ -1643,10 +1768,11 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Dependent', dependsOn: [indId] },
+          headers: { 'x-project-id': 'default' },
         });
         const depId = r2.json().id;
 
-        const list = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+        const list = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
         const listBody = list.json() as any;
         const tasks = listBody.tasks;
         assert.equal(tasks.length, 2);
@@ -1672,6 +1798,7 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Prereq to complete' },
+          headers: { 'x-project-id': 'default' },
         });
         const prereqId = r1.json().id;
 
@@ -1680,11 +1807,12 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: 'Waiting on prereq', dependsOn: [prereqId] },
+          headers: { 'x-project-id': 'default' },
         });
         const waiterId = r2.json().id;
 
         // Confirm it is blocked initially
-        const getBefore = await ctx.app.inject({ method: 'GET', url: `/tasks/${waiterId}` });
+        const getBefore = await ctx.app.inject({ method: 'GET', url: `/tasks/${waiterId}` , headers: { 'x-project-id': 'default' }});
         const before = getBefore.json();
         assert.ok(before.blockReasons.length > 0, 'Should be blocked before prereq completes');
         assert.ok(before.blockReasons.some((r: string) => r.includes('blocked by incomplete task(s)')));
@@ -1693,19 +1821,20 @@ describe('tasks with bare repo and agents', () => {
         await ctx.app.inject({
           method: 'POST',
           url: `/tasks/${prereqId}/claim`,
-          headers: { 'x-agent-name': 'agent-resolver' },
+          headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-resolver' },
         });
         await ctx.app.inject({
           method: 'POST',
           url: `/tasks/${prereqId}/complete`,
           payload: { result: { done: true, agent: 'agent-resolver' } },
+          headers: { 'x-project-id': 'default' },
         });
 
         // Re-fetch the dependent task as agent-resolver -- block reason should be gone
         const getAfter = await ctx.app.inject({
           method: 'GET',
           url: `/tasks/${waiterId}`,
-          headers: { 'x-agent-name': 'agent-resolver' },
+          headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-resolver' },
         });
         const after = getAfter.json();
         assert.equal(after.status, 'pending');
@@ -1719,6 +1848,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Task A', priority: 5 },
+        headers: { 'x-project-id': 'default' },
       });
       const idA = rA.json().id;
 
@@ -1727,6 +1857,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Task B', priority: 5, dependsOn: [idA] },
+        headers: { 'x-project-id': 'default' },
       });
       const idB = rB.json().id;
 
@@ -1735,6 +1866,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Task C', priority: 10 },
+        headers: { 'x-project-id': 'default' },
       });
       const idC = rC.json().id;
 
@@ -1742,19 +1874,20 @@ describe('tasks with bare repo and agents', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idA}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idA}/complete`,
         payload: { result: { summary: 'done', agent: 'agent-1' } },
+        headers: { 'x-project-id': 'default' },
       });
 
       // claim-next as agent-1 should return B (chain continuation beats C's higher priority)
       const claim1 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim1.statusCode, 200);
       assert.equal(claim1.json().task.id, idB, 'agent-1 should get task B (chain continuation)');
@@ -1764,7 +1897,7 @@ describe('tasks with bare repo and agents', () => {
       const claim2 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-2' },
       });
       assert.equal(claim2.statusCode, 200);
       assert.equal(claim2.json().task.id, idC, 'agent-2 should get task C');
@@ -1777,6 +1910,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Task A', priority: 5 },
+        headers: { 'x-project-id': 'default' },
       });
       const idA = rA.json().id;
 
@@ -1785,6 +1919,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Task B', priority: 5, dependsOn: [idA] },
+        headers: { 'x-project-id': 'default' },
       });
       const idB = rB.json().id;
 
@@ -1793,6 +1928,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Task C', priority: 10 },
+        headers: { 'x-project-id': 'default' },
       });
       const idC = rC.json().id;
 
@@ -1800,16 +1936,18 @@ describe('tasks with bare repo and agents', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idA}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idA}/complete`,
         payload: { result: { summary: 'done', agent: 'agent-1' } },
+        headers: { 'x-project-id': 'default' },
       });
       const intRes = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idA}/integrate`,
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(intRes.statusCode, 200, 'integrate should succeed');
 
@@ -1818,7 +1956,7 @@ describe('tasks with bare repo and agents', () => {
       const claim1 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim1.statusCode, 200);
       assert.equal(claim1.json().task.id, idC, 'agent-1 should get task C (higher priority, no chain preference after integrate)');
@@ -1828,140 +1966,145 @@ describe('tasks with bare repo and agents', () => {
 
   describe('branch-aware dependency resolution', () => {
     it('agent-2 cannot claim task whose dep was completed by agent-1', async () => {
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } , headers: { 'x-project-id': 'default' }});
       const depId = r1.json().id;
 
       const r2 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Blocked task', dependsOn: [depId] },
+        headers: { 'x-project-id': 'default' },
       });
       const blockedId = r2.json().id;
 
       // Complete dep as agent-1
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } , headers: { 'x-project-id': 'default' }});
 
       // agent-2 tries to claim the blocked task — should be denied (work on another branch)
       const claim = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${blockedId}/claim`,
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-2' },
       });
       assert.equal(claim.statusCode, 409);
       assert.equal(claim.json().message, 'Task has unmet dependencies');
     });
 
     it('agent-1 can claim task whose dep was completed by agent-1', async () => {
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } , headers: { 'x-project-id': 'default' }});
       const depId = r1.json().id;
 
       const r2 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Blocked task', dependsOn: [depId] },
+        headers: { 'x-project-id': 'default' },
       });
       const blockedId = r2.json().id;
 
       // Complete dep as agent-1
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } , headers: { 'x-project-id': 'default' }});
 
       // agent-1 claims the blocked task — should succeed (same branch)
       const claim = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${blockedId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 200);
       assert.deepEqual(claim.json(), { ok: true });
     });
 
     it('any agent can claim task whose dep is integrated', async () => {
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } , headers: { 'x-project-id': 'default' }});
       const depId = r1.json().id;
 
       const r2 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Blocked task', dependsOn: [depId] },
+        headers: { 'x-project-id': 'default' },
       });
       const blockedId = r2.json().id;
 
       // Complete dep as agent-1, then integrate it
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/integrate` });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } , headers: { 'x-project-id': 'default' }});
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/integrate` , headers: { 'x-project-id': 'default' }});
 
       // agent-2 claims the blocked task — should succeed (dep is integrated, available to all)
       const claim = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${blockedId}/claim`,
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-2' },
       });
       assert.equal(claim.statusCode, 200);
       assert.deepEqual(claim.json(), { ok: true });
     });
 
     it('mixed deps: one integrated + one completed by requesting agent is claimable', async () => {
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 1' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 1' } , headers: { 'x-project-id': 'default' }});
       const dep1 = r1.json().id;
-      const r2 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 2' } });
+      const r2 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 2' } , headers: { 'x-project-id': 'default' }});
       const dep2 = r2.json().id;
 
       const r3 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Needs both', dependsOn: [dep1, dep2] },
+        headers: { 'x-project-id': 'default' },
       });
       const taskId = r3.json().id;
 
       // Complete dep1 as agent-1 and integrate it
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/complete`, payload: { result: { agent: 'agent-1' } } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/integrate` });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/complete`, payload: { result: { agent: 'agent-1' } } , headers: { 'x-project-id': 'default' }});
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/integrate` , headers: { 'x-project-id': 'default' }});
 
       // Complete dep2 as agent-1 (not integrated)
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/complete`, payload: { result: { agent: 'agent-1' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/complete`, payload: { result: { agent: 'agent-1' } } , headers: { 'x-project-id': 'default' }});
 
       // agent-1 claims — should succeed (dep1 integrated, dep2 completed by same agent)
       const claim = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${taskId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 200);
       assert.deepEqual(claim.json(), { ok: true });
     });
 
     it('mixed deps: one integrated + one completed by different agent is not claimable', async () => {
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 1' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 1' } , headers: { 'x-project-id': 'default' }});
       const dep1 = r1.json().id;
-      const r2 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 2' } });
+      const r2 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep 2' } , headers: { 'x-project-id': 'default' }});
       const dep2 = r2.json().id;
 
       const r3 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Needs both', dependsOn: [dep1, dep2] },
+        headers: { 'x-project-id': 'default' },
       });
       const taskId = r3.json().id;
 
       // dep1: completed by agent-1, integrated
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/complete`, payload: { result: { agent: 'agent-1' } } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/integrate` });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/complete`, payload: { result: { agent: 'agent-1' } } , headers: { 'x-project-id': 'default' }});
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep1}/integrate` , headers: { 'x-project-id': 'default' }});
 
       // dep2: completed by agent-1 (not integrated)
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/complete`, payload: { result: { agent: 'agent-1' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${dep2}/complete`, payload: { result: { agent: 'agent-1' } } , headers: { 'x-project-id': 'default' }});
 
       // agent-2 tries to claim — should fail (dep2 completed by agent-1, not integrated)
       const claim = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${taskId}/claim`,
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-2' },
       });
       assert.equal(claim.statusCode, 409);
       const body = claim.json();
@@ -1971,49 +2114,51 @@ describe('tasks with bare repo and agents', () => {
     });
 
     it('claim-next skips task whose dep was completed by different agent', async () => {
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } , headers: { 'x-project-id': 'default' }});
       const depId = r1.json().id;
 
       await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Blocked task', dependsOn: [depId] },
+        headers: { 'x-project-id': 'default' },
       });
 
       // Complete dep as agent-1
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } , headers: { 'x-project-id': 'default' }});
 
       // claim-next as agent-2 — should not return the blocked task
       const claim = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-2' },
       });
       assert.equal(claim.statusCode, 200);
       assert.equal(claim.json().task, null);
     });
 
     it('claim-next returns task when dep completed by same agent', async () => {
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Dep task' } , headers: { 'x-project-id': 'default' }});
       const depId = r1.json().id;
 
       const r2 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Blocked task', dependsOn: [depId] },
+        headers: { 'x-project-id': 'default' },
       });
       const blockedId = r2.json().id;
 
       // Complete dep as agent-1
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-agent-name': 'agent-1' } });
-      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/claim`, headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' } });
+      await ctx.app.inject({ method: 'POST', url: `/tasks/${depId}/complete`, payload: { result: { agent: 'agent-1' } } , headers: { 'x-project-id': 'default' }});
 
       // claim-next as agent-1 — should return the blocked task
       const claim = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 200);
       assert.ok(claim.json().task);
@@ -2021,13 +2166,14 @@ describe('tasks with bare repo and agents', () => {
     });
 
     it('blockedBy in 409 response includes blockReasons distinguishing branch vs incomplete', async () => {
-      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending dep' } });
+      const r1 = await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Pending dep' } , headers: { 'x-project-id': 'default' }});
       const pendingDepId = r1.json().id;
 
       const r2 = await ctx.app.inject({
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Blocked task', dependsOn: [pendingDepId] },
+        headers: { 'x-project-id': 'default' },
       });
       const blockedId = r2.json().id;
 
@@ -2035,7 +2181,7 @@ describe('tasks with bare repo and agents', () => {
       const claim = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${blockedId}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claim.statusCode, 409);
       const body = claim.json();
@@ -2087,7 +2233,7 @@ describe('tasks with bare repo and agents', () => {
       const payload: Record<string, unknown> = { title };
       if (priority !== undefined) payload.priority = priority;
       if (dependsOn !== undefined) payload.dependsOn = dependsOn;
-      const res = await ctx.app.inject({ method: 'POST', url: '/tasks', payload });
+      const res = await ctx.app.inject({ method: 'POST', url: '/tasks', payload , headers: { 'x-project-id': 'default' }});
       assert.equal(res.statusCode, 200, `createTask '${title}' failed: ${res.body}`);
       return res.json().id;
     }
@@ -2102,7 +2248,7 @@ describe('tasks with bare repo and agents', () => {
       const res = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${taskId}/claim`,
-        headers: { 'x-agent-name': agent },
+        headers: { 'x-project-id': 'default', 'x-agent-name': agent },
       });
       assert.equal(res.statusCode, 200, `claim task ${taskId} as ${agent} failed: ${res.body}`);
     }
@@ -2113,6 +2259,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: `/tasks/${taskId}/complete`,
         payload: { result: { agent } },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 200, `complete task ${taskId} as ${agent} failed: ${res.body}`);
     }
@@ -2122,7 +2269,7 @@ describe('tasks with bare repo and agents', () => {
       const res = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': agent },
+        headers: { 'x-project-id': 'default', 'x-agent-name': agent },
       });
       assert.equal(res.statusCode, 200);
       return res.json();
@@ -2151,14 +2298,14 @@ describe('tasks with bare repo and agents', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idB}/release`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
 
       // Agent-2 CANNOT claim B (A completed by agent-1, not integrated)
       const claimB2 = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idB}/claim`,
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-2' },
       });
       assert.equal(claimB2.statusCode, 409, 'agent-2 should be blocked from claiming B');
 
@@ -2166,6 +2313,7 @@ describe('tasks with bare repo and agents', () => {
       const intRes = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idA}/integrate`,
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(intRes.statusCode, 200);
 
@@ -2173,7 +2321,7 @@ describe('tasks with bare repo and agents', () => {
       const claimB2After = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idB}/claim`,
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-2' },
       });
       assert.equal(claimB2After.statusCode, 200, 'agent-2 should claim B after A is integrated');
 
@@ -2189,14 +2337,14 @@ describe('tasks with bare repo and agents', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idC}/release`,
-        headers: { 'x-agent-name': 'agent-2' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-2' },
       });
 
       // Agent-1 CANNOT claim C (B completed by agent-2, not integrated)
       const claimC1 = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idC}/claim`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       assert.equal(claimC1.statusCode, 409, 'agent-1 should be blocked from claiming C');
     });
@@ -2229,12 +2377,12 @@ describe('tasks with bare repo and agents', () => {
       const idC = await createTask('C', 3);
 
       // Call replan
-      const replanRes = await ctx.app.inject({ method: 'POST', url: '/tasks/replan' });
+      const replanRes = await ctx.app.inject({ method: 'POST', url: '/tasks/replan' , headers: { 'x-project-id': 'default' }});
       assert.equal(replanRes.statusCode, 200);
 
       // Verify A and B have status = 'cycle'
-      const tA = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` })).json();
-      const tB = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idB}` })).json();
+      const tA = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` , headers: { 'x-project-id': 'default' }})).json();
+      const tB = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idB}` , headers: { 'x-project-id': 'default' }})).json();
       assert.equal(tA.status, 'cycle', 'A should be in cycle');
       assert.equal(tB.status, 'cycle', 'B should be in cycle');
 
@@ -2247,7 +2395,7 @@ describe('tasks with bare repo and agents', () => {
       await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idC}/release`,
-        headers: { 'x-agent-name': 'agent-1' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
       });
       // Re-claim C to get it out of the way
       await claimTask(idC, 'agent-1');
@@ -2257,11 +2405,12 @@ describe('tasks with bare repo and agents', () => {
       const resetRes = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${idA}/reset`,
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(resetRes.statusCode, 200);
 
       // Verify A is now pending
-      const tAReset = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` })).json();
+      const tAReset = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idA}` , headers: { 'x-project-id': 'default' }})).json();
       assert.equal(tAReset.status, 'pending');
 
       // claim-next should NOT return A (it still depends on B which is in cycle status)
@@ -2287,6 +2436,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks/integrate-batch',
         payload: { agent: 'agent-1' },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(batch1.statusCode, 200);
       const batch1Body = batch1.json();
@@ -2295,8 +2445,8 @@ describe('tasks with bare repo and agents', () => {
       assert.deepEqual(batch1Body.ids, [idT1]);
 
       // Verify T1 is integrated, T2 remains completed
-      const t1After = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idT1}` })).json();
-      const t2After = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idT2}` })).json();
+      const t1After = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idT1}` , headers: { 'x-project-id': 'default' }})).json();
+      const t2After = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idT2}` , headers: { 'x-project-id': 'default' }})).json();
       assert.equal(t1After.status, 'integrated');
       assert.equal(t2After.status, 'completed');
 
@@ -2305,6 +2455,7 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks/integrate-batch',
         payload: { agent: 'agent-2' },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(batch2.statusCode, 200);
       const batch2Body = batch2.json();
@@ -2313,7 +2464,7 @@ describe('tasks with bare repo and agents', () => {
       assert.deepEqual(batch2Body.ids, [idT2]);
 
       // Verify T2 is now also integrated
-      const t2Final = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idT2}` })).json();
+      const t2Final = (await ctx.app.inject({ method: 'GET', url: `/tasks/${idT2}` , headers: { 'x-project-id': 'default' }})).json();
       assert.equal(t2Final.status, 'integrated');
     });
   });
@@ -2328,10 +2479,11 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: `Task ${i + 1}` },
+          headers: { 'x-project-id': 'default' },
         });
       }
 
-      const res = await ctx.app.inject({ method: 'GET', url: '/tasks' });
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks' , headers: { 'x-project-id': 'default' }});
       assert.equal(res.statusCode, 200);
       const body = res.json() as any;
       assert.equal(body.tasks.length, 20);
@@ -2344,10 +2496,11 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: `Task ${i + 1}` },
+          headers: { 'x-project-id': 'default' },
         });
       }
 
-      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?offset=100' });
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?offset=100' , headers: { 'x-project-id': 'default' }});
       assert.equal(res.statusCode, 200);
       const body = res.json() as any;
       assert.equal(body.tasks.length, 0);
@@ -2355,10 +2508,10 @@ describe('tasks with bare repo and agents', () => {
     });
 
     it('negative offset is clamped to 0', async () => {
-      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'A' } });
-      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'B' } });
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'A' } , headers: { 'x-project-id': 'default' }});
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'B' } , headers: { 'x-project-id': 'default' }});
 
-      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?offset=-5' });
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?offset=-5' , headers: { 'x-project-id': 'default' }});
       assert.equal(res.statusCode, 200);
       const body = res.json() as any;
       assert.equal(body.tasks.length, 2);
@@ -2366,10 +2519,10 @@ describe('tasks with bare repo and agents', () => {
     });
 
     it('limit=0 is clamped to 1', async () => {
-      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'A' } });
-      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'B' } });
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'A' } , headers: { 'x-project-id': 'default' }});
+      await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'B' } , headers: { 'x-project-id': 'default' }});
 
-      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=0' });
+      const res = await ctx.app.inject({ method: 'GET', url: '/tasks?limit=0' , headers: { 'x-project-id': 'default' }});
       assert.equal(res.statusCode, 200);
       const body = res.json() as any;
       assert.equal(body.tasks.length, 1);
@@ -2383,6 +2536,7 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: `Pending ${i + 1}` },
+          headers: { 'x-project-id': 'default' },
         });
       }
 
@@ -2392,17 +2546,19 @@ describe('tasks with bare repo and agents', () => {
           method: 'POST',
           url: '/tasks',
           payload: { title: `Completed ${i + 1}` },
+          headers: { 'x-project-id': 'default' },
         });
         const id = r.json().id;
         await ctx.app.inject({
           method: 'POST',
           url: `/tasks/${id}/claim`,
-          headers: { 'x-agent-name': 'agent-1' },
+          headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
         });
         await ctx.app.inject({
           method: 'POST',
           url: `/tasks/${id}/complete`,
           payload: { result: { done: true } },
+          headers: { 'x-project-id': 'default' },
         });
       }
 
@@ -2410,6 +2566,7 @@ describe('tasks with bare repo and agents', () => {
       const page1 = await ctx.app.inject({
         method: 'GET',
         url: '/tasks?status=pending&limit=2&offset=0',
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(page1.statusCode, 200);
       const body1 = page1.json() as any;
@@ -2420,6 +2577,7 @@ describe('tasks with bare repo and agents', () => {
       const page2 = await ctx.app.inject({
         method: 'GET',
         url: '/tasks?status=pending&limit=2&offset=2',
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(page2.statusCode, 200);
       const body2 = page2.json() as any;
@@ -2433,7 +2591,7 @@ describe('tasks with bare repo and agents', () => {
       const res = await ctx.app.inject({
         method: 'POST',
         url: '/tasks/claim-next',
-        headers: { 'x-agent-name': '../../evil' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': '../../evil' },
       });
       assert.equal(res.statusCode, 400);
       const body = res.json();
@@ -2446,13 +2604,14 @@ describe('tasks with bare repo and agents', () => {
         method: 'POST',
         url: '/tasks',
         payload: { title: 'Agent name test task' },
+        headers: { 'x-project-id': 'default' },
       });
       const taskId = createRes.json().id;
 
       const res = await ctx.app.inject({
         method: 'POST',
         url: `/tasks/${taskId}/claim`,
-        headers: { 'x-agent-name': '../../evil' },
+        headers: { 'x-project-id': 'default', 'x-agent-name': '../../evil' },
       });
       assert.equal(res.statusCode, 400);
       const body = res.json();
@@ -2469,6 +2628,7 @@ describe('tasks with bare repo and agents', () => {
           title: 'Target agents test',
           targetAgents: ['valid-agent', '../../evil'],
         },
+        headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.statusCode, 400);
       const body = res.json();
