@@ -13,6 +13,15 @@ Base protocol for documentation audit agents. Every audit follows this sequence.
 - **Write**: new markdown files only. Place deliverables in a location specified by the launch prompt.
 - **Never**: edit, delete, or rename existing code files (.h, .cpp, .cs, .ini, .uasset references). If you find a code defect, document it in the deliverable — do not fix it.
 
+## Evidence Discipline
+
+Every claim in a deliverable must be either:
+
+- **Structural fact** — directly observable in code (a type exists, a function calls another function, a name is registered). Cite the file and symbol.
+- **Quoted semantics** — meaning stated in a code comment, doc string, constant name, or enum label. Quote the source.
+
+If the meaning, purpose, or ordering of a value is not explicitly stated in the source material, do not guess. Write: "the meaning/purpose/ordering of X is not documented in the source." Never fill gaps with plausible-sounding interpretations.
+
 ## Steps
 
 ### Step 1: Scope the Audit Area
