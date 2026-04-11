@@ -222,14 +222,14 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
 
     const addModResult = await runCommand(
       "git",
-      ["diff", "--name-only", "--diff-filter=AMCR", baseRef, "FETCH_HEAD"],
+      ["diff", "--name-only", "--no-renames", "--diff-filter=AMCR", baseRef, "FETCH_HEAD"],
       worktreePath,
       15000,
     );
 
     const delResult = await runCommand(
       "git",
-      ["diff", "--name-only", "--diff-filter=D", baseRef, "FETCH_HEAD"],
+      ["diff", "--name-only", "--no-renames", "--diff-filter=D", baseRef, "FETCH_HEAD"],
       worktreePath,
       15000,
     );
@@ -259,12 +259,27 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     }
 
     if (delFiles.length > 0) {
-      await runCommand(
+      const rmResult = await runCommand(
         "git",
         ["rm", "--quiet", "--force", "--", ...delFiles.split("\n")],
         worktreePath,
         15000,
       );
+      if (!rmResult.success) {
+        const resetResult = await runCommand(
+          "git",
+          ["reset", "--hard", "FETCH_HEAD"],
+          worktreePath,
+          30000,
+        );
+        if (!resetResult.success) {
+          throw new Error(
+            `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
+          );
+        }
+        await updateSyncRef(worktreePath);
+        return "changed";
+      }
     }
 
     if (addModFiles.length > 0) {
