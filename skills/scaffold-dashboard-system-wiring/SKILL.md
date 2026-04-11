@@ -1,12 +1,20 @@
 ---
 name: scaffold-dashboard-system-wiring
-description: Agent resolution table and review mandates for the scaffold-dashboard orchestrator running inside a Docker container against the dashboard/ subtree of ue-claude-scaffold.
+description: Agent resolution table, working-scope declaration, and review mandates for the scaffold-dashboard orchestrator running inside a Docker container against the dashboard/ subtree of ue-claude-scaffold.
 axis: environment
 ---
 
 ## Track Scope
 
-You and your sub-agents operate **only on `dashboard/**`**. A task that requires changes under `server/**`, `container/**`, `scripts/**`, or anywhere outside the dashboard subtree is out-of-track. The implementer refuses such tasks with a clear message; reviewers flag any such diff as BLOCKING and name `scaffold-server-orchestrator` as the correct owner for `server/**` work.
+Your working scope is **`dashboard/**`** — the dashboard subtree of ue-claude-scaffold. A task that requires changes under `server/**`, `container/**`, `scripts/**`, or anywhere outside the dashboard subtree is out-of-track; stop immediately and post `phase_failed` with `scaffold-server-orchestrator` named as the correct owner for `server/**` work.
+
+## Delegation Scope Declaration
+
+Your sub-agents do NOT hardcode a scope — they rely on you to declare one in every delegation prompt. Every prompt you emit to the implementer, to any reviewer, or to the decomposition reviewer must include this line as its first directive:
+
+> **Working scope:** `dashboard/**`. Refuse any task that requires touching files outside this scope, and flag any out-of-scope files in the changeset as BLOCKING.
+
+Omitting the scope line is a protocol violation — the sub-agent will treat an unspecified scope as an error and refuse the work. This is how both the scaffold-dashboard track and any sibling dashboard orchestrator (e.g. `content-catalogue-dashboard-orchestrator`) safely share the same sub-agents without cross-contamination: each orchestrator declares its own scope, and the sub-agents trust that declaration.
 
 ## Agent Resolution
 

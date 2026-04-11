@@ -1,12 +1,12 @@
 ---
 name: scaffold-dashboard-patterns
-description: React, Mantine UI, TanStack Router, and TanStack Query conventions for the ue-claude-scaffold monitoring dashboard.
+description: React, Mantine UI, TanStack Router, and TanStack Query conventions for any dashboard SPA on this stack.
 axis: domain
 ---
 
-# Scaffold Dashboard Patterns
+# Dashboard Patterns
 
-Domain knowledge for the dashboard SPA in `dashboard/`.
+Domain knowledge for React SPA codebases built on Vite + Mantine + TanStack Router + TanStack Query. Project-specific details (API base URL, auth headers, route layout, domain entities) come from the project's own code — not from this skill.
 
 ## Tech Stack
 
@@ -14,7 +14,7 @@ Domain knowledge for the dashboard SPA in `dashboard/`.
 - **Vite** — build tool and dev server
 - **Mantine** — component library and theme system
 - **TanStack Router** — file-based routing with type-safe route params
-- **TanStack Query** — server state management (polling the coordination server)
+- **TanStack Query** — server state management (polling, cache invalidation, mutation coherence)
 
 ## Mantine Conventions
 
@@ -33,16 +33,16 @@ Domain knowledge for the dashboard SPA in `dashboard/`.
 
 ## TanStack Query
 
-- Server state fetched via `useQuery` with polling intervals for real-time updates
-- The coordination server base URL is configurable (default `http://localhost:9100`)
-- Query keys should be descriptive arrays: `['agents']`, `['messages', channel]`, `['tasks', { status }]`
+- Server state fetched via `useQuery`; polling intervals are appropriate when the server does not push updates
+- The API base URL and auth headers are project-specific — read them from the project's own client wrapper, do not hardcode
+- Query keys are descriptive arrays whose first element names the resource and later elements carry disambiguating parameters, e.g. `[resource]`, `[resource, id]`, `[resource, { filter }]`. Always include any tenant / project scoping parameter that affects the response.
 - Mutations use `useMutation` with appropriate `onSuccess` invalidation
 
 ## TanStack Router
 
-- File-based routing in `src/routes/`
-- Route params and search params are type-safe
-- Layouts share common UI (navigation, status bar)
+- File-based routing using TanStack Router's generated tree — follow whatever routes directory the project already established
+- Route params and search params are type-safe; prefer the generated route types over hand-rolled `any`
+- Shared chrome (navigation, page frames) belongs in layout routes, not copy-pasted into leaf routes
 
 ## Component Composition
 

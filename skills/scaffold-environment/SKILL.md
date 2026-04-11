@@ -63,5 +63,5 @@ bash -n stop.sh
 - **ESM throughout**: all `.ts` imports use `.js` extensions (`import { foo } from './bar.js'`)
 - **DB schema**: defined in `server/src/schema/tables.ts`, indexed by `server/src/schema/index.ts`. Migrations live in `server/drizzle/` and apply via `npm run db:migrate` (which runs `src/migrate.ts`). PGlite for dev and tests; node-postgres for prod via `DATABASE_URL`.
 - **Config split**: `scaffold.config.json` (structural, not committed) + `.env` (secrets, not committed). Examples provided as `*.example.*` files.
-- **Tests**: Node.js built-in `node:test` + `node:assert/strict`. No Jest, no Vitest. Test helper in `server/src/test-helper.ts`.
+- **Tests**: each subtree owns its own test stack. Read `package.json` and `tsconfig.json` in the subtree you're working in for the authoritative test runner, scripts, and helpers — do not assume a framework.
 - **Agent/skill format**: Markdown with YAML frontmatter. Skills have `name`, `description`, `axis` fields. Agents have `name`, `description`, `model`, `color`, `tools` fields.

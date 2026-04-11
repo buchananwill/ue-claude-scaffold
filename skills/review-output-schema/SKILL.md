@@ -44,3 +44,19 @@ Standard output format for all code reviewers. Domain-specific sections can be a
 - Verdict is REQUEST CHANGES if any BLOCKING or WARNING exists.
 - Some domains add a NOTE tier (confidence 50-74, informational only). If present, NOTEs do not affect the verdict.
 - **All WARNINGs are treated as blocking by the orchestrator.** Only report issues you are confident about and can substantiate with specific code evidence. Do not pad with borderline nitpicks.
+
+## Spec-Fidelity Finding Resolution
+
+A BLOCKING finding that names a deviation from a spec-declared type, interface, or function signature has **restricted resolutions**. It may only be resolved by one of the following:
+
+1. **Reverting the implementation** to the literal spec shape.
+2. **Escalating the spec** as impossible, contradictory, or underspecified, and halting the phase.
+
+The following are NOT valid resolutions:
+
+- Adding JSDoc, code comments, commit-message prose, or debrief text that documents the deviation.
+- Deferring formalization to a later phase.
+- Paraphrasing the spec's intent into a looser invariant that the deviation happens to satisfy.
+- Renaming the deviating type without changing its shape (e.g., from `JunctionKeyConfig` to `JunctionSchema`).
+
+When reviewing a fix cycle, verify that the deviation's **shape** changed -- not just its documentation, naming, or surrounding prose. If the shape is unchanged, the finding is not closed: re-raise it with the same BLOCKING status and name the invalid resolution attempt explicitly in the evidence section. Do not approve a fix that leaves the deviating shape in place.

@@ -15,6 +15,24 @@ For each requirement in the spec:
 - Was anything introduced that the spec did NOT ask for?
 - Are edge cases from the spec handled?
 
+## Specification Shape Fidelity
+
+When the spec gives a type, interface, or function signature, the implementation must match its **literal shape**. A signature is not a sketch the implementer is free to enrich -- it is a contract. The spec's author has already chosen which parameters are part of the API and which are derived internally. If the spec declares `(table: string) => ...`, the outer function takes exactly one parameter. If the spec declares an interface with three fields, the implementation has three fields. Extra parameters, extra fields, or broadened config objects are BLOCKING deviations even when they are "internally consistent" or "more general."
+
+### Anti-Paraphrase Rule
+
+Watch for language in the implementation, its JSDoc, or its debrief that reframes the spec as aspirational:
+
+- "The spec says X but **in practice we need** Y."
+- "The spec's X is **shorthand** for Y."
+- "The **critical invariant** the spec requires **is preserved**..."
+- "Captured in the closure **rather than passed per-row**..."
+- "The spec's **intent** is..." / "What the spec actually means..."
+- "**Effectively equivalent** to..." / "**Functionally the same** as..."
+- "The real requirement is..."
+
+Any such phrase is a BLOCKING finding. It indicates the implementer has paraphrased a literal spec into a looser invariant and is claiming compliance against the paraphrase. The reviewer must not accept the paraphrase as a valid framing, regardless of how internally consistent the alternative invariant sounds. The fix is to revert the implementation to the literal spec shape, or escalate the spec as impossible. See `review-output-schema` for the finding-resolution protocol.
+
 ## Logic Correctness
 
 - Off-by-one errors, especially in aligned-array or indexed-collection access

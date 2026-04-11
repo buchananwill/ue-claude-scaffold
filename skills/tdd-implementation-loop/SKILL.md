@@ -24,6 +24,29 @@ When the plan gives you a function signature, that signature is the contract. If
 
 If you encounter a contradiction, an impossible request, or a design you cannot in good conscience implement, **STOP**. Do not interpret. Do not deviate silently. Report the problem via a message on the `general` channel with `type: "escalation"`, referencing your task ID and naming the specific contradiction. Then halt. Refusing to complete a poor-quality design is correct behavior; silent interpretation is not.
 
+### Watch-Phrases
+
+If you find yourself writing any of these phrases in a design decision, JSDoc, debrief, or commit message, STOP -- you are paraphrasing the spec to defuse its literal reading:
+
+- "in practice we need..."
+- "shorthand for..."
+- "the critical invariant is preserved..."
+- "captured in the closure rather than passed..."
+- "the spec's intent is..." / "what the spec actually means..."
+- "effectively equivalent to..." / "functionally the same as..."
+- "the real requirement is..."
+
+These are not escape hatches. They are alarms. The presence of any of them in your work means you have chosen interpretation over fidelity. Revert your change to match the literal spec, or escalate -- do not proceed.
+
+### Review-Cycle Response
+
+A BLOCKING review finding on a spec-fidelity issue has exactly two valid responses:
+
+1. **Revert** the deviation so the implementation matches the literal spec.
+2. **Escalate** the spec as impossible or underspecified, and halt.
+
+Adding documentation, JSDoc, or commit-message prose that explains the deviation is NOT a valid response. Deferring formalization to a later phase is NOT a valid response. Renaming the deviating type without changing its shape is NOT a valid response. If you cannot revert the deviation without breaking other committed work in the same phase, that is an escalation event -- report it on the `general` channel with `type: "escalation"` and halt.
+
 ## Sequence
 
 For each unit of work in the phase, execute these steps in order:
