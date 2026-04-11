@@ -476,7 +476,7 @@ describe('build route staging worktree sync', () => {
     const git = createGitTestInfrastructure(tmpDir, {
       seedSetup: (seedDir, bareRepoDir) => {
         // Create seed working clone, make initial commit with OLD_FILE
-        execSync(`git clone "${bareRepoDir}" seed`, { cwd: path.dirname(seedDir), stdio: 'ignore' });
+        execFileSync('git', ['clone', bareRepoDir, 'seed'], { cwd: path.dirname(seedDir), stdio: 'ignore' });
         execSync('git config user.email "test@test.com"', { cwd: seedDir, stdio: 'ignore' });
         execSync('git config user.name "Test"', { cwd: seedDir, stdio: 'ignore' });
 
@@ -490,9 +490,9 @@ describe('build route staging worktree sync', () => {
 
         // Push to docker/default/current-root and docker/default/test-agent
         execSync('git checkout -b docker/default/current-root', { cwd: seedDir, stdio: 'ignore' });
-        execSync(`git push "${bareRepoDir}" docker/default/current-root`, { cwd: seedDir, stdio: 'ignore' });
+        execFileSync('git', ['push', bareRepoDir, 'docker/default/current-root'], { cwd: seedDir, stdio: 'ignore' });
         execSync('git checkout -b docker/default/test-agent', { cwd: seedDir, stdio: 'ignore' });
-        execSync(`git push "${bareRepoDir}" docker/default/test-agent`, { cwd: seedDir, stdio: 'ignore' });
+        execFileSync('git', ['push', bareRepoDir, 'docker/default/test-agent'], { cwd: seedDir, stdio: 'ignore' });
       },
       cloneAgent: { name: 'test-agent' },
     });
@@ -561,7 +561,7 @@ process.exit(0);
 
     // In the seed clone, delete OLD_FILE and add NEW_FILE with overlapping content
     execSync('git checkout docker/default/test-agent', { cwd: seedDir, stdio: 'ignore' });
-    execSync(`git rm "${OLD_FILE}"`, { cwd: seedDir, stdio: 'ignore' });
+    execFileSync('git', ['rm', OLD_FILE], { cwd: seedDir, stdio: 'ignore' });
     const newDir = path.join(seedDir, path.dirname(NEW_FILE));
     mkdirSync(newDir, { recursive: true });
     writeFileSync(path.join(seedDir, NEW_FILE), newFileContent());
@@ -570,7 +570,7 @@ process.exit(0);
       cwd: seedDir,
       stdio: 'ignore',
     });
-    execSync(`git push "${bareRepoDir}" docker/default/test-agent`, {
+    execFileSync('git', ['push', bareRepoDir, 'docker/default/test-agent'], {
       cwd: seedDir,
       stdio: 'ignore',
     });
