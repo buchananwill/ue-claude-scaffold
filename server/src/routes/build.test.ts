@@ -32,16 +32,79 @@ process.exit(0);
   return { tmpDir, mockScriptPath, baseBuildConfig };
 }
 
+/**
+ * Creates a full build test context with Drizzle app, tmpDir, config, and registered plugins.
+ * Returns a cleanup function that closes the app, cleans up the DB, and removes tmpDir.
+ */
+async function createBuildTestContext(configOverrides: Parameters<typeof createTestConfig>[0], opts?: {
+  registerAgents?: boolean;
+}) {
+  const ctx = await createDrizzleTestApp();
+  const config = createTestConfig(configOverrides);
+  if (opts?.registerAgents) {
+    await ctx.app.register(agentsPlugin, { config });
+  }
+  await ctx.app.register(buildPlugin, { config });
+
+  const cleanup = async (tmpDir: string) => {
+    await ctx.app.close();
+    await ctx.cleanup();
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
+  };
+
+  return { ctx, config, cleanup };
+}
+
+/**
+ * Creates bare repo, staging worktree root, and optionally a seed clone with initial content.
+ * Returns paths and a helper to push branches from the seed clone.
+ */
+function createGitTestInfrastructure(tmpDir: string, opts?: {
+  seedSetup?: (seedDir: string, bareRepoDir: string) => void;
+  cloneAgent?: { name: string };
+}) {
+  const bareRepoDir = path.join(tmpDir, 'bare.git');
+  mkdirSync(bareRepoDir);
+  execSync('git init --bare', { cwd: bareRepoDir, stdio: 'ignore' });
+
+  const stagingRoot = path.join(tmpDir, 'staging');
+  mkdirSync(stagingRoot, { recursive: true });
+
+  const projectPath = path.join(tmpDir, 'project');
+  mkdirSync(projectPath);
+  execSync('git init', { cwd: projectPath, stdio: 'ignore' });
+
+  if (opts?.seedSetup) {
+    const seedDir = path.join(tmpDir, 'seed');
+    // The seedSetup callback is responsible for cloning and populating the seed dir
+    opts.seedSetup(seedDir, bareRepoDir);
+  }
+
+  let agentStagingDir: string | undefined;
+  if (opts?.cloneAgent) {
+    const agentName = opts.cloneAgent.name;
+    agentStagingDir = path.join(stagingRoot, agentName);
+    execSync(`git clone "${bareRepoDir}" ${agentName} --branch docker/default/${agentName}`, {
+      cwd: stagingRoot,
+      stdio: 'ignore',
+    });
+    execSync('git config user.email "test@test.com"', { cwd: agentStagingDir, stdio: 'ignore' });
+    execSync('git config user.name "Test"', { cwd: agentStagingDir, stdio: 'ignore' });
+  }
+
+  return { bareRepoDir, stagingRoot, projectPath, agentStagingDir };
+}
+
 describe('build routes', () => {
   let ctx: DrizzleTestContext;
   let tmpDir: string;
+  let teardown: () => Promise<void>;
 
   beforeEach(async () => {
-    ctx = await createDrizzleTestApp();
     const setup = createBuildTestSetup();
     tmpDir = setup.tmpDir;
 
-    const config = createTestConfig({
+    const harness = await createBuildTestContext({
       build: setup.baseBuildConfig,
       server: {
         port: 9100,
@@ -49,14 +112,12 @@ describe('build routes', () => {
         bareRepoPath: tmpDir,
       },
     });
-
-    await ctx.app.register(buildPlugin, { config });
+    ctx = harness.ctx;
+    teardown = () => harness.cleanup(tmpDir);
   });
 
   afterEach(async () => {
-    await ctx.app.close();
-    await ctx.cleanup();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
+    await teardown();
   });
 
   it('POST /build returns the correct response shape', async () => {
@@ -93,48 +154,36 @@ describe('build routes', () => {
 describe('build route branch resolution', () => {
   let ctx: DrizzleTestContext;
   let stagingRoot: string;
-  let projectPath: string;
   let tmpDir: string;
+  let teardown: () => Promise<void>;
 
   beforeEach(async () => {
-    ctx = await createDrizzleTestApp();
     const setup = createBuildTestSetup();
     tmpDir = setup.tmpDir;
 
-    const bareRepoDir = path.join(tmpDir, 'bare.git');
-    mkdirSync(bareRepoDir);
-    execSync('git init --bare', { cwd: bareRepoDir, stdio: 'ignore' });
+    const git = createGitTestInfrastructure(tmpDir);
+    stagingRoot = git.stagingRoot;
 
-    stagingRoot = path.join(tmpDir, 'staging');
-    mkdirSync(stagingRoot);
-
-    projectPath = path.join(tmpDir, 'project');
-    mkdirSync(projectPath);
-    execSync('git init', { cwd: projectPath, stdio: 'ignore' });
-
-    const config = createTestConfig({
+    const harness = await createBuildTestContext({
       project: {
         name: 'TestProject',
-        path: projectPath,
-        uprojectFile: path.join(projectPath, 'Test.uproject'),
+        path: git.projectPath,
+        uprojectFile: path.join(git.projectPath, 'Test.uproject'),
       },
       build: setup.baseBuildConfig,
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
-        bareRepoPath: bareRepoDir,
-        stagingWorktreeRoot: stagingRoot,
+        bareRepoPath: git.bareRepoDir,
+        stagingWorktreeRoot: git.stagingRoot,
       },
-    });
-
-    await ctx.app.register(agentsPlugin, { config });
-    await ctx.app.register(buildPlugin, { config });
+    }, { registerAgents: true });
+    ctx = harness.ctx;
+    teardown = () => harness.cleanup(tmpDir);
   });
 
   afterEach(async () => {
-    await ctx.app.close();
-    await ctx.cleanup();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
+    await teardown();
   });
 
   it('defaults to docker/default/current-root when no agent is registered', async () => {
@@ -233,13 +282,13 @@ describe('build route branch resolution', () => {
 describe('build route x-agent-name validation', () => {
   let ctx: DrizzleTestContext;
   let tmpDir: string;
+  let teardown: () => Promise<void>;
 
   beforeEach(async () => {
-    ctx = await createDrizzleTestApp();
     const setup = createBuildTestSetup();
     tmpDir = setup.tmpDir;
 
-    const config = createTestConfig({
+    const harness = await createBuildTestContext({
       build: setup.baseBuildConfig,
       server: {
         port: 9100,
@@ -247,14 +296,12 @@ describe('build route x-agent-name validation', () => {
         bareRepoPath: tmpDir,
       },
     });
-
-    await ctx.app.register(buildPlugin, { config });
+    ctx = harness.ctx;
+    teardown = () => harness.cleanup(tmpDir);
   });
 
   afterEach(async () => {
-    await ctx.app.close();
-    await ctx.cleanup();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
+    await teardown();
   });
 
   it('POST /build rejects malformed x-agent-name with path traversal', async () => {
@@ -384,6 +431,7 @@ describe('UBT contention detection and retry', () => {
 describe('build route staging worktree sync', () => {
   let ctx: DrizzleTestContext;
   let tmpDir: string;
+  let teardown: () => Promise<void>;
 
   const OLD_FILE = 'Source/Public/OldComponent.h';
   const NEW_FILE = 'Source/Public/NewComponent.h';
@@ -419,45 +467,33 @@ describe('build route staging worktree sync', () => {
   }
 
   beforeEach(async () => {
-    ctx = await createDrizzleTestApp();
     tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-sync-'));
 
-    const bareRepoDir = path.join(tmpDir, 'bare.git');
-    const seedDir = path.join(tmpDir, 'seed');
-    const stagingRoot = path.join(tmpDir, 'staging');
-    const agentStagingDir = path.join(stagingRoot, 'test-agent');
+    const git = createGitTestInfrastructure(tmpDir, {
+      seedSetup: (seedDir, bareRepoDir) => {
+        // Create seed working clone, make initial commit with OLD_FILE
+        execSync(`git clone "${bareRepoDir}" seed`, { cwd: path.dirname(seedDir), stdio: 'ignore' });
+        execSync('git config user.email "test@test.com"', { cwd: seedDir, stdio: 'ignore' });
+        execSync('git config user.name "Test"', { cwd: seedDir, stdio: 'ignore' });
 
-    // Create bare repo
-    mkdirSync(bareRepoDir);
-    execSync('git init --bare', { cwd: bareRepoDir, stdio: 'ignore' });
+        // Create OLD_FILE with enough content for rename detection
+        const oldDir = path.join(seedDir, path.dirname(OLD_FILE));
+        mkdirSync(oldDir, { recursive: true });
+        writeFileSync(path.join(seedDir, OLD_FILE), oldFileContent());
 
-    // Create seed working clone, make initial commit with OLD_FILE
-    execSync(`git clone "${bareRepoDir}" seed`, { cwd: tmpDir, stdio: 'ignore' });
-    execSync('git config user.email "test@test.com"', { cwd: seedDir, stdio: 'ignore' });
-    execSync('git config user.name "Test"', { cwd: seedDir, stdio: 'ignore' });
+        execSync('git add -A', { cwd: seedDir, stdio: 'ignore' });
+        execSync('git commit -m "initial commit with old file"', { cwd: seedDir, stdio: 'ignore' });
 
-    // Create OLD_FILE with enough content for rename detection
-    const oldDir = path.join(seedDir, path.dirname(OLD_FILE));
-    mkdirSync(oldDir, { recursive: true });
-    writeFileSync(path.join(seedDir, OLD_FILE), oldFileContent());
-
-    execSync('git add -A', { cwd: seedDir, stdio: 'ignore' });
-    execSync('git commit -m "initial commit with old file"', { cwd: seedDir, stdio: 'ignore' });
-
-    // Push to docker/default/current-root and docker/default/test-agent
-    execSync('git checkout -b docker/default/current-root', { cwd: seedDir, stdio: 'ignore' });
-    execSync(`git push "${bareRepoDir}" docker/default/current-root`, { cwd: seedDir, stdio: 'ignore' });
-    execSync('git checkout -b docker/default/test-agent', { cwd: seedDir, stdio: 'ignore' });
-    execSync(`git push "${bareRepoDir}" docker/default/test-agent`, { cwd: seedDir, stdio: 'ignore' });
-
-    // Initialize staging worktree for test-agent with the same commit
-    mkdirSync(stagingRoot, { recursive: true });
-    execSync(`git clone "${bareRepoDir}" test-agent --branch docker/default/test-agent`, {
-      cwd: stagingRoot,
-      stdio: 'ignore',
+        // Push to docker/default/current-root and docker/default/test-agent
+        execSync('git checkout -b docker/default/current-root', { cwd: seedDir, stdio: 'ignore' });
+        execSync(`git push "${bareRepoDir}" docker/default/current-root`, { cwd: seedDir, stdio: 'ignore' });
+        execSync('git checkout -b docker/default/test-agent', { cwd: seedDir, stdio: 'ignore' });
+        execSync(`git push "${bareRepoDir}" docker/default/test-agent`, { cwd: seedDir, stdio: 'ignore' });
+      },
+      cloneAgent: { name: 'test-agent' },
     });
-    execSync('git config user.email "test@test.com"', { cwd: agentStagingDir, stdio: 'ignore' });
-    execSync('git config user.name "Test"', { cwd: agentStagingDir, stdio: 'ignore' });
+
+    const agentStagingDir = git.agentStagingDir!;
 
     // Create mock build script
     const mockScriptPath = path.join(tmpDir, 'mock-build.js');
@@ -468,7 +504,7 @@ process.exit(0);
 `
     );
 
-    const config = createTestConfig({
+    const harness = await createBuildTestContext({
       project: {
         name: 'TestProject',
         path: agentStagingDir,
@@ -486,13 +522,12 @@ process.exit(0);
       server: {
         port: 9100,
         ubtLockTimeoutMs: 600000,
-        bareRepoPath: bareRepoDir,
-        stagingWorktreeRoot: stagingRoot,
+        bareRepoPath: git.bareRepoDir,
+        stagingWorktreeRoot: git.stagingRoot,
       },
-    });
-
-    await ctx.app.register(agentsPlugin, { config });
-    await ctx.app.register(buildPlugin, { config });
+    }, { registerAgents: true });
+    ctx = harness.ctx;
+    teardown = () => harness.cleanup(tmpDir);
 
     // Register the agent
     await ctx.app.inject({
@@ -504,9 +539,7 @@ process.exit(0);
   });
 
   afterEach(async () => {
-    await ctx.app.close();
-    await ctx.cleanup();
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
+    await teardown();
   });
 
   it('removes the old file when git detects a rename', async () => {
