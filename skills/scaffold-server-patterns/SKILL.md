@@ -1,6 +1,6 @@
 ---
 name: scaffold-server-patterns
-description: Fastify plugin conventions, ESM patterns, better-sqlite3 usage, route structure, and typed handler patterns for the ue-claude-scaffold coordination server.
+description: Fastify plugin conventions, ESM patterns, Drizzle ORM + PGlite usage, route structure, and typed handler patterns for the ue-claude-scaffold coordination server.
 axis: domain
 ---
 
@@ -35,27 +35,51 @@ All imports use `.js` extensions, even when the source file is `.ts`:
 
 ```typescript
 // CORRECT
-import { openDb } from './db.js'
+import { getDrizzleDb } from './drizzle-instance.js'
+import { agents } from './schema/tables.js'
 import agentsPlugin from './routes/agents.js'
 
 // WRONG — will fail at runtime
-import { openDb } from './db'
+import { getDrizzleDb } from './drizzle-instance'
 import agentsPlugin from './routes/agents.ts'
 ```
 
-## Database: better-sqlite3
+## Database: Drizzle + PGlite
 
-- WAL mode enabled for concurrent read performance
-- Schema embedded in `src/db.ts` as DDL statements in `openDb()` — no migration files
-- Always use parameterized queries with `?` placeholders:
+- Drizzle ORM with two drivers: PGlite (in-process Postgres for dev and tests) and node-postgres (prod via `DATABASE_URL`)
+- Schema defined in `server/src/schema/tables.ts`, indexed by `server/src/schema/index.ts`
+- Migrations live in `server/drizzle/` and apply via `npm run db:migrate` (which runs `src/migrate.ts`)
+- Query construction goes through Drizzle's typed builder API — never raw SQL strings:
 
 ```typescript
-// CORRECT — parameterized
-db.prepare('SELECT * FROM agents WHERE name = ?').get(name)
-db.prepare('INSERT INTO messages (channel, body) VALUES (?, ?)').run(channel, body)
+// CORRECT — typed builder
+import { eq } from 'drizzle-orm'
+import { agents } from '../schema/tables.js'
+
+await db.select().from(agents).where(eq(agents.name, name))
+await db.insert(agents).values({ name, projectId, status: 'active' })
+```
+
+- Transactions use `db.transaction(async (tx) => { ... })`. Functions that need to work inside or outside a transaction accept `DbOrTx` from `drizzle-instance.ts`:
+
+```typescript
+import type { DbOrTx } from '../drizzle-instance.js'
+
+async function upsertAgent(db: DbOrTx, name: string, projectId: string) {
+  return db.insert(agents).values({ name, projectId }).onConflictDoNothing()
+}
+```
+
+- Tests use `drizzle-test-helper.createDrizzleTestApp()` to spin up an isolated PGlite instance with the schema applied. Never share DB state across tests.
+- Raw SQL fragments (`` sql`...` ``) are allowed only for PG-specific features that Drizzle's builder cannot express. Always parameterize with `${variable}` placeholders — never string-interpolate user input:
+
+```typescript
+// CORRECT — parameterized raw fragment
+import { sql } from 'drizzle-orm'
+await db.execute(sql`SELECT pg_advisory_lock(${lockId})`)
 
 // WRONG — string interpolation (SQL injection risk)
-db.prepare(`SELECT * FROM agents WHERE name = '${name}'`).get()
+await db.execute(sql.raw(`SELECT pg_advisory_lock(${lockId})`))
 ```
 
 ## Agent and Project Identification

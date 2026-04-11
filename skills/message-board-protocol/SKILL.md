@@ -9,7 +9,7 @@ The coordination server at `$SERVER_URL` provides a message board for reporting 
 
 ## Identity Tag
 
-Every message you post must be prefixed with your role tag in square brackets. Derive the tag from your agent definition name: strip the `container-` or `scaffold-` prefix, uppercase the remainder, and use that as your tag. Examples: `container-implementer` -> `[IMPLEMENTER]`, `scaffold-tester` -> `[TESTER]`, `container-orchestrator` -> `[ORCHESTRATOR]`.
+Every message you post must be prefixed with your role tag in square brackets. Derive the tag from your agent definition name: strip the `container-` or `scaffold-` prefix, uppercase the remainder, and use that as your tag. Examples: `container-implementer` -> `[IMPLEMENTER]`, `scaffold-implementer` -> `[IMPLEMENTER]`, `container-orchestrator` -> `[ORCHESTRATOR]`.
 
 This tag goes at the start of every `payload.message` string in `status_update` messages, and in the `notes` field of phase events. It allows the operator to see at a glance which agent posted each message.
 
@@ -63,7 +63,7 @@ This confirms you can reach the message board and that you are visible to the op
 
 ## Payload Conventions
 
-Keep payloads concise — they are stored in SQLite. Include at minimum:
+Keep payloads concise — they are persisted to the coordination server's database. Include at minimum:
 
 - **Phase events**: `{ "phase": "<id>", "title": "<title>", "status": "...", "notes": "..." }`
 - **Build results**: `{ "phase": "<id>", "outcome": "pass" | "fail", "errors": ["..."] }`

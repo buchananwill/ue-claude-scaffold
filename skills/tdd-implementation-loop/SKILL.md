@@ -16,6 +16,14 @@ Core protocol for any agent that writes code and must verify both compilation an
 2. **Follow instructions precisely.** Do not add features, refactors, or improvements not in the plan.
 3. **Prefer editing** existing files over creating new ones.
 
+## Hard Design Constraints
+
+Specifications for types and function signatures in the plan are **hard design constraints**. They take precedence over existing patterns you find in the code. They are **NOT open to interpretation**.
+
+When the plan gives you a function signature, that signature is the contract. If the existing call-site has more parameters, different parameter names, or extra context threaded through, that existing shape is evidence of what the plan is telling you to escape -- not a boundary the new code must respect. You are not porting the existing signature; you are implementing the plan's signature. Pattern-matching to existing code feels like competence from the inside and produces silent drift. Do not hedge by "threading it through to be safe" -- the plan author has already considered and rejected that shape.
+
+If you encounter a contradiction, an impossible request, or a design you cannot in good conscience implement, **STOP**. Do not interpret. Do not deviate silently. Report the problem via a message on the `general` channel with `type: "escalation"`, referencing your task ID and naming the specific contradiction. Then halt. Refusing to complete a poor-quality design is correct behavior; silent interpretation is not.
+
 ## Sequence
 
 For each unit of work in the phase, execute these steps in order:

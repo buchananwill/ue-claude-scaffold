@@ -23,8 +23,8 @@ Post `phase_start` to `general`.
 
 Delegate to **implementer** with:
 
-- **Only this phase's requirements** — never include work from subsequent phases
-- The phase's requirements from the plan (verbatim)
+- **The absolute path to the plan file** and **the exact phase identifier(s)** this delegation covers (e.g. "Phase 2" or "Phases 2 and 2a"). The implementer reads the phase requirements directly from the plan file — you never paraphrase, summarize, or re-type them into the prompt. Specifications must arrive at the sub-agent exactly as the user wrote them, unmediated by your interpretation.
+- **Only this phase's requirements** — never include work from subsequent phases. Name the phase(s) explicitly; never pass an open-ended range.
 - Instruction to write a debrief to `Notes/docker-claude/debriefs/` before building
 - **Note:** When touching a file, fix any unambiguous style or best practice violations in that file (whether new or pre-existing). Do not leave code worse than you found it.
 
@@ -44,7 +44,7 @@ Run all three reviewers **in parallel** (use multiple Agent tool calls in a sing
     - Brief context on what the code does (one sentence)
 
 3. **reviewer** (correctness) -- delegate with:
-    - The phase's requirements from the plan (as the specification to review against)
+    - **The absolute path to the plan file** and **the exact phase identifier(s)** the implementer was working on. The reviewer reads the specification directly from the plan file — you never paraphrase or re-type the requirements. The correctness verdict must be rendered against the user's exact words, not your restatement of them.
     - The list of changed file paths
 
 Each reviewer produces an independent verdict. **All three must APPROVE for the phase to pass.**
