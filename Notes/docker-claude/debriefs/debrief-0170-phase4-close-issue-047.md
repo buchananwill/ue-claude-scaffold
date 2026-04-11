@@ -20,7 +20,7 @@ None — this is a bookkeeping phase.
 
 ## Build & Test Results
 
-Pending initial build.
+Server build (`npm run build`) passed cleanly. No test changes in this phase.
 
 ## Open Questions / Risks
 
