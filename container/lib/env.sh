@@ -45,6 +45,7 @@ CURRENT_TASK_SOURCE=""
 CURRENT_TASK_FILES=""
 PUMP_STATUS=""
 SESSION_TOKEN=""
+AGENT_ID=""
 AGENTS_DIR="/home/claude/.claude/agents"
 
 # ── Persistent logging ─────────────────────────────────────────────────────

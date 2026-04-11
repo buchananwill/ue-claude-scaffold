@@ -34,7 +34,11 @@ The implementer builds after making changes and iterates internally until the bu
 
 ### Step 2 — Parallel Code Review
 
-Run all three reviewers **in parallel** (use multiple Agent tool calls in a single message):
+**Scope selection.** Before delegating, identify which reviewers' scopes actually apply to this phase's work. A phase editing only shell scripts does not need the safety reviewer; a phase adding pure data types may not need the style reviewer. Match reviewers to the nature of the changed files and the phase's intent. **If in doubt, include the reviewer for at least the first review cycle.** If that reviewer reports back that none of the work falls within its scope, omit it from the remaining review cycles in this phase. Never omit a reviewer on a hunch without evidence from its own verdict.
+
+**correctness-reviewer always runs.** Correctness is in scope for every phase.
+
+Run the selected reviewers **in parallel** (use multiple Agent tool calls in a single message):
 
 1. **style-reviewer** -- delegate with:
     - The list of changed file paths
@@ -47,7 +51,7 @@ Run all three reviewers **in parallel** (use multiple Agent tool calls in a sing
     - **The absolute path to the plan file** and **the exact phase identifier(s)** the implementer was working on. The reviewer reads the specification directly from the plan file — you never paraphrase or re-type the requirements. The correctness verdict must be rendered against the user's exact words, not your restatement of them.
     - The list of changed file paths
 
-Each reviewer produces an independent verdict. **All three must APPROVE for the phase to pass.**
+Each selected reviewer produces an independent verdict. **All selected reviewers must APPROVE for the phase to pass.** A reviewer that declared itself out-of-scope in an earlier cycle counts as passing and is not re-run.
 
 ### Step 2a — Consolidate and Fix
 
@@ -153,8 +157,8 @@ When all phases are complete (or on failure), produce and post as a `summary` me
 ### Completed Phases
 - Phase N: <title> — <status> (N commits, N review cycles)
   - Build: PASS/FAIL
-  - Style Review: PASS / N BLOCKING / N WARNING addressed
-  - Safety Review: PASS / N BLOCKING / N WARNING addressed
+  - Style Review: PASS / OUT-OF-SCOPE / N BLOCKING / N WARNING addressed
+  - Safety Review: PASS / OUT-OF-SCOPE / N BLOCKING / N WARNING addressed
   - Correctness Review: PASS / N BLOCKING / N WARNING addressed
   - Debrief: <filename>
 

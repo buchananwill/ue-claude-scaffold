@@ -179,7 +179,9 @@ _register_agent() {
 
     SESSION_TOKEN=$(echo "$REG_BODY" | jq -r '.sessionToken // empty')
     export SESSION_TOKEN
-    echo "Registered with coordination server (token: ${SESSION_TOKEN:0:8}...)"
+    AGENT_ID=$(echo "$REG_BODY" | jq -r '.id // empty')
+    export AGENT_ID
+    echo "Registered with coordination server (token: ${SESSION_TOKEN:0:8}..., id: ${AGENT_ID:0:8}...)"
 }
 
 _smoke_test_messages() {

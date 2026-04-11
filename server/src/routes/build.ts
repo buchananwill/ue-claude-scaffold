@@ -1,16 +1,17 @@
-import type { FastifyPluginAsync } from 'fastify';
-import { spawn } from 'node:child_process';
-import path from 'node:path';
-import type { ScaffoldConfig, ProjectConfig } from '../config.js';
-import { getProject } from '../config.js';
-import { isStale, recordBuildStart, recordBuildEnd } from './ubt.js';
-import { ensureStagingPlugins } from '../staging-plugins.js';
-import { getDb } from '../drizzle-instance.js';
-import * as agentsQ from '../queries/agents.js';
-import * as projectsQ from '../queries/projects.js';
-import * as ubtQ from '../queries/ubt.js';
-import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
-import { resolveProject } from '../resolve-project.js';
+import type { FastifyPluginAsync } from "fastify";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import type { ScaffoldConfig, ProjectConfig } from "../config.js";
+import { getProject } from "../config.js";
+import { isStale, recordBuildStart, recordBuildEnd } from "./ubt.js";
+import { ensureStagingPlugins } from "../staging-plugins.js";
+import { getDb } from "../drizzle-instance.js";
+import * as agentsQ from "../queries/agents.js";
+import * as projectsQ from "../queries/projects.js";
+import * as ubtQ from "../queries/ubt.js";
+import { seedBranchFor, AGENT_NAME_RE } from "../branch-naming.js";
+import { resolveProject } from "../resolve-project.js";
+import { resolveAgent } from "./route-helpers.js";
 
 interface BuildOpts {
   config: ScaffoldConfig;
@@ -32,30 +33,30 @@ function runCommand(
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ["ignore", "pipe", "pipe"],
       timeout: timeoutMs,
     });
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
 
-    child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
-    child.on('close', (code) => {
+    child.on("close", (code) => {
       resolve({
         success: code === 0,
         exit_code: code ?? 1,
-        output: Buffer.concat(stdoutChunks).toString('utf-8'),
-        stderr: Buffer.concat(stderrChunks).toString('utf-8'),
+        output: Buffer.concat(stdoutChunks).toString("utf-8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf-8"),
       });
     });
 
-    child.on('error', (err) => {
+    child.on("error", (err) => {
       resolve({
         success: false,
         exit_code: 1,
-        output: '',
+        output: "",
         stderr: err.message,
       });
     });
@@ -64,7 +65,10 @@ function runCommand(
 
 export function isUbtContentionResult(result: SpawnResult): boolean {
   const combined = result.output + result.stderr;
-  return combined.includes('conflicting instance') || combined.includes('ConflictingInstance');
+  return (
+    combined.includes("conflicting instance") ||
+    combined.includes("ConflictingInstance")
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -96,13 +100,16 @@ async function runWithUbtRetry(
 }
 
 const SCRIPT_INTERPRETERS: Record<string, string> = {
-  '.py': 'python',
-  '.sh': 'bash',
-  '.rb': 'ruby',
+  ".py": "python",
+  ".sh": "bash",
+  ".rb": "ruby",
 };
 
 /** Resolve a script path into an explicit interpreter + args to avoid shebang/CRLF issues. */
-function resolveScript(scriptPath: string, extraArgs: string[]): { command: string; scriptArgs: string[] } {
+function resolveScript(
+  scriptPath: string,
+  extraArgs: string[],
+): { command: string; scriptArgs: string[] } {
   const ext = path.extname(scriptPath).toLowerCase();
   const interpreter = SCRIPT_INTERPRETERS[ext];
   if (interpreter) {
@@ -114,16 +121,22 @@ function resolveScript(scriptPath: string, extraArgs: string[]): { command: stri
 const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   const config = opts.config;
 
-  async function resolveProjectForAgent(projectId: string): Promise<{ project: ProjectConfig; projectId: string }> {
+  async function resolveProjectForAgent(
+    projectId: string,
+  ): Promise<{ project: ProjectConfig; projectId: string }> {
     try {
       const project = await resolveProject(config, getDb(), projectId);
       return { project, projectId };
     } catch {
-      throw Object.assign(new Error(`Unknown project: "${projectId}"`), { statusCode: 400 });
+      throw Object.assign(new Error(`Unknown project: "${projectId}"`), {
+        statusCode: 400,
+      });
     }
   }
 
-  async function checkLock(agentName: string | undefined): Promise<string | null> {
+  async function checkLock(
+    agentId: string | undefined,
+  ): Promise<string | null> {
     const lock = await ubtQ.getLock(getDb());
     if (!lock || !lock.holderAgentId) {
       return null;
@@ -131,14 +144,18 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     if (isStale(lock.acquiredAt ? lock.acquiredAt.toISOString() : null)) {
       return null;
     }
-    if (lock.holderAgentId === agentName) {
+    if (agentId && lock.holderAgentId === agentId) {
       return null;
     }
     return lock.holderAgentId;
   }
 
-  function getStagingWorktree(agentName: string | undefined, project: ProjectConfig): string {
-    const worktreeRoot = project.stagingWorktreeRoot ?? config.server.stagingWorktreeRoot;
+  function getStagingWorktree(
+    agentName: string | undefined,
+    project: ProjectConfig,
+  ): string {
+    const worktreeRoot =
+      project.stagingWorktreeRoot ?? config.server.stagingWorktreeRoot;
     if (worktreeRoot && agentName) {
       return path.join(worktreeRoot, agentName);
     }
@@ -149,16 +166,25 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     return project.bareRepoPath;
   }
 
-  const SYNC_REF = 'refs/scaffold/last-sync';
+  const SYNC_REF = "refs/scaffold/last-sync";
 
   async function updateSyncRef(worktreePath: string): Promise<void> {
-    const result = await runCommand('git', ['update-ref', SYNC_REF, 'FETCH_HEAD'], worktreePath, 5000);
+    const result = await runCommand(
+      "git",
+      ["update-ref", SYNC_REF, "FETCH_HEAD"],
+      worktreePath,
+      5000,
+    );
     if (!result.success) {
       throw new Error(`syncWorktree: git update-ref failed: ${result.stderr}`);
     }
   }
 
-  async function syncWorktree(agentName: string | undefined, projectId: string, project: ProjectConfig): Promise<'changed' | 'unchanged'> {
+  async function syncWorktree(
+    agentName: string | undefined,
+    projectId: string,
+    project: ProjectConfig,
+  ): Promise<"changed" | "unchanged"> {
     const worktreePath = getStagingWorktree(agentName, project);
     const bareRepo = getBareRepoPath(project);
 
@@ -166,35 +192,62 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const proj = getProject(config, projectId, dbRow ?? undefined);
     let branch = seedBranchFor(projectId, proj);
     if (agentName) {
-      const agentRow = await agentsQ.getWorktreeInfo(getDb(), projectId, agentName);
+      const agentRow = await agentsQ.getWorktreeInfo(
+        getDb(),
+        projectId,
+        agentName,
+      );
       if (agentRow?.worktree) {
         branch = agentRow.worktree;
       }
     }
 
-    const fetchResult = await runCommand('git', ['fetch', bareRepo, branch], worktreePath, 30000);
+    const fetchResult = await runCommand(
+      "git",
+      ["fetch", bareRepo, branch],
+      worktreePath,
+      30000,
+    );
     if (!fetchResult.success) {
       throw new Error(`syncWorktree: git fetch failed: ${fetchResult.stderr}`);
     }
 
-    const refCheck = await runCommand('git', ['rev-parse', '--verify', SYNC_REF], worktreePath, 5000);
-    const baseRef = refCheck.success ? SYNC_REF : 'HEAD';
+    const refCheck = await runCommand(
+      "git",
+      ["rev-parse", "--verify", SYNC_REF],
+      worktreePath,
+      5000,
+    );
+    const baseRef = refCheck.success ? SYNC_REF : "HEAD";
 
     const addModResult = await runCommand(
-      'git', ['diff', '--name-only', '--diff-filter=AMCR', baseRef, 'FETCH_HEAD'], worktreePath, 15000,
+      "git",
+      ["diff", "--name-only", "--diff-filter=AMCR", baseRef, "FETCH_HEAD"],
+      worktreePath,
+      15000,
     );
 
     const delResult = await runCommand(
-      'git', ['diff', '--name-only', '--diff-filter=D', baseRef, 'FETCH_HEAD'], worktreePath, 15000,
+      "git",
+      ["diff", "--name-only", "--diff-filter=D", baseRef, "FETCH_HEAD"],
+      worktreePath,
+      15000,
     );
 
     if (!addModResult.success || !delResult.success) {
-      const resetResult = await runCommand('git', ['reset', '--hard', 'FETCH_HEAD'], worktreePath, 30000);
+      const resetResult = await runCommand(
+        "git",
+        ["reset", "--hard", "FETCH_HEAD"],
+        worktreePath,
+        30000,
+      );
       if (!resetResult.success) {
-        throw new Error(`syncWorktree: git reset --hard failed: ${resetResult.stderr}`);
+        throw new Error(
+          `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
+        );
       }
       await updateSyncRef(worktreePath);
-      return 'changed';
+      return "changed";
     }
 
     const addModFiles = addModResult.output.trim();
@@ -202,32 +255,45 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
 
     if (addModFiles.length === 0 && delFiles.length === 0) {
       await updateSyncRef(worktreePath);
-      return 'unchanged';
+      return "unchanged";
     }
 
     if (delFiles.length > 0) {
       await runCommand(
-        'git', ['rm', '--quiet', '--force', '--', ...delFiles.split('\n')], worktreePath, 15000,
+        "git",
+        ["rm", "--quiet", "--force", "--", ...delFiles.split("\n")],
+        worktreePath,
+        15000,
       );
     }
 
     if (addModFiles.length > 0) {
       const checkoutResult = await runCommand(
-        'git', ['checkout', 'FETCH_HEAD', '--', ...addModFiles.split('\n')], worktreePath, 30000,
+        "git",
+        ["checkout", "FETCH_HEAD", "--", ...addModFiles.split("\n")],
+        worktreePath,
+        30000,
       );
       if (!checkoutResult.success) {
-        const resetResult = await runCommand('git', ['reset', '--hard', 'FETCH_HEAD'], worktreePath, 30000);
+        const resetResult = await runCommand(
+          "git",
+          ["reset", "--hard", "FETCH_HEAD"],
+          worktreePath,
+          30000,
+        );
         if (!resetResult.success) {
-          throw new Error(`syncWorktree: git reset --hard failed: ${resetResult.stderr}`);
+          throw new Error(
+            `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
+          );
         }
         await updateSyncRef(worktreePath);
-        return 'changed';
+        return "changed";
       }
     }
 
     await updateSyncRef(worktreePath);
 
-    return 'changed';
+    return "changed";
   }
 
   /**
@@ -237,6 +303,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
    */
   async function prepareBuildOrTest(
     agentName: string | undefined,
+    agentId: string | undefined,
     projectId: string,
   ): Promise<
     | { ok: true; project: ProjectConfig; projectId: string; cwd: string }
@@ -245,17 +312,29 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     if (agentName && !AGENT_NAME_RE.test(agentName)) {
       return {
         ok: false,
-        result: { success: false, exit_code: -1, output: '', stderr: 'Invalid X-Agent-Name header format' },
+        result: {
+          success: false,
+          exit_code: -1,
+          output: "",
+          stderr: "Invalid X-Agent-Name header format",
+        },
       };
     }
 
     const { project } = await resolveProjectForAgent(projectId);
-    const holder = await checkLock(agentName);
+    let resolvedAgentId = agentId;
+    if (!resolvedAgentId && agentName) {
+      const agentRow = await resolveAgent(getDb(), projectId, agentName);
+      resolvedAgentId = agentRow?.id;
+    }
+    const holder = await checkLock(resolvedAgentId);
     if (holder) {
       return {
         ok: false,
         result: {
-          success: false, exit_code: -1, output: '',
+          success: false,
+          exit_code: -1,
+          output: "",
           stderr: `UBT lock held by '${holder}'. The build hook should have acquired the lock first — this is unexpected.`,
         },
       };
@@ -267,7 +346,9 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       return {
         ok: false,
         result: {
-          success: false, exit_code: -1, output: '',
+          success: false,
+          exit_code: -1,
+          output: "",
           stderr: `Infrastructure error: ${(err as Error).message}. Agent should shut down.`,
         },
       };
@@ -281,41 +362,59 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
 
   fastify.post<{
     Body: { clean?: boolean };
-  }>('/build', async (request) => {
-    // NOTE: x-agent-name is trusted without authentication. This relies on
-    // network-isolated deployment (containers on the same host). If the server
-    // is exposed to untrusted networks, agent identity must be authenticated.
-    const agentName = request.headers['x-agent-name'] as string | undefined;
-    const prep = await prepareBuildOrTest(agentName, request.projectId);
+  }>("/build", async (request) => {
+    // NOTE: x-agent-name and x-agent-id are trusted without authentication.
+    // This relies on network-isolated deployment (containers on the same host).
+    // If the server is exposed to untrusted networks, agent identity must be
+    // authenticated.
+    const agentName = request.headers["x-agent-name"] as string | undefined;
+    const agentId = request.headers["x-agent-id"] as string | undefined;
+    const prep = await prepareBuildOrTest(
+      agentName,
+      agentId,
+      request.projectId,
+    );
     if (!prep.ok) return prep.result;
     const { project, projectId, cwd } = prep;
 
-    const args = ['--summary'];
+    const args = ["--summary"];
     if (request.body.clean) {
-      args.push('--clean');
+      args.push("--clean");
     }
 
     const scriptPath = project.build?.scriptPath ?? config.build.scriptPath;
     const { command, scriptArgs } = resolveScript(scriptPath, args);
 
-    const buildTimeoutMs = project.build?.buildTimeoutMs ?? config.build.buildTimeoutMs;
-    const agentForHistory = agentName ?? 'unknown';
-    const histId = await recordBuildStart(agentForHistory, 'build', projectId);
+    const buildTimeoutMs =
+      project.build?.buildTimeoutMs ?? config.build.buildTimeoutMs;
+    const agentForHistory = agentName ?? "unknown";
+    const histId = await recordBuildStart(agentForHistory, "build", projectId);
     const t0 = Date.now();
     const result = await runWithUbtRetry(
       () => runCommand(command, scriptArgs, cwd, buildTimeoutMs),
       config.build.ubtRetryCount,
       config.build.ubtRetryDelayMs,
     );
-    await recordBuildEnd(histId, Date.now() - t0, result.success, result.output, result.stderr);
+    await recordBuildEnd(
+      histId,
+      Date.now() - t0,
+      result.success,
+      result.output,
+      result.stderr,
+    );
     return result;
   });
 
   fastify.post<{
     Body: { filters?: string[] };
-  }>('/test', async (request) => {
-    const agentName = request.headers['x-agent-name'] as string | undefined;
-    const prep = await prepareBuildOrTest(agentName, request.projectId);
+  }>("/test", async (request) => {
+    const agentName = request.headers["x-agent-name"] as string | undefined;
+    const agentId = request.headers["x-agent-id"] as string | undefined;
+    const prep = await prepareBuildOrTest(
+      agentName,
+      agentId,
+      request.projectId,
+    );
     if (!prep.ok) return prep.result;
     const { project, projectId, cwd } = prep;
 
@@ -323,19 +422,27 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       ? request.body.filters
       : config.build.defaultTestFilters;
 
-    const scriptPath = project.build?.testScriptPath ?? config.build.testScriptPath;
+    const scriptPath =
+      project.build?.testScriptPath ?? config.build.testScriptPath;
     const { command, scriptArgs } = resolveScript(scriptPath, filters);
 
-    const testTimeoutMs = project.build?.testTimeoutMs ?? config.build.testTimeoutMs;
-    const agentForHistory = agentName ?? 'unknown';
-    const histId = await recordBuildStart(agentForHistory, 'test', projectId);
+    const testTimeoutMs =
+      project.build?.testTimeoutMs ?? config.build.testTimeoutMs;
+    const agentForHistory = agentName ?? "unknown";
+    const histId = await recordBuildStart(agentForHistory, "test", projectId);
     const t0 = Date.now();
     const result = await runWithUbtRetry(
       () => runCommand(command, scriptArgs, cwd, testTimeoutMs),
       config.build.ubtRetryCount,
       config.build.ubtRetryDelayMs,
     );
-    await recordBuildEnd(histId, Date.now() - t0, result.success, result.output, result.stderr);
+    await recordBuildEnd(
+      histId,
+      Date.now() - t0,
+      result.success,
+      result.output,
+      result.stderr,
+    );
     return result;
   });
 };

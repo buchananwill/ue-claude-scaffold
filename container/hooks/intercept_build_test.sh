@@ -17,6 +17,7 @@ set -euo pipefail
 SERVER_URL="${SERVER_URL:-http://host.docker.internal:9100}"
 WORK_BRANCH="${WORK_BRANCH:-main}"
 AGENT_NAME="${AGENT_NAME:-agent-1}"
+AGENT_ID="${AGENT_ID:-}"
 PROJECT_ID="${PROJECT_ID:-default}"
 
 # Build/test script names — configurable via env vars
@@ -175,6 +176,7 @@ fi
 RESPONSE=$(curl -s -X POST "${SERVER_URL}/${OPERATION}" \
     -H "Content-Type: application/json" \
     -H "X-Agent-Name: ${AGENT_NAME}" \
+    -H "X-Agent-Id: ${AGENT_ID}" \
     -H "X-Project-Id: ${PROJECT_ID}" \
     -d "$REQUEST_BODY" \
     --max-time $CURL_TIMEOUT)
