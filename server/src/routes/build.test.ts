@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
-import { writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -378,5 +378,189 @@ describe('UBT contention detection and retry', () => {
         false,
       );
     });
+  });
+});
+
+describe('build route staging worktree sync', () => {
+  let ctx: DrizzleTestContext;
+  let tmpDir: string;
+
+  const OLD_FILE = 'Source/Public/OldComponent.h';
+  const NEW_FILE = 'Source/Public/NewComponent.h';
+
+  /** Generate a block of lines that will be shared between old and new files. */
+  function sharedContent(): string {
+    const lines: string[] = [];
+    lines.push('#pragma once');
+    lines.push('#include "CoreMinimal.h"');
+    lines.push('');
+    for (let i = 0; i < 50; i++) {
+      lines.push(`// Shared boilerplate line ${i}: this content is identical in both files.`);
+    }
+    return lines.join('\n');
+  }
+
+  function oldFileContent(): string {
+    const lines: string[] = [sharedContent()];
+    for (let i = 0; i < 10; i++) {
+      lines.push(`// Old-only line ${i}`);
+    }
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  function newFileContent(): string {
+    const lines: string[] = [sharedContent()];
+    for (let i = 0; i < 10; i++) {
+      lines.push(`// New-only line ${i}`);
+    }
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  beforeEach(async () => {
+    ctx = await createDrizzleTestApp();
+    tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-sync-'));
+
+    const bareRepoDir = path.join(tmpDir, 'bare.git');
+    const seedDir = path.join(tmpDir, 'seed');
+    const stagingRoot = path.join(tmpDir, 'staging');
+    const agentStagingDir = path.join(stagingRoot, 'test-agent');
+
+    // Create bare repo
+    mkdirSync(bareRepoDir);
+    execSync('git init --bare', { cwd: bareRepoDir, stdio: 'ignore' });
+
+    // Create seed working clone, make initial commit with OLD_FILE
+    execSync(`git clone "${bareRepoDir}" seed`, { cwd: tmpDir, stdio: 'ignore' });
+    execSync('git config user.email "test@test.com"', { cwd: seedDir, stdio: 'ignore' });
+    execSync('git config user.name "Test"', { cwd: seedDir, stdio: 'ignore' });
+
+    // Create OLD_FILE with enough content for rename detection
+    const oldDir = path.join(seedDir, path.dirname(OLD_FILE));
+    mkdirSync(oldDir, { recursive: true });
+    writeFileSync(path.join(seedDir, OLD_FILE), oldFileContent());
+
+    execSync('git add -A', { cwd: seedDir, stdio: 'ignore' });
+    execSync('git commit -m "initial commit with old file"', { cwd: seedDir, stdio: 'ignore' });
+
+    // Push to docker/default/current-root and docker/default/test-agent
+    execSync('git checkout -b docker/default/current-root', { cwd: seedDir, stdio: 'ignore' });
+    execSync(`git push "${bareRepoDir}" docker/default/current-root`, { cwd: seedDir, stdio: 'ignore' });
+    execSync('git checkout -b docker/default/test-agent', { cwd: seedDir, stdio: 'ignore' });
+    execSync(`git push "${bareRepoDir}" docker/default/test-agent`, { cwd: seedDir, stdio: 'ignore' });
+
+    // Initialize staging worktree for test-agent with the same commit
+    mkdirSync(stagingRoot, { recursive: true });
+    execSync(`git clone "${bareRepoDir}" test-agent --branch docker/default/test-agent`, {
+      cwd: stagingRoot,
+      stdio: 'ignore',
+    });
+    execSync('git config user.email "test@test.com"', { cwd: agentStagingDir, stdio: 'ignore' });
+    execSync('git config user.name "Test"', { cwd: agentStagingDir, stdio: 'ignore' });
+
+    // Create mock build script
+    const mockScriptPath = path.join(tmpDir, 'mock-build.js');
+    writeFileSync(
+      mockScriptPath,
+      `process.stdout.write('build ok\\n');
+process.exit(0);
+`
+    );
+
+    const config = createTestConfig({
+      project: {
+        name: 'TestProject',
+        path: agentStagingDir,
+        uprojectFile: path.join(agentStagingDir, 'Test.uproject'),
+      },
+      build: {
+        scriptPath: `node ${mockScriptPath}`,
+        testScriptPath: `node ${mockScriptPath}`,
+        defaultTestFilters: [],
+        buildTimeoutMs: 660_000,
+        testTimeoutMs: 700_000,
+        ubtRetryCount: 5,
+        ubtRetryDelayMs: 30_000,
+      },
+      server: {
+        port: 9100,
+        ubtLockTimeoutMs: 600000,
+        bareRepoPath: bareRepoDir,
+        stagingWorktreeRoot: stagingRoot,
+      },
+    });
+
+    await ctx.app.register(agentsPlugin, { config });
+    await ctx.app.register(buildPlugin, { config });
+
+    // Register the agent
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      headers: { 'x-project-id': 'default' },
+      payload: { name: 'test-agent', worktree: 'docker/default/test-agent' },
+    });
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+    await ctx.cleanup();
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
+  });
+
+  it('removes the old file when git detects a rename', async () => {
+    const seedDir = path.join(tmpDir, 'seed');
+    const bareRepoDir = path.join(tmpDir, 'bare.git');
+    const agentStagingDir = path.join(tmpDir, 'staging', 'test-agent');
+
+    // First build to establish refs/scaffold/last-sync
+    const res1 = await ctx.app.inject({
+      method: 'POST',
+      url: '/build',
+      headers: { 'x-agent-name': 'test-agent', 'x-project-id': 'default' },
+      payload: {},
+    });
+    assert.equal(res1.statusCode, 200);
+
+    // In the seed clone, delete OLD_FILE and add NEW_FILE with overlapping content
+    execSync('git checkout docker/default/test-agent', { cwd: seedDir, stdio: 'ignore' });
+    execSync(`git rm "${OLD_FILE}"`, { cwd: seedDir, stdio: 'ignore' });
+    const newDir = path.join(seedDir, path.dirname(NEW_FILE));
+    mkdirSync(newDir, { recursive: true });
+    writeFileSync(path.join(seedDir, NEW_FILE), newFileContent());
+    execSync('git add -A', { cwd: seedDir, stdio: 'ignore' });
+    execSync('git commit -m "rename: delete old, add new with similar content"', {
+      cwd: seedDir,
+      stdio: 'ignore',
+    });
+    execSync(`git push "${bareRepoDir}" docker/default/test-agent`, {
+      cwd: seedDir,
+      stdio: 'ignore',
+    });
+
+    // Second build triggers sync with the rename commit
+    const res2 = await ctx.app.inject({
+      method: 'POST',
+      url: '/build',
+      headers: { 'x-agent-name': 'test-agent', 'x-project-id': 'default' },
+      payload: {},
+    });
+    assert.equal(res2.statusCode, 200);
+
+    // Assert: old file must be gone, new file must exist
+    const oldPath = path.join(agentStagingDir, OLD_FILE);
+    const newPath = path.join(agentStagingDir, NEW_FILE);
+
+    assert.equal(
+      existsSync(oldPath),
+      false,
+      `Old file should have been removed from staging worktree: ${oldPath}`,
+    );
+    assert.equal(
+      existsSync(newPath),
+      true,
+      `New file should exist in staging worktree: ${newPath}`,
+    );
   });
 });
