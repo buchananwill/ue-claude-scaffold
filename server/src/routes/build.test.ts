@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import { writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import buildPlugin, { isUbtContentionResult } from './build.js';
 import agentsPlugin from './agents.js';
 
 /** Shared setup for build test blocks: creates tmpDir, mock script, and base config. */
-function createBuildTestSetup() {
+function createMockBuildFixture() {
   const tmpDir = mkdtempSync(path.join(tmpdir(), 'scaffold-build-test-'));
   const mockScriptPath = path.join(tmpDir, 'mock-build.js');
   writeFileSync(
@@ -36,7 +36,7 @@ process.exit(0);
  * Creates a full build test context with Drizzle app, tmpDir, config, and registered plugins.
  * Returns a cleanup function that closes the app, cleans up the DB, and removes tmpDir.
  */
-async function createBuildTestContext(configOverrides: Parameters<typeof createTestConfig>[0], opts?: {
+async function createBuildTestContext(tmpDir: string, configOverrides: Parameters<typeof createTestConfig>[0], opts?: {
   registerAgents?: boolean;
 }) {
   const ctx = await createDrizzleTestApp();
@@ -45,8 +45,9 @@ async function createBuildTestContext(configOverrides: Parameters<typeof createT
     await ctx.app.register(agentsPlugin, { config });
   }
   await ctx.app.register(buildPlugin, { config });
+  await ctx.app.ready();
 
-  const cleanup = async (tmpDir: string) => {
+  const cleanup = async () => {
     await ctx.app.close();
     await ctx.cleanup();
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp dir cleanup -- safe to ignore */ }
@@ -62,6 +63,7 @@ async function createBuildTestContext(configOverrides: Parameters<typeof createT
 function createGitTestInfrastructure(tmpDir: string, opts?: {
   seedSetup?: (seedDir: string, bareRepoDir: string) => void;
   cloneAgent?: { name: string };
+  projectId?: string;
 }) {
   const bareRepoDir = path.join(tmpDir, 'bare.git');
   mkdirSync(bareRepoDir);
@@ -80,11 +82,12 @@ function createGitTestInfrastructure(tmpDir: string, opts?: {
     opts.seedSetup(seedDir, bareRepoDir);
   }
 
+  const projectId = opts?.projectId ?? 'default';
   let agentStagingDir: string | undefined;
   if (opts?.cloneAgent) {
     const agentName = opts.cloneAgent.name;
     agentStagingDir = path.join(stagingRoot, agentName);
-    execSync(`git clone "${bareRepoDir}" ${agentName} --branch docker/default/${agentName}`, {
+    execFileSync('git', ['clone', bareRepoDir, agentName, '--branch', `docker/${projectId}/${agentName}`], {
       cwd: stagingRoot,
       stdio: 'ignore',
     });
@@ -101,10 +104,10 @@ describe('build routes', () => {
   let teardown: () => Promise<void>;
 
   beforeEach(async () => {
-    const setup = createBuildTestSetup();
+    const setup = createMockBuildFixture();
     tmpDir = setup.tmpDir;
 
-    const harness = await createBuildTestContext({
+    const harness = await createBuildTestContext(tmpDir, {
       build: setup.baseBuildConfig,
       server: {
         port: 9100,
@@ -113,7 +116,7 @@ describe('build routes', () => {
       },
     });
     ctx = harness.ctx;
-    teardown = () => harness.cleanup(tmpDir);
+    teardown = harness.cleanup;
   });
 
   afterEach(async () => {
@@ -158,13 +161,13 @@ describe('build route branch resolution', () => {
   let teardown: () => Promise<void>;
 
   beforeEach(async () => {
-    const setup = createBuildTestSetup();
+    const setup = createMockBuildFixture();
     tmpDir = setup.tmpDir;
 
     const git = createGitTestInfrastructure(tmpDir);
     stagingRoot = git.stagingRoot;
 
-    const harness = await createBuildTestContext({
+    const harness = await createBuildTestContext(tmpDir, {
       project: {
         name: 'TestProject',
         path: git.projectPath,
@@ -179,7 +182,7 @@ describe('build route branch resolution', () => {
       },
     }, { registerAgents: true });
     ctx = harness.ctx;
-    teardown = () => harness.cleanup(tmpDir);
+    teardown = harness.cleanup;
   });
 
   afterEach(async () => {
@@ -285,10 +288,10 @@ describe('build route x-agent-name validation', () => {
   let teardown: () => Promise<void>;
 
   beforeEach(async () => {
-    const setup = createBuildTestSetup();
+    const setup = createMockBuildFixture();
     tmpDir = setup.tmpDir;
 
-    const harness = await createBuildTestContext({
+    const harness = await createBuildTestContext(tmpDir, {
       build: setup.baseBuildConfig,
       server: {
         port: 9100,
@@ -297,7 +300,7 @@ describe('build route x-agent-name validation', () => {
       },
     });
     ctx = harness.ctx;
-    teardown = () => harness.cleanup(tmpDir);
+    teardown = harness.cleanup;
   });
 
   afterEach(async () => {
@@ -431,6 +434,7 @@ describe('UBT contention detection and retry', () => {
 describe('build route staging worktree sync', () => {
   let ctx: DrizzleTestContext;
   let tmpDir: string;
+  let agentStagingDir: string;
   let teardown: () => Promise<void>;
 
   const OLD_FILE = 'Source/Public/OldComponent.h';
@@ -493,7 +497,7 @@ describe('build route staging worktree sync', () => {
       cloneAgent: { name: 'test-agent' },
     });
 
-    const agentStagingDir = git.agentStagingDir!;
+    agentStagingDir = git.agentStagingDir!;
 
     // Create mock build script
     const mockScriptPath = path.join(tmpDir, 'mock-build.js');
@@ -504,7 +508,7 @@ process.exit(0);
 `
     );
 
-    const harness = await createBuildTestContext({
+    const harness = await createBuildTestContext(tmpDir, {
       project: {
         name: 'TestProject',
         path: agentStagingDir,
@@ -527,7 +531,7 @@ process.exit(0);
       },
     }, { registerAgents: true });
     ctx = harness.ctx;
-    teardown = () => harness.cleanup(tmpDir);
+    teardown = harness.cleanup;
 
     // Register the agent
     await ctx.app.inject({
@@ -545,7 +549,6 @@ process.exit(0);
   it('removes the old file when git detects a rename', async () => {
     const seedDir = path.join(tmpDir, 'seed');
     const bareRepoDir = path.join(tmpDir, 'bare.git');
-    const agentStagingDir = path.join(tmpDir, 'staging', 'test-agent');
 
     // First build to establish refs/scaffold/last-sync
     const res1 = await ctx.app.inject({
