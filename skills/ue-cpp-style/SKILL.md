@@ -74,6 +74,7 @@ namespace Resort
 - **`static_assert`** for compile-time invariants.
 - **Strongly-typed `enum class`** — use `ENUM_CLASS_FLAGS()` for bitmask enums with a `None = 0`. Blueprint-exposed enums must be `: uint8`.
 - **IWYU** (Include What You Use) — never include `Engine.h` or similarly broad headers. Keep `.h` minimal; heavy includes go in `.cpp`.
+- **Generated headers use bare filenames** — `#include "MyClass.generated.h"`, never a directory path. UBT adds the intermediate generated-code directory to the include path automatically. The same applies to other UBT-generated headers (e.g. `.gen.cpp` includes).
 - **Avoid `FORCEINLINE`** unless profiling proves it helps. The compiler inlines better.
 - **Avoid `mutable`** — it should be rare and well-justified.
 - **Never** use `const_cast`. Code must respect const-correctness at all times.

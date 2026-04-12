@@ -28,6 +28,30 @@ function expectAllow(line, description) {
     `Should allow: ${description}\n  Line: ${line}\n  Got: ${issues.join('\n       ')}`);
 }
 
+// --- Rule: Generated header paths ---
+
+describe('Rule: Generated header paths', () => {
+  it('catches path in generated header include', () => {
+    expectCatch('#include "Source/MyProject/MyClass.generated.h"', 'path in generated header');
+  });
+  it('catches relative path in generated header include', () => {
+    expectCatch('#include "Public/MyClass.generated.h"', 'relative path in generated header');
+  });
+  it('catches angle-bracket path in generated header', () => {
+    expectCatch('#include <MyProject/MyClass.generated.h>', 'angle-bracket path');
+  });
+
+  it('allows bare generated header filename', () => {
+    expectAllow('#include "MyClass.generated.h"', 'bare generated header filename');
+  });
+  it('allows non-generated header with path', () => {
+    expectAllow('#include "Components/SceneComponent.h"', 'non-generated header with path');
+  });
+  it('allows comment mentioning generated header', () => {
+    expectAllow('// #include "Bad/Path.generated.h"', 'comment mentioning generated header');
+  });
+});
+
 // --- Rule 1: East-const ---
 
 describe('Rule 1: East-const', () => {

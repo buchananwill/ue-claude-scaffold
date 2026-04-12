@@ -15,6 +15,7 @@ skills:
   - ue-correctness
   - ue-safety
   - lint-hook-awareness
+  - project-test-knowledge
   - tdd-implementation-io-schema
   - debrief-protocol
   - message-board-protocol

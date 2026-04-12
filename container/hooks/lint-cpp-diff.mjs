@@ -34,6 +34,20 @@ export function checkLines(lines, filePath) {
     const lineNum = i + 1;
     const stripped = line.trim();
 
+    // Rule: Generated headers must use bare filenames, not paths
+    // Check before skipping preprocessor lines
+    if (stripped.startsWith('#include')) {
+      const genMatch = stripped.match(/#include\s+["<](.+\.generated\.h)[">]/);
+      if (genMatch && genMatch[1].includes('/')) {
+        issues.push(
+          `  LINT [${filePath}:${lineNum}] Generated header path: ` +
+          `use bare filename '#include "${genMatch[1].split('/').pop()}"' — ` +
+          `UBT adds the generated-code directory to the include path automatically. ` +
+          `Line: ${stripped.slice(0, 80)}`
+        );
+      }
+    }
+
     // Skip comments and preprocessor
     if (stripped.startsWith('//') || stripped.startsWith('#') || stripped.startsWith('/*') || stripped.startsWith('*')) {
       continue;
