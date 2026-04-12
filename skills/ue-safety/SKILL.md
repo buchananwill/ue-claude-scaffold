@@ -10,7 +10,7 @@ What to look for when reviewing UE C++ for runtime safety. These bugs compile bu
 ## Memory Safety
 
 - **Dangling `TObjectPtr<>`** — pointer surviving past its outer's lifetime. Check: is there a `UPROPERTY()` to establish a GC root?
-- **Raw `UObject*` across GC boundaries** — cached across frame boundaries or async callbacks can dangle after GC. Must be `TWeakObjectPtr` or `UPROPERTY()`.
+- **Raw `UObject*` across GC boundaries** — cached across frame boundaries or async callbacks can dangle after GC. Must be `TWeakObjectPtr` or `UPROPERTY() TObjectPtr<>`.
 - **Smart pointer cycles** — `TSharedPtr` circular references without a `TWeakPtr` break.
 - **Stack references escaping scope** — lambdas capturing locals by reference, then stored or posted to another thread.
 - **`TSharedRef` misuse** — null-checking (it cannot be null), default-constructing without a valid object.
@@ -19,7 +19,7 @@ What to look for when reviewing UE C++ for runtime safety. These bugs compile bu
 
 ## Garbage Collection
 
-- **Missing `UPROPERTY()` on `UObject*` members** — GC doesn't know about raw pointers, will collect the object.
+- **Missing `UPROPERTY()` on `TObjectPtr` members** — GC doesn't know about pointers unless marked with UPROPERTY(), will collect the object.
 - **`NewObject<>` result not rooted** — if not stored in a `UPROPERTY` or added to the root set, GC can collect it before use.
 - **Accessing `UObject` after `ConditionalBeginDestroy`** — check `IsValid()` / `IsValidLowLevel()` before use in deferred contexts.
 - **`AddReferencedObjects` correctness** — non-UObject class holding UObject pointers must implement this or use `FGCObject`.

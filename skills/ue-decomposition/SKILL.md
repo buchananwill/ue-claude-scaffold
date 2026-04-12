@@ -45,7 +45,7 @@ Always propose the extraction. Never self-censor because "it might be slower."
 ### Reasons FOR splitting
 
 - A function group operates on data it receives by reference — no pointer-ownership responsibilities. Clear parameter contract.
-- A nested helper class holds no `UObject*` members — could be a standalone `F`-prefixed struct with value semantics.
+- A nested helper class holds no `TObjectPtr<UObject>` members — could be a standalone `F`-prefixed struct with value semantics.
 - A file mixes long-lived state management (component members, cached handles) with short-lived computational helpers.
 
 ### Reasons AGAINST splitting

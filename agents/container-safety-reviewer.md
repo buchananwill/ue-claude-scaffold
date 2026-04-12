@@ -24,7 +24,7 @@ Find code that compiles and looks correct but will crash, corrupt memory, race, 
 ### Memory Safety
 
 - **Dangling `TObjectPtr<>`** — pointers surviving past their outer's lifetime. Check: is the pointer stored somewhere that outlives the `UObject` it references? Is there a `UPROPERTY()` to establish a GC root?
-- **Raw pointer lifetimes across GC boundaries** — a raw `UObject*` cached across a frame boundary or async callback can dangle after GC. Must be `TWeakObjectPtr` or `UPROPERTY()`.
+- **Raw pointer lifetimes across GC boundaries** — a raw `UObject*` cached across a frame boundary or async callback can dangle after GC. Must be `TWeakObjectPtr` or `UPROPERTY() TObjectPtr<>`.
 - **`MoveTemp()` correctness** — using a moved-from value after the move. Moving a non-movable type. Moving into a context that copies anyway.
 - **Smart pointer cycles** — `TSharedPtr` circular references without a `TWeakPtr` break.
 - **Stack references escaping scope** — lambdas capturing locals by reference, then stored or posted to another thread. The local dies, the lambda dereferences garbage.

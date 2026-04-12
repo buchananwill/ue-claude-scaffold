@@ -197,7 +197,8 @@ GetWorld()->GetTimerManager().SetTimer(Handle, [WeakActor]()
 
 - Raw `UObject*` member fields — always `TObjectPtr<>`
 - Raw `new`/`delete` for non-UObjects — always `MakeUnique`/`MakeShared`
-- Storing `UObject*` without `UPROPERTY` in long-lived members — GC can't see it
+- Storing `TObjectPtr<>` without `UPROPERTY()` — GC can't see it
+- Storing `TObjectPtr<>` AT ALL in a non-reflected (non-USTRUCT or non-UCLASS) type — GC can't see it
 - `TSharedPtr<UMyObject>` — never wrap UObjects in shared pointers
 - `TWeakObjectPtr` for guaranteed-lifetime refs — unnecessary overhead
 
