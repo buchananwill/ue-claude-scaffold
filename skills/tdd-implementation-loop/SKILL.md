@@ -85,6 +85,10 @@ After completing the TDD cycle:
 - **If the build or tests fail**, read the errors and fix them yourself. Iterate until both pass (max 3 attempts).
 - **If you cannot achieve a clean build and passing tests** after 3 attempts, stop and report what is failing.
 
+### Transitive Include Failures (IWYU)
+
+A build error in a file you did not touch is still your responsibility. Your change may have altered the include graph, breaking a file that relied on a transitive include instead of including what it uses directly. Do not dismiss these as pre-existing — trace the missing symbol to its declaring header and add the missing `#include` in the file that fails. This overrides any scope restriction for the purpose of restoring compilation.
+
 ## Completion Rule
 
 **The last thing you do before finishing must be a successful build with all tests passing against your final code.**
