@@ -42,7 +42,7 @@ Every source file (`.h`, `.cpp`) must begin with:
 
 A `.clang-format` file at the repository root is the authoritative source. Run `clang-format -i <file>` to auto-fix.
 
-- **4 spaces** for all indentation. No tabs.
+- **Tabs** for all indentation. No spaces.
 - **Allman brace style** — opening `{` on a new line, at the same indentation as the scope identifier.
 - **All scopes indent** — namespaces, classes, functions, control flow, lambdas.
 - **Access modifiers** (`public:`, `private:`, `protected:`) are flush with the `class`/`struct` keyword.
