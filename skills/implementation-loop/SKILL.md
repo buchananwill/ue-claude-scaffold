@@ -49,9 +49,13 @@ Adding documentation, JSDoc, or commit-message prose that explains the deviation
 5. **If the build fails**, read the errors and fix them yourself. Iterate until the build passes (max 3 attempts).
 6. **If you cannot achieve a clean build** after 3 attempts, stop and report what's failing.
 
-### Transitive Include Failures (IWYU)
+### Build Errors in Files You Did Not Edit
 
-A build error in a file you did not touch is still your responsibility. Your change may have altered the include graph, breaking a file that relied on a transitive include instead of including what it uses directly. Do not dismiss these as pre-existing — trace the missing symbol to its declaring header and add the missing `#include` in the file that fails. This overrides any scope restriction for the purpose of restoring compilation.
+***All build errors are your responsibility.*** A clean build is a hard gate — it is not negotiable and it is not scoped to "your" files.
+
+Build errors in files outside your original task scope have many causes: transitive include changes (IWYU), renamed or moved symbols, altered base class interfaces, macro side-effects, or pre-existing breakage exposed by your change. The cause does not matter. If the build fails, you fix it.
+
+When fixing files outside your task scope, apply the **minimum viable fix**: add the missing `#include`, update the symbol reference, adjust the signature to match — nothing more. Do not refactor, restyle, or improve code you entered only to restore compilation.
 
 ## Completion Rule
 

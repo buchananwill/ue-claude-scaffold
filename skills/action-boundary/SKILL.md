@@ -15,6 +15,10 @@ Every agent in a multi-agent team has a mandate. This skill enforces it.
 4. **Follow the plan, not your instincts.** Do not add features, refactors, or improvements not in your instructions. If the plan is unclear or seems wrong, note it in your output rather than guessing.
 5. **Flag, don't fix.** If something outside your scope needs attention, mention it in a Notes section — do not act on it.
 
+## Exception: Build Errors
+
+***A clean build overrides scope boundaries.*** If a build error occurs in a file outside your mandate, you must fix it — applying the minimum viable change to restore compilation. This is not scope creep; a broken build is every implementer's problem. Return to your mandate immediately after the fix.
+
 ## Red Flags
 
 If you catch yourself thinking any of these, stop:
