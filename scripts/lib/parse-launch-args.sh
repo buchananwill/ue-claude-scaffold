@@ -18,6 +18,9 @@ Launch a containerized Claude Code agent against your Unreal Engine project.
 Options:
   --agent-name NAME   Agent identifier (default: from .env or "agent-1")
   --agent-type TYPE   Agent type (required: set in .env, scaffold.config.json, or here)
+  --effort LEVEL      Reasoning effort for the top-level Claude session:
+                      low, medium, high, xhigh, max (default: high).
+                      Resolved as CLI > scaffold.config.json > .env > built-in default.
   --project ID        Project identifier for multi-project configs (default: "default")
   --verbosity LEVEL   Message board verbosity: quiet, normal, verbose (default: normal)
   --worker            Run in task-queue worker mode (no plan file needed)
@@ -52,6 +55,7 @@ USAGE
 _parse_launch_args() {
   _CLI_AGENT_NAME=""
   _CLI_AGENT_TYPE=""
+  _CLI_EFFORT=""
   _CLI_VERBOSITY=""
   _CLI_DRY_RUN=false
   _CLI_WORKER=false
@@ -73,6 +77,8 @@ _parse_launch_args() {
         _CLI_AGENT_NAME="$2"; shift 2 ;;
       --agent-type)
         _CLI_AGENT_TYPE="$2"; shift 2 ;;
+      --effort)
+        _CLI_EFFORT="$2"; shift 2 ;;
       --verbosity)
         _CLI_VERBOSITY="$2"; shift 2 ;;
       --worker)

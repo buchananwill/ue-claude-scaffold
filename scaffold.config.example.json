@@ -42,7 +42,8 @@
 
   "container": {
     "agentType": "container-orchestrator",
-    "maxTurns": 200
+    "maxTurns": 200,
+    "effort": "high"
   },
 
   "server": {
@@ -58,6 +59,7 @@
     "my-ue-game": {
       "name": "MyUEGame",
       "agentType": "container-orchestrator-ue",
+      "effort": "high",
       "path": "D:\\Projects\\MyUEGame",
       "uprojectFile": "MyUEGame.uproject",
       "bareRepoPath": "D:\\Repos\\my-ue-game.git",

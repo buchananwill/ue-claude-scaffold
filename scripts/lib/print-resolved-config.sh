@@ -12,10 +12,10 @@ readonly _LIB_PRINT_RESOLVED_CONFIG_LOADED=1
 #   Prints the resolved configuration to stdout.
 #   Reads from the following global variables:
 #     AGENT_NAME, AGENT_BRANCH, ROOT_BRANCH, WORK_BRANCH, AGENT_TYPE,
-#     PROJECT_ID, MAX_TURNS, BARE_REPO_PATH, UE_ENGINE_PATH, SERVER_PORT,
-#     WORKER_MODE, WORKER_POLL_INTERVAL, WORKER_SINGLE_TASK, AGENT_MODE,
-#     LOG_VERBOSITY, HOOK_BUILD_INTERCEPT, HOOK_CPP_LINT, HOOK_JS_LINT,
-#     _CLI_PARALLEL, _CLI_FRESH, SCRIPT_DIR
+#     CLAUDE_EFFORT, PROJECT_ID, MAX_TURNS, BARE_REPO_PATH, UE_ENGINE_PATH,
+#     SERVER_PORT, WORKER_MODE, WORKER_POLL_INTERVAL, WORKER_SINGLE_TASK,
+#     AGENT_MODE, LOG_VERBOSITY, HOOK_BUILD_INTERCEPT, HOOK_CPP_LINT,
+#     HOOK_JS_LINT, _CLI_PARALLEL, _CLI_FRESH, SCRIPT_DIR
 _print_resolved_config() {
   echo ""
   echo "=== Resolved Configuration ==="
@@ -24,6 +24,7 @@ _print_resolved_config() {
   echo "  ROOT_BRANCH:      ${ROOT_BRANCH:-}"
   echo "  WORK_BRANCH:      ${WORK_BRANCH:-}"
   echo "  AGENT_TYPE:       ${AGENT_TYPE:-}"
+  echo "  CLAUDE_EFFORT:    ${CLAUDE_EFFORT:-}"
   echo "  PROJECT_ID:       ${PROJECT_ID:-}"
   if [[ -d "${SCRIPT_DIR:-}/dynamic-agents" && -f "${SCRIPT_DIR:-}/dynamic-agents/${AGENT_TYPE:-}.md" ]]; then
     echo "  AGENT_COMPILED:   yes (dynamic-agents/${AGENT_TYPE}.md)"

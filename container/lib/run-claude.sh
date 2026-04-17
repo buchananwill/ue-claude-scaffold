@@ -119,6 +119,7 @@ _run_claude() {
         --dangerously-skip-permissions
         --output-format text
         --max-turns "$MAX_TURNS"
+        --effort "${CLAUDE_EFFORT:-high}"
         --mcp-config /home/claude/.claude/mcp.json
         --debug-file /logs/claude-debug.log
     )

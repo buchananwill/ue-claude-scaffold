@@ -10,6 +10,7 @@ services:
       - AGENT_NAME=${AGENT_NAME:-agent-1}
       - WORK_BRANCH=${WORK_BRANCH:-main}
       - AGENT_TYPE=${AGENT_TYPE:?Set AGENT_TYPE in .env}
+      - CLAUDE_EFFORT=${CLAUDE_EFFORT:-high}
       - MAX_TURNS=${MAX_TURNS:-200}
       - SERVER_URL=http://host.docker.internal:${SERVER_PORT:-9100}
       # Hook config — set these to match your project's build/test scripts

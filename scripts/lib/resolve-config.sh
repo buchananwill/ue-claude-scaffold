@@ -27,7 +27,7 @@ _validate_hook_values() {
 #   Reads scaffold.config.json and sets the global config variables:
 #     BARE_REPO_PATH, PROJECT_PATH, UE_ENGINE_PATH, SERVER_PORT,
 #     BUILD_SCRIPT_NAME, TEST_SCRIPT_NAME, DEFAULT_TEST_FILTERS, LOGS_PATH,
-#     PROJECT_HOOK_BUILD, PROJECT_HOOK_LINT, PROJECT_AGENT_TYPE, PROJECT_SEED_BRANCH
+#     PROJECT_HOOK_BUILD, PROJECT_HOOK_LINT, PROJECT_AGENT_TYPE, PROJECT_EFFORT, PROJECT_SEED_BRANCH
 #   Exits with error if config is missing or project not found.
 _resolve_project_config() {
   local script_dir="$1"
@@ -44,6 +44,7 @@ _resolve_project_config() {
   PROJECT_HOOK_LINT=""
   PROJECT_HOOK_JS_LINT=""
   PROJECT_AGENT_TYPE=""
+  PROJECT_EFFORT=""
   PROJECT_SEED_BRANCH=""
 
   if jq -e --arg id "$project_id" '.projects[$id]' "$_cfg" >/dev/null 2>&1; then
@@ -64,6 +65,7 @@ _resolve_project_config() {
     PROJECT_HOOK_LINT=$(jq -r --arg id "$project_id" '.projects[$id].hooks.cppLint // empty' "$_cfg")
     PROJECT_HOOK_JS_LINT=$(jq -r --arg id "$project_id" '.projects[$id].hooks.jsLint // empty' "$_cfg")
     PROJECT_AGENT_TYPE=$(jq -r --arg id "$project_id" '.projects[$id].agentType // empty' "$_cfg")
+    PROJECT_EFFORT=$(jq -r --arg id "$project_id" '.projects[$id].effort // empty' "$_cfg")
     PROJECT_SEED_BRANCH=$(jq -r --arg id "$project_id" '.projects[$id].seedBranch // empty' "$_cfg")
   elif [[ "$project_id" == "default" ]]; then
     # Legacy mode
@@ -82,6 +84,7 @@ _resolve_project_config() {
     PROJECT_HOOK_BUILD=$(jq -r '.hooks.buildIntercept // empty' "$_cfg")
     PROJECT_HOOK_LINT=$(jq -r '.hooks.cppLint // empty' "$_cfg")
     PROJECT_HOOK_JS_LINT=$(jq -r '.hooks.jsLint // empty' "$_cfg")
+    PROJECT_EFFORT=$(jq -r '.container.effort // empty' "$_cfg")
     PROJECT_SEED_BRANCH=$(jq -r '.tasks.seedBranch // empty' "$_cfg")
   else
     local _available
@@ -149,6 +152,14 @@ _resolve_agent_vars() {
   case "$LOG_VERBOSITY" in
     quiet|normal|verbose) ;;
     *) echo "Error: --verbosity must be quiet, normal, or verbose (got '$LOG_VERBOSITY')" >&2; exit 1 ;;
+  esac
+
+  # Reasoning-effort cascade: CLI > scaffold.config.json > env (.env) > built-in default (high).
+  CLAUDE_EFFORT="${_CLI_EFFORT:-${PROJECT_EFFORT:-${CLAUDE_EFFORT:-high}}}"
+
+  case "$CLAUDE_EFFORT" in
+    low|medium|high|xhigh|max) ;;
+    *) echo "Error: CLAUDE_EFFORT must be one of low, medium, high, xhigh, max (got '$CLAUDE_EFFORT')" >&2; exit 1 ;;
   esac
 
   # Branch names
