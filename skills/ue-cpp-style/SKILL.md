@@ -111,14 +111,24 @@ When the type already appears on the line (Cast<>, constructors, MakeUnique<>, e
   ```cpp
   auto* const Comp = Cast<UStaticMeshComponent>(Component);
   ```
-- **Use `auto&`** when the type is obvious from context.
-- **Avoid bare `auto`** when the type isn't visible on the same line.
+- **Use `auto&`** when the type is obvious from context (e.g. `auto& LAM = GetWorld()->GetLatentActionManager();`).
+- **Range-for: `auto const&` is the default.** The container on the right of `:` makes the element type obvious; explicit element types in range-for are never preferred. Use `auto&` only when mutating; use `auto` (by value) only for trivially-copyable elements when a copy is deliberate.
+  ```cpp
+  for (auto const& Str : Names)    { /* read only — default */ }
+  for (auto& Slot : Inventory)     { /* mutating */ }
+  for (auto const& [K, V] : Map)   { /* structured binding */ }
+
+  // Anti-patterns
+  for (FString const& Str : Names) // redundant — type is obvious from container
+  for (auto X : Names)             // silent copy — unintended for non-trivial types
+  ```
+- **Avoid bare `auto`** when the type isn't visible on the same line (range-for is the established exception above — the container makes the element type obvious).
 - **East-const with auto** — `const auto X = Cast<>()` makes X a raw pointer, not const pointee. Use east-const: `auto* const` (const ptr), `auto const*` (ptr to const), `auto const&` (const ref).
 - **Structured bindings** (`auto [X, Y] = Func();`) are encouraged in non-reflected code. Use `Tie(X, Y)` for reassignment.
 
 ## const — Where It Matters
 
-- **Do**: `const` on pointers/references to const objects, on member functions, on range-for when not mutating: `for (FString const& Str : Array)`.
+- **Do**: `const` on pointers/references to const objects, on member functions, on range-for when not mutating: `for (auto const& Str : Array)` (see auto Usage for the full range-for rule).
 - **Do**: `const` on return-by-reference: `TArray<FString> const& GetNames() const;`
 - **Don't**: `const` on return-by-value — it inhibits move semantics.
 - **Nuanced**: `const` on local values and by-value params is optional. Consistency within a file matters most.
