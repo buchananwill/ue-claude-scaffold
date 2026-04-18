@@ -1,20 +1,27 @@
-import type { FastifyPluginAsync } from 'fastify';
-import { randomBytes } from 'node:crypto';
-import { getDb } from '../drizzle-instance.js';
-import * as agentsQ from '../queries/agents.js';
-import type { AgentPublicRow } from '../queries/agents.js';
-import * as roomsQ from '../queries/rooms.js';
-import * as filesQ from '../queries/files.js';
-import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
-import type { ScaffoldConfig } from '../config.js';
-import { mergeIntoBranch } from '../git-utils.js';
-import { seedBranchFor, agentBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
-import { resolveProject } from '../resolve-project.js';
+import type { FastifyPluginAsync } from "fastify";
+import { randomBytes } from "node:crypto";
+import { getDb } from "../drizzle-instance.js";
+import * as agentsQ from "../queries/agents.js";
+import type { AgentPublicRow } from "../queries/agents.js";
+import * as roomsQ from "../queries/rooms.js";
+import * as filesQ from "../queries/files.js";
+import * as tasksLifecycleQ from "../queries/tasks-lifecycle.js";
+import type { ScaffoldConfig } from "../config.js";
+import { mergeIntoBranch } from "../git-utils.js";
+import {
+  seedBranchFor,
+  agentBranchFor,
+  AGENT_NAME_RE,
+} from "../branch-naming.js";
+import { resolveProject } from "../resolve-project.js";
 
-interface AgentsOpts { config: ScaffoldConfig }
+interface AgentsOpts {
+  config: ScaffoldConfig;
+}
 
 /** HTTP-response shape for a single agent. */
 export interface AgentResponse {
+  id: string;
   name: string;
   worktree: string;
   planDoc: string | null;
@@ -27,6 +34,7 @@ export interface AgentResponse {
 
 export function formatAgent(row: AgentPublicRow): AgentResponse {
   return {
+    id: row.id,
     name: row.name,
     worktree: row.worktree,
     planDoc: row.planDoc ?? null,
@@ -34,7 +42,7 @@ export function formatAgent(row: AgentPublicRow): AgentResponse {
     mode: row.mode,
     registeredAt: row.registeredAt ?? null,
     containerHost: row.containerHost ?? null,
-    projectId: row.projectId ?? 'default',
+    projectId: row.projectId ?? "default",
   };
 }
 
@@ -42,7 +50,14 @@ export function formatAgent(row: AgentPublicRow): AgentResponse {
  * Statuses that can be set via POST /agents/:name/status.
  * Intentionally excludes 'deleted' — deletion goes through DELETE endpoints.
  */
-const ALLOWED_STATUSES = ['idle', 'working', 'done', 'error', 'paused', 'stopping'] as const;
+const ALLOWED_STATUSES = [
+  "idle",
+  "working",
+  "done",
+  "error",
+  "paused",
+  "stopping",
+] as const;
 type AllowedStatus = (typeof ALLOWED_STATUSES)[number];
 const ALLOWED_STATUS_SET = new Set<string>(ALLOWED_STATUSES);
 
@@ -50,21 +65,27 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   const { config } = opts;
 
   fastify.post<{
-    Body: { name: string; worktree: string; planDoc?: string; mode?: 'single' | 'pump'; containerHost?: string };
-  }>('/agents/register', async (request, reply) => {
+    Body: {
+      name: string;
+      worktree: string;
+      planDoc?: string;
+      mode?: "single" | "pump";
+      containerHost?: string;
+    };
+  }>("/agents/register", async (request, reply) => {
     const { name, worktree, planDoc, mode, containerHost } = request.body;
     if (!AGENT_NAME_RE.test(name)) {
-      return reply.badRequest('Invalid agent name format');
+      return reply.badRequest("Invalid agent name format");
     }
     const projectId = request.projectId;
-    const sessionToken = randomBytes(16).toString('hex');
+    const sessionToken = randomBytes(16).toString("hex");
     const db = getDb();
 
     const newAgent = await agentsQ.register(db, {
       name,
       worktree,
       planDoc: planDoc ?? null,
-      mode: mode ?? 'single',
+      mode: mode ?? "single",
       containerHost: containerHost ?? null,
       sessionToken,
       projectId,
@@ -76,7 +97,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
       await roomsQ.createRoom(db, {
         id: roomId,
         name: `Direct: ${name}`,
-        type: 'direct',
+        type: "direct",
         createdBy: name,
         projectId,
       });
@@ -86,7 +107,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     return { ok: true, id: newAgent.id, sessionToken: newAgent.sessionToken };
   });
 
-  fastify.get('/agents', async (request) => {
+  fastify.get("/agents", async (request) => {
     const db = getDb();
     const rows = await agentsQ.getAll(db, request.projectId);
     return rows.map(formatAgent);
@@ -95,9 +116,13 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   // GET /agents/:name -- fetch a single agent by name
   fastify.get<{
     Params: { name: string };
-  }>('/agents/:name', async (request, reply) => {
+  }>("/agents/:name", async (request, reply) => {
     const db = getDb();
-    const row = await agentsQ.getByName(db, request.projectId, request.params.name);
+    const row = await agentsQ.getByName(
+      db,
+      request.projectId,
+      request.params.name,
+    );
     if (!row) {
       return reply.notFound(`Agent '${request.params.name}' not registered`);
     }
@@ -107,21 +132,21 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   fastify.post<{
     Params: { name: string };
     Body: { status: string };
-  }>('/agents/:name/status', async (request, reply) => {
+  }>("/agents/:name/status", async (request, reply) => {
     const { name } = request.params;
     const { status } = request.body;
     const db = getDb();
 
-    if (status === 'deleted') {
+    if (status === "deleted") {
       return reply.code(400).send({
-        error: 'invalid_status',
+        error: "invalid_status",
         allowed: ALLOWED_STATUSES,
       });
     }
 
     if (!ALLOWED_STATUS_SET.has(status)) {
       return reply.code(400).send({
-        error: 'invalid_status',
+        error: "invalid_status",
         allowed: ALLOWED_STATUSES,
       });
     }
@@ -130,7 +155,12 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     if (!agent) {
       return reply.notFound(`Agent '${name}' not registered`);
     }
-    await agentsQ.updateStatus(db, request.projectId, name, status as agentsQ.AgentStatus);
+    await agentsQ.updateStatus(
+      db,
+      request.projectId,
+      name,
+      status as agentsQ.AgentStatus,
+    );
     return { ok: true };
   });
 
@@ -139,7 +169,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   fastify.delete<{
     Params: { name: string };
     Querystring: { sessionToken?: string };
-  }>('/agents/:name', async (request, reply) => {
+  }>("/agents/:name", async (request, reply) => {
     const { name } = request.params;
     const { sessionToken } = request.query;
     const db = getDb();
@@ -151,10 +181,11 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     if (sessionToken && agent.sessionToken !== sessionToken) {
       fastify.log.warn(
         { agent: name, projectId: request.projectId },
-        'DELETE /agents/:name session token mismatch',
+        "DELETE /agents/:name session token mismatch",
       );
       return reply.code(409).send({
-        error: 'session token mismatch — another container has taken over this agent slot',
+        error:
+          "session token mismatch — another container has taken over this agent slot",
       });
     }
 
@@ -168,7 +199,7 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
 
   // DELETE /agents -- soft-delete all agents for the project.
   // No sessionToken required — this is an operator-level bulk action.
-  fastify.delete('/agents', async (request) => {
+  fastify.delete("/agents", async (request) => {
     const db = getDb();
     const result = await db.transaction(async (tx) => {
       const count = await agentsQ.deleteAllForProject(tx, request.projectId);
@@ -180,40 +211,46 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
   });
 
   // POST /agents/:name/sync -- merge seed branch into agent's branch
-  fastify.post<{ Params: { name: string } }>('/agents/:name/sync', async (request, reply) => {
-    const { name } = request.params;
-    const db = getDb();
+  fastify.post<{ Params: { name: string } }>(
+    "/agents/:name/sync",
+    async (request, reply) => {
+      const { name } = request.params;
+      const db = getDb();
 
-    const agent = await agentsQ.getWorktreeInfo(db, request.projectId, name);
-    if (!agent) {
-      return reply.notFound(`Agent '${name}' not found`);
-    }
+      const agent = await agentsQ.getWorktreeInfo(db, request.projectId, name);
+      if (!agent) {
+        return reply.notFound(`Agent '${name}' not found`);
+      }
 
-    let project;
-    try {
-      project = await resolveProject(config, db, agent.projectId);
-    } catch {
-      return reply.badRequest(`Unknown project: "${agent.projectId}"`);
-    }
-    const bareRepo = project.bareRepoPath;
-    if (!bareRepo) {
-      return reply.code(422).send({
-        statusCode: 422,
-        error: 'Unprocessable Entity',
-        message: 'sync requires bareRepoPath to be configured',
-      });
-    }
+      let project;
+      try {
+        project = await resolveProject(config, db, agent.projectId);
+      } catch {
+        return reply.badRequest(`Unknown project: "${agent.projectId}"`);
+      }
+      const bareRepo = project.bareRepoPath;
+      if (!bareRepo) {
+        return reply.code(422).send({
+          statusCode: 422,
+          error: "Unprocessable Entity",
+          message: "sync requires bareRepoPath to be configured",
+        });
+      }
 
-    const seedBranch = seedBranchFor(agent.projectId, project);
-    const targetBranch = agentBranchFor(agent.projectId, name);
+      const seedBranch = seedBranchFor(agent.projectId, project);
+      const targetBranch = agentBranchFor(agent.projectId, name);
 
-    const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
-    if (result.ok) {
-      return reply.send({ ok: true, ...(result.commitSha ? { commitSha: result.commitSha } : {}) });
-    } else {
-      return reply.code(409).send({ ok: false, reason: result.reason });
-    }
-  });
+      const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
+      if (result.ok) {
+        return reply.send({
+          ok: true,
+          ...(result.commitSha ? { commitSha: result.commitSha } : {}),
+        });
+      } else {
+        return reply.code(409).send({ ok: false, reason: result.reason });
+      }
+    },
+  );
 };
 
 export default agentsPlugin;

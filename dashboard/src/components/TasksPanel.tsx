@@ -12,24 +12,26 @@ import {
   Badge,
   Tooltip,
   Loader,
-} from '@mantine/core';
-import {
-  IconFilter,
-  IconTrash,
-} from '@tabler/icons-react';
-import { Fragment, useState } from 'react';
-import { Link } from '@tanstack/react-router';
-import type { Task } from '../api/types.js';
-import type { TaskFilters, TaskFiltersUrlBacked } from '../hooks/useTaskFilters.js';
-import { useProject } from '../contexts/ProjectContext.js';
-import { UNASSIGNED } from '../hooks/useTaskFilters.js';
-import { TASK_STATUSES, STATUS_LABELS } from '../constants/task-statuses.js';
-import { useTaskActions } from '../hooks/useTaskActions.js';
-import { SortHeader } from './SortHeader.js';
-import { StatusBadge } from './StatusBadge.js';
-import { RelativeTime } from './RelativeTime.js';
-import { TaskDetailRow } from './TaskDetailRow.js';
-import { TaskDuration } from './TaskDuration.js';
+} from "@mantine/core";
+import { IconFilter, IconTrash } from "@tabler/icons-react";
+import { Fragment, useState } from "react";
+import { Link } from "@tanstack/react-router";
+import type { Task } from "../api/types.js";
+import type {
+  TaskFilters,
+  TaskFiltersUrlBacked,
+} from "../hooks/useTaskFilters.js";
+import { useProject } from "../contexts/ProjectContext.js";
+import { UNASSIGNED } from "../hooks/useTaskFilters.js";
+import { TASK_STATUSES, STATUS_LABELS } from "../constants/task-statuses.js";
+import { useTaskActions } from "../hooks/useTaskActions.js";
+import { SortHeader } from "./SortHeader.js";
+import { StatusBadge } from "./StatusBadge.js";
+import { RelativeTime } from "./RelativeTime.js";
+import { TaskDetailRow } from "./TaskDetailRow.js";
+import { TaskDuration } from "./TaskDuration.js";
+import { useAgentNameMap } from "../hooks/useAgentNameMap.js";
+import { formatAgentRef } from "../utils/agentRef.js";
 
 interface TasksPanelProps {
   tasks: Task[] | null;
@@ -40,8 +42,16 @@ interface TasksPanelProps {
   availablePriorities?: number[];
 }
 
-export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availableAgents, availablePriorities }: TasksPanelProps) {
+export function TasksPanel({
+  tasks,
+  isFetching,
+  filters,
+  excludeStatuses,
+  availableAgents,
+  availablePriorities,
+}: TasksPanelProps) {
   const { projectId } = useProject();
+  const agentNames = useAgentNameMap();
   const [expanded, setExpanded] = useState<number | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<number | null>(null);
   const [confirmingBulk, setConfirmingBulk] = useState(false);
@@ -71,15 +81,25 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
   // When using client-side filtering (useTaskFilters), displayedTasks/uniqueAgents/uniquePriorities
   // are available. When using server-side filtering (useTaskFiltersUrlBacked), the tasks prop
   // is already filtered by the server and those derived values are not present.
-  const displayedTasks = 'displayedTasks' in filters ? filters.displayedTasks : (tasks ?? []);
-  const uniqueAgents = 'uniqueAgents' in filters ? filters.uniqueAgents : (availableAgents ?? []);
-  const uniquePriorities = 'uniquePriorities' in filters ? filters.uniquePriorities : (availablePriorities ?? []);
+  const displayedTasks =
+    "displayedTasks" in filters ? filters.displayedTasks : (tasks ?? []);
+  const uniqueAgents =
+    "uniqueAgents" in filters ? filters.uniqueAgents : (availableAgents ?? []);
+  const uniquePriorities =
+    "uniquePriorities" in filters
+      ? filters.uniquePriorities
+      : (availablePriorities ?? []);
 
-  const deletableStatuses = new Set(['completed', 'failed', 'pending']);
-  const bulkDeletable = displayedTasks.filter((t) => deletableStatuses.has(t.status));
+  const deletableStatuses = new Set(["completed", "failed", "pending"]);
+  const bulkDeletable = displayedTasks.filter((t) =>
+    deletableStatuses.has(t.status),
+  );
   const showBulkDelete = bulkDeletable.length > 0;
   const bulkDeletableStatusSet = new Set(bulkDeletable.map((t) => t.status));
-  const singleDeletableStatus = bulkDeletableStatusSet.size === 1 ? Array.from(bulkDeletableStatusSet)[0] : null;
+  const singleDeletableStatus =
+    bulkDeletableStatusSet.size === 1
+      ? Array.from(bulkDeletableStatusSet)[0]
+      : null;
 
   return (
     <Stack gap="sm">
@@ -91,36 +111,58 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
         >
           <Group gap="xs">
             {TASK_STATUSES.filter((s) => !excludeStatuses?.has(s)).map((s) => (
-              <Chip key={s} size="xs" value={s}>{STATUS_LABELS[s] ?? s}</Chip>
+              <Chip key={s} size="xs" value={s}>
+                {STATUS_LABELS[s] ?? s}
+              </Chip>
             ))}
           </Group>
         </Chip.Group>
         <Group gap="xs">
           {hasActiveFilters && (
-            <Anchor size="xs" onClick={clearAllFilters}>Clear all filters</Anchor>
+            <Anchor size="xs" onClick={clearAllFilters}>
+              Clear all filters
+            </Anchor>
           )}
           {showBulkDelete && (
             <Popover
               opened={confirmingBulk}
-              onChange={(opened) => { if (!opened) { setBulkDeleteTargets([]); setConfirmingBulk(false); } }}
+              onChange={(opened) => {
+                if (!opened) {
+                  setBulkDeleteTargets([]);
+                  setConfirmingBulk(false);
+                }
+              }}
               position="bottom"
               withArrow
               width={320}
             >
               <Popover.Target>
-                <Button size="compact-xs" variant="light" color="red" onClick={() => { setBulkDeleteTargets(bulkDeletable); setConfirmingBulk(true); }}>
-                  Delete {bulkDeletable.length}{singleDeletableStatus ? ` ${singleDeletableStatus}` : ' deletable'} task{bulkDeletable.length !== 1 ? 's' : ''}
+                <Button
+                  size="compact-xs"
+                  variant="light"
+                  color="red"
+                  onClick={() => {
+                    setBulkDeleteTargets(bulkDeletable);
+                    setConfirmingBulk(true);
+                  }}
+                >
+                  Delete {bulkDeletable.length}
+                  {singleDeletableStatus
+                    ? ` ${singleDeletableStatus}`
+                    : " deletable"}{" "}
+                  task{bulkDeletable.length !== 1 ? "s" : ""}
                 </Button>
               </Popover.Target>
               <Popover.Dropdown>
                 <Stack gap="xs">
                   <Text size="sm" fw={500}>
-                    Delete {bulkDeleteTargets.length}{singleDeletableStatus ? ` ${singleDeletableStatus}` : ' deletable'} task{bulkDeleteTargets.length !== 1 ? 's' : ''}?
+                    Delete {bulkDeleteTargets.length}
+                    {singleDeletableStatus
+                      ? ` ${singleDeletableStatus}`
+                      : " deletable"}{" "}
+                    task{bulkDeleteTargets.length !== 1 ? "s" : ""}?
                   </Text>
-                  <Stack
-                    gap={2}
-                    style={{ maxHeight: 160, overflowY: 'auto' }}
-                  >
+                  <Stack gap={2} style={{ maxHeight: 160, overflowY: "auto" }}>
                     {bulkDeleteTargets.map((t) => (
                       <Text key={t.id} size="xs" c="dimmed" truncate>
                         #{t.id} {t.title}
@@ -128,8 +170,19 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
                     ))}
                   </Stack>
                   <Group gap="xs">
-                    <Button size="xs" color="red" onClick={handleBulkDelete}>Yes</Button>
-                    <Button size="xs" variant="default" onClick={() => { setBulkDeleteTargets([]); setConfirmingBulk(false); }}>No</Button>
+                    <Button size="xs" color="red" onClick={handleBulkDelete}>
+                      Yes
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="default"
+                      onClick={() => {
+                        setBulkDeleteTargets([]);
+                        setConfirmingBulk(false);
+                      }}
+                    >
+                      No
+                    </Button>
                   </Group>
                 </Stack>
               </Popover.Dropdown>
@@ -141,41 +194,81 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
       {isFetching && displayedTasks.length === 0 ? (
         <Stack align="center" py="md">
           <Loader size="sm" />
-          <Text c="dimmed" size="sm">Loading tasks...</Text>
+          <Text c="dimmed" size="sm">
+            Loading tasks...
+          </Text>
         </Stack>
       ) : displayedTasks.length === 0 && hasActiveFilters ? (
         <Stack gap="xs" align="center" py="md">
-          <Text c="dimmed" size="sm">No tasks match the current filters.</Text>
-          <Anchor size="sm" onClick={clearAllFilters}>Clear all filters</Anchor>
+          <Text c="dimmed" size="sm">
+            No tasks match the current filters.
+          </Text>
+          <Anchor size="sm" onClick={clearAllFilters}>
+            Clear all filters
+          </Anchor>
         </Stack>
       ) : displayedTasks.length === 0 ? (
-        <Text c="dimmed" ta="center" py="md" size="sm">No tasks</Text>
+        <Text c="dimmed" ta="center" py="md" size="sm">
+          No tasks
+        </Text>
       ) : (
-        <Table striped highlightOnHover fz="sm" style={{ opacity: isFetching ? 0.7 : 1, transition: 'opacity 150ms' }}>
+        <Table
+          striped
+          highlightOnHover
+          fz="sm"
+          style={{ opacity: isFetching ? 0.7 : 1, transition: "opacity 150ms" }}
+        >
           <Table.Thead>
             <Table.Tr>
               <Table.Th w={40}>
-                <SortHeader label="#" column="id" activeColumn={sortColumn} dir={sortDir} onSort={cycleSort} />
+                <SortHeader
+                  label="#"
+                  column="id"
+                  activeColumn={sortColumn}
+                  dir={sortDir}
+                  onSort={cycleSort}
+                />
               </Table.Th>
               <Table.Th w={40}>
                 <Group gap={4} wrap="nowrap">
-                  <SortHeader label="Pri" column="priority" activeColumn={sortColumn} dir={sortDir} onSort={cycleSort} />
+                  <SortHeader
+                    label="Pri"
+                    column="priority"
+                    activeColumn={sortColumn}
+                    dir={sortDir}
+                    onSort={cycleSort}
+                  />
                   <Popover position="bottom" withArrow>
                     <Popover.Target>
-                      <ActionIcon variant="subtle" size="xs" color={priorityFilter.size > 0 ? 'blue' : 'gray'}>
-                        {priorityFilter.size > 0
-                          ? <Badge size="xs" circle>{priorityFilter.size}</Badge>
-                          : <IconFilter size={12} />}
+                      <ActionIcon
+                        variant="subtle"
+                        size="xs"
+                        color={priorityFilter.size > 0 ? "blue" : "gray"}
+                      >
+                        {priorityFilter.size > 0 ? (
+                          <Badge size="xs" circle>
+                            {priorityFilter.size}
+                          </Badge>
+                        ) : (
+                          <IconFilter size={12} />
+                        )}
                       </ActionIcon>
                     </Popover.Target>
                     <Popover.Dropdown>
                       <Checkbox.Group
                         value={Array.from(priorityFilter).map(String)}
-                        onChange={(vals: string[]) => setPriorityFilter(new Set(vals.map(Number)))}
+                        onChange={(vals: string[]) =>
+                          setPriorityFilter(new Set(vals.map(Number)))
+                        }
                       >
                         <Stack gap="xs">
                           {uniquePriorities.map((p) => (
-                            <Checkbox key={p} value={String(p)} label={`Priority ${p}`} size="xs" />
+                            <Checkbox
+                              key={p}
+                              value={String(p)}
+                              label={`Priority ${p}`}
+                              size="xs"
+                            />
                           ))}
                         </Stack>
                       </Checkbox.Group>
@@ -184,33 +277,65 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
                 </Group>
               </Table.Th>
               <Table.Th w={100}>
-                <SortHeader label="Status" column="status" activeColumn={sortColumn} dir={sortDir} onSort={cycleSort} />
+                <SortHeader
+                  label="Status"
+                  column="status"
+                  activeColumn={sortColumn}
+                  dir={sortDir}
+                  onSort={cycleSort}
+                />
               </Table.Th>
               <Table.Th>
-                <SortHeader label="Title" column="title" activeColumn={sortColumn} dir={sortDir} onSort={cycleSort} />
+                <SortHeader
+                  label="Title"
+                  column="title"
+                  activeColumn={sortColumn}
+                  dir={sortDir}
+                  onSort={cycleSort}
+                />
               </Table.Th>
               <Table.Th>
                 <Group gap={4} wrap="nowrap">
-                  <SortHeader label="Agent" column="claimedBy" activeColumn={sortColumn} dir={sortDir} onSort={cycleSort} />
+                  <SortHeader
+                    label="Agent"
+                    column="claimedBy"
+                    activeColumn={sortColumn}
+                    dir={sortDir}
+                    onSort={cycleSort}
+                  />
                   <Popover position="bottom" withArrow>
                     <Popover.Target>
-                      <ActionIcon variant="subtle" size="xs" color={agentFilter.size > 0 ? 'blue' : 'gray'}>
-                        {agentFilter.size > 0
-                          ? <Badge size="xs" circle>{agentFilter.size}</Badge>
-                          : <IconFilter size={12} />}
+                      <ActionIcon
+                        variant="subtle"
+                        size="xs"
+                        color={agentFilter.size > 0 ? "blue" : "gray"}
+                      >
+                        {agentFilter.size > 0 ? (
+                          <Badge size="xs" circle>
+                            {agentFilter.size}
+                          </Badge>
+                        ) : (
+                          <IconFilter size={12} />
+                        )}
                       </ActionIcon>
                     </Popover.Target>
                     <Popover.Dropdown>
                       <Checkbox.Group
                         value={Array.from(agentFilter)}
-                        onChange={(vals: string[]) => setAgentFilter(new Set(vals))}
+                        onChange={(vals: string[]) =>
+                          setAgentFilter(new Set(vals))
+                        }
                       >
                         <Stack gap="xs">
                           {uniqueAgents.map((a) => (
                             <Checkbox
                               key={a}
                               value={a}
-                              label={a === UNASSIGNED ? 'Unassigned' : a}
+                              label={
+                                a === UNASSIGNED
+                                  ? "Unassigned"
+                                  : formatAgentRef(a, agentNames)
+                              }
                               size="xs"
                             />
                           ))}
@@ -221,7 +346,13 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
                 </Group>
               </Table.Th>
               <Table.Th>
-                <SortHeader label="Created" column="createdAt" activeColumn={sortColumn} dir={sortDir} onSort={cycleSort} />
+                <SortHeader
+                  label="Created"
+                  column="createdAt"
+                  activeColumn={sortColumn}
+                  dir={sortDir}
+                  onSort={cycleSort}
+                />
               </Table.Th>
               <Table.Th>Duration</Table.Th>
               <Table.Th w={80} />
@@ -232,19 +363,33 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
               <Fragment key={t.id}>
                 <Table.Tr
                   onClick={() => setExpanded(expanded === t.id ? null : t.id)}
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: "pointer" }}
                 >
                   <Table.Td>{t.id}</Table.Td>
                   <Table.Td>{t.priority}</Table.Td>
                   <Table.Td>
                     <Group gap={4} wrap="nowrap">
                       <StatusBadge value={t.status} />
-                      {t.status === 'pending' && t.blockedBy && t.blockedBy.length > 0 && (
-                        <Badge size="xs" color="orange" variant="dot">blocked</Badge>
-                      )}
-                      {t.status === 'pending' && t.blockReasons?.length > 0 && (
-                        <Tooltip label={t.blockReasons.join('\n')} multiline maw={320} withArrow>
-                          <Badge size="xs" color="red" variant="dot" style={{ cursor: 'default' }}>
+                      {t.status === "pending" &&
+                        t.blockedBy &&
+                        t.blockedBy.length > 0 && (
+                          <Badge size="xs" color="orange" variant="dot">
+                            blocked
+                          </Badge>
+                        )}
+                      {t.status === "pending" && t.blockReasons?.length > 0 && (
+                        <Tooltip
+                          label={t.blockReasons.join("\n")}
+                          multiline
+                          maw={320}
+                          withArrow
+                        >
+                          <Badge
+                            size="xs"
+                            color="red"
+                            variant="dot"
+                            style={{ cursor: "default" }}
+                          >
                             warning
                           </Badge>
                         </Tooltip>
@@ -255,7 +400,11 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
                     <Link
                       to="/$projectId/tasks/$taskId"
                       params={{ projectId, taskId: String(t.id) }}
-                      style={{ textDecoration: 'none', color: 'inherit', fontWeight: 500 }}
+                      style={{
+                        textDecoration: "none",
+                        color: "inherit",
+                        fontWeight: 500,
+                      }}
                       onClick={(e) => e.stopPropagation()}
                     >
                       {t.title}
@@ -265,34 +414,55 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
                     {t.claimedBy ? (
                       <Link
                         to="/$projectId/agents/$agentName"
-                        params={{ projectId, agentName: t.claimedBy }}
-                        style={{ textDecoration: 'none' }}
+                        params={{
+                          projectId,
+                          agentName: formatAgentRef(t.claimedBy, agentNames),
+                        }}
+                        style={{ textDecoration: "none" }}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <Text size="xs">{t.claimedBy}</Text>
+                        <Text size="xs">
+                          {formatAgentRef(t.claimedBy, agentNames)}
+                        </Text>
                       </Link>
                     ) : (
-                      <Text size="xs" c="dimmed">{'\u2014'}</Text>
+                      <Text size="xs" c="dimmed">
+                        {"\u2014"}
+                      </Text>
                     )}
                   </Table.Td>
-                  <Table.Td><RelativeTime date={t.createdAt} /></Table.Td>
-                  <Table.Td><TaskDuration claimedAt={t.claimedAt} completedAt={t.completedAt} status={t.status} /></Table.Td>
+                  <Table.Td>
+                    <RelativeTime date={t.createdAt} />
+                  </Table.Td>
+                  <Table.Td>
+                    <TaskDuration
+                      claimedAt={t.claimedAt}
+                      completedAt={t.completedAt}
+                      status={t.status}
+                    />
+                  </Table.Td>
                   <Table.Td>
                     <Group gap={4} wrap="nowrap">
-                      {(t.status === 'claimed' || t.status === 'in_progress') && (
+                      {(t.status === "claimed" ||
+                        t.status === "in_progress") && (
                         <Button
                           size="compact-xs"
                           variant="light"
                           color="orange"
-                          onClick={(e) => { e.stopPropagation(); handleRelease(t.id); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRelease(t.id);
+                          }}
                         >
                           Release
                         </Button>
                       )}
-                      {t.status !== 'claimed' && t.status !== 'in_progress' && (
+                      {t.status !== "claimed" && t.status !== "in_progress" && (
                         <Popover
                           opened={confirmingDelete === t.id}
-                          onChange={(opened) => !opened && setConfirmingDelete(null)}
+                          onChange={(opened) =>
+                            !opened && setConfirmingDelete(null)
+                          }
                           position="left"
                           withArrow
                         >
@@ -301,7 +471,10 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
                               variant="subtle"
                               color="red"
                               size="sm"
-                              onClick={(e) => { e.stopPropagation(); setConfirmingDelete(t.id); }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmingDelete(t.id);
+                              }}
                             >
                               <IconTrash size={14} />
                             </ActionIcon>
@@ -310,10 +483,24 @@ export function TasksPanel({ tasks, isFetching, filters, excludeStatuses, availa
                             <Stack gap="xs">
                               <Text size="sm">Delete task #{t.id}?</Text>
                               <Group gap="xs">
-                                <Button size="xs" color="red" onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}>
+                                <Button
+                                  size="xs"
+                                  color="red"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDelete(t.id);
+                                  }}
+                                >
                                   Yes
                                 </Button>
-                                <Button size="xs" variant="default" onClick={(e) => { e.stopPropagation(); setConfirmingDelete(null); }}>
+                                <Button
+                                  size="xs"
+                                  variant="default"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmingDelete(null);
+                                  }}
+                                >
                                   No
                                 </Button>
                               </Group>

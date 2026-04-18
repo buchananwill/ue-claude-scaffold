@@ -1,19 +1,33 @@
-import { useMemo, useState, useCallback } from 'react';
-import { useSearch, useNavigate } from '@tanstack/react-router';
-import type { Task } from '../api/types.js';
+import { useMemo, useState, useCallback } from "react";
+import { useSearch, useNavigate } from "@tanstack/react-router";
+import type { Task } from "../api/types.js";
 
-export type SortDir = 'asc' | 'desc' | null;
-export type SortColumn = 'id' | 'priority' | 'status' | 'title' | 'claimedBy' | 'createdAt' | null;
+export type SortDir = "asc" | "desc" | null;
+export type SortColumn =
+  | "id"
+  | "priority"
+  | "status"
+  | "title"
+  | "claimedBy"
+  | "createdAt"
+  | null;
 
 // Must match server/src/queries/tasks-core.ts VALID_SORT_COLUMNS
-export const VALID_SORT_COLUMNS = new Set<string>(['id', 'priority', 'status', 'title', 'claimedBy', 'createdAt']);
+export const VALID_SORT_COLUMNS = new Set<string>([
+  "id",
+  "priority",
+  "status",
+  "title",
+  "claimedBy",
+  "createdAt",
+]);
 
 /**
  * Sentinel value for filtering tasks with no assigned agent.
  * Recognized by the server's GET /tasks handler (see server/src/routes/tasks.ts)
  * which translates it into a `claimed_by IS NULL` condition.
  */
-const UNASSIGNED = '__unassigned__';
+const UNASSIGNED = "__unassigned__";
 
 export { UNASSIGNED };
 
@@ -31,10 +45,8 @@ interface FilterState {
 }
 
 function useFilteredTasks(tasks: Task[], filters: FilterState) {
-  const {
-    statusFilter, agentFilter, priorityFilter,
-    sortColumn, sortDir,
-  } = filters;
+  const { statusFilter, agentFilter, priorityFilter, sortColumn, sortDir } =
+    filters;
 
   const uniqueAgents = useMemo(() => {
     const agents: string[] = [];
@@ -63,9 +75,10 @@ function useFilteredTasks(tasks: Task[], filters: FilterState) {
     let result = tasks;
 
     if (agentFilter.size > 0) {
-      result = result.filter((t) =>
-        (agentFilter.has(UNASSIGNED) && t.claimedBy === null) ||
-        (t.claimedBy !== null && agentFilter.has(t.claimedBy))
+      result = result.filter(
+        (t) =>
+          (agentFilter.has(UNASSIGNED) && t.claimedBy === null) ||
+          (t.claimedBy !== null && agentFilter.has(t.claimedBy)),
       );
     }
 
@@ -79,14 +92,19 @@ function useFilteredTasks(tasks: Task[], filters: FilterState) {
 
     if (sortColumn !== null) {
       const col = sortColumn;
-      const dir = sortDir === 'asc' ? 1 : -1;
+      const dir = sortDir === "asc" ? 1 : -1;
       result = [...result].sort((a, b) => {
         const av = a[col];
         const bv = b[col];
         if (av == null && bv == null) return 0;
         if (av == null) return 1;
         if (bv == null) return -1;
-        if (col === 'createdAt' || col === 'claimedBy' || col === 'status' || col === 'title') {
+        if (
+          col === "createdAt" ||
+          col === "claimedBy" ||
+          col === "status" ||
+          col === "title"
+        ) {
           return String(av).localeCompare(String(bv)) * dir;
         }
         return ((av as number) - (bv as number)) * dir;
@@ -96,7 +114,11 @@ function useFilteredTasks(tasks: Task[], filters: FilterState) {
     return result;
   }, [tasks, agentFilter, priorityFilter, statusFilter, sortColumn, sortDir]);
 
-  const hasActiveFilters = agentFilter.size > 0 || priorityFilter.size > 0 || statusFilter.size > 0 || sortColumn !== null;
+  const hasActiveFilters =
+    agentFilter.size > 0 ||
+    priorityFilter.size > 0 ||
+    statusFilter.size > 0 ||
+    sortColumn !== null;
 
   return {
     displayedTasks,
@@ -118,25 +140,40 @@ function useFilteredTasks(tasks: Task[], filters: FilterState) {
  * instead.
  */
 export function useTaskFilters(tasks: Task[]) {
-  const [statusFilter, setStatusFilterRaw] = useState<Set<string>>(() => new Set());
-  const [agentFilter, setAgentFilterRaw] = useState<Set<string>>(() => new Set());
-  const [priorityFilter, setPriorityFilterRaw] = useState<Set<number>>(() => new Set());
+  const [statusFilter, setStatusFilterRaw] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [agentFilter, setAgentFilterRaw] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [priorityFilter, setPriorityFilterRaw] = useState<Set<number>>(
+    () => new Set(),
+  );
   const [sortColumn, setSortColumn] = useState<SortColumn>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
 
-  const setStatusFilter = useCallback((val: Set<string>) => setStatusFilterRaw(val), []);
-  const setAgentFilter = useCallback((val: Set<string>) => setAgentFilterRaw(val), []);
-  const setPriorityFilter = useCallback((val: Set<number>) => setPriorityFilterRaw(val), []);
+  const setStatusFilter = useCallback(
+    (val: Set<string>) => setStatusFilterRaw(val),
+    [],
+  );
+  const setAgentFilter = useCallback(
+    (val: Set<string>) => setAgentFilterRaw(val),
+    [],
+  );
+  const setPriorityFilter = useCallback(
+    (val: Set<number>) => setPriorityFilterRaw(val),
+    [],
+  );
 
   const cycleSort = useCallback((col: NonNullable<SortColumn>) => {
     setSortColumn((prevCol) => {
       if (prevCol !== col) {
-        setSortDir('asc');
+        setSortDir("asc");
         return col;
       }
       setSortDir((prevDir) => {
-        if (prevDir === 'asc') {
-          return 'desc';
+        if (prevDir === "asc") {
+          return "desc";
         }
         setSortColumn(null);
         return null;
@@ -153,7 +190,18 @@ export function useTaskFilters(tasks: Task[]) {
     setSortDir(null);
   }, []);
 
-  const filters: FilterState = { statusFilter, agentFilter, priorityFilter, sortColumn, sortDir, setStatusFilter, setAgentFilter, setPriorityFilter, cycleSort, clearAllFilters };
+  const filters: FilterState = {
+    statusFilter,
+    agentFilter,
+    priorityFilter,
+    sortColumn,
+    sortDir,
+    setStatusFilter,
+    setAgentFilter,
+    setPriorityFilter,
+    cycleSort,
+    clearAllFilters,
+  };
   const derived = useFilteredTasks(tasks, filters);
 
   return {
@@ -176,66 +224,146 @@ export function useTaskFilters(tasks: Task[]) {
  * (e.g. OverviewPage).
  */
 export function useTaskFiltersUrlBacked() {
-  const search = useSearch({ from: '/$projectId/' });
-  const navigate = useNavigate({ from: '/$projectId/' });
+  const search = useSearch({ from: "/$projectId/" });
+  const navigate = useNavigate({ from: "/$projectId/" });
 
   const statusFilter = useMemo(() => {
     if (!search.status) return new Set<string>();
-    return new Set(search.status.split(',').filter(Boolean));
+    return new Set(search.status.split(",").filter(Boolean));
   }, [search.status]);
 
   const agentFilter = useMemo(() => {
     if (!search.agent) return new Set<string>();
-    return new Set(search.agent.split(',').filter(Boolean));
+    return new Set(search.agent.split(",").filter(Boolean));
   }, [search.agent]);
 
   const priorityFilter = useMemo(() => {
     if (!search.priority) return new Set<number>();
     return new Set(
-      search.priority.split(',').filter(Boolean).map(Number).filter((n) => !Number.isNaN(n))
+      search.priority
+        .split(",")
+        .filter(Boolean)
+        .map(Number)
+        .filter((n) => !Number.isNaN(n)),
     );
   }, [search.priority]);
 
+  const isDefaultSort = !search.sort;
   const sortColumn: SortColumn = useMemo(() => {
-    if (search.sort && VALID_SORT_COLUMNS.has(search.sort)) return search.sort as NonNullable<SortColumn>;
-    return null;
+    if (search.sort && VALID_SORT_COLUMNS.has(search.sort))
+      return search.sort as NonNullable<SortColumn>;
+    return "id";
   }, [search.sort]);
 
-  const sortDir: SortDir = sortColumn === null ? null : (search.dir === 'desc' ? 'desc' : 'asc');
+  const sortDir: SortDir = isDefaultSort
+    ? "desc"
+    : search.dir === "desc"
+      ? "desc"
+      : "asc";
 
   const page = search.page ?? 1;
 
-  const setPage = useCallback((n: number) => {
-    navigate({ search: (prev) => ({ ...prev, page: n > 1 ? n : undefined }) });
-  }, [navigate]);
+  const setPage = useCallback(
+    (n: number) => {
+      navigate({
+        search: (prev) => ({ ...prev, page: n > 1 ? n : undefined }),
+      });
+    },
+    [navigate],
+  );
 
-  const setStatusFilter = useCallback((val: Set<string>) => {
-    navigate({ search: (prev) => ({ ...prev, status: val.size ? [...val].join(',') : undefined, page: undefined }) });
-  }, [navigate]);
+  const setStatusFilter = useCallback(
+    (val: Set<string>) => {
+      navigate({
+        search: (prev) => ({
+          ...prev,
+          status: val.size ? [...val].join(",") : undefined,
+          page: undefined,
+        }),
+      });
+    },
+    [navigate],
+  );
 
-  const setAgentFilter = useCallback((val: Set<string>) => {
-    navigate({ search: (prev) => ({ ...prev, agent: val.size ? [...val].join(',') : undefined, page: undefined }) });
-  }, [navigate]);
+  const setAgentFilter = useCallback(
+    (val: Set<string>) => {
+      navigate({
+        search: (prev) => ({
+          ...prev,
+          agent: val.size ? [...val].join(",") : undefined,
+          page: undefined,
+        }),
+      });
+    },
+    [navigate],
+  );
 
-  const setPriorityFilter = useCallback((val: Set<number>) => {
-    navigate({ search: (prev) => ({ ...prev, priority: val.size ? [...val].join(',') : undefined, page: undefined }) });
-  }, [navigate]);
+  const setPriorityFilter = useCallback(
+    (val: Set<number>) => {
+      navigate({
+        search: (prev) => ({
+          ...prev,
+          priority: val.size ? [...val].join(",") : undefined,
+          page: undefined,
+        }),
+      });
+    },
+    [navigate],
+  );
 
-  const cycleSort = useCallback((col: NonNullable<SortColumn>) => {
-    if (sortColumn !== col) {
-      navigate({ search: (prev) => ({ ...prev, sort: col, dir: 'asc', page: undefined }) });
-    } else if (sortDir === 'asc') {
-      navigate({ search: (prev) => ({ ...prev, sort: col, dir: 'desc', page: undefined }) });
-    } else {
-      navigate({ search: (prev) => ({ ...prev, sort: undefined, dir: undefined, page: undefined }) });
-    }
-  }, [navigate, sortColumn, sortDir]);
+  const cycleSort = useCallback(
+    (col: NonNullable<SortColumn>) => {
+      if (sortColumn !== col) {
+        navigate({
+          search: (prev) => ({
+            ...prev,
+            sort: col,
+            dir: "asc",
+            page: undefined,
+          }),
+        });
+      } else if (sortDir === "asc") {
+        navigate({
+          search: (prev) => ({
+            ...prev,
+            sort: col,
+            dir: "desc",
+            page: undefined,
+          }),
+        });
+      } else {
+        navigate({
+          search: (prev) => ({
+            ...prev,
+            sort: undefined,
+            dir: undefined,
+            page: undefined,
+          }),
+        });
+      }
+    },
+    [navigate, sortColumn, sortDir],
+  );
 
   const clearAllFilters = useCallback(() => {
-    navigate({ search: (prev) => ({ ...prev, status: undefined, agent: undefined, priority: undefined, sort: undefined, dir: undefined, page: undefined }) });
+    navigate({
+      search: (prev) => ({
+        ...prev,
+        status: undefined,
+        agent: undefined,
+        priority: undefined,
+        sort: undefined,
+        dir: undefined,
+        page: undefined,
+      }),
+    });
   }, [navigate]);
 
-  const hasActiveFilters = agentFilter.size > 0 || priorityFilter.size > 0 || statusFilter.size > 0 || sortColumn !== null;
+  const hasActiveFilters =
+    agentFilter.size > 0 ||
+    priorityFilter.size > 0 ||
+    statusFilter.size > 0 ||
+    !isDefaultSort;
 
   return {
     statusFilter,

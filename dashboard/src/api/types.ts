@@ -19,6 +19,7 @@ export interface HealthResponse {
 }
 
 export interface Agent {
+  id: string;
   name: string;
   worktree: string;
   planDoc: string | null;
@@ -73,7 +74,7 @@ export interface SearchResults {
 export interface BuildRecord {
   id: number;
   agent: string;
-  type: 'build' | 'test';
+  type: "build" | "test";
   startedAt: string;
   durationMs: number | null;
   success: boolean | null;
@@ -99,7 +100,7 @@ export interface UbtQueueEntry {
 export interface Room {
   id: string;
   name: string;
-  type: 'group' | 'direct';
+  type: "group" | "direct";
   createdBy: string;
   createdAt: string;
   memberCount: number;
@@ -113,7 +114,7 @@ export interface RoomMember {
 export interface RoomDetail {
   id: string;
   name: string;
-  type: 'group' | 'direct';
+  type: "group" | "direct";
   createdBy: string;
   createdAt: string;
   members: RoomMember[];

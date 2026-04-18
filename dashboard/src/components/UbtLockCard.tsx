@@ -1,17 +1,30 @@
-import { Card, Text, Badge, List, Group, Stack, ThemeIcon } from '@mantine/core';
-import { IconLock, IconLockOpen } from '@tabler/icons-react';
-import type { UbtStatus } from '../api/types';
-import { RelativeTime } from './RelativeTime';
+import {
+  Card,
+  Text,
+  Badge,
+  List,
+  Group,
+  Stack,
+  ThemeIcon,
+} from "@mantine/core";
+import { IconLock, IconLockOpen } from "@tabler/icons-react";
+import type { UbtStatus } from "../api/types";
+import { RelativeTime } from "./RelativeTime";
+import { useAgentNameMap } from "../hooks/useAgentNameMap.js";
+import { formatAgentRef } from "../utils/agentRef.js";
 
 interface UbtLockCardProps {
   status: UbtStatus | null;
 }
 
 export function UbtLockCard({ status }: UbtLockCardProps) {
+  const agentNames = useAgentNameMap();
   if (!status) {
     return (
       <Card withBorder p="sm">
-        <Text c="dimmed" size="sm">Loading UBT status...</Text>
+        <Text c="dimmed" size="sm">
+          Loading UBT status...
+        </Text>
       </Card>
     );
   }
@@ -24,33 +37,47 @@ export function UbtLockCard({ status }: UbtLockCardProps) {
         <Group gap="xs">
           <ThemeIcon
             variant="light"
-            color={isFree ? 'green' : 'orange'}
+            color={isFree ? "green" : "orange"}
             size="sm"
           >
             {isFree ? <IconLockOpen size={14} /> : <IconLock size={14} />}
           </ThemeIcon>
-          <Text fw={600} size="sm">UBT Lock</Text>
+          <Text fw={600} size="sm">
+            UBT Lock
+          </Text>
         </Group>
 
         {isFree ? (
-          <Text c="green" size="sm">UBT is free</Text>
+          <Text c="green" size="sm">
+            UBT is free
+          </Text>
         ) : (
           <Group gap="xs">
-            <Badge color="orange" variant="light" size="sm">{status.holder}</Badge>
+            <Badge color="orange" variant="light" size="sm">
+              {formatAgentRef(status.holder, agentNames)}
+            </Badge>
             <RelativeTime date={status.acquiredAt} />
-            {status.stale && <Badge color="red" variant="light" size="xs">STALE</Badge>}
+            {status.stale && (
+              <Badge color="red" variant="light" size="xs">
+                STALE
+              </Badge>
+            )}
           </Group>
         )}
 
         {status.queue.length > 0 && (
           <div>
-            <Text size="xs" c="dimmed" fw={600} mb={4}>Queue</Text>
+            <Text size="xs" c="dimmed" fw={600} mb={4}>
+              Queue
+            </Text>
             <List size="sm" type="ordered">
               {status.queue.map((q) => (
                 <List.Item key={q.id}>
                   <Group gap={4}>
-                    <Text size="sm">{q.agent}</Text>
-                    <Text size="xs" c="dimmed">(pri: {q.priority})</Text>
+                    <Text size="sm">{formatAgentRef(q.agent, agentNames)}</Text>
+                    <Text size="xs" c="dimmed">
+                      (pri: {q.priority})
+                    </Text>
                   </Group>
                 </List.Item>
               ))}
