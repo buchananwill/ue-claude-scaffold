@@ -5,14 +5,14 @@ import * as taskFilesQ from '../queries/task-files.js';
 import * as taskDepsQ from '../queries/task-deps.js';
 import type { ScaffoldConfig } from '../config.js';
 import { mergeIntoAgentBranches } from '../git-utils.js';
-import { AGENT_NAME_RE } from '../branch-naming.js';
+import { AGENT_NAME_RE, validateAgentTypeOverride } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
 import { validateSourcePath } from '../tasks-validation.js';
 import { formatTask, toTaskRow, type TaskRow } from './tasks-types.js';
 import {
   type TasksOpts, type TaskBody, type PatchBody,
   taskBodyKeys, patchBodyKeys,
-  hasValue, validateFilePaths, validateAgentTypeOverride, unknownFields,
+  hasValue, validateFilePaths, unknownFields,
   linkFilesToTask, linkDepsToTask, depsForTask,
   formatTaskWithFiles,
 } from './tasks-files.js';

@@ -1,7 +1,7 @@
 import { eq, and, or, desc, asc, sql, count as countFn, inArray, isNull, type SQL } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
-import { validateAgentTypeOverride } from '../routes/tasks-files.js';
+import { validateAgentTypeOverride } from '../branch-naming.js';
 
 /** Drizzle inferred row type for the tasks table. */
 export type TaskDbRow = typeof tasks.$inferSelect;
@@ -20,6 +20,12 @@ export interface InsertOpts {
 }
 
 export async function insert(db: DrizzleDb, opts: InsertOpts) {
+  // Self-defending: validate agentTypeOverride before touching the DB
+  if (opts.agentTypeOverride !== undefined) {
+    const check = validateAgentTypeOverride(opts.agentTypeOverride, 'create');
+    if (!check.valid) throw new Error(check.error);
+  }
+
   const priority = opts.priority ?? 0;
   const rows = await db
     .insert(tasks)
