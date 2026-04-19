@@ -12,6 +12,7 @@ import { tasks } from './schema/tables.js';
 import * as tasksCore from './queries/tasks-core.js';
 import { linkFilesToTask } from './queries/composition.js';
 import { runReplan } from './routes/tasks-replan.js';
+import { isValidAgentName } from './branch-naming.js';
 import type { DrizzleDb } from './drizzle-instance.js';
 
 export interface IngestFileResult {
@@ -91,6 +92,12 @@ export async function ingestTaskFile(
     ? data.acceptance_criteria
     : undefined;
 
+  // Agent type override (accept both snake_case and camelCase frontmatter keys)
+  const rawAgentTypeOverride = data.agent_type_override ?? data.agentTypeOverride;
+  const agentTypeOverride = (typeof rawAgentTypeOverride === 'string' && isValidAgentName(rawAgentTypeOverride))
+    ? rawAgentTypeOverride
+    : undefined;
+
   // Files list
   const filesList: string[] = [];
   if (Array.isArray(data.files)) {
@@ -109,6 +116,7 @@ export async function ingestTaskFile(
     acceptanceCriteria,
     priority,
     projectId,
+    agentTypeOverride,
   });
 
   // Link files if any

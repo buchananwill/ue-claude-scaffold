@@ -200,6 +200,69 @@ describe('ingestTaskFile', () => {
     const rows = await ctx.db.select().from(tasks).where(eq(tasks.id, result.taskId));
     assert.equal(rows[0].priority, 0);
   });
+
+  it('agent_type_override from snake_case frontmatter key is stored', async () => {
+    const content = [
+      '---',
+      'title: Typed task',
+      'agent_type_override: container-implementer',
+      '---',
+      'Body.',
+    ].join('\n');
+
+    const result = await ingestTaskFile(ctx.db, '/tasks/typed-task.md', content, 'default');
+    assert.equal(result.action, 'created');
+
+    const rows = await ctx.db.select().from(tasks).where(eq(tasks.id, result.taskId));
+    assert.equal(rows[0].agentTypeOverride, 'container-implementer');
+  });
+
+  it('agentTypeOverride from camelCase frontmatter key is stored', async () => {
+    const content = [
+      '---',
+      'title: Camel typed',
+      'agentTypeOverride: container-reviewer',
+      '---',
+      'Body.',
+    ].join('\n');
+
+    const result = await ingestTaskFile(ctx.db, '/tasks/camel-typed.md', content, 'default');
+    assert.equal(result.action, 'created');
+
+    const rows = await ctx.db.select().from(tasks).where(eq(tasks.id, result.taskId));
+    assert.equal(rows[0].agentTypeOverride, 'container-reviewer');
+  });
+
+  it('invalid agent_type_override is ignored', async () => {
+    const content = [
+      '---',
+      'title: Bad override task',
+      'agent_type_override: ../invalid!name',
+      '---',
+      'Body.',
+    ].join('\n');
+
+    const result = await ingestTaskFile(ctx.db, '/tasks/bad-override.md', content, 'default');
+    assert.equal(result.action, 'created');
+
+    const rows = await ctx.db.select().from(tasks).where(eq(tasks.id, result.taskId));
+    assert.equal(rows[0].agentTypeOverride, null);
+  });
+
+  it('missing agent_type_override results in null', async () => {
+    const content = [
+      '---',
+      'title: No override',
+      '---',
+      'Body.',
+    ].join('\n');
+
+    const result = await ingestTaskFile(ctx.db, '/tasks/no-override.md', content, 'default');
+    assert.equal(result.action, 'created');
+
+    const rows = await ctx.db.select().from(tasks).where(eq(tasks.id, result.taskId));
+    assert.equal(rows[0].agentTypeOverride, null);
+  });
 });
 
 describe('ingestTaskDir', () => {

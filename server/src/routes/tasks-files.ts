@@ -28,6 +28,7 @@ export interface TaskBody {
   targetAgents?: string[] | string;
   dependsOn?: number[];
   dependsOnIndex?: number[];
+  agentTypeOverride?: string;
 }
 
 export const taskBodyKeys: { [K in keyof Required<TaskBody>]: true } = {
@@ -40,6 +41,7 @@ export const taskBodyKeys: { [K in keyof Required<TaskBody>]: true } = {
   targetAgents: true,
   dependsOn: true,
   dependsOnIndex: true,
+  agentTypeOverride: true,
 };
 
 export type PatchBody = Omit<TaskBody, 'targetAgents' | 'dependsOnIndex'>;
@@ -51,6 +53,7 @@ export const patchBodyKeys: { [K in keyof Required<PatchBody>]: true } = {
   priority: true,
   files: true,
   dependsOn: true,
+  agentTypeOverride: true,
 };
 
 // ── Utility functions (no DB access) ──────────────────────────────

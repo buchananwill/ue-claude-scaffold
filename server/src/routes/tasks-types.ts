@@ -15,6 +15,7 @@ export interface TaskRow {
   result: unknown;
   basePriority: number;
   progressLog: string | null;
+  agentTypeOverride: string | null;
   createdAt: string | Date | null;
 }
 
@@ -36,6 +37,7 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     result: row.result ?? null, // jsonb column — Drizzle returns unknown; parseResult handles coercion
     basePriority: row.basePriority,
     progressLog: row.progressLog,
+    agentTypeOverride: row.agentTypeOverride ?? null,
     createdAt: row.createdAt,
   };
 }
@@ -75,6 +77,7 @@ export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[],
     result,
     completedBy,
     progressLog: row.progressLog,
+    agentTypeOverride: row.agentTypeOverride,
     createdAt: row.createdAt,
     projectId: row.projectId,
   };

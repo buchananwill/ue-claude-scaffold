@@ -15,6 +15,7 @@ export interface InsertOpts {
   acceptanceCriteria?: string;
   priority?: number;
   projectId?: string;
+  agentTypeOverride?: string;
 }
 
 export async function insert(db: DrizzleDb, opts: InsertOpts) {
@@ -29,6 +30,7 @@ export async function insert(db: DrizzleDb, opts: InsertOpts) {
       priority,
       basePriority: priority,
       projectId: opts.projectId ?? 'default',
+      agentTypeOverride: opts.agentTypeOverride ?? null,
     })
     .returning();
   return rows[0];
@@ -162,6 +164,7 @@ export type PatchFields = Partial<{
   acceptanceCriteria: string;
   priority: number;
   status: string;
+  agentTypeOverride: string | null;
 }>;
 
 export async function patch(db: DrizzleDb, id: number, fields: PatchFields): Promise<boolean> {
@@ -172,6 +175,7 @@ export async function patch(db: DrizzleDb, id: number, fields: PatchFields): Pro
   if (fields.acceptanceCriteria !== undefined) set.acceptanceCriteria = fields.acceptanceCriteria;
   if (fields.priority !== undefined) set.priority = fields.priority;
   if (fields.status !== undefined) set.status = fields.status;
+  if (fields.agentTypeOverride !== undefined) set.agentTypeOverride = fields.agentTypeOverride;
 
   if (Object.keys(set).length === 0) return false;
 

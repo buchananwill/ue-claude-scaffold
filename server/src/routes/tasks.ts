@@ -5,7 +5,7 @@ import * as taskFilesQ from '../queries/task-files.js';
 import * as taskDepsQ from '../queries/task-deps.js';
 import type { ScaffoldConfig } from '../config.js';
 import { mergeIntoAgentBranches } from '../git-utils.js';
-import { AGENT_NAME_RE } from '../branch-naming.js';
+import { AGENT_NAME_RE, isValidAgentName } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
 import { validateSourcePath } from '../tasks-validation.js';
 import { formatTask, toTaskRow, type TaskRow } from './tasks-types.js';
@@ -170,7 +170,17 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       );
     }
 
-    const { title, description, sourcePath, acceptanceCriteria, priority, files, targetAgents, dependsOn, dependsOnIndex } = request.body;
+    const { title, description, sourcePath, acceptanceCriteria, priority, files, targetAgents, dependsOn, dependsOnIndex, agentTypeOverride } = request.body;
+
+    // Validate agentTypeOverride
+    if (agentTypeOverride !== undefined && agentTypeOverride !== null) {
+      if (typeof agentTypeOverride !== 'string' || !isValidAgentName(agentTypeOverride)) {
+        return reply.badRequest(
+          `Invalid agentTypeOverride: "${String(agentTypeOverride).slice(0, 64)}". ` +
+          'Must match agent name format (alphanumeric, hyphens, underscores; 1-64 chars).'
+        );
+      }
+    }
 
     // Tasks are a union: EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode).
     if (hasValue(sourcePath) && (hasValue(description) || hasValue(acceptanceCriteria))) {
@@ -264,6 +274,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       acceptanceCriteria: acceptanceCriteria ?? undefined,
       priority: priority ?? 0,
       projectId,
+      agentTypeOverride: agentTypeOverride ?? undefined,
     });
     const id = inserted.id;
     if (files?.length) {
@@ -312,6 +323,15 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       if (t.files?.length) {
         const err = validateFilePaths(t.files);
         if (err) return reply.badRequest(`Task ${i}: ${err}`);
+      }
+      // Validate agentTypeOverride
+      if (t.agentTypeOverride !== undefined && t.agentTypeOverride !== null) {
+        if (typeof t.agentTypeOverride !== 'string' || !isValidAgentName(t.agentTypeOverride)) {
+          return reply.badRequest(
+            `Task ${i}: Invalid agentTypeOverride: "${String(t.agentTypeOverride).slice(0, 64)}". ` +
+            'Must match agent name format (alphanumeric, hyphens, underscores; 1-64 chars).'
+          );
+        }
       }
       // Mixed-protocol check
       if (hasValue(t.sourcePath) && (hasValue(t.description) || hasValue(t.acceptanceCriteria))) {
@@ -377,6 +397,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         acceptanceCriteria: t.acceptanceCriteria ?? undefined,
         priority: t.priority ?? 0,
         projectId,
+        agentTypeOverride: t.agentTypeOverride ?? undefined,
       });
       const taskId = inserted.id;
       if (t.files?.length) {
@@ -475,6 +496,16 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const hasFiles = 'files' in body && Array.isArray(body.files);
     const hasDeps = 'dependsOn' in body && Array.isArray(body.dependsOn);
 
+    // Validate agentTypeOverride if provided
+    if ('agentTypeOverride' in body && body.agentTypeOverride !== undefined && body.agentTypeOverride !== null) {
+      if (typeof body.agentTypeOverride !== 'string' || !isValidAgentName(body.agentTypeOverride)) {
+        return reply.badRequest(
+          `Invalid agentTypeOverride: "${String(body.agentTypeOverride).slice(0, 64)}". ` +
+          'Must match agent name format (alphanumeric, hyphens, underscores; 1-64 chars).'
+        );
+      }
+    }
+
     // Build the patch fields
     const patchFields: tasksCore.PatchFields = {};
     if ('title' in body) patchFields.title = body.title as string;
@@ -482,6 +513,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if ('sourcePath' in body) patchFields.sourcePath = body.sourcePath as string;
     if ('acceptanceCriteria' in body) patchFields.acceptanceCriteria = body.acceptanceCriteria as string;
     if ('priority' in body) patchFields.priority = body.priority as number;
+    if ('agentTypeOverride' in body) patchFields.agentTypeOverride = (body.agentTypeOverride as string | null) ?? null;
 
     const hasScalarFields = Object.keys(patchFields).length > 0;
 
