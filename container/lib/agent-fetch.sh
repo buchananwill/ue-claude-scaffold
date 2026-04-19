@@ -53,9 +53,10 @@ _ensure_agent_type() {
     fi
 
     # Size guard: reject definitions larger than 512KB
+    local MAX_DEFINITION_BYTES=524288
     local compiled_size
     compiled_size=$(printf '%s\n' "$compiled_md" | wc -c)
-    if [ "$compiled_size" -gt 524288 ]; then
+    if [ "$compiled_size" -gt "$MAX_DEFINITION_BYTES" ]; then
         echo "ERROR: Agent definition '${agent_type}' exceeds 512KB (${compiled_size} bytes)" >&2
         return 1
     fi

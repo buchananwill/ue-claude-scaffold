@@ -104,7 +104,13 @@ function buildNullableSentinelFilter(
   }
 }
 
-function buildFilterConditions(opts: { status?: string[]; agent?: string[]; priority?: number[]; agentTypeOverride?: string[]; projectId?: string }): SQL[] {
+function buildFilterConditions(opts: {
+  status?: string[];
+  agent?: string[];
+  priority?: number[];
+  agentTypeOverride?: string[];
+  projectId?: string;
+}): SQL[] {
   const conditions: SQL[] = [];
 
   if (opts.status && opts.status.length > 0) {
