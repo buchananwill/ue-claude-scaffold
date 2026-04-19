@@ -189,28 +189,130 @@ UObjects are GC-managed, not shared-pointer-managed. Never wrap UObjects in TSha
 
 ### Lambda Captures and Pointer Safety
 
-Deferred lambdas (delegates, timers, async) must use `CreateWeakLambda` / `CreateSPLambda`, or capture `TWeakObjectPtr` and validate:
+Deferred lambdas (delegates, timers, async) must use `CreateWeakLambda` / `CreateSPLambda`, or capture `TWeakObjectPtr` and pin at invocation:
 
 ```cpp
 // DANGEROUS — raw pointer capture in deferred lambda; MyActor might be GC'd
+AActor* MyActor = GetOwner();
+GetWorld()->GetTimerManager().SetTimer(Handle, [MyActor]()
+{
+    MyActor->DoThing();  // MyActor might be GC'd!
+}, 1.0f, false);
+
+// SAFE — weak pointer pinned at invocation
 TWeakObjectPtr<AActor> WeakActor = GetOwner();
 GetWorld()->GetTimerManager().SetTimer(Handle, [WeakActor]()
 {
-    if (AActor* Actor = WeakActor.Get())
+    if (auto Pinned = WeakActor.Pin())
     {
-        Actor->DoThing();
+        Pinned->DoThing();
     }
 }, 1.0f, false);
 ```
 
 ### Anti-patterns
 
+- **`.Get()` on a smart pointer** — maximum-severity red flag. Bypasses RAII. The only legitimate use is lending a raw pointer to an API outside C++. See the dedicated section below.
 - Raw `UObject*` member fields — always `TObjectPtr<>`
 - Raw `new`/`delete` for non-UObjects — always `MakeUnique`/`MakeShared`
 - Storing `TObjectPtr<>` without `UPROPERTY()` — GC can't see it
 - Storing `TObjectPtr<>` AT ALL in a non-reflected (non-USTRUCT or non-UCLASS) type — GC can't see it
 - `TSharedPtr<UMyObject>` — never wrap UObjects in shared pointers
 - `TWeakObjectPtr` for guaranteed-lifetime refs — unnecessary overhead
+
+## `.Get()` on a Smart Pointer Is a Maximum-Severity Red Flag
+
+**Calling `.Get()` on a smart pointer is a maximum-severity red flag** -- `TUniquePtr`,
+`TSharedPtr`, `TSharedRef`, `TWeakPtr`, and `TWeakObjectPtr` alike. These types exist to
+encode ownership and lifetime through RAII. `.Get()` discards that contract and yields a
+raw pointer with no lifetime guarantee. Any code downstream of a `.Get()` site has no way
+to know the pointee is still alive.
+
+**The only legitimate reason to call `.Get()` is to lend the raw pointer to an API outside
+C++** -- a C FFI boundary, SQLite, or another third-party library that cannot accept a C++
+smart pointer type. **Good C++ has almost no other reason to bypass a smart pointer's RAII
+contract via `.Get()`.** When you see one in a review, treat it as a defect until proven
+otherwise.
+
+### What to do instead
+
+**Immediate consumption (callee uses the object within the call, then returns):**
+dereference the smart pointer at the call site.
+
+```cpp
+// WRONG -- strips RAII
+DoWork(Shared.Get());
+
+// CORRECT -- dereference to a reference
+DoWork(*Shared);
+
+// CORRECT -- operator-> already dereferences
+Shared->DoWork();
+```
+
+**Stored consumption (callee keeps the pointer beyond the call):** pass the smart
+pointer itself so ownership flows through the type system.
+
+```cpp
+// WRONG -- callee has no lifetime guarantee
+void Register(FMyData* Raw);
+Register(Shared.Get());
+
+// CORRECT -- shared ownership
+void Register(TSharedPtr<FMyData> Data);
+Register(Shared);
+
+// CORRECT -- non-owning observer
+void Register(TWeakPtr<FMyData> Weak);
+Register(Shared);
+```
+
+**Weak references (`TWeakPtr`, `TWeakObjectPtr`):** `.Pin()` promotes the weak ref to a
+strong handle for the duration of use -- `TWeakPtr::Pin()` returns a `TSharedPtr`,
+`TWeakObjectPtr::Pin()` returns a `TStrongObjectPtr`. Both preserve RAII. `.Get()` on a
+weak pointer is the same anti-pattern as on a shared pointer -- it hands out a raw pointer
+and throws away the guarantee you just went looking for.
+
+```cpp
+// WRONG -- raw pointer, no lifetime guarantee
+if (UMySubsystem* Raw = Weak.Get())
+{
+    Raw->DoWork();
+}
+
+// CORRECT -- Pin promotes to TStrongObjectPtr for the scope
+if (auto Pinned = Weak.Pin())
+{
+    Pinned->DoWork();
+}
+```
+
+**Deferred callables (lambdas, delegates, task queues, coroutine state):** capture a weak
+pointer and pin at invocation. `.Get()` in a capture is silent UB waiting for a reorder.
+
+```cpp
+// WRONG -- raw pointer outlives its guarantor
+MyDelegate.BindLambda([Raw = Shared.Get()]()
+{
+    Raw->DoWork();  // RAII severed at capture
+});
+
+// CORRECT -- TWeakPtr + pin
+MyDelegate.BindLambda([Weak = TWeakPtr<FMyData>(Shared)]()
+{
+    if (auto Pinned = Weak.Pin())
+    {
+        Pinned->DoWork();
+    }
+});
+```
+
+### Review posture
+
+Existing code contains `.Get()` call sites -- particularly on `TWeakObjectPtr` -- that
+survived earlier, laxer guidance. Same-scope synchronous uses are not correctness bugs and
+do not require a crash-stop rewrite. New code must not add them; refactors that touch such
+a call site should replace `.Get()` with the RAII-preserving alternative on the way past.
 
 ## Lambdas
 
