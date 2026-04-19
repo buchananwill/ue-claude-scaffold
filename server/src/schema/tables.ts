@@ -105,6 +105,7 @@ export const tasks = pgTable('tasks', {
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   check('tasks_status_check', sql`${table.status} IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')`),
+  check('tasks_agent_type_override_check', sql`${table.agentTypeOverride} IS NULL OR ${table.agentTypeOverride} ~ '^[a-zA-Z0-9_-]{1,64}$'`),
   index('idx_tasks_status').on(table.status),
   index('idx_tasks_priority').on(table.priority.desc(), table.id.asc()),
 ]);

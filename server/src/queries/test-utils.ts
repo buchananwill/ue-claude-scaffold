@@ -124,7 +124,8 @@ CREATE TABLE "tasks" (
   "progress_log" text,
   "agent_type_override" text,
   "created_at" timestamp DEFAULT now(),
-  CONSTRAINT "tasks_status_check" CHECK ("status" IN ('pending','claimed','in_progress','completed','failed','integrated','cycle'))
+  CONSTRAINT "tasks_status_check" CHECK ("status" IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')),
+  CONSTRAINT "tasks_agent_type_override_check" CHECK ("agent_type_override" IS NULL OR "agent_type_override" ~ '^[a-zA-Z0-9_-]{1,64}$')
 );
 CREATE INDEX "idx_tasks_status" ON "tasks" ("status");
 CREATE INDEX "idx_tasks_priority" ON "tasks" ("priority" DESC, "id" ASC);
