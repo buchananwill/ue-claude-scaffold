@@ -1,6 +1,7 @@
 import { eq, and, or, desc, asc, sql, count as countFn, inArray, isNull, type SQL } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
+import { isValidAgentName } from '../branch-naming.js';
 
 /** Drizzle inferred row type for the tasks table. */
 export type TaskDbRow = typeof tasks.$inferSelect;
@@ -168,6 +169,16 @@ export type PatchFields = Partial<{
 }>;
 
 export async function patch(db: DrizzleDb, id: number, fields: PatchFields): Promise<boolean> {
+  // Self-defending: validate agentTypeOverride before touching the DB
+  if (fields.agentTypeOverride !== undefined && fields.agentTypeOverride !== null) {
+    if (typeof fields.agentTypeOverride !== 'string' || !isValidAgentName(fields.agentTypeOverride)) {
+      throw new Error(
+        `Invalid agentTypeOverride: "${String(fields.agentTypeOverride).slice(0, 64)}". ` +
+        'Must match agent name format (alphanumeric, hyphens, underscores; 1-64 chars).'
+      );
+    }
+  }
+
   const set: Record<string, unknown> = {};
   if (fields.title !== undefined) set.title = fields.title;
   if (fields.description !== undefined) set.description = fields.description;

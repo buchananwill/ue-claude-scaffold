@@ -141,4 +141,31 @@ describe('tasks-core queries', () => {
     assert.equal(rows[0].title, 'AAA');
     assert.equal(rows[1].title, 'ZZZ');
   });
+
+  it('patch() throws on invalid agentTypeOverride', async () => {
+    const task = await tasksCore.insert(db, { title: 'Guard test' });
+    await assert.rejects(
+      () => tasksCore.patch(db, task.id, { agentTypeOverride: '../bad!' }),
+      (err: Error) => {
+        assert.ok(err.message.includes('Invalid agentTypeOverride'));
+        return true;
+      },
+    );
+  });
+
+  it('patch() allows null agentTypeOverride (clearing the field)', async () => {
+    const task = await tasksCore.insert(db, { title: 'Clear test', agentTypeOverride: 'container-reviewer' });
+    const ok = await tasksCore.patch(db, task.id, { agentTypeOverride: null });
+    assert.equal(ok, true);
+    const updated = await tasksCore.getById(db, task.id);
+    assert.equal(updated?.agentTypeOverride, null);
+  });
+
+  it('patch() allows valid agentTypeOverride', async () => {
+    const task = await tasksCore.insert(db, { title: 'Valid test' });
+    const ok = await tasksCore.patch(db, task.id, { agentTypeOverride: 'container-implementer' });
+    assert.equal(ok, true);
+    const updated = await tasksCore.getById(db, task.id);
+    assert.equal(updated?.agentTypeOverride, 'container-implementer');
+  });
 });

@@ -1052,4 +1052,32 @@ describe('tasks routes', () => {
     assert.equal(body.tasks[0].agentTypeOverride, 'container-reviewer');
   });
 
+  it('POST /tasks rejects null agentTypeOverride with 400', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Null override', agentTypeOverride: null },
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('agentTypeOverride must be a string or omitted, not null'));
+  });
+
+  it('POST /tasks/batch rejects null agentTypeOverride with 400', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks/batch',
+      payload: {
+        tasks: [
+          { title: 'Good task' },
+          { title: 'Null override', agentTypeOverride: null },
+        ],
+      },
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Task 1'));
+    assert.ok(res.json().message.includes('agentTypeOverride must be a string or omitted, not null'));
+  });
+
 });

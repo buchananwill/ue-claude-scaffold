@@ -172,8 +172,13 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     const { title, description, sourcePath, acceptanceCriteria, priority, files, targetAgents, dependsOn, dependsOnIndex, agentTypeOverride } = request.body;
 
-    // Validate agentTypeOverride
-    if (agentTypeOverride !== undefined && agentTypeOverride !== null) {
+    // Validate agentTypeOverride — null is not allowed on create (use PATCH to clear)
+    if (agentTypeOverride === null) {
+      return reply.badRequest(
+        'agentTypeOverride must be a string or omitted, not null'
+      );
+    }
+    if (agentTypeOverride !== undefined) {
       if (typeof agentTypeOverride !== 'string' || !isValidAgentName(agentTypeOverride)) {
         return reply.badRequest(
           `Invalid agentTypeOverride: "${String(agentTypeOverride).slice(0, 64)}". ` +
@@ -324,8 +329,13 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         const err = validateFilePaths(t.files);
         if (err) return reply.badRequest(`Task ${i}: ${err}`);
       }
-      // Validate agentTypeOverride
-      if (t.agentTypeOverride !== undefined && t.agentTypeOverride !== null) {
+      // Validate agentTypeOverride — null is not allowed on create (use PATCH to clear)
+      if (t.agentTypeOverride === null) {
+        return reply.badRequest(
+          `Task ${i}: agentTypeOverride must be a string or omitted, not null`
+        );
+      }
+      if (t.agentTypeOverride !== undefined) {
         if (typeof t.agentTypeOverride !== 'string' || !isValidAgentName(t.agentTypeOverride)) {
           return reply.badRequest(
             `Task ${i}: Invalid agentTypeOverride: "${String(t.agentTypeOverride).slice(0, 64)}". ` +
