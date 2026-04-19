@@ -101,6 +101,7 @@ export const tasks = pgTable('tasks', {
   completedAt: timestamp('completed_at'),
   result: jsonb('result'),
   progressLog: text('progress_log'),
+  agentTypeOverride: text('agent_type_override'),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   check('tasks_status_check', sql`${table.status} IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')`),
