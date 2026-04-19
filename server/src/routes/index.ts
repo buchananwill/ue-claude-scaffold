@@ -19,3 +19,4 @@ export { default as containerSettingsPlugin } from './container-settings.js';
 export { default as tasksIngestPlugin } from './tasks-ingest.js';
 export { default as exitClassifyPlugin } from './exit-classify.js';
 export { default as statusPlugin } from './status.js';
+export { default as agentDefinitionsPlugin } from './agent-definitions.js';
