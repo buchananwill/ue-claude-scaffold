@@ -175,9 +175,8 @@ export async function ingestTaskDir(
   // Replan is a global operation by design — it operates on the full task
   // dependency graph across all projects, not just the project being ingested.
   // The replanned count in the response is the global count.
-  let replanned = 0;
   const replanResult = await runReplan();
-  replanned = replanResult.replanned;
+  const replanned = replanResult.replanned;
 
   return { ingested, skipped, errors, replanned, tasks: results };
 }

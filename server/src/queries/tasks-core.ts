@@ -196,9 +196,9 @@ export type PatchFields = Partial<{
 export async function patch(db: DrizzleDb, id: number, fields: PatchFields): Promise<boolean> {
   // Self-defending: validate agentTypeOverride before touching the DB
   if (fields.agentTypeOverride !== undefined) {
-    const atoCheck = validateAgentTypeOverride(fields.agentTypeOverride, 'patch');
-    if (!atoCheck.valid) {
-      throw new Error(atoCheck.error);
+    const overrideCheck = validateAgentTypeOverride(fields.agentTypeOverride, 'patch');
+    if (!overrideCheck.valid) {
+      throw new Error(overrideCheck.error);
     }
   }
 

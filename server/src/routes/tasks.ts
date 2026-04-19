@@ -131,9 +131,9 @@ export function parseTaskListQuery(
   }
 
   // --- agentTypeOverride filter ---
-  const atoResult = parseCommaFilter(agentTypeOverride, 'agentTypeOverride');
-  if (atoResult.error) return { ok: false, error: atoResult.error };
-  const agentTypeOverrideArr = atoResult.values;
+  const overrideResult = parseCommaFilter(agentTypeOverride, 'agentTypeOverride');
+  if (overrideResult.error) return { ok: false, error: overrideResult.error };
+  const agentTypeOverrideArr = overrideResult.values;
 
   if (agentTypeOverrideArr) {
     for (const v of agentTypeOverrideArr) {
@@ -189,9 +189,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const { title, description, sourcePath, acceptanceCriteria, priority, files, targetAgents, dependsOn, dependsOnIndex, agentTypeOverride } = request.body;
 
     // Validate agentTypeOverride — null is not allowed on create (use PATCH to clear)
-    const atoCheck = validateAgentTypeOverride(agentTypeOverride, 'create');
-    if (!atoCheck.valid) {
-      return reply.badRequest(atoCheck.error);
+    const overrideCheck = validateAgentTypeOverride(agentTypeOverride, 'create');
+    if (!overrideCheck.valid) {
+      return reply.badRequest(overrideCheck.error);
     }
 
     // Tasks are a union: EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode).
@@ -337,9 +337,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         if (err) return reply.badRequest(`Task ${i}: ${err}`);
       }
       // Validate agentTypeOverride — null is not allowed on create (use PATCH to clear)
-      const batchAtoCheck = validateAgentTypeOverride(t.agentTypeOverride, 'create');
-      if (!batchAtoCheck.valid) {
-        return reply.badRequest(`Task ${i}: ${batchAtoCheck.error}`);
+      const overrideCheck = validateAgentTypeOverride(t.agentTypeOverride, 'create');
+      if (!overrideCheck.valid) {
+        return reply.badRequest(`Task ${i}: ${overrideCheck.error}`);
       }
       // Mixed-protocol check
       if (hasValue(t.sourcePath) && (hasValue(t.description) || hasValue(t.acceptanceCriteria))) {
@@ -508,9 +508,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     // Validate agentTypeOverride if provided
     if ('agentTypeOverride' in body) {
-      const patchAtoCheck = validateAgentTypeOverride(body.agentTypeOverride, 'patch');
-      if (!patchAtoCheck.valid) {
-        return reply.badRequest(patchAtoCheck.error);
+      const overrideCheck = validateAgentTypeOverride(body.agentTypeOverride, 'patch');
+      if (!overrideCheck.valid) {
+        return reply.badRequest(overrideCheck.error);
       }
     }
 
