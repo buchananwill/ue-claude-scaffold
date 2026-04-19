@@ -122,6 +122,7 @@ CREATE TABLE "tasks" (
   "completed_at" timestamp,
   "result" jsonb,
   "progress_log" text,
+  "agent_type_override" text,
   "created_at" timestamp DEFAULT now(),
   CONSTRAINT "tasks_status_check" CHECK ("status" IN ('pending','claimed','in_progress','completed','failed','integrated','cycle'))
 );
