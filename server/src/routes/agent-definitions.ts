@@ -76,6 +76,12 @@ const agentDefinitionsPlugin: FastifyPluginAsync<AgentDefinitionsOpts> = async (
         // Compile to a temp directory, read output, clean up
         const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-def-'));
         try {
+          // compileAgent is synchronous by design — it is a shared utility also
+          // used in build-time (CLI) compilation where async offers no benefit.
+          // For typical agent definitions with 1-5 skills the compile time is
+          // sub-millisecond, so blocking the event loop here is negligible.
+          // Converting to an async variant is tracked as a separate concern
+          // outside this endpoint's scope.
           compileAgent(sourcePath, tmpDir, skillsDir);
 
           const compiledPath = path.join(tmpDir, `${type}.md`);
