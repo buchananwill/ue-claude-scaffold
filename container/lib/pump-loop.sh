@@ -49,6 +49,7 @@ _poll_and_claim_task() {
             CURRENT_TASK_AC=$(echo "$body" | jq -r '.task.acceptanceCriteria // "None specified"')
             CURRENT_TASK_SOURCE=$(echo "$body" | jq -r '.task.sourcePath // ""')
             CURRENT_TASK_FILES=$(echo "$body" | jq -r '(.task.files // []) | join(", ")')
+            CURRENT_TASK_AGENT_TYPE=$(echo "$body" | jq -r '.task.agentTypeOverride // ""')
             echo "Claimed task #${CURRENT_TASK_ID}: ${CURRENT_TASK_TITLE}"
             echo ""
             echo "── Claimed task record ──"
@@ -94,6 +95,19 @@ _pump_iteration() {
         return
     fi
 
+    # If the task has an agent type override, fetch and cache the definition
+    if [ -n "${CURRENT_TASK_AGENT_TYPE:-}" ]; then
+        echo "Task has agent type override: ${CURRENT_TASK_AGENT_TYPE}"
+        if ! _ensure_agent_type "$CURRENT_TASK_AGENT_TYPE"; then
+            echo "ERROR: Could not fetch agent definition '${CURRENT_TASK_AGENT_TYPE}'. Releasing task." >&2
+            _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/release" \
+                --max-time 10 >/dev/null 2>&1 || true
+            CURRENT_TASK_ID=""
+            CURRENT_TASK_AGENT_TYPE=""
+            return
+        fi
+    fi
+
     local task_prompt
     task_prompt="$(_build_task_prompt)"
 
@@ -131,6 +145,7 @@ _pump_iteration() {
     CURRENT_TASK_AC=""
     CURRENT_TASK_SOURCE=""
     CURRENT_TASK_FILES=""
+    CURRENT_TASK_AGENT_TYPE=""
 
     # Check if agent has been stopped or paused
     local agent_status

@@ -22,6 +22,9 @@ source "${SCRIPT_DIR}/lib/run-claude.sh"
 # shellcheck source=lib/post-setup.sh
 source "${SCRIPT_DIR}/lib/post-setup.sh"
 
+# shellcheck source=lib/agent-fetch.sh
+source "${SCRIPT_DIR}/lib/agent-fetch.sh"
+
 # shellcheck source=lib/pump-loop.sh
 source "${SCRIPT_DIR}/lib/pump-loop.sh"
 

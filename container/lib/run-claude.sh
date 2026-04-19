@@ -92,6 +92,9 @@ _run_claude() {
     local full_prompt="$1"
     local mode="$2"
 
+    # Use per-task agent type override when set, otherwise fall back to container default
+    local effective_agent_type="${CURRENT_TASK_AGENT_TYPE:-$AGENT_TYPE}"
+
     # Clear any stale stop sentinel from a prior container run
     rm -f /tmp/.stop_requested
 
@@ -108,7 +111,7 @@ _run_claude() {
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo ""
 
-    echo "Starting Claude Code (agent: ${AGENT_TYPE:-default}, mode: ${mode})..."
+    echo "Starting Claude Code (agent: ${effective_agent_type:-default}, mode: ${mode})..."
     echo ""
 
     _post_status "working"
@@ -126,8 +129,8 @@ _run_claude() {
     if [ -n "${CHAT_ROOM:-}" ]; then
         CLAUDE_ARGS+=(--channels server:chat --dangerously-load-development-channels server:chat)
     fi
-    if [ -n "$AGENT_TYPE" ]; then
-        CLAUDE_ARGS+=(--agent "$AGENT_TYPE")
+    if [ -n "$effective_agent_type" ]; then
+        CLAUDE_ARGS+=(--agent "$effective_agent_type")
     fi
 
     # Capture output for abnormal exit detection
