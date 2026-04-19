@@ -79,9 +79,6 @@ export function validateFilePaths(files: string[]): string | null {
   return null;
 }
 
-// Re-export validateAgentTypeOverride from its canonical location
-export { validateAgentTypeOverride } from '../branch-naming.js';
-
 // ── Composition functions (async, use Drizzle query modules) ──────
 
 export async function linkFilesToTask(taskId: number, files: string[], projectId: string = 'default'): Promise<void> {

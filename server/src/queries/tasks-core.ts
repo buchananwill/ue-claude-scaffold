@@ -77,6 +77,31 @@ export interface ListOpts {
   dir?: 'asc' | 'desc';
 }
 
+/**
+ * Build a filter condition for a nullable column where one special sentinel
+ * value (e.g. '__unassigned__', '__default__') maps to IS NULL, and the
+ * remaining values match via eq/inArray. Handles three combinations:
+ * sentinel+named -> OR(IS NULL, IN(...)), sentinel-only -> IS NULL,
+ * named-only -> eq/inArray.
+ */
+function buildNullableSentinelFilter(
+  column: typeof tasks.claimedByAgentId | typeof tasks.agentTypeOverride,
+  values: string[],
+  sentinel: string,
+): SQL {
+  const hasSentinel = values.includes(sentinel);
+  const named = values.filter(v => v !== sentinel);
+  if (hasSentinel && named.length > 0) {
+    return or(isNull(column), inArray(column, named))!;
+  } else if (hasSentinel) {
+    return isNull(column);
+  } else if (named.length === 1) {
+    return eq(column, named[0]);
+  } else {
+    return inArray(column, named);
+  }
+}
+
 function buildFilterConditions(opts: { status?: string[]; agent?: string[]; priority?: number[]; agentTypeOverride?: string[]; projectId?: string }): SQL[] {
   const conditions: SQL[] = [];
 
@@ -88,35 +113,10 @@ function buildFilterConditions(opts: { status?: string[]; agent?: string[]; prio
     }
   }
   if (opts.agent && opts.agent.length > 0) {
-    const unassigned = opts.agent.includes('__unassigned__');
-    const named = opts.agent.filter(a => a !== '__unassigned__');
-    if (unassigned && named.length > 0) {
-      // claimedBy IS NULL OR claimedBy IN (...)
-      conditions.push(or(isNull(tasks.claimedByAgentId), inArray(tasks.claimedByAgentId, named))!);
-    } else if (unassigned) {
-      conditions.push(isNull(tasks.claimedByAgentId));
-    } else {
-      if (named.length === 1) {
-        conditions.push(eq(tasks.claimedByAgentId, named[0]));
-      } else {
-        conditions.push(inArray(tasks.claimedByAgentId, named));
-      }
-    }
+    conditions.push(buildNullableSentinelFilter(tasks.claimedByAgentId, opts.agent, '__unassigned__'));
   }
   if (opts.agentTypeOverride && opts.agentTypeOverride.length > 0) {
-    const defaultSentinel = opts.agentTypeOverride.includes('__default__');
-    const named = opts.agentTypeOverride.filter(v => v !== '__default__');
-    if (defaultSentinel && named.length > 0) {
-      conditions.push(or(isNull(tasks.agentTypeOverride), inArray(tasks.agentTypeOverride, named))!);
-    } else if (defaultSentinel) {
-      conditions.push(isNull(tasks.agentTypeOverride));
-    } else {
-      if (named.length === 1) {
-        conditions.push(eq(tasks.agentTypeOverride, named[0]));
-      } else {
-        conditions.push(inArray(tasks.agentTypeOverride, named));
-      }
-    }
+    conditions.push(buildNullableSentinelFilter(tasks.agentTypeOverride, opts.agentTypeOverride, '__default__'));
   }
   if (opts.priority && opts.priority.length > 0) {
     if (opts.priority.length === 1) {
