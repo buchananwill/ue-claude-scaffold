@@ -69,6 +69,7 @@ export interface ListOpts {
   status?: string[];
   agent?: string[];
   priority?: number[];
+  agentTypeOverride?: string[];
   projectId?: string;
   limit?: number;
   offset?: number;
@@ -76,7 +77,7 @@ export interface ListOpts {
   dir?: 'asc' | 'desc';
 }
 
-function buildFilterConditions(opts: { status?: string[]; agent?: string[]; priority?: number[]; projectId?: string }): SQL[] {
+function buildFilterConditions(opts: { status?: string[]; agent?: string[]; priority?: number[]; agentTypeOverride?: string[]; projectId?: string }): SQL[] {
   const conditions: SQL[] = [];
 
   if (opts.status && opts.status.length > 0) {
@@ -99,6 +100,21 @@ function buildFilterConditions(opts: { status?: string[]; agent?: string[]; prio
         conditions.push(eq(tasks.claimedByAgentId, named[0]));
       } else {
         conditions.push(inArray(tasks.claimedByAgentId, named));
+      }
+    }
+  }
+  if (opts.agentTypeOverride && opts.agentTypeOverride.length > 0) {
+    const defaultSentinel = opts.agentTypeOverride.includes('__default__');
+    const named = opts.agentTypeOverride.filter(v => v !== '__default__');
+    if (defaultSentinel && named.length > 0) {
+      conditions.push(or(isNull(tasks.agentTypeOverride), inArray(tasks.agentTypeOverride, named))!);
+    } else if (defaultSentinel) {
+      conditions.push(isNull(tasks.agentTypeOverride));
+    } else {
+      if (named.length === 1) {
+        conditions.push(eq(tasks.agentTypeOverride, named[0]));
+      } else {
+        conditions.push(inArray(tasks.agentTypeOverride, named));
       }
     }
   }
@@ -150,6 +166,7 @@ export interface CountOpts {
   status?: string[];
   agent?: string[];
   priority?: number[];
+  agentTypeOverride?: string[];
   projectId?: string;
 }
 

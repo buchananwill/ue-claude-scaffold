@@ -1080,4 +1080,59 @@ describe('tasks routes', () => {
     assert.ok(res.json().message.includes('agentTypeOverride must be a string or omitted, not null'));
   });
 
+  // ── agentTypeOverride filter on GET /tasks ────────────────────────
+
+  it('GET /tasks?agentTypeOverride=container-reviewer returns only matching tasks', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Reviewer task', agentTypeOverride: 'container-reviewer' }, headers: { 'x-project-id': 'default' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Implementer task', agentTypeOverride: 'container-implementer' }, headers: { 'x-project-id': 'default' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Default task' }, headers: { 'x-project-id': 'default' } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agentTypeOverride=container-reviewer', headers: { 'x-project-id': 'default' } });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as TaskListBody;
+    assert.equal(body.total, 1);
+    assert.equal(body.tasks.length, 1);
+    assert.equal(body.tasks[0].agentTypeOverride, 'container-reviewer');
+  });
+
+  it('GET /tasks?agentTypeOverride=__default__ returns tasks with null override', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Override task', agentTypeOverride: 'container-reviewer' }, headers: { 'x-project-id': 'default' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Default task 1' }, headers: { 'x-project-id': 'default' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Default task 2' }, headers: { 'x-project-id': 'default' } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agentTypeOverride=__default__', headers: { 'x-project-id': 'default' } });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as TaskListBody;
+    assert.equal(body.total, 2);
+    for (const t of body.tasks) {
+      assert.equal(t.agentTypeOverride, null);
+    }
+  });
+
+  it('GET /tasks?agentTypeOverride=container-reviewer,__default__ returns both', async () => {
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Reviewer task', agentTypeOverride: 'container-reviewer' }, headers: { 'x-project-id': 'default' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Implementer task', agentTypeOverride: 'container-implementer' }, headers: { 'x-project-id': 'default' } });
+    await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'Default task' }, headers: { 'x-project-id': 'default' } });
+
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agentTypeOverride=container-reviewer,__default__', headers: { 'x-project-id': 'default' } });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as TaskListBody;
+    assert.equal(body.total, 2);
+    const overrides = body.tasks.map((t: TaskListBody['tasks'][number]) => t.agentTypeOverride);
+    assert.ok(overrides.includes('container-reviewer'));
+    assert.ok(overrides.includes(null));
+  });
+
+  it('GET /tasks?agentTypeOverride=../invalid returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agentTypeOverride=../invalid', headers: { 'x-project-id': 'default' } });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('Invalid agentTypeOverride value'));
+  });
+
+  it('GET /tasks?agentTypeOverride= with empty segments returns 400', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/tasks?agentTypeOverride=,container-reviewer', headers: { 'x-project-id': 'default' } });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('empty segments'));
+  });
+
 });

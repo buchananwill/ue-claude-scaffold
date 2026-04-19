@@ -5,7 +5,7 @@ import * as taskFilesQ from '../queries/task-files.js';
 import * as taskDepsQ from '../queries/task-deps.js';
 import type { ScaffoldConfig } from '../config.js';
 import { mergeIntoAgentBranches } from '../git-utils.js';
-import { AGENT_NAME_RE, validateAgentTypeOverride } from '../branch-naming.js';
+import { AGENT_NAME_RE, isValidAgentName, validateAgentTypeOverride } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
 import { validateSourcePath } from '../tasks-validation.js';
 import { formatTask, toTaskRow, type TaskRow } from './tasks-types.js';
@@ -54,6 +54,7 @@ interface TaskListQueryInput {
   status?: string;
   agent?: string;
   priority?: string;
+  agentTypeOverride?: string;
   sort?: string;
   dir?: string;
   limit?: string;
@@ -64,6 +65,7 @@ interface ParsedTaskListQuery {
   statusArr: string[] | undefined;
   agentArr: string[] | undefined;
   priorityArr: number[] | undefined;
+  agentTypeOverrideArr: string[] | undefined;
   sortCol: tasksCore.SortColumn | undefined;
   dirVal: 'asc' | 'desc' | undefined;
   limitNum: number;
@@ -82,7 +84,7 @@ type ParseResult =
 export function parseTaskListQuery(
   query: TaskListQueryInput,
 ): ParseResult {
-  const { status, agent: agentFilter, priority: priorityFilter, sort, dir, limit, offset } = query;
+  const { status, agent: agentFilter, priority: priorityFilter, agentTypeOverride, sort, dir, limit, offset } = query;
   const limitNum = Math.min(Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : tasksCore.DEFAULT_LIST_LIMIT), 500);
   const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
 
@@ -128,6 +130,20 @@ export function parseTaskListQuery(
     }
   }
 
+  // --- agentTypeOverride filter ---
+  const atoResult = parseCommaFilter(agentTypeOverride, 'agentTypeOverride');
+  if (atoResult.error) return { ok: false, error: atoResult.error };
+  const agentTypeOverrideArr = atoResult.values;
+
+  if (agentTypeOverrideArr) {
+    for (const v of agentTypeOverrideArr) {
+      if (v === '__default__') continue;
+      if (!isValidAgentName(v)) {
+        return { ok: false, error: `Invalid agentTypeOverride value: "${v.slice(0, 64)}".` };
+      }
+    }
+  }
+
   // Validate sort column
   let sortCol: tasksCore.SortColumn | undefined;
   if (sort) {
@@ -149,7 +165,7 @@ export function parseTaskListQuery(
     dirVal = dir;
   }
 
-  return { ok: true, data: { statusArr, agentArr, priorityArr, sortCol, dirVal, limitNum, offsetNum } };
+  return { ok: true, data: { statusArr, agentArr, priorityArr, agentTypeOverrideArr, sortCol, dirVal, limitNum, offsetNum } };
 }
 
 const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
@@ -426,6 +442,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       status?: string;
       agent?: string;
       priority?: string;
+      agentTypeOverride?: string;
       sort?: string;
       dir?: string;
       limit?: string;
@@ -436,13 +453,14 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     const parsed = parseTaskListQuery(request.query);
     if (!parsed.ok) return reply.badRequest(parsed.error);
-    const { statusArr, agentArr, priorityArr, sortCol, dirVal, limitNum, offsetNum } = parsed.data;
+    const { statusArr, agentArr, priorityArr, agentTypeOverrideArr, sortCol, dirVal, limitNum, offsetNum } = parsed.data;
 
     const db = getDb();
     const filterOpts = {
       status: statusArr,
       agent: agentArr,
       priority: priorityArr,
+      agentTypeOverride: agentTypeOverrideArr,
       projectId,
     };
     const rows = await tasksCore.list(db, { ...filterOpts, limit: limitNum, offset: offsetNum, sort: sortCol, dir: dirVal });

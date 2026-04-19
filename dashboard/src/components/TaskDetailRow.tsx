@@ -13,7 +13,7 @@ export function TaskDetailRow({ task, expanded }: TaskDetailRowProps) {
   const { projectId } = useProject();
   return (
     <Table.Tr>
-      <Table.Td colSpan={8}>
+      <Table.Td colSpan={9}>
         <Collapse in={expanded}>
           <Stack gap="xs" p="sm">
             {task.description && (
@@ -38,6 +38,12 @@ export function TaskDetailRow({ task, expanded }: TaskDetailRowProps) {
               <div>
                 <Text size="xs" fw={600} c="dimmed">Result</Text>
                 <Code block>{JSON.stringify(task.result, null, 2)}</Code>
+              </div>
+            )}
+            {task.agentTypeOverride && (
+              <div>
+                <Text size="xs" fw={600} c="dimmed">Agent Type Override</Text>
+                <Badge size="sm" variant="light" color="violet">{task.agentTypeOverride}</Badge>
               </div>
             )}
             {task.blockedBy && task.blockedBy.length > 0 && (

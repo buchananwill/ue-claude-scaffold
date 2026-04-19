@@ -166,6 +166,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     completedAt: null,
     result: null,
     progressLog: null,
+    agentTypeOverride: null,
     createdAt: new Date(2025, 0, id).toISOString(),
     ...overrides,
   };
@@ -505,7 +506,8 @@ describe('hasActiveFilters logic', () => {
   });
 
   it('is true when agent filter is set', () => {
-    const has = new Set(['alice']).size > 0 || new Set<number>().size > 0 || new Set<string>().size > 0 || null !== null;
+    const has = new Set(['alice']).size > 0 || new Set<number>().size > 0 || new Set<string>().size > 0;
+    // At least one filter (agent) is non-empty, so hasActiveFilters should be true
     expect(has).toBe(true);
   });
 

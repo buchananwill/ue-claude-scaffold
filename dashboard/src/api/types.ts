@@ -44,6 +44,7 @@ export interface Task {
   completedAt: string | null;
   result: unknown;
   progressLog: string | null;
+  agentTypeOverride: string | null;
   createdAt: string;
 }
 
