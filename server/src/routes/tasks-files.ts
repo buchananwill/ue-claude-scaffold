@@ -1,6 +1,6 @@
 import type { ScaffoldConfig } from '../config.js';
 import { existsInBareRepo } from '../git-utils.js';
-import { seedBranchFor, validateAgentTypeOverride } from '../branch-naming.js';
+import { seedBranchFor } from '../branch-naming.js';
 import { getDb } from '../drizzle-instance.js';
 import * as tasksCore from '../queries/tasks-core.js';
 import * as taskFilesQ from '../queries/task-files.js';

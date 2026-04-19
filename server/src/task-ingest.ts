@@ -167,7 +167,7 @@ export async function ingestTaskDir(
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       const message = code ? `File error: ${code}` : 'Failed to process file';
-      results.push({ file, action: 'error' as const, error: message });
+      results.push({ file, action: 'error', error: message });
       errors++;
     }
   }
