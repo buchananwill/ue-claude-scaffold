@@ -4,7 +4,7 @@
  * GET /agents/definitions/:type — compile and return an agent definition
  * (markdown + meta.json sidecar) on demand.
  */
-import * as fs from 'node:fs';
+import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
@@ -17,6 +17,16 @@ interface AgentDefinitionsOpts {
 }
 
 const AGENT_NAME_PATTERN = AGENT_NAME_RE.source;
+
+/** Return true if `filePath` exists on disk. */
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const agentDefinitionsPlugin: FastifyPluginAsync<AgentDefinitionsOpts> = async (app, { config }) => {
   app.get<{ Params: { type: string } }>(
@@ -47,40 +57,47 @@ const agentDefinitionsPlugin: FastifyPluginAsync<AgentDefinitionsOpts> = async (
       let sourcePath: string | null = null;
       let isDynamic = false;
 
-      if (fs.existsSync(dynamicPath)) {
+      if (await fileExists(dynamicPath)) {
         sourcePath = dynamicPath;
         // Check if it has skills in frontmatter
-        const text = fs.readFileSync(dynamicPath, 'utf-8');
+        const text = await fs.readFile(dynamicPath, 'utf-8');
         const { meta } = parseFrontmatter(text);
         isDynamic = Array.isArray(meta['skills']) && meta['skills'].length > 0;
-      } else if (fs.existsSync(staticPath)) {
+      } else if (await fileExists(staticPath)) {
         sourcePath = staticPath;
         isDynamic = false;
       }
 
       if (!sourcePath) {
-        return reply.notFound(`Agent type '${type}' not found`);
+        return reply.notFound('Agent type not found');
       }
 
       if (isDynamic) {
         // Compile to a temp directory, read output, clean up
-        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-def-'));
+        const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-def-'));
         try {
           compileAgent(sourcePath, tmpDir, skillsDir);
 
           const compiledPath = path.join(tmpDir, `${type}.md`);
           const metaPath = path.join(tmpDir, `${type}.meta.json`);
 
-          const markdown = fs.readFileSync(compiledPath, 'utf-8');
-          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+          const markdown = await fs.readFile(compiledPath, 'utf-8');
+          const metaRaw = await fs.readFile(metaPath, 'utf-8');
+
+          let meta: unknown;
+          try {
+            meta = JSON.parse(metaRaw);
+          } catch {
+            throw app.httpErrors.internalServerError('Failed to parse compiled agent metadata');
+          }
 
           return { agentType: type, markdown, meta };
         } finally {
-          fs.rmSync(tmpDir, { recursive: true, force: true });
+          await fs.rm(tmpDir, { recursive: true, force: true });
         }
       } else {
         // Static agent: return directly with default meta
-        const markdown = fs.readFileSync(sourcePath, 'utf-8');
+        const markdown = await fs.readFile(sourcePath, 'utf-8');
         return { agentType: type, markdown, meta: { 'access-scope': 'read-only' } };
       }
     },
