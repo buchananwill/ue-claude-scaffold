@@ -95,6 +95,12 @@ _run_claude() {
     # Use per-task agent type override when set, otherwise fall back to container default
     local effective_agent_type="${CURRENT_TASK_AGENT_TYPE:-$AGENT_TYPE}"
 
+    # Defence-in-depth: validate effective_agent_type against allowlist
+    if [ -n "$effective_agent_type" ] && [[ ! "$effective_agent_type" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "ERROR: effective_agent_type contains invalid characters: $effective_agent_type" >&2
+        return 1
+    fi
+
     # Clear any stale stop sentinel from a prior container run
     rm -f /tmp/.stop_requested
 

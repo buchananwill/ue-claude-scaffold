@@ -50,6 +50,11 @@ _poll_and_claim_task() {
             CURRENT_TASK_SOURCE=$(echo "$body" | jq -r '.task.sourcePath // ""')
             CURRENT_TASK_FILES=$(echo "$body" | jq -r '(.task.files // []) | join(", ")')
             CURRENT_TASK_AGENT_TYPE=$(echo "$body" | jq -r '.task.agentTypeOverride // ""')
+            # Allowlist: reject agent type overrides with unsafe characters
+            if [ -n "$CURRENT_TASK_AGENT_TYPE" ] && [[ ! "$CURRENT_TASK_AGENT_TYPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                echo "ERROR: agentTypeOverride contains invalid characters: $CURRENT_TASK_AGENT_TYPE" >&2
+                CURRENT_TASK_AGENT_TYPE=""
+            fi
             echo "Claimed task #${CURRENT_TASK_ID}: ${CURRENT_TASK_TITLE}"
             echo ""
             echo "── Claimed task record ──"
@@ -103,6 +108,11 @@ _pump_iteration() {
             _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/release" \
                 --max-time 10 >/dev/null 2>&1 || true
             CURRENT_TASK_ID=""
+            CURRENT_TASK_TITLE=""
+            CURRENT_TASK_DESC=""
+            CURRENT_TASK_AC=""
+            CURRENT_TASK_SOURCE=""
+            CURRENT_TASK_FILES=""
             CURRENT_TASK_AGENT_TYPE=""
             return
         fi

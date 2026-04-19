@@ -16,6 +16,12 @@ _ensure_agent_type() {
         return 1
     fi
 
+    # Allowlist: only safe characters in agent_type (defence in depth)
+    if [[ ! "$agent_type" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "ERROR: agent_type contains invalid characters: $agent_type" >&2
+        return 1
+    fi
+
     local agent_file="${AGENTS_DIR}/${agent_type}.md"
     local meta_file="${AGENTS_DIR}/${agent_type}.meta.json"
 
@@ -28,9 +34,8 @@ _ensure_agent_type() {
     echo "Fetching agent definition '${agent_type}' from server..."
 
     local response http_status body
-    response=$(_curl_server -s -w "\n%{http_code}" \
-        "${SERVER_URL}/agents/definitions/${agent_type}" \
-        --max-time 15) || response=$'\n000'
+    response=$(_curl_server -s -w "\n%{http_code}" --max-time 15 -- \
+        "${SERVER_URL}/agents/definitions/${agent_type}") || response=$'\n000'
     http_status="${response##*$'\n'}"
     body="${response%$'\n'*}"
 
@@ -47,9 +52,17 @@ _ensure_agent_type() {
         return 1
     fi
 
+    # Size guard: reject definitions larger than 512KB
+    local compiled_size
+    compiled_size=$(printf '%s\n' "$compiled_md" | wc -c)
+    if [ "$compiled_size" -gt 524288 ]; then
+        echo "ERROR: Agent definition '${agent_type}' exceeds 512KB (${compiled_size} bytes)" >&2
+        return 1
+    fi
+
     # Write the agent definition
     mkdir -p "$AGENTS_DIR"
-    echo "$compiled_md" > "$agent_file"
+    printf '%s\n' "$compiled_md" > "$agent_file"
 
     # Write the meta.json sidecar (extract access-scope from response metadata)
     access_scope=$(echo "$body" | jq -r '.metadata["access-scope"] // "read-only"')
