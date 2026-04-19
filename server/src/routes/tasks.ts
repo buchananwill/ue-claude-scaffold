@@ -5,14 +5,14 @@ import * as taskFilesQ from '../queries/task-files.js';
 import * as taskDepsQ from '../queries/task-deps.js';
 import type { ScaffoldConfig } from '../config.js';
 import { mergeIntoAgentBranches } from '../git-utils.js';
-import { AGENT_NAME_RE, isValidAgentName } from '../branch-naming.js';
+import { AGENT_NAME_RE } from '../branch-naming.js';
 import { resolveProject } from '../resolve-project.js';
 import { validateSourcePath } from '../tasks-validation.js';
 import { formatTask, toTaskRow, type TaskRow } from './tasks-types.js';
 import {
   type TasksOpts, type TaskBody, type PatchBody,
   taskBodyKeys, patchBodyKeys,
-  hasValue, validateFilePaths, unknownFields,
+  hasValue, validateFilePaths, validateAgentTypeOverride, unknownFields,
   linkFilesToTask, linkDepsToTask, depsForTask,
   formatTaskWithFiles,
 } from './tasks-files.js';
@@ -173,18 +173,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const { title, description, sourcePath, acceptanceCriteria, priority, files, targetAgents, dependsOn, dependsOnIndex, agentTypeOverride } = request.body;
 
     // Validate agentTypeOverride — null is not allowed on create (use PATCH to clear)
-    if (agentTypeOverride === null) {
-      return reply.badRequest(
-        'agentTypeOverride must be a string or omitted, not null'
-      );
-    }
-    if (agentTypeOverride !== undefined) {
-      if (typeof agentTypeOverride !== 'string' || !isValidAgentName(agentTypeOverride)) {
-        return reply.badRequest(
-          `Invalid agentTypeOverride: "${String(agentTypeOverride).slice(0, 64)}". ` +
-          'Must match agent name format (alphanumeric, hyphens, underscores; 1-64 chars).'
-        );
-      }
+    const atoCheck = validateAgentTypeOverride(agentTypeOverride, 'create');
+    if (!atoCheck.valid) {
+      return reply.badRequest(atoCheck.error);
     }
 
     // Tasks are a union: EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode).
@@ -279,7 +270,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       acceptanceCriteria: acceptanceCriteria ?? undefined,
       priority: priority ?? 0,
       projectId,
-      agentTypeOverride: agentTypeOverride ?? undefined,
+      agentTypeOverride,
     });
     const id = inserted.id;
     if (files?.length) {
@@ -330,18 +321,9 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         if (err) return reply.badRequest(`Task ${i}: ${err}`);
       }
       // Validate agentTypeOverride — null is not allowed on create (use PATCH to clear)
-      if (t.agentTypeOverride === null) {
-        return reply.badRequest(
-          `Task ${i}: agentTypeOverride must be a string or omitted, not null`
-        );
-      }
-      if (t.agentTypeOverride !== undefined) {
-        if (typeof t.agentTypeOverride !== 'string' || !isValidAgentName(t.agentTypeOverride)) {
-          return reply.badRequest(
-            `Task ${i}: Invalid agentTypeOverride: "${String(t.agentTypeOverride).slice(0, 64)}". ` +
-            'Must match agent name format (alphanumeric, hyphens, underscores; 1-64 chars).'
-          );
-        }
+      const batchAtoCheck = validateAgentTypeOverride(t.agentTypeOverride, 'create');
+      if (!batchAtoCheck.valid) {
+        return reply.badRequest(`Task ${i}: ${batchAtoCheck.error}`);
       }
       // Mixed-protocol check
       if (hasValue(t.sourcePath) && (hasValue(t.description) || hasValue(t.acceptanceCriteria))) {
@@ -407,7 +389,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         acceptanceCriteria: t.acceptanceCriteria ?? undefined,
         priority: t.priority ?? 0,
         projectId,
-        agentTypeOverride: t.agentTypeOverride ?? undefined,
+        agentTypeOverride: t.agentTypeOverride,
       });
       const taskId = inserted.id;
       if (t.files?.length) {
@@ -507,12 +489,10 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     const hasDeps = 'dependsOn' in body && Array.isArray(body.dependsOn);
 
     // Validate agentTypeOverride if provided
-    if ('agentTypeOverride' in body && body.agentTypeOverride !== undefined && body.agentTypeOverride !== null) {
-      if (typeof body.agentTypeOverride !== 'string' || !isValidAgentName(body.agentTypeOverride)) {
-        return reply.badRequest(
-          `Invalid agentTypeOverride: "${String(body.agentTypeOverride).slice(0, 64)}". ` +
-          'Must match agent name format (alphanumeric, hyphens, underscores; 1-64 chars).'
-        );
+    if ('agentTypeOverride' in body) {
+      const patchAtoCheck = validateAgentTypeOverride(body.agentTypeOverride, 'patch');
+      if (!patchAtoCheck.valid) {
+        return reply.badRequest(patchAtoCheck.error);
       }
     }
 

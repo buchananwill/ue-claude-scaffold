@@ -37,7 +37,7 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     result: row.result ?? null, // jsonb column — Drizzle returns unknown; parseResult handles coercion
     basePriority: row.basePriority,
     progressLog: row.progressLog,
-    agentTypeOverride: row.agentTypeOverride ?? null,
+    agentTypeOverride: row.agentTypeOverride,
     createdAt: row.createdAt,
   };
 }

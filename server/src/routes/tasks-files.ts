@@ -1,6 +1,6 @@
 import type { ScaffoldConfig } from '../config.js';
 import { existsInBareRepo } from '../git-utils.js';
-import { seedBranchFor } from '../branch-naming.js';
+import { seedBranchFor, isValidAgentName } from '../branch-naming.js';
 import { getDb } from '../drizzle-instance.js';
 import * as tasksCore from '../queries/tasks-core.js';
 import * as taskFilesQ from '../queries/task-files.js';
@@ -77,6 +77,40 @@ export function validateFilePaths(files: string[]): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Validate the agentTypeOverride field.
+ *
+ * In `create` mode: rejects `null` (must be a string or omitted); rejects
+ * invalid strings; passes valid strings or undefined.
+ *
+ * In `patch` mode: allows `null` (for clearing); rejects invalid non-null
+ * strings; passes valid strings or undefined.
+ */
+export function validateAgentTypeOverride(
+  value: unknown,
+  mode: 'create' | 'patch',
+): { valid: true; value: string | null } | { valid: false; error: string } {
+  if (value === undefined) {
+    return { valid: true, value: null };
+  }
+  if (value === null) {
+    if (mode === 'create') {
+      return { valid: false, error: 'agentTypeOverride must be a string or omitted, not null' };
+    }
+    // patch mode — null clears the override
+    return { valid: true, value: null };
+  }
+  if (typeof value !== 'string' || !isValidAgentName(value)) {
+    return {
+      valid: false,
+      error:
+        `Invalid agentTypeOverride: "${String(value).slice(0, 64)}". ` +
+        'Must match agent name format (alphanumeric, hyphens, underscores; 1-64 chars).',
+    };
+  }
+  return { valid: true, value };
 }
 
 // ── Composition functions (async, use Drizzle query modules) ──────
