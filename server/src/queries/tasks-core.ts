@@ -92,7 +92,9 @@ function buildNullableSentinelFilter(
   const hasSentinel = values.includes(sentinel);
   const named = values.filter(v => v !== sentinel);
   if (hasSentinel && named.length > 0) {
-    return or(isNull(column), inArray(column, named))!;
+    const clause = or(isNull(column), inArray(column, named));
+    if (!clause) throw new Error('Invariant violation: or() returned undefined with two defined operands');
+    return clause;
   } else if (hasSentinel) {
     return isNull(column);
   } else if (named.length === 1) {
