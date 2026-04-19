@@ -51,7 +51,7 @@ _poll_and_claim_task() {
             CURRENT_TASK_FILES=$(echo "$body" | jq -r '(.task.files // []) | join(", ")')
             CURRENT_TASK_AGENT_TYPE=$(echo "$body" | jq -r '.task.agentTypeOverride // ""')
             # Allowlist: reject agent type overrides with unsafe characters
-            if [ -n "$CURRENT_TASK_AGENT_TYPE" ] && [[ ! "$CURRENT_TASK_AGENT_TYPE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            if [ -n "$CURRENT_TASK_AGENT_TYPE" ] && ! _is_safe_name "$CURRENT_TASK_AGENT_TYPE"; then
                 echo "ERROR: agentTypeOverride contains invalid characters: $CURRENT_TASK_AGENT_TYPE" >&2
                 CURRENT_TASK_AGENT_TYPE=""
             fi
@@ -107,13 +107,7 @@ _pump_iteration() {
             echo "ERROR: Could not fetch agent definition '${CURRENT_TASK_AGENT_TYPE}'. Releasing task." >&2
             _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/release" \
                 --max-time 10 >/dev/null 2>&1 || true
-            CURRENT_TASK_ID=""
-            CURRENT_TASK_TITLE=""
-            CURRENT_TASK_DESC=""
-            CURRENT_TASK_AC=""
-            CURRENT_TASK_SOURCE=""
-            CURRENT_TASK_FILES=""
-            CURRENT_TASK_AGENT_TYPE=""
+            _reset_task_vars
             return
         fi
     fi
@@ -149,13 +143,7 @@ _pump_iteration() {
     git clean -fd
 
     # Reset task-specific variables
-    CURRENT_TASK_ID=""
-    CURRENT_TASK_TITLE=""
-    CURRENT_TASK_DESC=""
-    CURRENT_TASK_AC=""
-    CURRENT_TASK_SOURCE=""
-    CURRENT_TASK_FILES=""
-    CURRENT_TASK_AGENT_TYPE=""
+    _reset_task_vars
 
     # Check if agent has been stopped or paused
     local agent_status

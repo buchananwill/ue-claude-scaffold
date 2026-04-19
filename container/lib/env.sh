@@ -2,6 +2,12 @@
 # container/lib/env.sh — Environment variable defaults and validation.
 # Sourced by entrypoint.sh; do not execute directly.
 
+# ── Shared helpers ──────────────────────────────────────────────────────────
+# Allowlist check: returns 0 if value matches ^[a-zA-Z0-9_-]+$, 1 otherwise.
+_is_safe_name() {
+    [[ "$1" =~ ^[a-zA-Z0-9_-]+$ ]]
+}
+
 WORK_BRANCH="${WORK_BRANCH:-main}"
 AGENT_TYPE="${AGENT_TYPE:-}"
 if [ -z "$AGENT_TYPE" ]; then
@@ -9,7 +15,7 @@ if [ -z "$AGENT_TYPE" ]; then
     exit 1
 fi
 AGENT_NAME="${AGENT_NAME:-agent-1}"
-if [[ ! "$AGENT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+if ! _is_safe_name "$AGENT_NAME"; then
     echo "ERROR: AGENT_NAME contains invalid characters: $AGENT_NAME" >&2
     exit 1
 fi
@@ -27,7 +33,7 @@ fi
 WORKER_SINGLE_TASK="${WORKER_SINGLE_TASK:-true}"
 AGENT_MODE="${AGENT_MODE:-single}"
 PROJECT_ID="${PROJECT_ID:-default}"
-if [[ ! "$PROJECT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+if ! _is_safe_name "$PROJECT_ID"; then
     echo "ERROR: PROJECT_ID contains invalid characters: $PROJECT_ID" >&2
     exit 1
 fi
@@ -44,6 +50,18 @@ CURRENT_TASK_AC=""
 CURRENT_TASK_SOURCE=""
 CURRENT_TASK_FILES=""
 CURRENT_TASK_AGENT_TYPE=""
+
+# Reset all CURRENT_TASK_* variables to empty strings.
+_reset_task_vars() {
+    CURRENT_TASK_ID=""
+    CURRENT_TASK_TITLE=""
+    CURRENT_TASK_DESC=""
+    CURRENT_TASK_AC=""
+    CURRENT_TASK_SOURCE=""
+    CURRENT_TASK_FILES=""
+    CURRENT_TASK_AGENT_TYPE=""
+}
+
 PUMP_STATUS=""
 SESSION_TOKEN=""
 AGENT_ID=""

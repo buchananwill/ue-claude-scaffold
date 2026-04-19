@@ -17,7 +17,7 @@ _ensure_agent_type() {
     fi
 
     # Allowlist: only safe characters in agent_type (defence in depth)
-    if [[ ! "$agent_type" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    if ! _is_safe_name "$agent_type"; then
         echo "ERROR: agent_type contains invalid characters: $agent_type" >&2
         return 1
     fi
@@ -46,7 +46,7 @@ _ensure_agent_type() {
 
     # Extract the compiled markdown and metadata from the response
     local compiled_md access_scope
-    compiled_md=$(echo "$body" | jq -r '.compiled // empty')
+    compiled_md=$(echo "$body" | jq -r '.markdown // empty')
     if [ -z "$compiled_md" ]; then
         echo "ERROR: Server returned empty compiled definition for '${agent_type}'" >&2
         return 1
@@ -64,8 +64,8 @@ _ensure_agent_type() {
     mkdir -p "$AGENTS_DIR"
     printf '%s\n' "$compiled_md" > "$agent_file"
 
-    # Write the meta.json sidecar (extract access-scope from response metadata)
-    access_scope=$(echo "$body" | jq -r '.metadata["access-scope"] // "read-only"')
+    # Write the meta.json sidecar (extract access-scope from response meta)
+    access_scope=$(echo "$body" | jq -r '.meta["access-scope"] // "read-only"')
     jq -n --arg scope "$access_scope" '{"access-scope": $scope}' > "$meta_file"
 
     echo "Cached agent definition '${agent_type}' (access-scope: ${access_scope})"

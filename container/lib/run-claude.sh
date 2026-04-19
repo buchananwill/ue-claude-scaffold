@@ -96,7 +96,7 @@ _run_claude() {
     local effective_agent_type="${CURRENT_TASK_AGENT_TYPE:-$AGENT_TYPE}"
 
     # Defence-in-depth: validate effective_agent_type against allowlist
-    if [ -n "$effective_agent_type" ] && [[ ! "$effective_agent_type" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    if [ -n "$effective_agent_type" ] && ! _is_safe_name "$effective_agent_type"; then
         echo "ERROR: effective_agent_type contains invalid characters: $effective_agent_type" >&2
         return 1
     fi
