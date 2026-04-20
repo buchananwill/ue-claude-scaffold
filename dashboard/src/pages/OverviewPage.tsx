@@ -112,7 +112,7 @@ export function OverviewPage() {
         </Group>
       </Grid.Col>
       <Grid.Col span={4}>
-        <Stack gap="md">
+        <Stack gap="md" pos={'sticky'} top={64}>
           <Card withBorder p="sm">
             <Title order={5} mb="sm">Agents</Title>
             <AgentsPanel agents={agents.data ?? null} />
