@@ -35,6 +35,10 @@ import {
 import { sweepStaleLock } from "./routes/ubt.js";
 import { seedFromConfig } from "./queries/projects.js";
 
+// Pin to local PGlite — ignore any inherited DATABASE_URL until the Supabase migration is ready.
+// Remove this line when you want this project to honor the env var again.
+delete process.env.DATABASE_URL;
+
 const config = loadConfig();
 const pgliteDataDir = "./data/pglite";
 await initDrizzle({ pgliteDataDir });
