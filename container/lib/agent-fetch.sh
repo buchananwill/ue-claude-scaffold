@@ -63,7 +63,7 @@ _ensure_agent_type() {
     echo "Fetching agent definition '${agent_type}' from server..."
 
     local response http_status body
-    response=$(_curl_server -s -w "\n%{http_code}" --max-time 15 -- \
+    response=$(_curl_server -s -w "\n%{http_code}" --max-time 15 \
         "${SERVER_URL}/agents/definitions/${agent_type}") || response=$'\n000'
     http_status="${response##*$'\n'}"
     body="${response%$'\n'*}"
