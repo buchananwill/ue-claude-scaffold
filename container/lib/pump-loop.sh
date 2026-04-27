@@ -2,6 +2,55 @@
 # container/lib/pump-loop.sh — Task polling, claiming, and pump iteration.
 # Sourced by entrypoint.sh; do not execute directly.
 
+# Increment the consecutive-non-complete counter and remember the last few task
+# IDs so the circuit-breaker message names what was happening when it tripped.
+_bump_consecutive_noncomplete() {
+    local task_id="$1"
+    CONSECUTIVE_NONCOMPLETE=$((CONSECUTIVE_NONCOMPLETE + 1))
+    if [ -n "$task_id" ]; then
+        RECENT_NONCOMPLETE_TASK_IDS+=("$task_id")
+        # Keep only the last 3 entries
+        if [ "${#RECENT_NONCOMPLETE_TASK_IDS[@]}" -gt 3 ]; then
+            RECENT_NONCOMPLETE_TASK_IDS=("${RECENT_NONCOMPLETE_TASK_IDS[@]:${#RECENT_NONCOMPLETE_TASK_IDS[@]}-3}")
+        fi
+    fi
+}
+
+# Trip the non-complete circuit breaker: post a visible message, set status to
+# error, set PUMP_STATUS to circuit_break. Caller must `return` after this.
+_trip_noncomplete_circuit_breaker() {
+    local recent_ids="${RECENT_NONCOMPLETE_TASK_IDS[*]:-(none)}"
+    echo "*** CIRCUIT BREAKER: ${CONSECUTIVE_NONCOMPLETE} consecutive non-completed task cycles. ***" >&2
+    echo "*** Recent task IDs: ${recent_ids} ***" >&2
+    echo "*** Presumed infrastructural failure. Stopping pump for operator review. ***" >&2
+
+    # Post a message to the general channel so the dashboard surfaces this.
+    local body_text msg_payload
+    body_text="Container shutting down: ${CONSECUTIVE_NONCOMPLETE} consecutive non-completed task cycles (limit ${CONSECUTIVE_NONCOMPLETE_LIMIT}). Recent task IDs: ${recent_ids}. Presumed infrastructural failure."
+    msg_payload=$(jq -n \
+        --arg agent "$AGENT_NAME" \
+        --arg body "$body_text" \
+        --argjson limit "$CONSECUTIVE_NONCOMPLETE_LIMIT" \
+        --argjson count "$CONSECUTIVE_NONCOMPLETE" \
+        '{
+            channel: "general",
+            type: "circuit_breaker",
+            payload: {
+                agent: $agent,
+                summary: $body,
+                consecutiveNonComplete: $count,
+                limit: $limit
+            }
+        }')
+    _curl_server -s -X POST "${SERVER_URL}/messages" \
+        -H "Content-Type: application/json" \
+        -d "$msg_payload" \
+        --max-time 5 >/dev/null 2>&1 || true
+
+    _post_status "error"
+    PUMP_STATUS="circuit_break"
+}
+
 _poll_and_claim_task() {
     local max_attempts=60
     local attempt=0
@@ -100,13 +149,27 @@ _pump_iteration() {
         return
     fi
 
-    # If the task has an agent type override, fetch and cache the definition
+    # If the task has an agent type override, fetch and cache the definition.
+    # Fetch failure marks the task as 'failed' (not 'released') so it does not
+    # immediately re-claim itself in a tight loop. The operator can /reset it
+    # once the agent definition is fixed.
     if [ -n "${CURRENT_TASK_AGENT_TYPE:-}" ]; then
         echo "Task has agent type override: ${CURRENT_TASK_AGENT_TYPE}"
         if ! _ensure_agent_type "$CURRENT_TASK_AGENT_TYPE"; then
-            echo "ERROR: Could not fetch agent definition '${CURRENT_TASK_AGENT_TYPE}'. Releasing task." >&2
-            _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/release" \
+            local fail_id="$CURRENT_TASK_ID"
+            local fail_payload
+            fail_payload=$(jq -n --arg err "agent-type-fetch-failed:${CURRENT_TASK_AGENT_TYPE}" '{"error": $err}')
+            echo "ERROR: Could not fetch agent definition '${CURRENT_TASK_AGENT_TYPE}'. Failing task #${fail_id}." >&2
+            _curl_server -s -X POST "${SERVER_URL}/tasks/${fail_id}/fail" \
+                -H "Content-Type: application/json" \
+                -d "$fail_payload" \
                 --max-time 10 >/dev/null 2>&1 || true
+            _bump_consecutive_noncomplete "$fail_id"
+            if [ "$CONSECUTIVE_NONCOMPLETE" -ge "$CONSECUTIVE_NONCOMPLETE_LIMIT" ]; then
+                _trip_noncomplete_circuit_breaker
+                _reset_task_vars
+                return
+            fi
             _reset_task_vars
             return
         fi
@@ -114,6 +177,9 @@ _pump_iteration() {
 
     local task_prompt
     task_prompt="$(_build_task_prompt)"
+
+    # Capture the task ID before _run_claude clears it on completion/failure.
+    local task_id_before="$CURRENT_TASK_ID"
 
     set +e
     _run_claude "$task_prompt" "task"
@@ -134,6 +200,23 @@ _pump_iteration() {
         echo "Will retry once more before triggering circuit breaker."
     else
         CONSECUTIVE_ABNORMAL=0
+    fi
+
+    # ── Hard failsafe: too many non-completed cycles in a row ──
+    # Completed = exit 0 AND no abnormal shutdown. Anything else (fail, release,
+    # abnormal) increments the non-complete streak. Sustained streaks indicate
+    # an infrastructural failure (e.g. unfetchable agent type, broken plan)
+    # that no amount of retrying will resolve.
+    if [ "$TASK_EXIT" -eq 0 ] && [ -z "$ABNORMAL_SHUTDOWN" ]; then
+        CONSECUTIVE_NONCOMPLETE=0
+        RECENT_NONCOMPLETE_TASK_IDS=()
+    else
+        _bump_consecutive_noncomplete "$task_id_before"
+        if [ "$CONSECUTIVE_NONCOMPLETE" -ge "$CONSECUTIVE_NONCOMPLETE_LIMIT" ]; then
+            _trip_noncomplete_circuit_breaker
+            _reset_task_vars
+            return
+        fi
     fi
 
     # Clean workspace for next task

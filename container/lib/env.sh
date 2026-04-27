@@ -43,6 +43,13 @@ HOST_LOG_DIR="/logs"
 ABNORMAL_SHUTDOWN=""
 ABNORMAL_REASON=""
 CONSECUTIVE_ABNORMAL=0
+# Number of consecutive task cycles that ended in any state other than 'completed'.
+# Resets the moment any task reaches completed. At CONSECUTIVE_NONCOMPLETE_LIMIT
+# the pump trips a circuit breaker and exits — covers degenerate loops where the
+# container can claim tasks but never satisfy them (e.g. unfetchable agent type).
+CONSECUTIVE_NONCOMPLETE=0
+CONSECUTIVE_NONCOMPLETE_LIMIT=20
+RECENT_NONCOMPLETE_TASK_IDS=()
 CURRENT_TASK_ID=""
 CURRENT_TASK_TITLE=""
 CURRENT_TASK_DESC=""

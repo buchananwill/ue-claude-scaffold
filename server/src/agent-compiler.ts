@@ -10,8 +10,8 @@
  * The compiled output must be byte-identical for the same inputs.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 const FRONTMATTER_RE = /^---\s*\n(.*?\n)---\s*\n/s;
 const ACCESS_SCOPE_RE = /^\*{3}ACCESS SCOPE:\s*(.+?)\*{3}\s*$/m;
@@ -21,9 +21,9 @@ const ACCESS_SCOPE_RE = /^\*{3}ACCESS SCOPE:\s*(.+?)\*{3}\s*$/m;
  * the highest rank wins. Unknown scopes default to rank 1 (write-access).
  */
 export const SCOPE_RANK: Record<string, number> = {
-  'read-only': 0,
-  'write-access': 1,
-  'ubt-build-hook-interceptor': 2,
+  "read-only": 0,
+  "write-access": 1,
+  "ubt-build-hook-interceptor": 2,
 };
 
 /**
@@ -32,7 +32,10 @@ export const SCOPE_RANK: Record<string, number> = {
  * Uses simple line-based parsing to avoid external YAML dependencies.
  * Handles scalar values, single-line lists (JSON-style), and multi-line lists.
  */
-export function parseFrontmatter(text: string): { meta: Record<string, string | string[]>; body: string } {
+export function parseFrontmatter(text: string): {
+  meta: Record<string, string | string[]>;
+  body: string;
+} {
   const m = FRONTMATTER_RE.exec(text);
   if (!m) {
     return { meta: {}, body: text };
@@ -43,16 +46,19 @@ export function parseFrontmatter(text: string): { meta: Record<string, string | 
   const meta: Record<string, string | string[]> = {};
   let currentKey: string | null = null;
 
-  for (const line of raw.split('\n')) {
+  for (const line of raw.split("\n")) {
     // raw ends with \n, so last element after split is empty string
     const stripped = line.trim();
-    if (stripped.startsWith('#') || stripped === '') {
+    if (stripped.startsWith("#") || stripped === "") {
       continue;
     }
 
     // Continuation of a multi-line list
-    if (line.startsWith('  - ') && currentKey !== null) {
-      const val = line.trim().replace(/^[-\s]+/, '').trim();
+    if (line.startsWith("  - ") && currentKey !== null) {
+      const val = line
+        .trim()
+        .replace(/^[-\s]+/, "")
+        .trim();
       const existing = meta[currentKey];
       if (Array.isArray(existing)) {
         existing.push(val);
@@ -60,21 +66,21 @@ export function parseFrontmatter(text: string): { meta: Record<string, string | 
       continue;
     }
 
-    if (!line.includes(':')) {
+    if (!line.includes(":")) {
       continue;
     }
 
-    const colonIdx = line.indexOf(':');
+    const colonIdx = line.indexOf(":");
     const key = line.slice(0, colonIdx).trim();
     const val = line.slice(colonIdx + 1).trim();
     currentKey = key;
 
     // Inline list: [a, b, c] or ["a", "b", "c"]
-    if (val.startsWith('[') && val.endsWith(']')) {
-      const items = val.slice(1, -1).split(',');
+    if (val.startsWith("[") && val.endsWith("]")) {
+      const items = val.slice(1, -1).split(",");
       meta[key] = items
-        .filter(i => i.trim() !== '')
-        .map(i => i.trim().replace(/^["']/, '').replace(/["']$/, ''));
+        .filter((i) => i.trim() !== "")
+        .map((i) => i.trim().replace(/^["']/, "").replace(/["']$/, ""));
     }
     // Quoted string
     else if (
@@ -84,7 +90,7 @@ export function parseFrontmatter(text: string): { meta: Record<string, string | 
       meta[key] = val.slice(1, -1);
     }
     // Empty value — start of a multi-line list
-    else if (val === '') {
+    else if (val === "") {
       meta[key] = [];
     } else {
       meta[key] = val;
@@ -97,16 +103,21 @@ export function parseFrontmatter(text: string): { meta: Record<string, string | 
 /**
  * Serialize a metadata dict back to YAML frontmatter.
  */
-export function serializeFrontmatter(meta: Record<string, string | string[]>): string {
-  const lines: string[] = ['---'];
+export function serializeFrontmatter(
+  meta: Record<string, string | string[]>,
+): string {
+  const lines: string[] = ["---"];
   for (const [key, val] of Object.entries(meta)) {
     if (Array.isArray(val)) {
       // Inline list format for compactness
-      const quoted = val.join(', ');
+      const quoted = val.join(", ");
       lines.push(`${key}: [${quoted}]`);
-    // Note: single-quote values are not quoted, matching Python behavior
-    // Note: list items are not individually quoted, matching Python behavior
-    } else if (typeof val === 'string' && (val.includes('\n') || val.includes(':') || val.includes('"'))) {
+      // Note: single-quote values are not quoted, matching Python behavior
+      // Note: list items are not individually quoted, matching Python behavior
+    } else if (
+      typeof val === "string" &&
+      (val.includes("\n") || val.includes(":") || val.includes('"'))
+    ) {
       // Python writes f'{key}: "{val}"' verbatim — no escaping of interior double quotes.
       // We match this bug-for-bug for byte-identical output.
       lines.push(`${key}: "${val}"`);
@@ -114,8 +125,8 @@ export function serializeFrontmatter(meta: Record<string, string | string[]>): s
       lines.push(`${key}: ${val}`);
     }
   }
-  lines.push('---');
-  return lines.join('\n') + '\n';
+  lines.push("---");
+  return lines.join("\n") + "\n";
 }
 
 /**
@@ -125,18 +136,21 @@ export function serializeFrontmatter(meta: Record<string, string | string[]>): s
  * `***ACCESS SCOPE: {value}***` marker line, or null if absent.
  * The marker line is stripped from the returned body.
  */
-export function resolveSkill(name: string, skillsDir: string): { body: string; accessScope: string | null } {
+export function resolveSkill(
+  name: string,
+  skillsDir: string,
+): { body: string; accessScope: string | null } {
   // Validate skill name to prevent path traversal
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
     throw new Error(`Invalid skill name '${name}': must match [a-zA-Z0-9_-]+`);
   }
 
-  const skillPath = path.join(skillsDir, name, 'SKILL.md');
+  const skillPath = path.join(skillsDir, name, "SKILL.md");
   if (!fs.existsSync(skillPath)) {
     throw new Error(`Skill '${name}' not found at ${skillPath}`);
   }
 
-  const text = fs.readFileSync(skillPath, 'utf-8');
+  const text = fs.readFileSync(skillPath, "utf-8");
   const { body: rawBody } = parseFrontmatter(text);
 
   let accessScope: string | null = null;
@@ -144,7 +158,9 @@ export function resolveSkill(name: string, skillsDir: string): { body: string; a
   const scopeMatch = ACCESS_SCOPE_RE.exec(body);
   if (scopeMatch) {
     accessScope = scopeMatch[1].trim();
-    body = body.slice(0, scopeMatch.index) + body.slice(scopeMatch.index + scopeMatch[0].length);
+    body =
+      body.slice(0, scopeMatch.index) +
+      body.slice(scopeMatch.index + scopeMatch[0].length);
   }
 
   return { body: body.trim(), accessScope };
@@ -161,22 +177,27 @@ export function compileAgent(
   outputDir: string,
   skillsDir: string,
 ): { outputPath: string; compiledBody: string } {
-  const text = fs.readFileSync(source, 'utf-8');
+  const text = fs.readFileSync(source, "utf-8");
   const { meta, body } = parseFrontmatter(text);
 
-  const skills = (meta['skills'] as string[] | undefined) ?? [];
-  delete meta['skills'];
+  const skills = (meta["skills"] as string[] | undefined) ?? [];
+  delete meta["skills"];
   if (skills.length === 0) {
     // Matches Python: compile_agent() writes directly to stderr for no-skills warning
-    process.stderr.write(`WARNING: ${path.basename(source)} has no skills listed — copying as-is\n`);
+    process.stderr.write(
+      `WARNING: ${path.basename(source)} has no skills listed — copying as-is\n`,
+    );
   }
 
   // Build the compiled body: original "why" paragraph + injected skills
   const sections: string[] = [body.trim()];
 
-  let highestScope = 'read-only';
+  let highestScope = "read-only";
   for (const skillName of skills) {
-    const { body: skillContent, accessScope } = resolveSkill(skillName, skillsDir);
+    const { body: skillContent, accessScope } = resolveSkill(
+      skillName,
+      skillsDir,
+    );
     if (accessScope !== null) {
       if ((SCOPE_RANK[accessScope] ?? 1) > (SCOPE_RANK[highestScope] ?? 0)) {
         highestScope = accessScope;
@@ -185,19 +206,112 @@ export function compileAgent(
     sections.push(skillContent);
   }
 
-  const compiledBody = sections.join('\n\n').trimEnd() + '\n';
+  const compiledBody = sections.join("\n\n").trimEnd() + "\n";
   const compiledFrontmatter = serializeFrontmatter(meta);
 
   fs.mkdirSync(outputDir, { recursive: true });
   const outPath = path.join(outputDir, path.basename(source));
-  fs.writeFileSync(outPath, compiledFrontmatter + '\n' + compiledBody, 'utf-8');
+  fs.writeFileSync(outPath, compiledFrontmatter + "\n" + compiledBody, "utf-8");
 
   // Write sidecar metadata (consumed by container entrypoint, not by Claude Code)
-  const stem = path.basename(source, '.md');
-  const metaPath = path.join(outputDir, stem + '.meta.json');
-  fs.writeFileSync(metaPath, JSON.stringify({ 'access-scope': highestScope }, null, 2) + '\n', 'utf-8');
+  const stem = path.basename(source, ".md");
+  const metaPath = path.join(outputDir, stem + ".meta.json");
+  fs.writeFileSync(
+    metaPath,
+    JSON.stringify({ "access-scope": highestScope }, null, 2) + "\n",
+    "utf-8",
+  );
 
   return { outputPath: outPath, compiledBody };
+}
+
+/**
+ * One compiled agent entry — used for both the lead agent and its referenced
+ * sub-agents in the {@link compileAgentWithSubAgents} result.
+ */
+export interface CompiledAgent {
+  type: string;
+  outputPath: string;
+  compiledBody: string;
+}
+
+/**
+ * Result of compiling an agent together with its one-level sub-agent references.
+ *
+ * `warnings` contains one entry per sub-agent that itself references further
+ * dynamic agents — Claude Code does not support two levels of sub-agent
+ * nesting, so those references are not compiled.
+ */
+export interface CompileWithSubAgentsResult {
+  main: CompiledAgent;
+  subAgents: CompiledAgent[];
+  warnings: string[];
+}
+
+/**
+ * Compile a lead agent and every dynamic sub-agent referenced from its
+ * compiled body, one level deep.
+ *
+ * The lead is compiled first; sub-agents are discovered by whole-word matching
+ * the compiled body against filenames in `dynamicDir`. Each discovered sub-agent
+ * is then compiled in turn. If a sub-agent's own compiled body references
+ * further dynamic agents, those are recorded as warnings rather than compiled
+ * — Claude Code does not allow sub-agents to dispatch their own sub-agents.
+ *
+ * Pass `excludeSet` to share the "already-compiled" set across multiple calls
+ * (e.g. when compiling several leads in one CLI invocation). The function
+ * mutates the passed set; callers can read it to learn the full union of
+ * compiled names.
+ */
+export function compileAgentWithSubAgents(
+  source: string,
+  outputDir: string,
+  skillsDir: string,
+  dynamicDir: string,
+  excludeSet?: Set<string>,
+): CompileWithSubAgentsResult {
+  const exclude = excludeSet ?? new Set<string>();
+  const warnings: string[] = [];
+
+  const { outputPath, compiledBody } = compileAgent(
+    source,
+    outputDir,
+    skillsDir,
+  );
+  const stem = path.basename(source, ".md");
+  exclude.add(stem);
+  const main: CompiledAgent = { type: stem, outputPath, compiledBody };
+
+  // Discover sub-agents in the lead's compiled body. Pre-add their names to
+  // `exclude` so cross-references between siblings don't trigger duplicate
+  // compilation when we walk them below.
+  const subPaths = findSubAgents(compiledBody, dynamicDir, exclude);
+  for (const s of subPaths) {
+    exclude.add(path.basename(s, ".md"));
+  }
+
+  const subAgents: CompiledAgent[] = [];
+  for (const subSrc of subPaths) {
+    const subStem = path.basename(subSrc, ".md");
+    const subResult = compileAgent(subSrc, outputDir, skillsDir);
+    subAgents.push({
+      type: subStem,
+      outputPath: subResult.outputPath,
+      compiledBody: subResult.compiledBody,
+    });
+
+    // Warn if a sub-agent's compiled body would in turn require its own
+    // sub-agents — Claude Code rejects two-level nesting.
+    const further = findSubAgents(subResult.compiledBody, dynamicDir, exclude);
+    for (const f of further) {
+      const fStem = path.basename(f, ".md");
+      warnings.push(
+        `sub-agent ${subStem} references ${fStem} — sub-agents cannot launch sub-agents. Skipping.`,
+      );
+    }
+  }
+
+  return { main, subAgents, warnings };
 }
 
 /**
@@ -207,14 +321,21 @@ export function compileAgent(
  * in the compiled text. Returns paths to matched dynamic agent source files,
  * excluding any names in the exclude set (already compiled).
  */
-export function findSubAgents(compiledBody: string, dynamicDir: string, exclude: Set<string>): string[] {
+export function findSubAgents(
+  compiledBody: string,
+  dynamicDir: string,
+  exclude: Set<string>,
+): string[] {
   const candidates: Map<string, string> = new Map();
   if (!fs.existsSync(dynamicDir)) {
     return [];
   }
-  const entries = fs.readdirSync(dynamicDir).filter(f => f.endsWith('.md')).sort();
+  const entries = fs
+    .readdirSync(dynamicDir)
+    .filter((f) => f.endsWith(".md"))
+    .sort();
   for (const f of entries) {
-    const name = f.replace(/\.md$/, '');
+    const name = f.replace(/\.md$/, "");
     candidates.set(name, path.join(dynamicDir, f));
   }
 
@@ -225,7 +346,9 @@ export function findSubAgents(compiledBody: string, dynamicDir: string, exclude:
       continue;
     }
     // Match the agent name as a whole word (not a substring of something else)
-    const re = new RegExp('\\b' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
+    const re = new RegExp(
+      "\\b" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b",
+    );
     if (re.test(compiledBody)) {
       matched.push(filePath);
     }

@@ -99,6 +99,60 @@ await server.register(exitClassifyPlugin);
 await server.register(statusPlugin);
 await server.register(agentDefinitionsPlugin, { config });
 
+// Compile-probe every dynamic-agents/*.md once at startup so broken definitions
+// surface here instead of failing at the first runtime fetch. Non-blocking:
+// failures are logged and the server still starts.
+{
+  const fs = await import("node:fs");
+  const fsp = await import("node:fs/promises");
+  const path = await import("node:path");
+  const os = await import("node:os");
+  const { compileAgentWithSubAgents } = await import("./agent-compiler.js");
+
+  const dynamicDir = path.join(config.configDir, "dynamic-agents");
+  if (fs.existsSync(dynamicDir)) {
+    const probeRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "agent-probe-"));
+    let pass = 0;
+    const failures: string[] = [];
+    try {
+      const skillsDir = path.join(config.configDir, "skills");
+      const entries = fs
+        .readdirSync(dynamicDir)
+        .filter((f) => f.endsWith(".md"))
+        .sort();
+      for (const entry of entries) {
+        const stem = entry.replace(/\.md$/, "");
+        const probeOut = path.join(probeRoot, stem);
+        try {
+          fs.mkdirSync(probeOut, { recursive: true });
+          compileAgentWithSubAgents(
+            path.join(dynamicDir, entry),
+            probeOut,
+            skillsDir,
+            dynamicDir,
+          );
+          pass++;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          failures.push(`  ${entry}: ${msg}`);
+        }
+      }
+    } finally {
+      await fsp.rm(probeRoot, { recursive: true, force: true });
+    }
+    if (failures.length > 0) {
+      console.error(
+        `Agent compile probe: ${pass} passed, ${failures.length} failed:`,
+      );
+      for (const f of failures) {
+        console.error(f);
+      }
+    } else {
+      console.log(`Agent compile probe: ${pass} dynamic agents OK`);
+    }
+  }
+}
+
 try {
   const address = await server.listen({
     port: config.server.port,

@@ -4,13 +4,20 @@
  * GET /agents/definitions/:type — compile and return an agent definition
  * (markdown + meta.json sidecar) on demand.
  */
-import * as fs from 'node:fs/promises';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import type { FastifyPluginAsync } from 'fastify';
-import type { ScaffoldConfig } from '../config.js';
-import { AGENT_NAME_RE } from '../branch-naming.js';
-import { compileAgent, parseFrontmatter } from '../agent-compiler.js';
+import * as fs from "node:fs/promises";
+import * as fsSync from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import type { FastifyPluginAsync } from "fastify";
+import type { ScaffoldConfig } from "../config.js";
+import { AGENT_NAME_RE } from "../branch-naming.js";
+import {
+  compileAgent,
+  compileAgentWithSubAgents,
+  findSubAgents,
+  parseFrontmatter,
+} from "../agent-compiler.js";
+import type { FastifyInstance } from "fastify";
 
 interface AgentDefinitionsOpts {
   config: ScaffoldConfig;
@@ -28,17 +35,57 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-const agentDefinitionsPlugin: FastifyPluginAsync<AgentDefinitionsOpts> = async (app, { config }) => {
+/** Read and parse a sidecar meta.json file written by the agent compiler. */
+async function readMetaJson(
+  metaPath: string,
+  app: FastifyInstance,
+): Promise<unknown> {
+  const raw = await fs.readFile(metaPath, "utf-8");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw app.httpErrors.internalServerError(
+      "Failed to parse compiled agent metadata",
+    );
+  }
+}
+
+/**
+ * Compile one sub-agent for inclusion in a static lead's response bundle.
+ *
+ * Static agents have no skills frontmatter, so the lead is served verbatim,
+ * but their body may still reference dynamic sub-agents that need full
+ * compilation. This helper compiles one such sub-agent and reads back its
+ * markdown plus sidecar meta.
+ */
+function compileSubAgentForResponse(
+  subSrc: string,
+  outputDir: string,
+  skillsDir: string,
+): { markdown: string; meta: unknown } {
+  compileAgent(subSrc, outputDir, skillsDir);
+  const stem = path.basename(subSrc, ".md");
+  const compiledPath = path.join(outputDir, `${stem}.md`);
+  const metaPath = path.join(outputDir, `${stem}.meta.json`);
+  const markdown = fsSync.readFileSync(compiledPath, "utf-8");
+  const metaRaw = fsSync.readFileSync(metaPath, "utf-8");
+  return { markdown, meta: JSON.parse(metaRaw) };
+}
+
+const agentDefinitionsPlugin: FastifyPluginAsync<AgentDefinitionsOpts> = async (
+  app,
+  { config },
+) => {
   app.get<{ Params: { type: string } }>(
-    '/agents/definitions/:type',
+    "/agents/definitions/:type",
     {
       schema: {
         params: {
-          type: 'object',
+          type: "object",
           properties: {
-            type: { type: 'string', pattern: AGENT_NAME_PATTERN },
+            type: { type: "string", pattern: AGENT_NAME_PATTERN },
           },
-          required: ['type'],
+          required: ["type"],
         },
       },
     },
@@ -46,9 +93,9 @@ const agentDefinitionsPlugin: FastifyPluginAsync<AgentDefinitionsOpts> = async (
       const { type } = request.params;
 
       const repoRoot = config.configDir;
-      const dynamicDir = path.join(repoRoot, 'dynamic-agents');
-      const staticDir = path.join(repoRoot, 'agents');
-      const skillsDir = path.join(repoRoot, 'skills');
+      const dynamicDir = path.join(repoRoot, "dynamic-agents");
+      const staticDir = path.join(repoRoot, "agents");
+      const skillsDir = path.join(repoRoot, "skills");
 
       // Locate source: dynamic-agents/{type}.md first, then agents/{type}.md
       const dynamicPath = path.join(dynamicDir, `${type}.md`);
@@ -60,51 +107,91 @@ const agentDefinitionsPlugin: FastifyPluginAsync<AgentDefinitionsOpts> = async (
       if (await fileExists(dynamicPath)) {
         sourcePath = dynamicPath;
         // Check if it has skills in frontmatter
-        const text = await fs.readFile(dynamicPath, 'utf-8');
+        const text = await fs.readFile(dynamicPath, "utf-8");
         const { meta } = parseFrontmatter(text);
-        isDynamic = Array.isArray(meta['skills']) && meta['skills'].length > 0;
+        isDynamic = Array.isArray(meta["skills"]) && meta["skills"].length > 0;
       } else if (await fileExists(staticPath)) {
         sourcePath = staticPath;
         isDynamic = false;
       }
 
       if (!sourcePath) {
-        return reply.notFound('Agent type not found');
+        return reply.notFound("Agent type not found");
       }
 
-      if (isDynamic) {
-        // Compile to a temp directory, read output, clean up
-        const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-def-'));
-        try {
-          // compileAgent is synchronous by design — it is a shared utility also
-          // used in build-time (CLI) compilation where async offers no benefit.
-          // For typical agent definitions with 1-5 skills the compile time is
-          // sub-millisecond, so blocking the event loop here is negligible.
-          // Converting to an async variant is tracked as a separate concern
-          // outside this endpoint's scope.
-          compileAgent(sourcePath, tmpDir, skillsDir);
+      // Dynamic and static agents both need sub-agent bundling. The lead is
+      // compiled (or read as-is for static); its body is then scanned against
+      // dynamic-agents/ for one-level sub-agent references, and each match is
+      // compiled and returned alongside the lead.
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-def-"));
+      try {
+        if (isDynamic) {
+          // compileAgentWithSubAgents is synchronous — same rationale as
+          // compileAgent: sub-millisecond per definition, used by both the CLI
+          // and this endpoint, async offers no benefit.
+          const result = compileAgentWithSubAgents(
+            sourcePath,
+            tmpDir,
+            skillsDir,
+            dynamicDir,
+          );
 
-          const compiledPath = path.join(tmpDir, `${type}.md`);
-          const metaPath = path.join(tmpDir, `${type}.meta.json`);
+          const markdown = await fs.readFile(result.main.outputPath, "utf-8");
+          const meta = await readMetaJson(
+            path.join(tmpDir, `${type}.meta.json`),
+            app,
+          );
 
-          const markdown = await fs.readFile(compiledPath, 'utf-8');
-          const metaRaw = await fs.readFile(metaPath, 'utf-8');
+          const subAgents = await Promise.all(
+            result.subAgents.map(async (sub) => ({
+              agentType: sub.type,
+              markdown: await fs.readFile(sub.outputPath, "utf-8"),
+              meta: await readMetaJson(
+                path.join(tmpDir, `${sub.type}.meta.json`),
+                app,
+              ),
+            })),
+          );
 
-          let meta: unknown;
-          try {
-            meta = JSON.parse(metaRaw);
-          } catch {
-            throw app.httpErrors.internalServerError('Failed to parse compiled agent metadata');
-          }
-
-          return { agentType: type, markdown, meta };
-        } finally {
-          await fs.rm(tmpDir, { recursive: true, force: true });
+          return {
+            agentType: type,
+            markdown,
+            meta,
+            subAgents,
+            warnings: result.warnings,
+          };
         }
-      } else {
-        // Static agent: return directly with default meta
-        const markdown = await fs.readFile(sourcePath, 'utf-8');
-        return { agentType: type, markdown, meta: { 'access-scope': 'read-only' } };
+
+        // Static agent: serve verbatim, but still discover sub-agents in its
+        // body so the caller receives the full dispatch set in one round-trip.
+        const markdown = await fs.readFile(sourcePath, "utf-8");
+        const subAgentPaths = fsSync.existsSync(dynamicDir)
+          ? findSubAgents(markdown, dynamicDir, new Set([type]))
+          : [];
+
+        const subAgents = subAgentPaths.map((subSrc) => {
+          const subStem = path.basename(subSrc, ".md");
+          const subResult = compileSubAgentForResponse(
+            subSrc,
+            tmpDir,
+            skillsDir,
+          );
+          return {
+            agentType: subStem,
+            markdown: subResult.markdown,
+            meta: subResult.meta,
+          };
+        });
+
+        return {
+          agentType: type,
+          markdown,
+          meta: { "access-scope": "read-only" },
+          subAgents,
+          warnings: [],
+        };
+      } finally {
+        await fs.rm(tmpDir, { recursive: true, force: true });
       }
     },
   );

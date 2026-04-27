@@ -1,22 +1,25 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
-import assert from 'node:assert/strict';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
-import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
-import agentDefinitionsPlugin from './agent-definitions.js';
-import type { ScaffoldConfig } from '../config.js';
-import { createTestConfig } from '../test-helper.js';
+import { describe, it, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+import {
+  createDrizzleTestApp,
+  type DrizzleTestContext,
+} from "../drizzle-test-helper.js";
+import agentDefinitionsPlugin from "./agent-definitions.js";
+import type { ScaffoldConfig } from "../config.js";
+import { createTestConfig } from "../test-helper.js";
 
 /**
  * Create a temporary directory tree simulating the repo layout with
  * agents/, dynamic-agents/, and skills/ directories.
  */
 function createTestRepoLayout(): { repoRoot: string; cleanup: () => void } {
-  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-def-test-'));
-  const agentsDir = path.join(repoRoot, 'agents');
-  const dynamicDir = path.join(repoRoot, 'dynamic-agents');
-  const skillsDir = path.join(repoRoot, 'skills');
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-def-test-"));
+  const agentsDir = path.join(repoRoot, "agents");
+  const dynamicDir = path.join(repoRoot, "dynamic-agents");
+  const skillsDir = path.join(repoRoot, "skills");
 
   fs.mkdirSync(agentsDir, { recursive: true });
   fs.mkdirSync(dynamicDir, { recursive: true });
@@ -24,61 +27,61 @@ function createTestRepoLayout(): { repoRoot: string; cleanup: () => void } {
 
   // Static agent: no skills in frontmatter
   fs.writeFileSync(
-    path.join(agentsDir, 'static-agent.md'),
+    path.join(agentsDir, "static-agent.md"),
     [
-      '---',
-      'name: static-agent',
-      'description: A static agent with no skills',
-      'model: opus',
-      'tools: [Read, Edit]',
-      '---',
-      '',
-      '# Static Agent',
-      '',
-      'This is a static agent definition.',
-      '',
-    ].join('\n'),
+      "---",
+      "name: static-agent",
+      "description: A static agent with no skills",
+      "model: opus",
+      "tools: [Read, Edit]",
+      "---",
+      "",
+      "# Static Agent",
+      "",
+      "This is a static agent definition.",
+      "",
+    ].join("\n"),
   );
 
   // Create a skill for the dynamic agent
-  const skillDir = path.join(skillsDir, 'test-skill');
+  const skillDir = path.join(skillsDir, "test-skill");
   fs.mkdirSync(skillDir, { recursive: true });
   fs.writeFileSync(
-    path.join(skillDir, 'SKILL.md'),
+    path.join(skillDir, "SKILL.md"),
     [
-      '---',
-      'name: test-skill',
-      'description: A test skill',
-      'axis: testing',
-      '---',
-      '',
-      '***ACCESS SCOPE: write-access***',
-      '',
-      '# Test Skill',
-      '',
-      'Skill content here.',
-      '',
-    ].join('\n'),
+      "---",
+      "name: test-skill",
+      "description: A test skill",
+      "axis: testing",
+      "---",
+      "",
+      "***ACCESS SCOPE: write-access***",
+      "",
+      "# Test Skill",
+      "",
+      "Skill content here.",
+      "",
+    ].join("\n"),
   );
 
   // Dynamic agent: has skills in frontmatter
   fs.writeFileSync(
-    path.join(dynamicDir, 'dynamic-agent.md'),
+    path.join(dynamicDir, "dynamic-agent.md"),
     [
-      '---',
-      'name: dynamic-agent',
-      'description: A dynamic agent with skills',
-      'model: opus',
-      'tools: [Read, Edit, Bash]',
-      'skills:',
-      '  - test-skill',
-      '---',
-      '',
-      '# Dynamic Agent',
-      '',
-      'This is a dynamic agent template.',
-      '',
-    ].join('\n'),
+      "---",
+      "name: dynamic-agent",
+      "description: A dynamic agent with skills",
+      "model: opus",
+      "tools: [Read, Edit, Bash]",
+      "skills:",
+      "  - test-skill",
+      "---",
+      "",
+      "# Dynamic Agent",
+      "",
+      "This is a dynamic agent template.",
+      "",
+    ].join("\n"),
   );
 
   return {
@@ -87,7 +90,7 @@ function createTestRepoLayout(): { repoRoot: string; cleanup: () => void } {
   };
 }
 
-describe('GET /agents/definitions/:type', () => {
+describe("GET /agents/definitions/:type", () => {
   let ctx: DrizzleTestContext;
   let layout: ReturnType<typeof createTestRepoLayout>;
   let config: ScaffoldConfig;
@@ -105,102 +108,180 @@ describe('GET /agents/definitions/:type', () => {
     layout?.cleanup();
   });
 
-  it('returns a static agent definition with default meta', async () => {
+  it("returns a static agent definition with default meta", async () => {
     const res = await ctx.app.inject({
-      method: 'GET',
-      url: '/agents/definitions/static-agent',
+      method: "GET",
+      url: "/agents/definitions/static-agent",
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();
-    assert.equal(body.agentType, 'static-agent');
-    assert.ok(body.markdown.includes('# Static Agent'));
-    assert.deepEqual(body.meta, { 'access-scope': 'read-only' });
+    assert.equal(body.agentType, "static-agent");
+    assert.ok(body.markdown.includes("# Static Agent"));
+    assert.deepEqual(body.meta, { "access-scope": "read-only" });
+    assert.deepEqual(body.subAgents, []);
+    assert.deepEqual(body.warnings, []);
   });
 
-  it('returns a compiled dynamic agent definition with sidecar meta', async () => {
+  it("returns a compiled dynamic agent definition with sidecar meta", async () => {
     const res = await ctx.app.inject({
-      method: 'GET',
-      url: '/agents/definitions/dynamic-agent',
+      method: "GET",
+      url: "/agents/definitions/dynamic-agent",
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();
-    assert.equal(body.agentType, 'dynamic-agent');
+    assert.equal(body.agentType, "dynamic-agent");
     // The compiled output should contain the skill content
-    assert.ok(body.markdown.includes('# Test Skill'));
-    assert.ok(body.markdown.includes('Skill content here.'));
+    assert.ok(body.markdown.includes("# Test Skill"));
+    assert.ok(body.markdown.includes("Skill content here."));
     // Meta should reflect the skill's access scope
-    assert.equal(body.meta['access-scope'], 'write-access');
+    assert.equal(body.meta["access-scope"], "write-access");
+    assert.deepEqual(body.subAgents, []);
+    assert.deepEqual(body.warnings, []);
   });
 
-  it('returns 404 for nonexistent agent type', async () => {
+  it("bundles referenced sub-agents in the response", async () => {
+    // Add a worker the lead's skill will reference, then a skill that names it
+    fs.writeFileSync(
+      path.join(layout.repoRoot, "dynamic-agents", "worker-bee.md"),
+      [
+        "---",
+        "name: worker-bee",
+        "description: A sub-agent invoked by leads",
+        "model: opus",
+        "tools: [Read, Edit]",
+        "---",
+        "",
+        "# Worker Bee",
+        "",
+        "Performs the unit of work.",
+        "",
+      ].join("\n"),
+    );
+
+    const dispatchSkill = path.join(
+      layout.repoRoot,
+      "skills",
+      "dispatch-skill",
+    );
+    fs.mkdirSync(dispatchSkill, { recursive: true });
+    fs.writeFileSync(
+      path.join(dispatchSkill, "SKILL.md"),
+      [
+        "---",
+        "name: dispatch-skill",
+        "description: Dispatch skill",
+        "axis: dispatch",
+        "---",
+        "",
+        "# Dispatch",
+        "",
+        "Hand each phase to worker-bee for execution.",
+        "",
+      ].join("\n"),
+    );
+
+    fs.writeFileSync(
+      path.join(layout.repoRoot, "dynamic-agents", "lead-agent.md"),
+      [
+        "---",
+        "name: lead-agent",
+        "description: A lead that dispatches to worker-bee",
+        "model: opus",
+        "tools: [Agent, Read]",
+        "skills:",
+        "  - dispatch-skill",
+        "---",
+        "",
+        "# Lead Agent",
+        "",
+        "Coordinates the work.",
+        "",
+      ].join("\n"),
+    );
+
     const res = await ctx.app.inject({
-      method: 'GET',
-      url: '/agents/definitions/nonexistent',
+      method: "GET",
+      url: "/agents/definitions/lead-agent",
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.agentType, "lead-agent");
+    assert.equal(body.subAgents.length, 1);
+    assert.equal(body.subAgents[0].agentType, "worker-bee");
+    assert.ok(body.subAgents[0].markdown.includes("# Worker Bee"));
+    assert.deepEqual(body.subAgents[0].meta, { "access-scope": "read-only" });
+    assert.deepEqual(body.warnings, []);
+  });
+
+  it("returns 404 for nonexistent agent type", async () => {
+    const res = await ctx.app.inject({
+      method: "GET",
+      url: "/agents/definitions/nonexistent",
     });
     assert.equal(res.statusCode, 404);
   });
 
-  it('returns 400 for invalid agent type name', async () => {
+  it("returns 400 for invalid agent type name", async () => {
     const res = await ctx.app.inject({
-      method: 'GET',
-      url: '/agents/definitions/bad%20name!!',
+      method: "GET",
+      url: "/agents/definitions/bad%20name!!",
     });
     assert.equal(res.statusCode, 400);
   });
 
-  it('prefers dynamic-agents over static agents for the same name', async () => {
+  it("prefers dynamic-agents over static agents for the same name", async () => {
     // Create a static agent with the same name as the dynamic one
     fs.writeFileSync(
-      path.join(layout.repoRoot, 'agents', 'dynamic-agent.md'),
+      path.join(layout.repoRoot, "agents", "dynamic-agent.md"),
       [
-        '---',
-        'name: dynamic-agent',
-        'description: Static version',
-        'model: opus',
-        'tools: [Read]',
-        '---',
-        '',
-        '# Static Version of Dynamic Agent',
-        '',
-      ].join('\n'),
+        "---",
+        "name: dynamic-agent",
+        "description: Static version",
+        "model: opus",
+        "tools: [Read]",
+        "---",
+        "",
+        "# Static Version of Dynamic Agent",
+        "",
+      ].join("\n"),
     );
 
     const res = await ctx.app.inject({
-      method: 'GET',
-      url: '/agents/definitions/dynamic-agent',
+      method: "GET",
+      url: "/agents/definitions/dynamic-agent",
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();
     // Should get the dynamic (compiled) version, not the static one
-    assert.ok(body.markdown.includes('# Test Skill'));
-    assert.equal(body.meta['access-scope'], 'write-access');
+    assert.ok(body.markdown.includes("# Test Skill"));
+    assert.equal(body.meta["access-scope"], "write-access");
   });
 
-  it('treats a dynamic-agents file without skills as static', async () => {
+  it("treats a dynamic-agents file without skills as static", async () => {
     // Create a file in dynamic-agents/ but without skills
     fs.writeFileSync(
-      path.join(layout.repoRoot, 'dynamic-agents', 'no-skills-agent.md'),
+      path.join(layout.repoRoot, "dynamic-agents", "no-skills-agent.md"),
       [
-        '---',
-        'name: no-skills-agent',
-        'description: A dynamic-dir agent with no skills',
-        'model: opus',
-        'tools: [Read]',
-        '---',
-        '',
-        '# No Skills Agent',
-        '',
-      ].join('\n'),
+        "---",
+        "name: no-skills-agent",
+        "description: A dynamic-dir agent with no skills",
+        "model: opus",
+        "tools: [Read]",
+        "---",
+        "",
+        "# No Skills Agent",
+        "",
+      ].join("\n"),
     );
 
     const res = await ctx.app.inject({
-      method: 'GET',
-      url: '/agents/definitions/no-skills-agent',
+      method: "GET",
+      url: "/agents/definitions/no-skills-agent",
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();
-    assert.equal(body.agentType, 'no-skills-agent');
+    assert.equal(body.agentType, "no-skills-agent");
     // Without skills, it should be treated as static with default meta
-    assert.deepEqual(body.meta, { 'access-scope': 'read-only' });
+    assert.deepEqual(body.meta, { "access-scope": "read-only" });
   });
 });
