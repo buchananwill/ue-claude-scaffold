@@ -17,7 +17,7 @@ Add a long-running, project-scoped oversight agent that detects continuity gaps 
 - Engineer containers communicate via the server message board (`POST /messages` / the `messages` table) and commit work to their `docker/{project-id}/{agent-name}` branches in the bare repo. The LM watches both surfaces for matcher/anomaly evidence. Chat rooms (`/rooms/*`) are not an evidence surface for the LM — engineers don't post status reports there — but the LM can post into a target agent's room when it needs to intervene.
 - One watchdog container per project, lifecycle scoped to active work. The container starts when the operator launches a pump or worker for the project and shuts itself down when the project goes idle (no active or pending tasks, all pump agents idle, no inspection in flight) for a configured grace window. The watchdog therefore never runs while nothing is happening — there is no need to design around long-idle windows.
 - Engineers' actual reasoning lives in their board messages (orchestrator debriefs, `phase_start` / `phase_complete` / `status_update` messages) and in commit messages on their branches; both feed the matcher pipeline equally.
-- Triggers are one-shot per piece of evidence. The driver tracks cursors (last seen board message ID, last seen commit SHA per agent branch, last seen build ID, last seen task transition timestamp) so a given matcher phrase, anomaly, or mention fires exactly once. There is no schema-level dedup on findings — the driver's cursors prevent the flood, and the LM's behavioural judgment handles the remaining edge cases (a window genuinely justifies a re-emit only when the LM decides so, e.g. severity escalation).
+- Triggers are one-shot per piece of evidence. The driver tracks cursors (last seen board message ID, last seen commit SHA per agent branch, last seen build ID — see Phase 4's `DriverCursors` for the canonical list) so a given matcher phrase, anomaly, or mention fires exactly once. There is no schema-level dedup on findings — the driver's cursors prevent the flood, and the LM's behavioural judgment handles the remaining edge cases (a window genuinely justifies a re-emit only when the LM decides so, e.g. severity escalation).
 - A 30-minute heartbeat window with zero new evidence — no agent commits, no UE builds, no posted messages — is itself a red flag worth escalating. The LM must not return `quiet` on an empty window: an active project with no activity for half an hour is either stuck or hiding work, and that's a finding.
 - The container can fetch any branch in the bare repo (`docker/{project-id}/current-root` plus every `docker/{project-id}/{agent-name}`) into its own throwaway worktrees for diff inspection.
 - The watchdog can ask the server to email the operator out-of-band for findings the operator should see immediately — the server holds the Resend API key, the container does not. This keeps the container's outbound media surface as narrow as possible.
@@ -50,21 +50,39 @@ export const lmInspections = pgTable('lm_inspections', {
   producedChatMessageId: integer('produced_chat_message_id').references(() => chatMessages.id),
   // Set for chat-room posts: 'finding' with severity='intervene' (Phase 12).
   // produced_message_id and produced_chat_message_id are mutually exclusive on a
-  // given inspection — the audit trail records which surface the LM posted to.
-});
+  // given inspection — enforced by the CHECK constraint below.
+}, (table) => [
+  check(
+    'lm_inspections_produced_exclusive',
+    sql`${table.producedMessageId} IS NULL OR ${table.producedChatMessageId} IS NULL`,
+  ),
+]);
+```
+
+Existing [`server/src/schema/tables.ts`](../server/src/schema/tables.ts) `build_history` gains two nullable columns:
+
+```ts
+// Additive on the existing build_history table — no other column changes.
+testsRun: integer('tests_run'),       // populated only when type='test' AND
+testsFailed: integer('tests_failed'), // the project's /test endpoint parsed counts.
+// Both NULL when type='build', or when type='test' and the project has not opted
+// in to test-count parsing (the parser is per-project; see issue/follow-up plan).
 ```
 
 **Work:**
 
-- Author one Drizzle migration under [`server/drizzle/`](../server/drizzle/) that adds `lm_inspections`.
-- Add the new table to [`server/src/schema/tables.ts`](../server/src/schema/tables.ts).
-- No findings table, no dedup_key, no severity column. Severity, title, body, and any auditor-specific structured data live on `messages.payload` for rows with `type='lm_finding'`. The audit-trail link inspection → message goes through `lm_inspections.produced_message_id`.
+- Author one Drizzle migration under [`server/drizzle/`](../server/drizzle/) that adds `lm_inspections` (with the CHECK constraint above) and adds `tests_run` / `tests_failed` to `build_history`.
+- Add the new table and the new columns to [`server/src/schema/tables.ts`](../server/src/schema/tables.ts).
+- No findings table, no dedup_key, no severity column. Severity, title, body, and any auditor-specific structured data live on `messages.payload` for rows with `type='lm_finding'`. The audit-trail link inspection → message goes through `lm_inspections.produced_message_id` (board posts) or `produced_chat_message_id` (chat-room posts) — never both.
+- The `tests_run` / `tests_failed` columns are added structurally now so Phase 5's `test_failure_count_increased` anomaly has a column to read from. Population is opt-in per project: each project's `/test` endpoint can parse its own runner output and write the counts. Projects that have not yet opted in leave both columns NULL, and Phase 5's anomaly silently skips the comparison for those projects.
 
 **Verification:**
 
 - `npm run db:migrate` succeeds against a fresh PGlite.
 - `npx tsx --test server/src/schema/` passes.
 - A fresh hand-written test inserts an inspection row, then a `messages` row with `type='lm_finding'`, sets `produced_message_id` on the inspection, and reads back the join.
+- A second test attempts to set both `produced_message_id` and `produced_chat_message_id` on the same inspection row and confirms the CHECK constraint rejects it.
+- A third test inserts a `build_history` row with `type='test'`, `tests_run=10`, `tests_failed=2`, and reads it back.
 
 <!-- PHASE-BOUNDARY -->
 
@@ -91,23 +109,35 @@ interface LmWindowResponse {
   // source for commit history. The window endpoint surfaces only what lives in
   // the database: board messages, tasks, and build/test results.
   recentTasks: Array<{
-    id: string; status: string; phaseId: string | null; agentName: string | null;
-    startedAt: string | null; finishedAt: string | null; planPath: string | null;
+    id: string;
+    status: string;
+    claimedByAgentId: string | null; // FK to agents.id
+    claimedByAgentName: string | null; // resolved via JOIN on agents
+    claimedAt: string | null;
+    completedAt: string | null;
+    sourcePath: string | null;
   }>;
   recentBuilds: Array<{
-    id: number; kind: 'build' | 'test'; success: boolean; exitCode: number;
-    branch: string; startedAt: string; finishedAt: string;
+    id: number;
+    type: 'build' | 'test';
+    success: boolean; // mapped from integer 0/1 in build_history
+    agent: string;    // agent name at the time of the build
+    startedAt: string;
+    durationMs: number | null;
+    testsRun: number | null;
+    testsFailed: number | null;
   }>;
 }
 
 // POST /lm/inspections
 interface RecordInspectionRequest {
-  triggerKind: 'heartbeat' | 'matcher' | 'anomaly' | 'mention';
+  triggerKind: 'heartbeat' | 'matcher' | 'anomaly' | 'mention' | 'stale_window';
   triggerDetail?: string;
   startedAt: string;        // ISO8601
   finishedAt: string;       // ISO8601
   inputTokens: number;
   outputTokens: number;
+  producedMessageId?: number; // set when the driver posted to the board (heartbeat-quiet, budget-exhausted)
   outcome: 'quiet' | 'finding' | 'budget_exhausted' | 'error';
 }
 interface RecordInspectionResponse { id: number; lastInspectionAt: string }
@@ -145,7 +175,7 @@ interface LmStateResponse {
 
 **Verification:**
 
-- New test file [`server/src/routes/lm.test.ts`](../server/src/routes/lm.test.ts) using [`server/src/drizzle-test-helper.ts`](../server/src/drizzle-test-helper.ts) covers: window aggregation respects `since` and includes both room and board messages, inspection insert returns the new row's ID and `lastInspectionAt`, finding insert posts a message-board entry with `type='lm_finding'` and `fromAgent` matching the request's `X-Agent-Name` header, finding insert updates the inspection's `produced_message_id`, state reflects today's token sum.
+- New test file [`server/src/routes/lm.test.ts`](../server/src/routes/lm.test.ts) using [`server/src/drizzle-test-helper.ts`](../server/src/drizzle-test-helper.ts) covers: window aggregation respects `since` and surfaces board messages, tasks, and builds (chat-room content is not surfaced); `recentBuilds` rows include `testsRun` and `testsFailed` when populated and `null` when unset; `recentTasks` rows include `claimedByAgentName` resolved via JOIN on `agents`; inspection insert returns the new row's ID and `lastInspectionAt` and accepts `triggerKind='stale_window'` and an optional `producedMessageId`; finding insert posts a message-board entry with `type='lm_finding'` and `fromAgent` matching the request's `X-Agent-Name` header; finding insert updates the inspection's `produced_message_id`; state reflects today's token sum.
 - `npm test` green for the server package.
 
 <!-- PHASE-BOUNDARY -->
@@ -369,9 +399,13 @@ function findAnomalies(window: LmWindowResponse): AnomalyHit[];
 //   - phase_too_fast: a task transitioned to 'completed' in < 60s of wall-clock
 //     time since 'in_progress'.
 //   - test_failure_count_increased: most recent test build for an agent has more
-//     failures than its previous test build on the same branch. Fires the trigger
-//     unconditionally; the audit decides whether the increase is legitimate (e.g.
-//     TDD red-phase, where the agent has just committed a deliberately failing
+//     tests_failed than its previous test build on the same agent. Fires only
+//     when both prev.testsFailed and now.testsFailed are non-null (the project
+//     has opted in to test-count parsing — see Phase 1). For projects that have
+//     not opted in, this anomaly silently no-ops; matchers and the heartbeat
+//     remain in force. When it does fire, the audit decides whether the increase
+//     is legitimate (e.g. TDD red-phase, where the agent has just committed a
+//     deliberately failing
 //     test) or a regression the agent is rationalising as out-of-scope.
 //   - diff_size_outlier: most recent commit on an agent branch touched > 50
 //     files OR > 2000 added lines.
@@ -399,12 +433,12 @@ function findMentions(args: {
   - `already_broken` — `\bthis (was )?already broken\b`
 - Anomaly thresholds and matcher list are configuration, not code — operators tune them without rebuilding the image. Both files are mounted into the container via the existing read-only bind for [`container/watchdog/`](../container/watchdog/).
 
-**Worked example — `test_failure_count_increased` direction and corroboration.** The arithmetic gate is sign-sensitive; the *interpretation* of a hit is corroboration-sensitive. Concrete trace:
+**Worked example — `test_failure_count_increased` direction and corroboration.** The arithmetic gate is sign-sensitive; the *interpretation* of a hit is corroboration-sensitive. Concrete trace (project has opted in — both rows have non-null `tests_failed`):
 
-- Agent `agent-1` built at T+0 with 3 test failures.
-- Agent `agent-1` built at T+1 with 5 test failures.
-- `5 > 3`, the count increased on the same branch — **fire the trigger**. The trigger says "an audit is warranted", not "this is a regression".
-- Sign-sensitivity: the comparison is `now.failures > prev.failures` on the **same branch**, **most recent two builds**. Inverted form (`prev > now`) would fire only when the suite improves — silencing the signal entirely. Builds on different branches do not compare. A build with `success=true` has `failures=0`.
+- Agent `agent-1` built at T+0 with 3 test failures (`tests_failed=3`).
+- Agent `agent-1` built at T+1 with 5 test failures (`tests_failed=5`).
+- `5 > 3`, the count increased for the same agent — **fire the trigger**. The trigger says "an audit is warranted", not "this is a regression".
+- Sign-sensitivity: the comparison is `now.testsFailed > prev.testsFailed` on the **same agent** (`build_history.agent`), **most recent two builds with non-null `tests_failed`**. Inverted form (`prev > now`) would fire only when the suite improves — silencing the signal entirely. Builds with NULL `tests_failed` (project not opted in, or test suite never ran due to auto-build failure) are excluded from the comparison; the rule needs two non-null values to fire.
 - The audit window includes commits between T+0 and T+1 plus messages in the same window. The LM (Phase 7) decides the outcome from the bundle:
   - Commit message says "add failing tests for happy-path login (TDD red phase)" and the new failing tests are in the file the commit touched → **quiet**, this is normal red-phase work.
   - No agent commits in the window AND a container restart is visible in the activity log → ambiguous — earlier phase failures may have been left behind, or the restart itself caused them; the LM emits a `note` so the operator can confirm whether the failures belong to the agent's prior incarnation.
@@ -414,7 +448,7 @@ function findMentions(args: {
 
 - Unit tests in [`container/watchdog/src/matchers.test.ts`](../container/watchdog/src/matchers.test.ts), [`container/watchdog/src/anomalies.test.ts`](../container/watchdog/src/anomalies.test.ts), [`container/watchdog/src/mentions.test.ts`](../container/watchdog/src/mentions.test.ts).
 - The matcher test asserts each seeded phrase fires on a positive sample placed in a board message and a positive sample placed in a commit message body (returning correct `source` and `ref`), and does not fire on a hand-crafted near-miss (e.g. `scoped_to_previous_phase` does not fire on "this is scoped to the current phase").
-- The anomaly test asserts `test_failure_count_increased` fires for `(prev=3, now=5)` and does not fire for `(prev=5, now=3)` or `(prev=3, now=3)`.
+- The anomaly test asserts `test_failure_count_increased` fires for `(prev=3, now=5)`, does not fire for `(prev=5, now=3)` or `(prev=3, now=3)`, and does not fire when either side is NULL (`(prev=null, now=5)`, `(prev=3, now=null)`, `(prev=null, now=null)`).
 - A `fetchNewCommits` test in [`container/watchdog/src/fetchCommits.test.ts`](../container/watchdog/src/fetchCommits.test.ts) using a tmp bare repo + agent branch: cursor empty on first call returns the full branch history; cursor at HEAD returns empty; cursor partway returns only commits after it; cursor advances correctly across multiple branches.
 
 <!-- PHASE-BOUNDARY -->
@@ -435,11 +469,14 @@ interface AuditContext {
   // docker/{projectId}/{agentName} after the driver's most recent fetch.
   newCommits: NewCommit[];
   // Full commit list since the per-branch cursor — subject and body included.
-  recentDiffs: Array<{
-    agentName: string; sinceSha: string; nowSha: string;
+  cumulativeDiffs: Array<{
+    agentName: string; seedHeadSha: string; nowSha: string;
     filesChanged: number; insertions: number; deletions: number;
-    truncatedDiffText: string; // first 4000 chars of `git diff sinceSha..nowSha`
+    truncatedDiffText: string; // first 4000 chars of `git diff <seedHeadSha>..<nowSha>`
   }>;
+  // Diff is cumulative-since-seed (against docker/${PROJECT_ID}/current-root HEAD),
+  // not incremental-since-last-poll. The LM judges scope by reading the full set of
+  // files the agent has touched since branching from seed.
   recentBoardLmFindings: LmWindowResponse['recentBoardMessages'];
   // The subset of recentBoardMessages with type='lm_finding' — the LM's memory of
   // what it has already flagged in this run, so it can choose to escalate or stay
@@ -465,7 +502,7 @@ async function runAudit(ctx: AuditContext, opts: { agentType: string; budgetRema
 
 - Bundle assembly steps:
   1. The driver has already done `git fetch` and populated `newCommits` during the poll cycle that produced the trigger (Phase 4). Reuse that data — no extra fetch needed at audit time.
-  2. For each agent in `window.agents`, produce a diff against the project's seed branch `docker/${PROJECT_ID}/current-root`, capped at 4000 characters.
+  2. For each agent in `window.agents`, populate `cumulativeDiffs[i]` by capturing `seedHeadSha` (HEAD of `docker/${PROJECT_ID}/current-root` after the driver's fetch), `nowSha` (HEAD of the agent's branch), and the truncated diff text from `git diff <seedHeadSha>..<nowSha>` capped at 4000 characters.
   3. Include the **full** `newCommits` list with their full commit messages (subject + body), and the **full** `recentBoardMessages` list capped at 50 — both surfaces are first-class evidence for the LM, not statistically sampled. (Engineer-side volume on these surfaces is bounded by phase cadence; sampling would discard the tail of the conversation that is most likely to contain the rationalisation language we care about.)
   4. Build the prompt using the watchdog agent definition (Phase 7) plus the JSON-serialised bundle.
 - Invocation: spawn `claude -p` as a child process with stdin = prompt and `--output-format json` so token counts are recoverable. Honour `CLAUDE_CREDENTIALS_PATH` from the existing mount. The agent invoked is the per-project wiring named by `WATCHDOG_AGENT_TYPE` (Phase 7) — e.g. `lm-watchdog-ue` or `lm-watchdog-scaffold` — compiled from [`dynamic-agents/`](../dynamic-agents/) into the container's compiled agents directory by [`scripts/lib/compile-agents.sh`](../scripts/lib/compile-agents.sh) at container start.
@@ -587,16 +624,27 @@ operatorEmail: text('operator_email'),
 // Null disables operator email for the project even when notifyOperator=true.
 
 // New table.
+// Each row references EXACTLY ONE outbound message via the two FK columns
+// (board OR chat, never both, never neither) — same exclusivity pattern as
+// lm_inspections.produced_message_id / produced_chat_message_id.
+// onDelete is the Drizzle default ('restrict') on both FKs — deleting the
+// referenced message must NOT cascade-delete the email audit row.
 export const lmEmailLog = pgTable('lm_email_log', {
   id: serial('id').primaryKey(),
   projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
-  messageId: integer('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
+  boardMessageId: integer('board_message_id').references(() => messages.id),
+  chatMessageId: integer('chat_message_id').references(() => chatMessages.id),
   sentAt: timestamp('sent_at').notNull().defaultNow(),
   resendId: text('resend_id'),         // ID returned by Resend; null on failure or skip
   ok: boolean('ok').notNull(),         // true = email accepted by Resend; false = error or skipped
   reason: text('reason').notNull(),    // 'sent' | 'cooldown' | 'no_address' | 'no_api_key' | 'error'
   errorBody: text('error_body'),
-});
+}, (table) => [
+  check(
+    'lm_email_log_target_exclusive',
+    sql`(${table.boardMessageId} IS NULL) <> (${table.chatMessageId} IS NULL)`,
+  ),
+]);
 ```
 
 Server-host environment (never reaches the container):
@@ -634,14 +682,14 @@ async function sendOperatorEmail(args: {
   2. `projects.operator_email` null → `reason='no_address'`.
   3. Most recent successful `lm_email_log` row for `projectId` (any message) is more recent than `now − RESEND_COOLDOWN_MINUTES` → `reason='cooldown'`. Cooldown is project-level, not finding-level: the goal is to keep the operator's inbox tolerable when a cascading failure produces a burst of distinct findings; the operator only needs one nudge per burst.
   4. Count of `lm_email_log` rows for `projectId` since today's UTC midnight where `ok=true` and `reason='sent'` is at least `RESEND_DAILY_CAP` → `reason='cooldown'` (cap-driven cooldown, same outcome shape).
-  5. Otherwise call `sendOperatorEmail`. On HTTP success → `reason='sent'`, `ok=true`. On HTTP error → `reason='error'`, `ok=false`, `errorBody` set. Either way insert one `lm_email_log` row referencing the just-posted `messages.id`.
+  5. Otherwise call `sendOperatorEmail`. On HTTP success → `reason='sent'`, `ok=true`. On HTTP error → `reason='error'`, `ok=false`, `errorBody` set. Either way insert one `lm_email_log` row with `board_message_id` set to the just-posted `messages.id` (note/pause findings) — see Phase 10 for the chat-message variant.
 - Subject line: `[LM ${projectId}] ${title}`. Body is plain text containing: project ID, finding title, finding body, severity, inspection ID, message-board channel, message-board entry ID, and a link to the message-board entry in the dashboard (if a dashboard URL is configured in project config — otherwise omit the link).
 - The Resend wrapper performs no retries. A failed send lands in `lm_email_log` with `ok=false`; the operator inspects the log to triage. The route returns `emailed=false, emailReason='error'` to the watchdog so the inspection record correctly captures the attempt.
 - Every email decision (skip or send, success or failure) lands in `lm_email_log` so the operator has a complete audit trail of what the LM tried to send and why.
 
 **Worked example — cooldown direction.** The cooldown gate is sign-sensitive: cooldown is "time *since* last successful send", not "time *until* next allowed send". Concrete trace with `RESEND_COOLDOWN_MINUTES=15`:
 
-- T+0:00: finding F1, `notifyOperator=true`. No prior `lm_email_log` for the project. `now − lastSentAt` is undefined → treated as ≥ 15 min. Send. New row `(messageId=M1, sentAt=T+0:00, ok=true, reason='sent')`.
+- T+0:00: finding F1, `notifyOperator=true`. No prior `lm_email_log` for the project. `now − lastSentAt` is undefined → treated as ≥ 15 min. Send. New row `(boardMessageId=M1, chatMessageId=null, sentAt=T+0:00, ok=true, reason='sent')`.
 - T+0:05: distinct finding F2 (different agent, different evidence), `notifyOperator=true`. `now − lastSentAt = 5min < 15min ⇒ skip`. New row `(messageId=M2, ok=false, reason='cooldown')`. The operator already got the F1 email; the F2 message is on the board for them to read when they look.
 - T+0:16: distinct finding F3, `notifyOperator=true`. `now − lastSentAt(F1) = 16min ≥ 15min ⇒ send`. New row `(messageId=M3, ok=true, reason='sent')`.
 
@@ -692,7 +740,7 @@ interface PostInterventionResponse {
   2. Resolve the agent's chat room: query `room_members` for rooms the agent is currently in. If exactly one room, use it. If multiple, prefer the room whose ID matches `engineers-${projectId}` if present, otherwise the most-recently-created room. If zero, return 409 `no_chat_room` — the driver records `outcome='error'` for the inspection and the operator gets notified via the standard email path so they can fix the launch wiring.
   3. Insert a row in `chat_messages` with `roomId = <resolved>`, `authorType = 'system'`, `authorAgentId = null`, `content = body`. (The `system` author type bypasses membership — see the precedent at [`server/src/routes/rooms.ts`](../server/src/routes/rooms.ts) line 304 for `operator`-typed posts; `system` follows the same pattern.)
   4. Update the corresponding `lm_inspections` row's `produced_chat_message_id` to the new `chat_messages.id`.
-  5. If `notifyOperator: true`, run the same Phase 9 email gating, writing an `lm_email_log` row referencing the chat message ID. The `lm_email_log.messageId` column is reused for both `messages.id` (findings) and `chat_messages.id` (interventions); the column type is `integer` with no FK constraint, and the audit trail is unambiguous via the FK chain back through `lm_inspections.produced_message_id` vs `produced_chat_message_id`. (Rename to `outbound_id` if the polymorphism is uncomfortable in review; mention it as a possible refinement.)
+  5. If `notifyOperator: true`, run the same Phase 9 email gating, writing an `lm_email_log` row with `chat_message_id` set to the new chat message and `board_message_id` left NULL. The Phase 9 schema's `(boardMessageId XOR chatMessageId)` CHECK constraint enforces that exactly one column is populated per row; this is the chat-message branch.
   6. Return the chat message ID, the resolved room ID, and the email status.
 - Register the new endpoint in [`server/src/routes/index.ts`](../server/src/routes/index.ts).
 - Update [`server/src/schema/tables.ts`](../server/src/schema/tables.ts) `chat_messages.authorType` documentation to confirm `'system'` is a recognised value. The migration that added `produced_chat_message_id` lives in Phase 1; no schema change is required in this phase.
@@ -786,7 +834,7 @@ Driver dispatch table:
 
 **Verification:**
 
-- Update [`container/watchdog/src/audit.test.ts`](../container/watchdog/src/audit.test.ts) with stub envelopes for each severity; assert the driver calls `POST /lm/findings` for `note`/`pause`, `POST /lm/findings` + `POST /coalesce/pause` for `pause`, and `POST /lm/interventions` for `intervene`. Assert `targetAgent: null` on `intervene` is rejected as malformed.
+- Update [`container/watchdog/src/audit.test.ts`](../container/watchdog/src/audit.test.ts) with stub envelopes for each severity; assert the driver calls `POST /lm/findings` for `note`, `POST /lm/findings` + `POST /coalesce/pause` for `pause`, and `POST /lm/interventions` for `intervene`. Assert `targetAgent: null` on `intervene` is rejected as malformed.
 - A hand-run audit driven by Phase 13's smoke test, with conditions designed to elicit each severity, returns the expected envelope shape and the driver dispatches correctly.
 
 <!-- PHASE-BOUNDARY -->
