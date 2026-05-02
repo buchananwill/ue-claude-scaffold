@@ -2,7 +2,7 @@
 name: design-data
 description: Data structures specialist. Focuses on the right balance of normalized versus denormalized data, storage layout, access patterns, and schema coherence.
 model: sonnet
-tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch]
+tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch, mcp__chat__check_messages, mcp__chat__reply, mcp__chat__check_presence]
 disallowedTools: [Edit]
 skills:
   - container-git-readonly

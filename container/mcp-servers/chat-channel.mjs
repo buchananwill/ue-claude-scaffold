@@ -15,6 +15,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 const SERVER_URL = process.env.SERVER_URL ?? 'http://host.docker.internal:9100';
 const AGENT_NAME = process.env.AGENT_NAME ?? 'unknown';
 const SESSION_TOKEN = process.env.SESSION_TOKEN ?? '';
+const PROJECT_ID = process.env.PROJECT_ID ?? 'default';
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL) || 3000;
 const DISCOVERY_EVERY_N = 10;
 
@@ -29,6 +30,7 @@ log(`POLL_INTERVAL_MS: ${POLL_INTERVAL_MS}`);
 const authHeaders = {
   'Content-Type': 'application/json',
   'X-Agent-Name': AGENT_NAME,
+  'X-Project-Id': PROJECT_ID,
   ...(SESSION_TOKEN ? { Authorization: `Bearer ${SESSION_TOKEN}` } : {}),
 };
 

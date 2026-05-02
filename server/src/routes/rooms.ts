@@ -1,13 +1,16 @@
-import type { FastifyPluginAsync, FastifyReply } from 'fastify';
-import { getDb, type DrizzleDb } from '../drizzle-instance.js';
-import * as roomsQ from '../queries/rooms.js';
-import type { RoomRow } from '../queries/rooms.js';
-import * as chatQ from '../queries/chat.js';
-import { resolveAgent } from './route-helpers.js';
-import { sql } from 'drizzle-orm';
-import { rooms, chatMessages, agents } from '../schema/tables.js';
+import type { FastifyPluginAsync, FastifyReply } from "fastify";
+import { getDb, type DrizzleDb } from "../drizzle-instance.js";
+import * as roomsQ from "../queries/rooms.js";
+import type { RoomRow } from "../queries/rooms.js";
+import * as chatQ from "../queries/chat.js";
+import * as agentsQ from "../queries/agents.js";
+import { resolveAgent } from "./route-helpers.js";
+import { sql } from "drizzle-orm";
+import { rooms, chatMessages, agents } from "../schema/tables.js";
 
 const ROOM_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /**
  * Parse a cursor query parameter for message pagination.
@@ -45,22 +48,29 @@ async function requireRoom(
 const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   // POST /rooms — create a room
   fastify.post<{
-    Body: { id: string; name: string; type: 'group' | 'direct'; members?: string[] };
-  }>('/rooms', async (request, reply) => {
-    const agentName = request.headers['x-agent-name'] as string | undefined;
-    const caller = agentName ?? 'operator';
+    Body: {
+      id: string;
+      name: string;
+      type: "group" | "direct";
+      members?: string[];
+    };
+  }>("/rooms", async (request, reply) => {
+    const agentName = request.headers["x-agent-name"] as string | undefined;
+    const caller = agentName ?? "operator";
     const { id, name, type, members } = request.body;
     const db = getDb();
 
     // Validate id and name
     if (!id || !ROOM_ID_RE.test(id)) {
-      return reply.badRequest('id must match /^[a-zA-Z0-9_-]{1,64}$/');
+      return reply.badRequest("id must match /^[a-zA-Z0-9_-]{1,64}$/");
     }
     if (!name || name.trim().length === 0 || name.length > 256) {
-      return reply.badRequest('name is required and must be at most 256 characters');
+      return reply.badRequest(
+        "name is required and must be at most 256 characters",
+      );
     }
 
-    if (type !== 'group' && type !== 'direct') {
+    if (type !== "group" && type !== "direct") {
       return reply.badRequest('type must be "group" or "direct"');
     }
 
@@ -69,7 +79,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     if (agentName) {
       const callerAgent = await resolveAgent(db, request.projectId, agentName);
       if (!callerAgent) {
-        return reply.code(403).send({ error: 'unknown_agent' });
+        return reply.code(403).send({ error: "unknown_agent" });
       }
       callerAgentId = callerAgent.id;
     }
@@ -87,10 +97,18 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     // Now create the room and add members
-    await roomsQ.createRoom(db, { id, name, type, createdBy: caller, projectId: request.projectId });
+    await roomsQ.createRoom(db, {
+      id,
+      name,
+      type,
+      createdBy: caller,
+      projectId: request.projectId,
+    });
 
-    const allMemberIds = callerAgentId ? [callerAgentId, ...memberIds] : memberIds;
-    await Promise.all(allMemberIds.map(mid => roomsQ.addMember(db, id, mid)));
+    const allMemberIds = callerAgentId
+      ? [callerAgentId, ...memberIds]
+      : memberIds;
+    await Promise.all(allMemberIds.map((mid) => roomsQ.addMember(db, id, mid)));
 
     return { ok: true, id };
   });
@@ -98,30 +116,40 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   // GET /rooms — list rooms, optionally filtered by member
   fastify.get<{
     Querystring: { member?: string };
-  }>('/rooms', async (request) => {
+  }>("/rooms", async (request) => {
     const db = getDb();
-    const rows = await roomsQ.listRooms(db, { member: request.query.member, projectId: request.projectId });
+    const rows = await roomsQ.listRooms(db, {
+      member: request.query.member,
+      projectId: request.projectId,
+    });
 
     // Compute member counts
-    return Promise.all(rows.map(async (r) => {
-      const members = await roomsQ.getMembers(db, r.id);
-      return {
-        id: r.id,
-        name: r.name,
-        type: r.type,
-        createdBy: r.createdBy,
-        createdAt: r.createdAt,
-        memberCount: members.length,
-      };
-    }));
+    return Promise.all(
+      rows.map(async (r) => {
+        const members = await roomsQ.getMembers(db, r.id);
+        return {
+          id: r.id,
+          name: r.name,
+          type: r.type,
+          createdBy: r.createdBy,
+          createdAt: r.createdAt,
+          memberCount: members.length,
+        };
+      }),
+    );
   });
 
   // GET /rooms/:id — get room details with members
   fastify.get<{
     Params: { id: string };
-  }>('/rooms/:id', async (request, reply) => {
+  }>("/rooms/:id", async (request, reply) => {
     const db = getDb();
-    const room = await requireRoom(db, request.params.id, request.projectId, reply);
+    const room = await requireRoom(
+      db,
+      request.params.id,
+      request.projectId,
+      reply,
+    );
     if (!room) return;
 
     const memberRows = await roomsQ.getMembers(db, room.id);
@@ -132,14 +160,17 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       type: room.type,
       createdBy: room.createdBy,
       createdAt: room.createdAt,
-      members: memberRows.map(m => ({ member: m.name, joinedAt: m.joinedAt })),
+      members: memberRows.map((m) => ({
+        member: m.name,
+        joinedAt: m.joinedAt,
+      })),
     };
   });
 
   // GET /rooms/:id/presence — who is in the room and are they online?
   fastify.get<{
     Params: { id: string };
-  }>('/rooms/:id/presence', async (request, reply) => {
+  }>("/rooms/:id/presence", async (request, reply) => {
     const { id } = request.params;
     const db = getDb();
 
@@ -156,27 +187,44 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   // DELETE /rooms/:id — delete a room
   fastify.delete<{
     Params: { id: string };
-  }>('/rooms/:id', async (request, reply) => {
+  }>("/rooms/:id", async (request, reply) => {
     const db = getDb();
-    const room = await requireRoom(db, request.params.id, request.projectId, reply);
+    const room = await requireRoom(
+      db,
+      request.params.id,
+      request.projectId,
+      reply,
+    );
     if (!room) return;
     await roomsQ.deleteRoom(db, request.params.id, request.projectId);
     return { ok: true };
   });
 
-  // POST /rooms/:id/members — add members to a room
+  // POST /rooms/:id/members — add members to a room (by agent UUID)
   fastify.post<{
     Params: { id: string };
-    Body: { members: string[] };
-  }>('/rooms/:id/members', async (request, reply) => {
+    Body: { agentIds: string[] };
+  }>("/rooms/:id/members", async (request, reply) => {
     const db = getDb();
-    const room = await requireRoom(db, request.params.id, request.projectId, reply);
+    const room = await requireRoom(
+      db,
+      request.params.id,
+      request.projectId,
+      reply,
+    );
     if (!room) return;
 
-    for (const name of request.body.members) {
-      const agent = await resolveAgent(db, request.projectId, name);
+    for (const agentId of request.body.agentIds) {
+      if (!UUID_RE.test(agentId)) {
+        return reply.badRequest(`Invalid agentId: ${agentId}`);
+      }
+      const agent = await agentsQ.getByIdInProject(
+        db,
+        request.projectId,
+        agentId,
+      );
       if (!agent) {
-        return reply.notFound('unknown agent');
+        return reply.notFound("unknown agent");
       }
       await roomsQ.addMember(db, request.params.id, agent.id);
     }
@@ -187,13 +235,22 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   // DELETE /rooms/:id/members/:member — remove a member from a room
   fastify.delete<{
     Params: { id: string; member: string };
-  }>('/rooms/:id/members/:member', async (request, reply) => {
+  }>("/rooms/:id/members/:member", async (request, reply) => {
     const db = getDb();
-    const room = await requireRoom(db, request.params.id, request.projectId, reply);
+    const room = await requireRoom(
+      db,
+      request.params.id,
+      request.projectId,
+      reply,
+    );
     if (!room) return;
-    const agent = await resolveAgent(db, request.projectId, request.params.member);
+    const agent = await resolveAgent(
+      db,
+      request.projectId,
+      request.params.member,
+    );
     if (!agent) {
-      return reply.notFound('unknown agent');
+      return reply.notFound("unknown agent");
     }
     await roomsQ.removeMember(db, request.params.id, agent.id);
     return { ok: true };
@@ -203,17 +260,21 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.post<{
     Params: { id: string };
     Body: { content: string; replyTo?: number };
-  }>('/rooms/:id/messages', async (request, reply) => {
-    const agentName = request.headers['x-agent-name'] as string | undefined;
+  }>("/rooms/:id/messages", async (request, reply) => {
+    const agentName = request.headers["x-agent-name"] as string | undefined;
     const db = getDb();
     const { id } = request.params;
     const { content, replyTo } = request.body;
 
-    if (!content || typeof content !== 'string' || content.trim().length === 0) {
-      return reply.badRequest('content is required');
+    if (
+      !content ||
+      typeof content !== "string" ||
+      content.trim().length === 0
+    ) {
+      return reply.badRequest("content is required");
     }
     if (content.length > 65536) {
-      return reply.badRequest('content must be at most 65536 characters');
+      return reply.badRequest("content must be at most 65536 characters");
     }
 
     const room = await requireRoom(db, id, request.projectId, reply);
@@ -223,20 +284,32 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       // Agent flow: resolve agent, check membership
       const agent = await resolveAgent(db, request.projectId, agentName);
       if (!agent) {
-        return reply.code(403).send({ error: 'unknown_agent' });
+        return reply.code(403).send({ error: "unknown_agent" });
       }
       const isMember = await chatQ.isAgentMember(db, id, agent.id);
       if (!isMember) {
-        return reply.code(403).send({ error: 'not_a_member' });
+        return reply.code(403).send({ error: "not_a_member" });
       }
-      fastify.log.info({ sender: agentName, roomId: id }, 'room message POST');
-      const msg = await chatQ.sendMessage(db, { roomId: id, authorType: 'agent', authorAgentId: agent.id, content, replyTo: replyTo ?? null });
+      fastify.log.info({ sender: agentName, roomId: id }, "room message POST");
+      const msg = await chatQ.sendMessage(db, {
+        roomId: id,
+        authorType: "agent",
+        authorAgentId: agent.id,
+        content,
+        replyTo: replyTo ?? null,
+      });
       return { ok: true, id: msg.id };
     }
 
     // Operator flow: skip membership check
-    fastify.log.info({ sender: 'operator', roomId: id }, 'room message POST');
-    const msg = await chatQ.sendMessage(db, { roomId: id, authorType: 'operator', authorAgentId: null, content, replyTo: replyTo ?? null });
+    fastify.log.info({ sender: "operator", roomId: id }, "room message POST");
+    const msg = await chatQ.sendMessage(db, {
+      roomId: id,
+      authorType: "operator",
+      authorAgentId: null,
+      content,
+      replyTo: replyTo ?? null,
+    });
     return { ok: true, id: msg.id };
   });
 
@@ -244,7 +317,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
     Params: { id: string };
     Querystring: { since?: string; before?: string; limit?: string };
-  }>('/rooms/:id/messages', async (request, reply) => {
+  }>("/rooms/:id/messages", async (request, reply) => {
     const { id } = request.params;
     const { since, before, limit } = request.query;
     const pageSize = Math.min(Math.max(Number(limit) || 100, 1), 500);
@@ -253,10 +326,10 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     const sinceN = parseMessageCursor(since);
     const beforeN = parseMessageCursor(before);
     if (Number.isNaN(sinceN)) {
-      return reply.badRequest('since must be a non-negative safe integer');
+      return reply.badRequest("since must be a non-negative safe integer");
     }
     if (Number.isNaN(beforeN)) {
-      return reply.badRequest('before must be a non-negative safe integer');
+      return reply.badRequest("before must be a non-negative safe integer");
     }
 
     const db = getDb();
@@ -264,15 +337,15 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
     const room = await requireRoom(db, id, request.projectId, reply);
     if (!room) return;
 
-    const callerName = request.headers['x-agent-name'] as string | undefined;
+    const callerName = request.headers["x-agent-name"] as string | undefined;
     if (callerName) {
       const agent = await resolveAgent(db, request.projectId, callerName);
       if (!agent) {
-        return reply.code(403).send({ error: 'unknown_agent' });
+        return reply.code(403).send({ error: "unknown_agent" });
       }
       const isMember = await chatQ.isAgentMember(db, id, agent.id);
       if (!isMember) {
-        return reply.code(403).send({ error: 'not_a_member' });
+        return reply.code(403).send({ error: "not_a_member" });
       }
     }
 
@@ -295,13 +368,13 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
   // GET /transcript — readable chat transcript across all rooms (or one room)
   fastify.get<{
     Querystring: { room?: string };
-  }>('/transcript', async (request, reply) => {
+  }>("/transcript", async (request, reply) => {
     const db = getDb();
 
     // Use raw SQL for the transcript query since it joins rooms + chat_messages + agents with formatting
     const roomFilter = request.query.room;
     if (roomFilter && !ROOM_ID_RE.test(roomFilter)) {
-      return reply.badRequest('Invalid room filter');
+      return reply.badRequest("Invalid room filter");
     }
     const whereClause = roomFilter
       ? sql`WHERE ${chatMessages.roomId} = ${roomFilter} AND ${rooms.projectId} = ${request.projectId}`
@@ -328,11 +401,17 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       ${orderClause}
     `);
 
-    type Row = { room_name: string; roomId: string; sender: string; content: string; time: string };
+    type Row = {
+      room_name: string;
+      roomId: string;
+      sender: string;
+      content: string;
+      time: string;
+    };
     const typedRows = rows.rows as Row[];
 
-    let text = '';
-    let currentRoom = '';
+    let text = "";
+    let currentRoom = "";
     for (const r of typedRows) {
       if (r.roomId !== currentRoom) {
         text += `\n══════ ${r.room_name} ══════\n\n`;
@@ -341,7 +420,7 @@ const roomsPlugin: FastifyPluginAsync = async (fastify) => {
       text += `[${r.time}] ${r.sender}:\n${r.content}\n\n`;
     }
 
-    reply.type('text/plain; charset=utf-8').send(text);
+    reply.type("text/plain; charset=utf-8").send(text);
   });
 };
 

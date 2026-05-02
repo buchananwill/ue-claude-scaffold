@@ -1,0 +1,43 @@
+{
+  "id": "vehicle-configurator-plan-review-2",
+  "name": "Vehicle Configurator Plan Review 2",
+  "hooks": { "buildIntercept": false, "cppLint": false },
+  "members": [
+    {
+      "agentName": "leader-1",
+      "role": "discussion-leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "ui-1",
+      "role": "domain-ui",
+      "agentType": "design-ui",
+      "isLeader": false
+    },
+    {
+      "agentName": "data-1",
+      "role": "domain-data",
+      "agentType": "design-data",
+      "isLeader": false
+    },
+    {
+      "agentName": "architect-1",
+      "role": "domain-architect",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "changeling-1",
+      "role": "changeling",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "changeling-2",
+      "role": "changeling",
+      "agentType": "changeling",
+      "isLeader": false
+    }
+  ]
+}

@@ -10,6 +10,7 @@ _setup_mcp_config() {
             --arg server_url "$SERVER_URL" \
             --arg agent_name "$AGENT_NAME" \
             --arg session_token "$SESSION_TOKEN" \
+            --arg project_id "$PROJECT_ID" \
             '{
                 "mcpServers": {
                     "chat": {
@@ -18,7 +19,8 @@ _setup_mcp_config() {
                         "env": {
                             "SERVER_URL": $server_url,
                             "AGENT_NAME": $agent_name,
-                            "SESSION_TOKEN": $session_token
+                            "SESSION_TOKEN": $session_token,
+                            "PROJECT_ID": $project_id
                         }
                     }
                 }

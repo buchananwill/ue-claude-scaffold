@@ -1,0 +1,42 @@
+{
+  "id": "resort-vehicle-configurator-4",
+  "name": "Resort Vehicle Configurator 4",
+  "members": [
+    {
+      "agentName": "rvc-leader",
+      "role": "Discussion Leader",
+      "agentType": "design-leader",
+      "isLeader": true
+    },
+    {
+      "agentName": "rvc-architect",
+      "role": "Systems Architect",
+      "agentType": "design-architect",
+      "isLeader": false
+    },
+    {
+      "agentName": "rvc-domain",
+      "role": "Domain Expert",
+      "agentType": "design-domain",
+      "isLeader": false
+    },
+    {
+      "agentName": "rvc-critic",
+      "role": "Adaptive Critic",
+      "agentType": "changeling",
+      "isLeader": false
+    },
+    {
+      "agentName": "rvc-data",
+      "role": "Data Structures",
+      "agentType": "design-data",
+      "isLeader": false
+    },
+    {
+      "agentName": "rvc-ui",
+      "role": "UI Specialist Slate",
+      "agentType": "design-ui",
+      "isLeader": false
+    }
+  ]
+}

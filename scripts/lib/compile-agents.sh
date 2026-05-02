@@ -19,11 +19,6 @@ _compile_agents() {
   local _ca_team_mode="${3:-}"
 
   COMPILED_AGENTS_DIR="$script_dir/.compiled-agents"
-  [[ -n "$COMPILED_AGENTS_DIR" && "$COMPILED_AGENTS_DIR" == "$script_dir/"* ]] || {
-    echo "Error: unsafe COMPILED_AGENTS_DIR: $COMPILED_AGENTS_DIR" >&2
-    exit 1
-  }
-  rm -rf "$COMPILED_AGENTS_DIR"
   mkdir -p "$COMPILED_AGENTS_DIR"
 
   if [[ ! -f "$script_dir/server/dist/bin/compile-agent.js" ]]; then

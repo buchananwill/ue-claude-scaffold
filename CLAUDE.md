@@ -74,13 +74,14 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `POST /agents/{name}/exit-classify` — classify agent exit codes and decide retry/stop/report
    - `POST /hooks/resolve` — stateless hook cascade resolution (intercept, guard, push, lint) from request body
    - `GET /agents/{name}/settings.json`, `GET /agents/{name}/mcp.json` — render container settings and MCP config for an agent
+   - `GET /agents/definitions/:type` — compile and return an agent definition (markdown + meta sidecar) plus its referenced sub-agents in one round-trip; consumed by containers that need to fetch a non-default agent on the fly
    - `POST /tasks/ingest` — ingest task markdown files into the task queue
    - `POST /teams/{id}/launch` — orchestrate team container launches
    - `POST /messages`, `GET /messages/{channel}`, `GET /messages/{channel}/count`, `POST /messages/{id}/claim`, `POST /messages/{id}/resolve`, `DELETE /messages/{param}` — message board for agent progress
    - `/rooms/*` — threaded message rooms (alternative to the flat message board); includes `GET /transcript` for plain-text human-readable transcripts
    - `/teams/*` — design team registration and lifecycle
    - UBT lock (`GET /ubt/status`, `POST /ubt/acquire`, `POST /ubt/release`) — singleton mutex with priority queue and stale-lock sweeping (60s interval)
-   - `/tasks/*` — task queue split across `tasks.ts`, `tasks-claim.ts`, `tasks-lifecycle.ts`, `tasks-files.ts`, `tasks-replan.ts` (claim/complete/fail/release/replan lifecycle for worker mode)
+   - `/tasks/*` — task queue split across `tasks.ts`, `tasks-claim.ts`, `tasks-lifecycle.ts`, `tasks-replan.ts`, `tasks-ingest.ts` (claim/complete/fail/release/replan lifecycle for worker mode; helpers and shared types live in `tasks-files.ts` and `tasks-types.ts`). Tasks carry an optional `agentTypeOverride` column so a single pump container can run different agent definitions per task — validated by a CHECK constraint on `tasks.agent_type_override`, by `validateAgentTypeOverride` on every write route, by an `agentTypeOverride` filter on `GET /tasks` (with the `__default__` sentinel for "no override"), and by an allowlist regex in `container/lib/pump-loop.sh` before the container exports the agent type for the next iteration
    - `POST /sync/plans` — merge committed state from the exterior repo into the bare repo's `docker/{project-id}/current-root` branch; optionally propagates to agent branches via `targetAgents` body param
    - `GET /search` — full-text search across tasks, messages, agents
    - `GET /files` — file ownership registry (tracks which agent owns which files)

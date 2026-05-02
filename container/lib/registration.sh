@@ -184,6 +184,29 @@ _register_agent() {
     echo "Registered with coordination server (token: ${SESSION_TOKEN:0:8}..., id: ${AGENT_ID:0:8}...)"
 }
 
+_join_chat_room() {
+    if [ -z "${CHAT_ROOM:-}" ]; then
+        return 0
+    fi
+    if [ -z "${AGENT_ID:-}" ]; then
+        echo "ERROR: AGENT_ID not set — cannot join chat room" >&2
+        exit 1
+    fi
+    local payload response status
+    payload=$(jq -n --arg id "$AGENT_ID" '{agentIds: [$id]}')
+    response=$(_curl_server -s -w "\n%{http_code}" -X POST "${SERVER_URL}/rooms/${CHAT_ROOM}/members" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        --max-time 10 2>/dev/null) || response=$'\n000'
+    status="${response##*$'\n'}"
+    if [ "$status" != "200" ] && [ "$status" != "201" ]; then
+        echo "ERROR: Failed to join chat room '${CHAT_ROOM}' (HTTP ${status})" >&2
+        echo "Response: ${response%$'\n'*}" >&2
+        exit 1
+    fi
+    echo "Joined chat room '${CHAT_ROOM}' as agent ${AGENT_ID:0:8}..."
+}
+
 _smoke_test_messages() {
     local SMOKE_RESPONSE SMOKE_STATUS smoke_payload
     smoke_payload=$(jq -n '{channel: "general", type: "status_update", payload: {message: "Container online. Preparing to launch Claude agent."}}')

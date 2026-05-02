@@ -39,13 +39,13 @@ _snapshot_agents() {
         cp /staged-agents/* "$AGENTS_DIR/"
         echo "── Agent definitions snapshotted ──"
         ls -1 "$AGENTS_DIR"/*.md 2>/dev/null | while read -r f; do echo "  $(basename "$f")"; done
-        # Verify the requested agent type is present
+        # Verify the requested agent type is present; fetch from server if not.
         if [ ! -f "$AGENTS_DIR/${AGENT_TYPE}.md" ]; then
-            echo "ERROR: Agent type '${AGENT_TYPE}' not found in snapshotted agents." >&2
-            echo "Available agents:" >&2
-            ls -1 "$AGENTS_DIR"/*.md 2>/dev/null | xargs -I{} basename {} .md >&2
-            echo "Check AGENT_TYPE in .env and ensure the agent was compiled." >&2
-            exit 1
+            echo "Agent type '${AGENT_TYPE}' not in snapshot — fetching from server..."
+            if ! _ensure_agent_type "$AGENT_TYPE"; then
+                echo "ERROR: Agent type '${AGENT_TYPE}' not in snapshot and server fetch failed." >&2
+                exit 1
+            fi
         fi
         echo "Verified: ${AGENT_TYPE}.md is present."
     else

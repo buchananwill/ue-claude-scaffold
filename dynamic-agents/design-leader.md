@@ -2,7 +2,7 @@
 name: design-leader
 description: Advocate for the user's brief. Mediate the design team's discussion. Own the final deliverable.
 model: opus
-tools: [Read, Glob, Grep, Bash, WebFetch, WebSearch, Edit, Write]
+tools: [Read, Glob, Grep, Bash, WebFetch, WebSearch, Edit, Write, mcp__chat__check_messages, mcp__chat__reply, mcp__chat__check_presence]
 skills:
   - container-git-write
   - chat-etiquette

@@ -36,6 +36,7 @@ _symlink_plugins
 
 # ── Register with coordination server ──────────────────────────────────────
 _register_agent
+_join_chat_room
 _smoke_test_messages
 trap _shutdown EXIT
 

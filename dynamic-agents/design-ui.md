@@ -2,7 +2,7 @@
 name: design-ui
 description: UI systems specialist. Masters the project's Slate UI module. Champions semantic tokens, composable component libraries, and separation of styling/theming from headless event logic.
 model: sonnet
-tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch]
+tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch, mcp__chat__check_messages, mcp__chat__reply, mcp__chat__check_presence]
 disallowedTools: [Edit]
 skills:
   - container-git-readonly
