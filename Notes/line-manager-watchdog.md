@@ -5,29 +5,27 @@ Add a long-running, project-scoped oversight agent that detects continuity gaps 
 
 ## Context
 
-- Pump containers run `claude -p` per task with fresh context. Quality per task is high, but cross-task drift slips through (TFs written off across phase boundaries, slop language passing review).
+- Pump containers run `claude -p` per task with fresh context. Quality per task is high, but cross-task drift slips through — most importantly, test failures that one phase caused get rationalised away by a later phase as "out of scope" or "pre-existing", a pattern that gets worse when anomalous container shutdown and restart blurs the phase boundary. The watchdog also has to tolerate legitimate test-failure increases (TDD red-phase, deliberately failing tests committed before the implementation lands), so a raw failure-count delta is a *trigger for an audit*, not a finding on its own — corroborating evidence (commit messages, files touched, rationalisation language) is what promotes the trigger to a finding.
 - Headless `claude -p` is request/response. Keeping a session "alive" between events would either burn tokens on heartbeats or waste the 5-minute prompt cache window. The watchdog is therefore not a long-running Claude session — it is a long-running driver process that summons short Opus sessions on signal.
 - Haiku is **not** in the runtime path. Haiku is an upstream analysis tool the operator runs against the historical message corpus to surface candidate weasel phrases; the curated phrases land in a static matcher config. Runtime triage is regex/string matchers + numeric anomaly checks + (sometimes) Opus.
 - Heartbeat fires Opus unconditionally — the point of the watchdog is to catch continuity gaps the matchers cannot articulate. The heartbeat clock measures "time since last Opus inspection of any kind", so a tripwire-triggered audit at minute 25 resets the clock and the next heartbeat fires 30 minutes after that, not at minute 30.
-- The watchdog never pushes code. Its terminal action is always to post a finding to a chat room with a new `auditor` author type. Tier-1 ("note") is the default; Tier-2 ("pause") calls the existing `/coalesce/pause` endpoint when a finding is severe enough.
+- The watchdog never pushes code. Its terminal action is always to post a finding to a server message-board channel via `POST /messages`, mirroring how orchestrators post their debriefs. Tier-1 ("note") is the default; Tier-2 ("pause") calls the existing `/coalesce/pause` endpoint when a finding is severe enough.
+- Chat rooms (`/rooms/*`) are reserved for cases where the watchdog needs to actively contact a specific running agent to intervene in their reasoning. That "tag-in" capability is out of scope for this plan and is a future extension built on top of the existing rooms endpoints; v1 reads room messages for matcher input but never posts into them.
 - One watchdog container per project. The container can fetch any branch in the bare repo (`docker/{project-id}/current-root` plus every `docker/{project-id}/{agent-name}`) into its own throwaway worktrees for diff inspection.
 - The watchdog can ask the server to email the operator out-of-band for findings the operator should see immediately — the server holds the Resend API key, the container does not. This keeps the container's outbound media surface as narrow as possible.
-- Out of scope for this plan: the Haiku-assisted historical sweep tool (separate one-shot tooling); operator dashboard UI for findings (the chat room already renders messages); promotion of the watchdog to a code-pushing role; notification channels other than email (SMS, Slack, push) — the email path is the v1 surface, additional channels are future plans.
+- Out of scope for this plan: the Haiku-assisted historical sweep tool (separate one-shot tooling); operator dashboard UI for findings (the existing message-board view already renders entries on the configured channel); promotion of the watchdog to a code-pushing role; the "tag-in" path where the watchdog posts into a chat room to interrupt a running agent; notification channels other than email (SMS, Slack, push) — the email path is the v1 surface, additional channels are future plans.
 
 <!-- PHASE-BOUNDARY -->
 
 ## Phase 1 — Schema additions for the watchdog
 
-**Outcome:** The database accepts `auditor` as a value of [`server/src/schema/tables.ts`](../server/src/schema/tables.ts) `chatMessages.authorType`, persists every Opus inspection (so the heartbeat clock has a single source of truth across container restarts), and persists each emitted finding under a stable de-duplication key.
+**Outcome:** The database persists every Opus inspection (so the heartbeat clock has a single source of truth across container restarts) and persists each emitted finding under a stable de-duplication key. Findings reference the server message-board entry created when the finding posts.
 
 **Types / APIs:**
 
 In [`server/src/schema/tables.ts`](../server/src/schema/tables.ts):
 
 ```ts
-// Additive — existing values 'agent' | 'operator' | 'system' continue to work.
-// Add 'auditor' as the watchdog's author type.
-
 export const lmInspections = pgTable('lm_inspections', {
   id: serial('id').primaryKey(),
   projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
@@ -48,17 +46,18 @@ export const lmFindings = pgTable('lm_findings', {
   severity: text('severity').notNull(),        // 'note' | 'pause'
   title: text('title').notNull(),
   body: text('body').notNull(),
-  postedRoomId: text('posted_room_id').references(() => rooms.id),
-  postedMessageId: integer('posted_message_id').references(() => chatMessages.id),
+  postedMessageId: integer('posted_message_id').references(() => messages.id),
   notifyOperator: boolean('notify_operator').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 // Unique index on (project_id, dedup_key) so the same finding is never re-emitted.
+// posted_message_id references the row created by msgQ.insert when the finding posts
+// to the message board (Phase 2). It is null only when the post fails before insertion.
 ```
 
 **Work:**
 
-- Author one Drizzle migration under [`server/drizzle/`](../server/drizzle/) that adds `lm_inspections` and `lm_findings`. No constraint changes are required for `chat_messages.author_type` — the column is plain text.
+- Author one Drizzle migration under [`server/drizzle/`](../server/drizzle/) that adds `lm_inspections` and `lm_findings`.
 - Add the new tables to [`server/src/schema/tables.ts`](../server/src/schema/tables.ts).
 - The `dedupKey` is computed by the driver (Phase 4) as a SHA-256 hex of a stable tuple — for matcher hits: `(projectId, matcherKey, agentBranchHeadSha, messageId)`; for anomalies: `(projectId, anomalyKey, agentName, phaseId)`; for heartbeat findings: `(projectId, "heartbeat", agentBranchHeadSha, findingClass)`. The schema does not enforce structure on the key; uniqueness on `(project_id, dedup_key)` is the only invariant.
 
@@ -84,9 +83,13 @@ New plugin file [`server/src/routes/lm.ts`](../server/src/routes/lm.ts) register
 interface LmWindowResponse {
   cursor: { since: string; now: string };
   agents: Array<{ id: string; name: string; status: string; mode: string; branch: string }>;
-  recentMessages: Array<{
+  recentRoomMessages: Array<{
     id: number; roomId: string; authorType: string; authorAgentId: string | null;
     content: string; createdAt: string;
+  }>;
+  recentBoardMessages: Array<{
+    id: number; channel: string; fromAgent: string; type: string;
+    payload: unknown; createdAt: string;
   }>;
   recentTasks: Array<{
     id: string; status: string; phaseId: string | null; agentName: string | null;
@@ -119,12 +122,12 @@ interface PostFindingRequest {
   severity: 'note' | 'pause';
   title: string;
   body: string;
-  roomId: string;           // target chat room
+  channel: string;          // message-board channel, e.g. 'lm-findings'
   notifyOperator: boolean;  // true => server emails the operator (rate-limited, Phase 9)
 }
 interface PostFindingResponse {
   findingId: number;
-  messageId: number;        // ID of the chat_messages row created with author_type='auditor'
+  messageId: number;        // ID of the messages row created with type='lm_finding'
   deduped: boolean;         // true if (project_id, dedup_key) already existed; no message posted
   emailed: boolean;
   emailReason?: 'sent' | 'cooldown' | 'no_address' | 'no_api_key' | 'error' | 'not_requested';
@@ -142,20 +145,20 @@ interface LmStateResponse {
 **Work:**
 
 - Register the plugin in [`server/src/routes/index.ts`](../server/src/routes/index.ts).
-- `GET /lm/window` aggregates rows from the existing tables. The `since` query param defaults to "the latest `finishedAt` in `lmInspections` for this project, or now − 30 min if none". `recentMessages`/`recentTasks`/`recentBuilds` are bounded by `since` and a hard cap (200 rows each) so the bundle stays small.
-- `POST /lm/findings` is the only place where the `auditor` author type is written — the route inserts a row into `chatMessages` with `authorType: 'auditor'` and `authorAgentId: null`, then inserts the finding row with `postedMessageId` set. If `(projectId, dedupKey)` already exists, the route returns `{deduped: true}` and posts no message.
+- `GET /lm/window` aggregates rows from the existing tables. The `since` query param defaults to "the latest `finishedAt` in `lmInspections` for this project, or now − 30 min if none". Each row collection (`recentRoomMessages`, `recentBoardMessages`, `recentTasks`, `recentBuilds`) is bounded by `since` and a hard cap (200 rows each) so the bundle stays small. `recentBoardMessages` includes orchestrator debriefs, prior LM findings, and any other agent output posted via `POST /messages`; the watchdog scans it for matcher hits alongside `recentRoomMessages`.
+- `POST /lm/findings` posts to the server message board, mirroring how orchestrators post their debriefs. The route inserts a row into `messages` via `msgQ.insert` with `channel` from the request, `type='lm_finding'`, and `fromAgent` taken from the request's `X-Agent-Name` header (the watchdog sets this to its configured identity, e.g. `lm-watchdog`). The `payload` carries the structured finding (`severity`, `title`, `body`, `dedupKey`). The route then inserts the `lm_findings` row with `postedMessageId` referencing the new `messages.id`. If `(projectId, dedupKey)` already exists, the route returns `{deduped: true}` and posts nothing.
 - `GET /lm/state` reads the daily budget from project config (Phase 8) and sums tokens from today's `lmInspections` rows.
 
 **Verification:**
 
-- New test file [`server/src/routes/lm.test.ts`](../server/src/routes/lm.test.ts) using [`server/src/drizzle-test-helper.ts`](../server/src/drizzle-test-helper.ts) covers: window aggregation respects `since`, inspection insert returns the new row's ID and `lastInspectionAt`, finding insert posts a message with `authorType='auditor'`, finding insert with a duplicate `dedupKey` returns `{deduped: true}` and posts no message, state reflects today's token sum.
+- New test file [`server/src/routes/lm.test.ts`](../server/src/routes/lm.test.ts) using [`server/src/drizzle-test-helper.ts`](../server/src/drizzle-test-helper.ts) covers: window aggregation respects `since` and includes both room and board messages, inspection insert returns the new row's ID and `lastInspectionAt`, finding insert posts a message-board entry with `type='lm_finding'` and `fromAgent` matching the request's `X-Agent-Name` header, finding insert with a duplicate `dedupKey` returns `{deduped: true}` and posts no message, state reflects today's token sum.
 - `npm test` green for the server package.
 
 <!-- PHASE-BOUNDARY -->
 
 ## Phase 3 — Watchdog container service in compose
 
-**Outcome:** `launch.sh` (or an equivalent invocation) can start a `lm-watchdog` container per project alongside the existing pump containers. The container starts, registers nothing on the agents table (the watchdog is not an agent — its identity is `auditor`), and idles in its driver loop.
+**Outcome:** `launch.sh` (or an equivalent invocation) can start a `lm-watchdog` container per project alongside the existing pump containers. The container starts, registers nothing on the agents table (the watchdog is not an agent — its identity is the `WATCHDOG_AGENT_IDENTITY` value sent as `X-Agent-Name` on every server request, which the message board records as `fromAgent` on each posted entry), and idles in its driver loop.
 
 **Types / APIs:**
 
@@ -173,7 +176,8 @@ services:
       - WATCHDOG_HEARTBEAT_SECONDS=${WATCHDOG_HEARTBEAT_SECONDS:-1800}
       - WATCHDOG_POLL_SECONDS=${WATCHDOG_POLL_SECONDS:-30}
       - WATCHDOG_DAILY_TOKEN_BUDGET=${WATCHDOG_DAILY_TOKEN_BUDGET:-0}   # 0 = unlimited
-      - WATCHDOG_DEFAULT_ROOM=${WATCHDOG_DEFAULT_ROOM:-general}
+      - WATCHDOG_DEFAULT_CHANNEL=${WATCHDOG_DEFAULT_CHANNEL:-lm-findings}
+      - WATCHDOG_AGENT_IDENTITY=${WATCHDOG_AGENT_IDENTITY:-lm-watchdog}
       - WATCHDOG_AGENT_TYPE=${WATCHDOG_AGENT_TYPE:-lm-watchdog}
     volumes:
       - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git:ro
@@ -192,7 +196,7 @@ volumes:
 
 - Add a new [`container/Dockerfile.watchdog`](../container/Dockerfile.watchdog) layered on the existing container image. It installs Node ≥ 20 (already present), copies the driver source (Phase 4) under `/opt/watchdog`, and sets `ENTRYPOINT ["/opt/watchdog/entrypoint.sh"]`.
 - Bare repo mount is **read-only**. The driver does its own `git clone /repo.git /workspace/repo` on first start so it has a writable working tree for `git fetch` + worktree creation, without ever pushing anything back.
-- The watchdog does **not** call `POST /agents/register`. It is identified solely by `author_type='auditor'` on chat messages.
+- The watchdog does **not** call `POST /agents/register`. It identifies itself via the `X-Agent-Name` header (`WATCHDOG_AGENT_IDENTITY`) on every request, which the message board records as `fromAgent` on each posted entry. `WATCHDOG_AGENT_TYPE` is the agent definition slug used when invoking `claude -p` (Phase 6) and is independent of the identity header.
 - Update [`scripts/launch-team.sh`](../scripts/launch-team.sh) and the relevant compose-detect helper in [`scripts/lib/compose-detect.sh`](../scripts/lib/compose-detect.sh) to recognise `lm-watchdog` as a known service. Launch path: `./launch.sh --watchdog` brings up only the watchdog service for the resolved project.
 - Container start-up steps in [`container/Dockerfile.watchdog`](../container/Dockerfile.watchdog)'s entrypoint: validate env, ensure `/workspace/repo` exists (clone if not), then `exec node /opt/watchdog/dist/main.js`.
 
@@ -229,7 +233,8 @@ class ServerClient {
 interface DriverConfig {
   heartbeatSeconds: number;
   pollSeconds: number;
-  defaultRoom: string;
+  defaultChannel: string;        // message-board channel for findings/heartbeat output
+  agentIdentity: string;         // sent as X-Agent-Name on every server request
   workspaceRepoPath: string;
 }
 async function runDriver(client: ServerClient, cfg: DriverConfig): Promise<never>;
@@ -292,27 +297,42 @@ interface MatcherConfig {
   phrases: Array<{
     key: string;          // stable identifier, e.g. 'scoped_to_previous_phase'
     pattern: string;      // case-insensitive regex
-    severity: 'note' | 'pause';
   }>;
 }
-function findMatcherHits(msgs: LmWindowResponse['recentMessages'], cfg: MatcherConfig): Array<{
-  matcherKey: string; messageId: number; severity: 'note' | 'pause';
+function findMatcherHits(args: {
+  roomMessages: LmWindowResponse['recentRoomMessages'];
+  boardMessages: LmWindowResponse['recentBoardMessages'];
+  cfg: MatcherConfig;
+}): Array<{
+  matcherKey: string;
+  source: 'room' | 'board';
+  messageId: number;
 }>;
+// Matcher hits and anomaly hits are triggers, not pre-judged findings.
+// They cause an audit to run; the LM (Phase 7) assigns severity based on the
+// full window context, including corroborating evidence.
 
 // container/watchdog/src/anomalies.ts
-interface AnomalyHit { anomalyKey: string; detail: string; severity: 'note' | 'pause' }
+interface AnomalyHit { anomalyKey: string; detail: string }
 function findAnomalies(window: LmWindowResponse): AnomalyHit[];
 // Initial rule set:
-//   - phase_too_fast: a task transitioned to 'completed' in < 60s of wall-clock time
-//     since 'in_progress'. Severity 'note'.
+//   - phase_too_fast: a task transitioned to 'completed' in < 60s of wall-clock
+//     time since 'in_progress'.
 //   - test_failure_count_increased: most recent test build for an agent has more
-//     failures than its previous test build on the same branch. Severity 'pause'.
-//   - diff_size_outlier: most recent commit on an agent branch touched > 50 files
-//     OR > 2000 added lines. Severity 'note'.
+//     failures than its previous test build on the same branch. Fires the trigger
+//     unconditionally; the audit decides whether the increase is legitimate (e.g.
+//     TDD red-phase, where the agent has just committed a deliberately failing
+//     test) or a regression the agent is rationalising as out-of-scope.
+//   - diff_size_outlier: most recent commit on an agent branch touched > 50
+//     files OR > 2000 added lines.
 // Thresholds live alongside the matcher config in /opt/watchdog/anomalies.json.
 
 // container/watchdog/src/mentions.ts
-function findMentions(msgs: LmWindowResponse['recentMessages'], watchdogHandle: string): number[];
+function findMentions(args: {
+  roomMessages: LmWindowResponse['recentRoomMessages'];
+  boardMessages: LmWindowResponse['recentBoardMessages'];
+  watchdogHandle: string;
+}): Array<{ source: 'room' | 'board'; messageId: number }>;
 // watchdogHandle defaults to 'lm' / '@lm' / 'line manager' (case-insensitive).
 ```
 
@@ -328,13 +348,16 @@ function findMentions(msgs: LmWindowResponse['recentMessages'], watchdogHandle: 
   - `already_broken` — `\bthis (was )?already broken\b`
 - Anomaly thresholds and matcher list are configuration, not code — operators tune them without rebuilding the image. Both files are mounted into the container via the existing read-only bind for [`container/watchdog/`](../container/watchdog/).
 
-**Worked example — `test_failure_count_increased` direction.** This is the most sign-sensitive rule in the set. Concrete trace:
+**Worked example — `test_failure_count_increased` direction and corroboration.** The arithmetic gate is sign-sensitive; the *interpretation* of a hit is corroboration-sensitive. Concrete trace:
 
 - Agent `agent-1` built at T+0 with 3 test failures.
 - Agent `agent-1` built at T+1 with 5 test failures.
-- `5 > 3`, the count *increased*, the agent committed something between T+0 and T+1 that worsened the suite — fire the anomaly.
-- Inverted form (`prev > now`) would only fire when the failure count *decreased*, which is the opposite of slop and would silence the very signal we built the rule for.
-- The comparison is `now.failures > prev.failures` on the **same branch**, **most recent two builds**. Builds on different branches do not compare. A build with `success=true` has `failures=0`.
+- `5 > 3`, the count increased on the same branch — **fire the trigger**. The trigger says "an audit is warranted", not "this is a regression".
+- Sign-sensitivity: the comparison is `now.failures > prev.failures` on the **same branch**, **most recent two builds**. Inverted form (`prev > now`) would fire only when the suite improves — silencing the signal entirely. Builds on different branches do not compare. A build with `success=true` has `failures=0`.
+- The audit window includes commits between T+0 and T+1 plus messages in the same window. The LM (Phase 7) decides the outcome from the bundle:
+  - Commit message says "add failing tests for happy-path login (TDD red phase)" and the new failing tests are in the file the commit touched → **quiet**, this is normal red-phase work.
+  - No agent commits in the window AND a container restart is visible in the activity log → ambiguous — earlier phase failures may have been left behind, or the restart itself caused them; the LM emits a `note` so the operator can confirm whether the failures belong to the agent's prior incarnation.
+  - Commits touch unrelated files AND a message in the window contains rationalisation language matched by `pre_existing_failure` / `out_of_scope_errors` / `scoped_to_previous_phase` → **pause**, the agent is plausibly disclaiming failures their own work caused.
 
 **Verification:**
 
@@ -346,7 +369,7 @@ function findMentions(msgs: LmWindowResponse['recentMessages'], watchdogHandle: 
 
 ## Phase 6 — Audit invocation: bundle, claude -p, emit finding
 
-**Outcome:** When a trigger fires, the driver assembles a context bundle, invokes a fresh Opus session via `claude -p` with the watchdog agent definition (Phase 7), parses the response, and posts at most one finding to the configured chat room with `authorType='auditor'`. Quiet outcomes record the inspection but post no message, except on heartbeat (a single-line "all quiet" message is always posted on heartbeat to confirm the watchdog is alive).
+**Outcome:** When a trigger fires, the driver assembles a context bundle, invokes a fresh Opus session via `claude -p` with the watchdog agent definition (Phase 7), parses the response, and posts at most one finding to the configured message-board channel via `POST /messages`. Quiet outcomes record the inspection but post nothing, except on heartbeat (a single-line "all quiet" entry is always posted on heartbeat to confirm the watchdog is alive).
 
 **Types / APIs:**
 
@@ -387,18 +410,18 @@ async function runAudit(ctx: AuditContext, opts: { agentType: string; budgetRema
 - Bundle assembly steps:
   1. `git -C /workspace/repo fetch /repo.git '+refs/heads/docker/${PROJECT_ID}/*:refs/heads/docker/${PROJECT_ID}/*'` to refresh known agent branches.
   2. For each agent in `window.agents`, capture the head SHA and produce a diff against the project's seed branch `docker/${PROJECT_ID}/current-root`, capped at 4000 characters.
-  3. Sample messages: include the **tail** of `recentMessages` (the last 5) plus a uniform random sample of up to 15 more from the remainder.
+  3. Sample messages: include the **tail** of `recentRoomMessages` (the last 5) plus a uniform random sample of up to 15 more from the remainder, and the **full** `recentBoardMessages` list (capped at 50 — board volume is much lower than room volume, so the LM gets full visibility into agent debriefs and prior findings).
   4. Build the prompt using the watchdog agent definition (Phase 7) plus the JSON-serialised bundle.
 - Invocation: spawn `claude -p` as a child process with stdin = prompt and `--output-format json` so token counts are recoverable. Honour `CLAUDE_CREDENTIALS_PATH` from the existing mount.
 - The audit response is a JSON envelope (defined in Phase 7) the driver parses to produce `AuditResult`.
-- On heartbeat with `outcome='quiet'`: post a one-line message ("LM heartbeat — quiet, no findings") to `WATCHDOG_DEFAULT_ROOM` with `authorType='auditor'`. On any other trigger with `outcome='quiet'`: record the inspection but post nothing.
-- On `outcome='finding'`: compute `dedupKey` and call `POST /lm/findings`. If the server returns `{deduped: true}`, the driver records the inspection but no message lands — preventing alert fatigue when the same incident re-trips a wire on consecutive cycles.
-- On `outcome='budget_exhausted'`: post a one-line message once per UTC day, then short-circuit subsequent audits to a no-op until the day rolls over.
+- On heartbeat with `outcome='quiet'`: post a one-line entry to the message board on `WATCHDOG_DEFAULT_CHANNEL` via `POST /messages` with `type='lm_heartbeat'` and payload `{text: 'LM heartbeat — quiet, no findings'}`. On any other trigger with `outcome='quiet'`: record the inspection but post nothing.
+- On `outcome='finding'`: compute `dedupKey` and call `POST /lm/findings`. The server inserts the message-board row and the finding row in the same handler (Phase 2). If the server returns `{deduped: true}`, no entry posts — preventing alert fatigue when the same incident re-trips a wire on consecutive cycles.
+- On `outcome='budget_exhausted'`: post a one-line entry once per UTC day on `WATCHDOG_DEFAULT_CHANNEL` with `type='lm_budget_exhausted'`, then short-circuit subsequent audits to a no-op until the day rolls over.
 
 **Verification:**
 
 - Tests in [`container/watchdog/src/audit.test.ts`](../container/watchdog/src/audit.test.ts) using a fake `claude -p` (a stub binary on `PATH`) that returns canned JSON envelopes for `quiet`, `finding`, and `error` cases.
-- Coverage: heartbeat-quiet posts one message; non-heartbeat-quiet posts none; finding-with-new-dedup-key posts one message; finding-with-existing-dedup-key posts none; budget exhaustion posts once per day; malformed audit JSON yields `outcome='error'` and an inspection row with `outcome='error'`.
+- Coverage: heartbeat-quiet posts one message-board entry on the default channel with `type='lm_heartbeat'`; non-heartbeat-quiet posts nothing; finding-with-new-dedup-key posts one entry with `type='lm_finding'`; finding-with-existing-dedup-key posts nothing; budget exhaustion posts once per UTC day with `type='lm_budget_exhausted'`; malformed audit JSON yields `outcome='error'` and an inspection row with `outcome='error'`.
 
 <!-- PHASE-BOUNDARY -->
 
@@ -416,7 +439,7 @@ The agent's response format is constrained to a single JSON object:
   "finding": {
     "severity": "note" | "pause",
     "title": "<short, specific>",
-    "body": "<2-6 sentences; cites concrete agent names, branches, and message IDs>",
+    "body": "<2-6 sentences; cites concrete agent names, branches, and message references in the form 'room#<id>' or 'board#<id>' so the operator can navigate to the originating message>",
     "notifyOperator": true | false
   } | null,
   "rationale": "<one paragraph; the LM's reasoning, kept for the inspection log>"
@@ -425,7 +448,7 @@ The agent's response format is constrained to a single JSON object:
 
 **Work:**
 
-- Author [`dynamic-agents/lm-watchdog.md`](../dynamic-agents/lm-watchdog.md) covering: read-only role; the LM never pushes code or invokes tools that mutate repo state; quiet-discipline output (single line for "all quiet"); how to weight the bundle (recent test failure deltas dominate; matcher hits are pre-flagged for second-guessing, not blind acceptance; phase-too-fast anomalies require corroboration in commit content before promoting to a finding); when to choose `severity='pause'` vs `'note'` (pause only for safety/correctness regressions that would compound across subsequent phases — a test suite getting worse, deletion or `.skip` of test files, agent commits touching files outside the task's declared scope); when to set `notifyOperator=true` (every `severity='pause'` finding sets it, since the operator should know when work is paused; `severity='note'` findings set it only when sustained drift is observed — the same dedup-class incident has been noted in two consecutive inspections without operator action).
+- Author [`dynamic-agents/lm-watchdog.md`](../dynamic-agents/lm-watchdog.md) covering: read-only role; the LM never pushes code or invokes tools that mutate repo state; quiet-discipline output (single line for "all quiet"); how to weight the bundle (recent test failure deltas dominate; matcher hits are pre-flagged for second-guessing, not blind acceptance; phase-too-fast anomalies require corroboration in commit content before promoting to a finding); when to choose `severity='pause'` vs `'note'` (pause only for safety/correctness regressions that would compound across subsequent phases AND that the agent is plausibly responsible for — agent commits in the window touching the failing test's subject, deletion or `.skip` of test files, agent commits touching files outside the task's declared scope, or rationalisation language attached to failures the agent's own commits could have caused; a test-failure increase without that corroboration is `note` at most, and a TDD red-phase commit that adds deliberately-failing tests is `quiet`; after a container restart, treat phase-boundary attribution claims with extra scepticism); when to set `notifyOperator=true` (every `severity='pause'` finding sets it, since the operator should know when work is paused; `severity='note'` findings set it only when sustained drift is observed — the same dedup-class incident has been noted in two consecutive inspections without operator action).
 - The agent definition lists only the tools needed: `Read`, `Grep`, `Bash` (for `git log` / `git diff` inspection inside the watchdog's read-only worktree). No `Edit`, no `Write`, no network.
 - The output contract is restated verbatim at the end of the agent file. The driver parses the last fenced JSON block in the response.
 - Verify [`scripts/lib/compile-agents.sh`](../scripts/lib/compile-agents.sh) compiles the new file into `agents/lm-watchdog.md` without manual intervention. Per the compilation memory, do not run the compile script by hand — exercise it via the existing automated path (test or launch).
@@ -433,7 +456,7 @@ The agent's response format is constrained to a single JSON object:
 **Verification:**
 
 - New entry exists in `agents/` after compilation runs.
-- A hand-run audit (driven by Phase 9's smoke test) returns a valid JSON envelope; the driver's parser accepts it without error.
+- A hand-run audit (driven by Phase 10's smoke test) returns a valid JSON envelope; the driver's parser accepts it without error.
 
 <!-- PHASE-BOUNDARY -->
 
@@ -536,7 +559,7 @@ async function sendOperatorEmail(args: {
   3. Most recent successful `lm_email_log` row for `(projectId, finding.dedupKey)` is more recent than `now − RESEND_COOLDOWN_HOURS` → `reason='cooldown'`.
   4. Count of `lm_email_log` rows for `projectId` since today's UTC midnight where `ok=true` and `reason='sent'` is at least `RESEND_DAILY_CAP` → `reason='cooldown'` (cap-driven cooldown, same outcome shape).
   5. Otherwise call `sendOperatorEmail`. On HTTP success → `reason='sent'`, `ok=true`. On HTTP error → `reason='error'`, `ok=false`, `errorBody` set. Either way insert one `lm_email_log` row.
-- Subject line: `[LM ${projectId}] ${title}`. Body is plain text containing: project ID, finding title, finding body, severity, dedup key, inspection ID, link to the chat room (if a dashboard URL is configured in project config — otherwise omit).
+- Subject line: `[LM ${projectId}] ${title}`. Body is plain text containing: project ID, finding title, finding body, severity, dedup key, inspection ID, message-board channel, message-board entry ID, and a link to the message-board entry in the dashboard (if a dashboard URL is configured in project config — otherwise omit the link).
 - The Resend wrapper performs no retries. A failed send lands in `lm_email_log` with `ok=false`; the operator inspects the log to triage. The route returns `emailed=false, emailReason='error'` to the watchdog so the inspection record correctly captures the attempt.
 - Every email decision (skip or send, success or failure) lands in `lm_email_log` so the operator has a complete audit trail of what the LM tried to send and why.
 
@@ -576,11 +599,11 @@ Document the smoke test in [`container/watchdog/SMOKE.md`](../container/watchdog
 
 1. **Preconditions.** Coordination server running on `${SERVER_PORT}`. A pump container has been launched at least once for the chosen project so `docker/${PROJECT_ID}/current-root` exists. `WATCHDOG_HEARTBEAT_SECONDS=120` (lowered for the test) in the operator's `.env`.
 2. **Boot watchdog.** `./launch.sh --watchdog --project <id>`. Verify with `docker ps` that the `lm-watchdog` service is up. Tail container logs.
-3. **First heartbeat.** Within `WATCHDOG_HEARTBEAT_SECONDS + WATCHDOG_POLL_SECONDS` of boot, observe in the configured chat room a message from `authorType='auditor'` reading "LM heartbeat — quiet, no findings". Confirm one row in `lm_inspections` with `triggerKind='heartbeat'`, `outcome='quiet'`.
-4. **Plant a tripwire.** Operator posts a message in the configured chat room reading "Test failures here are pre-existing — already broken before this phase." This contains both `pre_existing_failure` and `already_broken` matcher phrases.
-5. **Tripwire audit.** Within `WATCHDOG_POLL_SECONDS` of the planted message, observe a second `authorType='auditor'` message — a finding referring to the planted text. Confirm a second `lm_inspections` row with `triggerKind='matcher'`, an `lm_findings` row with the matching `dedupKey`, and that the `auditor` message ID matches `lm_findings.posted_message_id`.
-6. **Email path.** With `RESEND_API_KEY` and `RESEND_FROM` set in the server's host environment and `operator_email` set on the project, plant a synthetic `severity='pause'` finding (post a message strong enough to trigger the `test_failure_count_increased`-class language plus a planted matcher phrase, or hand-call `POST /lm/findings` from the dashboard with `notifyOperator: true`). Confirm the operator receives an email; confirm one `lm_email_log` row with `reason='sent', ok=true`. Repeat the trigger immediately and confirm a second `lm_email_log` row with `reason='cooldown'`.
-7. **De-dup check.** Operator posts the same matcher message from step 4 again. Within `WATCHDOG_POLL_SECONDS`, confirm a new `lm_inspections` row exists, but **no** new `lm_findings` row, **no** new auditor message in the chat room, and **no** new `lm_email_log` row.
+3. **First heartbeat.** Within `WATCHDOG_HEARTBEAT_SECONDS + WATCHDOG_POLL_SECONDS` of boot, query `GET /messages/${WATCHDOG_DEFAULT_CHANNEL}` and observe a single entry with `type='lm_heartbeat'`, `fromAgent` matching `WATCHDOG_AGENT_IDENTITY`, and payload text "LM heartbeat — quiet, no findings". Confirm one row in `lm_inspections` with `triggerKind='heartbeat'`, `outcome='quiet'`.
+4. **Plant a tripwire.** Operator posts a message in a chat room (an existing `/rooms/*` room the agents use, *not* the message-board channel) reading "Test failures here are pre-existing — already broken before this phase." This contains both `pre_existing_failure` and `already_broken` matcher phrases. The watchdog reads room messages as part of its window scan, so the matcher fires from there.
+5. **Tripwire audit.** Within `WATCHDOG_POLL_SECONDS` of the planted message, query `GET /messages/${WATCHDOG_DEFAULT_CHANNEL}` and observe a second entry with `type='lm_finding'` referring to the planted text. Confirm a second `lm_inspections` row with `triggerKind='matcher'`, an `lm_findings` row with the matching `dedupKey`, and that the new `messages` row's ID matches `lm_findings.posted_message_id`.
+6. **Email path.** With `RESEND_API_KEY` and `RESEND_FROM` set in the server's host environment and `operator_email` set on the project, plant a synthetic `severity='pause'` finding (either by planting a stronger rationalisation phrase in a room alongside an actual test-failure-count regression on an agent branch, or by hand-calling `POST /lm/findings` from the dashboard with `notifyOperator: true`). Confirm the operator receives an email; confirm one `lm_email_log` row with `reason='sent', ok=true`. Repeat the trigger immediately and confirm a second `lm_email_log` row with `reason='cooldown'`.
+7. **De-dup check.** Operator re-posts the same matcher message from step 4 in the same chat room. Within `WATCHDOG_POLL_SECONDS`, confirm a new `lm_inspections` row exists, but **no** new `lm_findings` row, **no** new entry on `${WATCHDOG_DEFAULT_CHANNEL}`, and **no** new `lm_email_log` row.
 8. **Heartbeat clock reset.** Confirm that the next heartbeat fires `WATCHDOG_HEARTBEAT_SECONDS` after the most recent inspection (the one from step 5 or step 6, whichever is later), not after step 3's.
 9. **Teardown.** `./stop.sh --watchdog --project <id>`. Confirm container stops cleanly.
 
