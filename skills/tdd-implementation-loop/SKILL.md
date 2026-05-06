@@ -16,36 +16,48 @@ Core protocol for any agent that writes code and must verify both compilation an
 2. **Follow instructions precisely.** Do not add features, refactors, or improvements not in the plan.
 3. **Prefer editing** existing files over creating new ones.
 
-## Hard Design Constraints
+## The Behaviour Contract
 
-Specifications for types and function signatures in the plan are **hard design constraints**. They take precedence over existing patterns you find in the code. They are **NOT open to interpretation**.
+The plan defines a **non-negotiable behaviour contract**. The behaviour your code must produce — the inputs it accepts, the outputs it returns, the invariants it maintains, the side effects it performs, the edge cases it handles — is literal and not open to interpretation. If your code does not do exactly what the plan says, your code fails.
 
-When the plan gives you a function signature, that signature is the contract. If the existing call-site has more parameters, different parameter names, or extra context threaded through, that existing shape is evidence of what the plan is telling you to escape -- not a boundary the new code must respect. You are not porting the existing signature; you are implementing the plan's signature. Pattern-matching to existing code feels like competence from the inside and produces silent drift. Do not hedge by "threading it through to be safe" -- the plan author has already considered and rejected that shape.
+Code samples in the plan (function signatures, type sketches, snippets) are **best-effort guidance**, not part of the contract. Their job is to communicate the intended shape of the work; they may have been written quickly, in pseudo-code, or before the plan author audited them against standing style and best-practice rules. When a code sample conflicts with the style or best-practice guidance in your loaded domain skills, follow the style/best-practice and adapt the sample — the behaviour the sample is illustrating must still be delivered exactly. Always state the adaptation plainly in your debrief or commit message: name the rule that drove it and confirm the behaviour is unchanged.
 
-If you encounter a contradiction, an impossible request, or a design you cannot in good conscience implement, **STOP**. Do not interpret. Do not deviate silently. Report the problem via a message on the `general` channel with `type: "escalation"`, referencing your task ID and naming the specific contradiction. Then halt. Refusing to complete a poor-quality design is correct behavior; silent interpretation is not.
+Acceptable adaptation (behaviour preserved):
+- Renaming a parameter to match the project's naming convention while keeping its position, type, and semantics.
+- Splitting a sample function into smaller helpers when the loaded decomposition skill demands it, provided the public entry point still produces the specified behaviour.
+- Substituting a sample's idiom with the project-standard one (e.g., a typed enum the project mandates) when the swap preserves what the code can compute.
 
-### Watch-Phrases
+Unacceptable adaptation (behaviour altered):
+- Dropping or adding a parameter that changes what the function can compute.
+- Returning a different type that loses or invents information the plan said the caller would receive.
+- Skipping a side effect, an invariant check, or an edge case the plan calls out.
+- Reframing a literal "the function must do X" into "the function effectively does X-ish".
 
-If you find yourself writing any of these phrases in a design decision, JSDoc, debrief, or commit message, STOP -- you are paraphrasing the spec to defuse its literal reading:
+If the behaviour itself is undeliverable — internally contradictory, impossible to achieve given real constraints, or a cursed design — **STOP**. Do not interpret. Do not partially deliver. Post a message on the `general` channel with `type: "escalation"`, referencing your task ID and naming exactly which behaviour is undeliverable and why. Then halt. Refusing to complete an impossible design is correct behavior; silent reinterpretation is not.
 
-- "in practice we need..."
-- "shorthand for..."
-- "the critical invariant is preserved..."
-- "captured in the closure rather than passed..."
+### Watch-Phrases for Behaviour Paraphrase
+
+If you find yourself writing any of these phrases about the **behaviour** specified in the plan, STOP — you are paraphrasing the contract:
+
+- "in practice we need..." (about what the behaviour must do)
+- "the critical invariant is preserved..." (when the invariant has actually been weakened)
+- "captured in the closure rather than passed..." (when this changes what the behaviour can express)
 - "the spec's intent is..." / "what the spec actually means..."
 - "effectively equivalent to..." / "functionally the same as..."
 - "the real requirement is..."
 
-These are not escape hatches. They are alarms. The presence of any of them in your work means you have chosen interpretation over fidelity. Revert your change to match the literal spec, or escalate -- do not proceed.
+These phrases are alarms when applied to behaviour. Adapting a code sample's surface to standing style is a different action — and you must say so plainly: "Adapted the sample signature to match <named rule from loaded skill>; behaviour unchanged: <evidence>." Revert any behaviour deviation to match the literal spec, or escalate — do not proceed.
 
 ### Review-Cycle Response
 
-A BLOCKING review finding on a spec-fidelity issue has exactly two valid responses:
+A BLOCKING review finding on a behaviour-fidelity issue has exactly two valid responses:
 
-1. **Revert** the deviation so the implementation matches the literal spec.
-2. **Escalate** the spec as impossible or underspecified, and halt.
+1. **Restore** the specified behaviour so the implementation matches the plan.
+2. **Escalate** the behaviour as undeliverable, and halt.
 
-Adding documentation, JSDoc, or commit-message prose that explains the deviation is NOT a valid response. Deferring formalization to a later phase is NOT a valid response. Renaming the deviating type without changing its shape is NOT a valid response. If you cannot revert the deviation without breaking other committed work in the same phase, that is an escalation event -- report it on the `general` channel with `type: "escalation"` and halt.
+Adding documentation, JSDoc, or commit-message prose that explains the deviation is NOT a valid response. Deferring the behaviour to a later phase is NOT a valid response. Renaming the deviating function or type without restoring the behaviour is NOT a valid response. If you cannot restore the behaviour without breaking other committed work in the same phase, that is an escalation event — report it on the `general` channel with `type: "escalation"` and halt.
+
+A BLOCKING finding that targets a code-sample adaptation (you adapted the sample to standing style and the reviewer flagged it as deviation) has a third valid response: name the style/best-practice rule that drove the adaptation, cite the loaded domain skill that mandates it, and demonstrate that the behaviour is unchanged. The reviewer is responsible for accepting a justified, behaviour-preserving style adaptation.
 
 ## Sequence
 
