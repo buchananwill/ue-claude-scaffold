@@ -92,23 +92,29 @@ ue-claude-scaffold/
 │   └── core/                              # Shared agent fragments
 ├── container/                 # Docker container infrastructure
 │   ├── Dockerfile
-│   ├── docker-compose.example.yml  # Template — copy to docker-compose.yml
+│   ├── docker-compose.example.yml   # Starter — copy to docker-compose.yml
+│   ├── docker-compose.template.yml  # Base compose layer used by launch.sh
+│   ├── docker-compose.engine.yml    # Optional layer — mounts the UE engine
 │   ├── entrypoint.sh
 │   ├── container-settings.json
+│   ├── lib/                   # Sourced helpers for entrypoint.sh
 │   ├── mcp-servers/           # MCP servers loaded by container Claude
+│   │   └── chat-channel.mjs   # Chat-room participation MCP
 │   └── hooks/                 # Claude Code hooks
 │       ├── intercept_build_test.sh    # Routes build/test to host
 │       ├── block-push-passthrough.sh  # Blocks manual git push
-│       ├── guard-branch.sh            # Refuses commits to forbidden branches
-│       ├── inject-agent-header.sh     # Adds X-Agent-Name to outbound requests
+│       ├── guard-branch.sh            # Refuses commits on the wrong branch
+│       ├── inject-agent-header.sh     # Adds X-Agent-Name / X-Project-Id to outbound requests
 │       ├── push-after-commit.sh       # Auto-push after commits
-│       └── lint-cpp-diff.py           # C++ diff linter
+│       ├── lint-format.sh             # Generic format/lint dispatcher
+│       └── lint-cpp-diff.mjs          # Node-based C++ diff linter (UE rules)
 ├── dashboard/                 # React + Vite monitoring SPA (TanStack Router + Query, Mantine UI)
 ├── server/                    # Fastify + TypeScript coordination server
 │   ├── src/                   # Routes, schema, plugins, queries
 │   └── drizzle/               # Generated SQL migrations
-├── skills/                    # Modular skills loaded by dynamic agents
-├── dynamic-agents/            # Compiled agent definitions for runtime use
+├── skills/                    # Modular skills (~65) loaded by dynamic agents
+├── dynamic-agents/            # Skills-composed agent definitions (source)
+├── .compiled-agents/          # Generated: flattened md + meta.json (do not edit)
 ├── teams/                     # Design team definitions and status
 ├── briefs/                    # Design briefs for teams and agents
 ├── plans/                     # Plan documents for container agents
@@ -119,7 +125,9 @@ ue-claude-scaffold/
 ├── database/                  # Local PGlite data directory
 ├── Notes/                     # Ad-hoc notes and design docs
 ├── scripts/
-│   └── ingest-tasks.sh        # Bulk-import task markdown into the queue
+│   ├── ingest-tasks.sh        # Bulk-import task markdown into the queue
+│   ├── launch-team.sh         # Server-side team launch (called by launch.sh --team)
+│   └── lib/                   # Sourced helpers for launch.sh / status.sh / stop.sh
 ├── launch.sh                  # Parameterized agent launcher
 ├── setup.sh                   # First-time setup script
 ├── status.sh                  # Agent monitoring script
@@ -156,10 +164,10 @@ it:
 
 ### Coordination Server
 
-A Fastify + TypeScript server running on the host. Provides:
+A Fastify + TypeScript server running on the host. Persists state in Postgres via Drizzle ORM — Supabase when `SCAFFOLD_DATABASE_URL` is set, otherwise an in-process PGlite at `server/data/pglite`. Provides:
 
 - **Build/test proxy** -- routes container build requests to the host UE installation
-- **Message board** -- pub/sub for agent progress reporting, persisted in PGlite via Drizzle
+- **Message board** -- pub/sub for agent progress reporting
 - **Rooms & teams** -- threaded message rooms and design-team registration
 - **Agent registry** -- tracks active agents and their status
 - **Project registry** -- portable per-project config (`GET/POST /projects`) backed by the `projects` table
@@ -170,6 +178,7 @@ A Fastify + TypeScript server running on the host. Provides:
 - **Search** -- full-text search across tasks, messages, and agents
 - **Coalesce** -- system-wide coordination for graceful shutdown (pause pumps, release files)
 - **Multi-tenancy** -- one server serves multiple UE projects. Requests scope by `X-Project-Id` header (default `default`); every persisted row carries a `project_id`
+- **Agent definition compiler** -- `GET /agents/definitions/:type` compiles dynamic-agents on demand and returns the flattened markdown plus its referenced sub-agents in one round-trip; every `dynamic-agents/*.md` is also probed at startup so broken compositions surface immediately
 
 ### Git Data Flow
 
@@ -195,18 +204,19 @@ config, DB rows, git branches, and the `X-Project-Id` HTTP header.
 Secrets and per-launch parameters. Created from `.env.example` by `setup.sh`. Structural configuration (paths, ports,
 build scripts) lives in `scaffold.config.json`.
 
-| Variable                  | Required | Default                  | Description                                |
-|---------------------------|----------|--------------------------|--------------------------------------------|
-| `CLAUDE_CREDENTIALS_PATH` | Yes*     | —                        | Path to `.credentials.json` for OAuth auth |
-| `ANTHROPIC_API_KEY`       | Yes*     | —                        | API key for token-based auth               |
-| `DATABASE_URL`            | No       | (PGlite)                 | External Postgres connection string. Omit to use the in-process PGlite database |
-| `AGENT_NAME`              | No       | `agent-1`                | Agent identifier                           |
-| `WORK_BRANCH`             | No       | (computed)               | Git branch for the agent -- normally set automatically by launch.sh |
-| `AGENT_TYPE`              | Yes      | —                        | Agent definition to load (e.g. `container-orchestrator`, `scaffold-orchestrator`) |
-| `MAX_TURNS`               | No       | `200`                    | Max Claude Code turns before stopping      |
-| `WORKER_MODE`             | No       | `false`                  | Run as task-queue worker instead of plan executor |
-| `WORKER_POLL_INTERVAL`    | No       | `30`                     | Worker polling interval in seconds         |
-| `WORKER_SINGLE_TASK`      | No       | `true`                   | Worker exits after one task instead of looping |
+| Variable                   | Required | Default                  | Description                                |
+|----------------------------|----------|--------------------------|--------------------------------------------|
+| `CLAUDE_CREDENTIALS_PATH`  | Yes*     | —                        | Path to `.credentials.json` for OAuth auth |
+| `ANTHROPIC_API_KEY`        | Yes*     | —                        | API key for token-based auth               |
+| `SCAFFOLD_DATABASE_URL`    | No       | (PGlite)                 | Postgres connection string for the coordination server. Set in the shell that runs `npm run dev`. Omit to use the in-process PGlite database. The scaffold deliberately ignores any inherited `DATABASE_URL` to avoid hijack from a co-installed Supabase project |
+| `AGENT_NAME`               | No       | `agent-1`                | Agent identifier                           |
+| `WORK_BRANCH`              | No       | (computed)               | Git branch for the agent — normally set automatically by launch.sh |
+| `AGENT_TYPE`               | Yes      | —                        | Agent definition to load (e.g. `container-orchestrator`, `container-orchestrator-ue`, `scaffold-orchestrator`) |
+| `CLAUDE_EFFORT`            | No       | `high`                   | Reasoning effort for the top-level Claude session: `low`, `medium`, `high`, `xhigh`, `max`. Resolution order: launch CLI > scaffold.config.json > .env > built-in default |
+| `MAX_TURNS`                | No       | `200`                    | Max Claude Code turns before stopping      |
+| `WORKER_MODE`              | No       | `false`                  | Run as task-queue worker instead of plan executor |
+| `WORKER_POLL_INTERVAL`     | No       | `30`                     | Worker polling interval in seconds         |
+| `WORKER_SINGLE_TASK`       | No       | `true`                   | Worker exits after one task instead of looping |
 
 *One of `CLAUDE_CREDENTIALS_PATH` or `ANTHROPIC_API_KEY` is required.
 
@@ -301,9 +311,18 @@ Parameterized launcher for container agents.
 # One-shot prompt (no task queue)
 ./launch.sh --prompt "Audit the Inventory module for unused includes"
 
+# Override reasoning effort for the top-level session
+./launch.sh --effort xhigh   # low | medium | high | xhigh | max
+
+# Adjust message-board verbosity
+./launch.sh --verbosity verbose   # quiet | normal | verbose
+
 # Toggle hooks at launch
-./launch.sh --hooks      # Force-enable build intercept and C++ linting
-./launch.sh --no-hooks   # Force-disable both
+./launch.sh --hooks      # Force-enable build intercept + C++/JS linting
+./launch.sh --no-hooks   # Force-disable all
+
+# Skip agent registration (debugging / manual runs)
+./launch.sh --no-agent
 
 # Preview what would happen without launching
 ./launch.sh --dry-run
@@ -377,15 +396,14 @@ Requires `curl` and `jq`. Supports `NO_COLOR` environment variable to disable co
 
 ## Agent Definitions
 
-The `agents/` directory contains agent definitions used by the container. When running in a container, agent definitions
-are automatically mounted from the scaffold's `agents/` directory. For interactive (non-container) Claude Code use,
-install them manually:
+There are two parallel definition trees:
 
-```bash
-cp agents/*.md ~/.claude/agents/
-```
+- **`agents/`** — static, hand-authored fallback set. Plain markdown with no skills composition. Use these for interactive Claude Code by copying them to your user config: `cp agents/*.md ~/.claude/agents/`.
+- **`dynamic-agents/`** — skills-composed definitions that are the active set used in containers. Each `.md` declares a `skills:` list in its front matter; the compiler in `server/src/agent-compiler.ts` (CLI binary `compile-agent`) inlines those skills and writes a flattened pair (`<name>.md` + `<name>.meta.json`) to `.compiled-agents/`. The launcher compiles automatically before container start. The coordination server probes every dynamic agent at startup and logs any compile failures.
 
 ### Available Agent Types
+
+#### `agents/` (static fallback set)
 
 | Type                                | Description                                                                                                              |
 |-------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
@@ -396,7 +414,11 @@ cp agents/*.md ~/.claude/agents/
 | `container-safety-reviewer`         | Focused review of memory safety, thread safety, and invariant preservation.                                              |
 | `container-style-reviewer`          | Focused review of style and coding conventions.                                                                          |
 | `container-tester`                  | Writes tests for an implementation, runs them, and iterates until passing.                                               |
-| `changeling`                        | Adaptive agent template used to compose dynamic agents at launch.                                                        |
+| `changeling`                        | Adaptive role used in design discussions; placeholder participant.                                                       |
+
+#### `dynamic-agents/` (skills-composed; active set)
+
+Per-stack orchestrators (`container-orchestrator-ue`, `scaffold-orchestrator`, `scaffold-server-orchestrator`, `scaffold-dashboard-orchestrator`, `content-catalogue-dashboard-orchestrator`), implementers (`container-implementer-ue`, `scaffold-implementer`, `scaffold-server-implementer`, `scaffold-dashboard-implementer`), role-specialised reviewers (decomposition / safety / correctness / react-quality / browser-safety / typescript-type) per stack, style-sweep agents (`container-style-sweep-ue`, `scaffold-style-sweep`, `scaffold-server-style-sweep`), and the design-team roster (`design-leader`, `design-architect`, `design-domain`, `design-data`, `design-ui`, `design-ui-mantine`, `design-elegance`, `design-performance`, `design-safety`, `design-critic`, `cleanup-leader`).
 
 ### Customising for your project
 

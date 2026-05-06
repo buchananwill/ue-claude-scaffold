@@ -32,9 +32,11 @@ A React + Vite SPA for monitoring agents, builds, tasks, and messages in real ti
 npm run dev              # Start Vite dev server
 npm run build            # Type-check + production build
 npm run preview          # Preview production build locally
+npm run lint             # ESLint
+npm test                 # Vitest unit tests
 ```
 
-The dashboard talks to the coordination server (default `http://localhost:9100`).
+The dashboard talks to the coordination server (default `http://localhost:9100`). Pages: Overview, Agent Detail, Build Log, Chat, Messages, Search, Task Detail, Teams.
 
 ### Shell Scripts (from repo root, requires Git Bash on Windows)
 
@@ -42,9 +44,19 @@ The dashboard talks to the coordination server (default `http://localhost:9100`)
 ./setup.sh               # First-time setup (prereqs, config files, deps)
 ./launch.sh              # Launch container agent (resumes existing branch by default)
 ./launch.sh --fresh      # Reset agent branch to docker/{project-id}/current-root before launch
+./launch.sh --worker     # Single-task worker (claim one task, exit)
+./launch.sh --pump       # Continuous pump (claim tasks until drained)
+./launch.sh --parallel N # Launch N pump containers in parallel
+./launch.sh --team T --brief PATH   # Launch a design team with a brief
+./launch.sh --prompt "…"            # One-shot direct prompt (bypass task queue)
+./launch.sh --effort high           # Override CLAUDE_EFFORT (low|medium|high|xhigh|max)
+./launch.sh --verbosity verbose     # Message-board verbosity (quiet|normal|verbose)
+./launch.sh --hooks / --no-hooks    # Force hook bundle on/off
+./launch.sh --no-agent              # Skip agent registration (debugging)
 ./launch.sh --dry-run    # Preview resolved config and branch names without launching
 ./stop.sh                # Stop all running agent containers
 ./stop.sh --agent agent-1  # Stop a specific agent
+./stop.sh --team T       # Stop a design team and dissolve it
 ./stop.sh --drain        # Graceful shutdown (pause pumps, wait for in-flight tasks, stop)
 ./status.sh --follow     # Monitor agent progress (polls every 5s)
 ./scripts/ingest-tasks.sh --tasks-dir ./tasks  # Ingest task markdown files into task queue
@@ -87,7 +99,7 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `GET /files` — file ownership registry (tracks which agent owns which files)
    - `/coalesce/*` — system-wide coordination: pause pump agents, wait for in-flight tasks, release file ownership
 
-3. **Docker container** (`container/`) — runs a single Claude Code instance in non-interactive mode (`claude -p`). The entrypoint (`entrypoint.sh`) is a thin dispatcher that sources shared libraries from `container/lib/` (env.sh for environment setup, workspace-setup.sh for git clone/checkout, registration.sh for server registration, finalize.sh for git exclude and settings, run-claude.sh for launching Claude, pump-loop.sh for multi-task mode, post-setup.sh for plugin symlinking). The repo's `CLAUDE.md` is environment-agnostic — no patching needed. User-level Claude settings (hooks, agents, credentials) are mounted from outside the repo.
+3. **Docker container** (`container/`) — runs a single Claude Code instance in non-interactive mode (`claude -p`). The entrypoint (`entrypoint.sh`) is a thin dispatcher that sources shared libraries from `container/lib/` (`env.sh` for environment setup, `workspace-setup.sh` for git clone/checkout, `registration.sh` for server registration and chat-room join, `finalize.sh` for git exclude and settings, `run-claude.sh` for launching Claude, `pump-loop.sh` for multi-task mode, `post-setup.sh` for plugin symlinking, `agent-fetch.sh` for on-the-fly agent definition fetching). Compose files are layered: `docker-compose.template.yml` is the base, `docker-compose.engine.yml` adds the UE engine mount when configured, and `docker-compose.example.yml` is the user-copyable starting point. A bundled MCP server (`container/mcp-servers/chat-channel.mjs`) wires the agent's chat-room participation through Claude's MCP layer. The repo's `CLAUDE.md` is environment-agnostic — no patching needed. User-level Claude settings (hooks, agents, credentials) are mounted from outside the repo.
 
 4. **Dashboard** (`dashboard/`) — React + Vite SPA for real-time monitoring of agents, builds, tasks, and messages. Polls the coordination server. See Commands section above.
 
@@ -112,11 +124,17 @@ persistent — created once by `setup.sh`, never recreated on launch. The exteri
 
 ### Build Hook Interception
 
-Container agents don't run builds directly. Two PreToolUse hooks in `container/hooks/` enforce this:
+Container agents don't run builds directly. Hooks in `container/hooks/` enforce the host-side build path and project conventions:
 
-- **`intercept_build_test.sh`** — intercepts build/test commands, commits+pushes to the bare repo, then calls the coordination server's `/build` or `/test` endpoint. The server syncs to a staging worktree and runs the real UE build scripts.
-- **`block-push-passthrough.sh`** — blocks manual `git push` commands. Pushes are handled automatically by the build/test intercept hook, so direct pushes are an error.
-- Additional hooks in `container/hooks/` cover branch guarding (`guard-branch.sh`), agent header injection (`inject-agent-header.sh`), post-commit auto-push (`push-after-commit.sh`), and C++ diff linting (`lint-cpp-diff.mjs`). No Python is required — the project uses only bash and Node.js/TypeScript.
+- **`intercept_build_test.sh`** (PreToolUse) — intercepts build/test commands, commits+pushes to the bare repo, then calls the coordination server's `/build` or `/test` endpoint. The server syncs to a staging worktree and runs the real UE build scripts.
+- **`block-push-passthrough.sh`** (PreToolUse) — blocks manual `git push` commands. Pushes are handled automatically by the build/test intercept hook, so direct pushes are an error.
+- **`guard-branch.sh`** — refuses commits made on the wrong branch.
+- **`inject-agent-header.sh`** — injects `X-Agent-Name` / `X-Project-Id` headers on outbound `curl` calls to the coordination server.
+- **`push-after-commit.sh`** — auto-pushes to the bare repo after every commit.
+- **`lint-cpp-diff.mjs`** — Node-based C++ diff linter (UE-specific style/safety rules); ships with `lint-cpp-diff.test.mjs`.
+- **`lint-format.sh`** — generic format/lint dispatcher used by JS/TS-only projects.
+
+The hook bundle that runs in any given container is decided server-side via `POST /hooks/resolve` and projected into the container's `settings.json` via `GET /agents/{name}/settings.json`. No Python is required — the project uses only bash and Node.js/TypeScript.
 
 ### Task-Queue Execution
 
@@ -146,16 +164,14 @@ docker/{project-id}/agent-2         ← agent-2's working branch
 
 ### Agent Definitions
 
-Agent type definitions live in `agents/` as markdown files. Each defines the agent's role, available tools, and behavioral instructions. The `AGENT_TYPE` env var in `.env` selects which definition to use at launch. Current agent types:
+The scaffold has two parallel agent definition trees:
 
-- `container-orchestrator` — default for container execution; executes a plan E2E by delegating to sub-agents
-- `container-implementer` — writes code according to a plan or fix instructions
-- `container-reviewer` — generic reviewer for spec and project style
-- `container-decomposition-reviewer` — review focused on decomposition criteria including lifetime/safety
-- `container-safety-reviewer` — review focused on memory/thread safety and invariants
-- `container-style-reviewer` — review focused on style and coding conventions
-- `container-tester` — writes and runs tests for an implementation
-- `changeling` — adaptive agent template (see `agents/changeling.md`)
+- **`agents/`** — static, hand-authored markdown definitions. The minimal fallback set used when no skills composition is needed. Includes `container-orchestrator`, `container-implementer`, `container-reviewer`, `container-decomposition-reviewer`, `container-safety-reviewer`, `container-style-reviewer`, `container-tester`, and the `changeling` adaptive template. Shared fragments live in `agents/core/`.
+- **`dynamic-agents/`** — skills-composed definitions that are the active set used in practice. Each `.md` file declares a `skills:` list in front matter; the compiler in `server/src/agent-compiler.ts` (CLI: `server/src/bin/compile-agent.ts`, exposed as the `compile-agent` binary) inlines those skills and writes a flattened pair (`<name>.md` + `<name>.meta.json`) into `.compiled-agents/`. Includes per-stack orchestrators (`container-orchestrator-ue`, `scaffold-orchestrator`, `scaffold-server-orchestrator`, `scaffold-dashboard-orchestrator`, `content-catalogue-dashboard-orchestrator`), implementers, role-specialised reviewers (decomposition / safety / correctness / react-quality / browser-safety / typescript-type), style-sweep agents, and the design-team roster (`design-leader`, `design-architect`, `design-domain`, `design-data`, `design-ui`, `design-ui-mantine`, `design-elegance`, `design-performance`, `design-safety`, `design-critic`, `cleanup-leader`).
+
+`AGENT_TYPE` in `.env`, `--agent-type` on `launch.sh`, or `projects.<id>.agentType` in `scaffold.config.json` selects which definition to use at launch. The launcher first tries to compile from `dynamic-agents/` and falls back to `agents/` if no matching dynamic definition exists. The coordination server probes every `dynamic-agents/*.md` once at startup and logs any that fail to compile so broken definitions surface immediately rather than at first runtime fetch.
+
+Reasoning effort for the top-level container session is controlled by `CLAUDE_EFFORT` (`.env`) / `--effort` (`launch.sh`) / `projects.<id>.effort` (`scaffold.config.json`). Valid values: `low`, `medium`, `high` (default), `xhigh`, `max`. This currently only affects the top-level session — sub-agents spawned via the Agent tool inherit the harness default.
 
 ### Server Code Conventions
 
@@ -174,9 +190,12 @@ Agent type definitions live in `agents/` as markdown files. Each defines the age
 - `scaffold.config.json` — structural config (paths, ports, build scripts, path remaps). Not committed (user-specific). Copy from `scaffold.config.example.json`. Supports either the legacy single-project shape (top-level `project`, `engine`, `build`, `server` fields) or a multi-project shape with a `projects: { [id]: ProjectConfig }` map. Legacy configs are synthesized internally as `{ default: {...} }`.
 - `.env` — secrets and per-launch params (auth credentials, agent name, branch). Not committed. Copy from `.env.example`.
 - `SCAFFOLD_DATABASE_URL` — Postgres connection URL for the coordination server. Set in the shell that runs the server (the scaffold deliberately ignores any inherited `DATABASE_URL` to avoid hijack from a co-installed unrelated Supabase project). Unset it to fall back to PGlite. Rollback recipe: [Notes/operational-runbook.md](./Notes/operational-runbook.md).
-- `container/docker-compose.yml` — Docker Compose config with local volume mounts. Not committed (user-specific). Copy from `container/docker-compose.example.yml`.
-- `container/container-settings.json` — Claude Code settings injected into containers (hooks config, permissions)
-- `skills/` — modular skills loaded by dynamic agent definitions. Each skill is a directory with a `SKILL.md`. Current skills include `task-worker-protocol`, `orchestrator-phase-protocol`, and `debrief-protocol`.
+- `container/docker-compose.yml` — Docker Compose config with local volume mounts. Not committed (user-specific). Copy from `container/docker-compose.example.yml`. The launcher applies `container/docker-compose.template.yml` as the base and conditionally layers `container/docker-compose.engine.yml` when an engine path is configured.
+- `container/container-settings.json` — Claude Code settings injected into containers (hooks config, permissions).
+- `container/mcp-servers/` — bundled MCP servers loaded inside the container; currently just `chat-channel.mjs` for chat-room participation.
+- `skills/` — modular skills loaded by `dynamic-agents/` definitions. Each skill is a directory with a `SKILL.md`. The repo currently ships ~65 skills including `task-worker-protocol`, `orchestrator-phase-protocol`, `debrief-protocol`, `ue-cpp-style`, `ue-decomposition`, `ue-safety`, `general-correctness`, `general-decomposition`, `quality-philosophy`, `commit-discipline`, `react-component-discipline`, `typescript-type-discipline`, the `mandate-*` axes, and several `*-system-wiring` / `*-patterns` packs.
+- `dynamic-agents/` and `.compiled-agents/` — see Agent Definitions above. `.compiled-agents/` is generated; do not hand-edit.
+- `Notes/` — operator-facing runbooks and design notes. Start at `Notes/operational-runbook.md` for DB rollback recipes.
 
 ### Issues
 
