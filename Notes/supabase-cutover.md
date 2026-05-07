@@ -20,17 +20,17 @@ Parents must be inserted before children. Used by Phases 3 and 5; do not re-deri
 2. agents
 3. rooms
 4. teams
-5. room_members         (→ rooms, agents)
-6. team_members         (→ teams, agents)
-7. chat_messages        (→ rooms, agents; self-FK on reply_to)
-8. tasks                (→ projects, agents)
-9. task_files           (→ tasks)
-10. task_dependencies   (→ tasks)
-11. messages            (→ projects, agents)
-12. build_history       (→ projects, agents)
-13. files               (→ projects, agents)
-14. ubt_lock            (→ agents)
-15. ubt_queue           (→ agents)
+5. room_members         (-> rooms, agents)
+6. team_members         (-> teams, agents)
+7. chat_messages        (-> rooms, agents; self-FK on reply_to)
+8. tasks                (-> projects, agents)
+9. task_files           (-> tasks)
+10. task_dependencies   (-> tasks)
+11. messages            (-> projects, agents)
+12. build_history       (-> projects, agents)
+13. files               (-> projects, agents)
+14. ubt_lock            (-> agents)
+15. ubt_queue           (-> agents)
 ```
 
 ### Worked example: insert order
@@ -64,7 +64,7 @@ export function applyScaffoldDatabaseUrl(): { backendHint: 'postgres' | 'pglite'
 - In [server/src/index.ts](../server/src/index.ts), replace the `delete process.env.DATABASE_URL;` line (currently line 40) with `import { applyScaffoldDatabaseUrl } from './db-env.js';` at the import block and a call `applyScaffoldDatabaseUrl();` immediately before `loadConfig()`.
 - In [server/src/migrate.ts](../server/src/migrate.ts), call `applyScaffoldDatabaseUrl()` before `initDrizzle(...)` so the standalone migration runner uses the same precedence.
 - Update [.env.example](../.env.example): under the `── Database ──` section, replace the `# DATABASE_URL=...` example with `# SCAFFOLD_DATABASE_URL=postgresql://postgres:[password]@[host]:5432/postgres` and a one-line note that this scaffold deliberately ignores a user-level `DATABASE_URL` to avoid hijack from co-installed Supabase projects.
-- Add unit tests in `server/src/db-env.test.ts`: (a) `SCAFFOLD_DATABASE_URL` set, `DATABASE_URL` set to a different value → after call, `DATABASE_URL` equals the scaffold value, `backendHint === 'postgres'`. (b) `SCAFFOLD_DATABASE_URL` unset, `DATABASE_URL` set → after call, `DATABASE_URL` is `undefined`, `backendHint === 'pglite'`. (c) Both unset → after call, `DATABASE_URL` is `undefined`, `backendHint === 'pglite'`.
+- Add unit tests in `server/src/db-env.test.ts`: (a) `SCAFFOLD_DATABASE_URL` set, `DATABASE_URL` set to a different value -> after call, `DATABASE_URL` equals the scaffold value, `backendHint === 'postgres'`. (b) `SCAFFOLD_DATABASE_URL` unset, `DATABASE_URL` set -> after call, `DATABASE_URL` is `undefined`, `backendHint === 'pglite'`. (c) Both unset -> after call, `DATABASE_URL` is `undefined`, `backendHint === 'pglite'`.
 
 **Verification:**
 - `npm run typecheck` clean.
@@ -187,9 +187,9 @@ async function copyPgliteToPostgres(opts: CopyOptions): Promise<CopyResult>;
 - Row-count parity check: same comparison as Phase 4, this time against the production Supabase. All 15 tables match.
 - Export `SCAFFOLD_DATABASE_URL=<production-url>` in the shell that will run the server. Start the server: `npm run dev` (or however the user normally runs it).
 - Smoke checks:
-  - `curl http://localhost:9100/health` → `db.backend: "postgres"`, pool fields populated.
-  - `curl http://localhost:9100/status` → returns the same set of agent names, task counts, and recent message ids that were visible pre-cutover (compare against a snapshot of `/status` taken before stopping the server).
-  - `curl http://localhost:9100/projects` → returns the seeded projects.
+  - `curl http://localhost:9100/health` -> `db.backend: "postgres"`, pool fields populated.
+  - `curl http://localhost:9100/status` -> returns the same set of agent names, task counts, and recent message ids that were visible pre-cutover (compare against a snapshot of `/status` taken before stopping the server).
+  - `curl http://localhost:9100/projects` -> returns the seeded projects.
 - Move the live PGlite dir aside: rename `server/data/pglite` to `server/data/pglite-pre-cutover-<timestamp>`. The directory is the rollback artifact and must not be deleted in this phase.
 
 **Verification:**
