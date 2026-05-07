@@ -28,6 +28,73 @@ function expectAllow(line, description) {
     `Should allow: ${description}\n  Line: ${line}\n  Got: ${issues.join('\n       ')}`);
 }
 
+// --- Rule 0: Non-ASCII characters ---
+
+describe('Rule 0: Non-ASCII characters', () => {
+  it('catches less-than-or-equal in comment', () => {
+    expectCatch('\t// capacity ≤ population', 'less-than-or-equal in comment');
+  });
+  it('catches en dash in comment', () => {
+    expectCatch('\t// keep tiny – only counting', 'en dash in comment');
+  });
+  it('catches em dash in comment', () => {
+    expectCatch('\t// keep tiny — only counting', 'em dash in comment');
+  });
+  it('catches non-breaking hyphen in identifier-like context', () => {
+    expectCatch('\t// I‑th element', 'non-breaking hyphen');
+  });
+  it('catches smart double quotes', () => {
+    expectCatch('\t// “small”', 'smart double quotes');
+  });
+  it('catches smart single quote (apostrophe)', () => {
+    expectCatch("\t// we’re only counting", 'smart single quote');
+  });
+  it('catches horizontal ellipsis', () => {
+    expectCatch('\t// 1 … P.NumArchetypes', 'horizontal ellipsis');
+  });
+  it('catches almost-equal-to', () => {
+    expectCatch('\t// (coord mod 100) ≈ 50', 'almost-equal-to');
+  });
+  it('catches not-equal-to', () => {
+    expectCatch('\t// X ≠ Y', 'not-equal-to');
+  });
+  it('catches greater-than-or-equal', () => {
+    expectCatch('\t// N ≥ 0', 'greater-than-or-equal');
+  });
+  it('catches section sign', () => {
+    expectCatch('\t// Vision §3 reference', 'section sign');
+  });
+  it('catches multiplication sign', () => {
+    expectCatch('\t// EntityConfig × Stack', 'multiplication sign');
+  });
+  it('catches middle dot', () => {
+    expectCatch('\t// A · B', 'middle dot');
+  });
+  it('catches non-breaking space', () => {
+    expectCatch('int32 X = 0;', 'non-breaking space');
+  });
+  it('catches glyphs outside comments (in code)', () => {
+    expectCatch('if (X ≤ Y) { return; }', 'less-than-or-equal in code');
+  });
+  it('catches an unmapped non-ASCII char with generic message', () => {
+    expectCatch('// emoji \u{1F600} sneaks in', 'unmapped non-ASCII char');
+  });
+  it('reports the ASCII replacement in the issue text', () => {
+    const issues = checkLines(['// capacity ≤ population'], 'Test.h');
+    assert.ok(
+      issues.some(s => s.includes("'<='")),
+      `Issue should mention the ASCII replacement '<=': ${issues.join(' | ')}`
+    );
+  });
+
+  it('allows a pure-ASCII comment', () => {
+    expectAllow('// keep tiny - only counting', 'pure-ASCII comment');
+  });
+  it('allows pure-ASCII code', () => {
+    expectAllow('int32 X = 0;', 'pure-ASCII code');
+  });
+});
+
 // --- Rule: Generated header paths ---
 
 describe('Rule: Generated header paths', () => {

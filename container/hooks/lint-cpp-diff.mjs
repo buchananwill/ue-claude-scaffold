@@ -18,6 +18,39 @@
 import { fileURLToPath } from 'node:url';
 
 /**
+ * Map of non-ASCII glyphs that commonly slip into C++ comments to their ASCII
+ * equivalents. The pre-commit hook in PistePerfect rejects any non-ASCII char
+ * in staged .h/.cpp files, so catch them here with a concrete replacement.
+ */
+export const NON_ASCII_REPLACEMENTS = {
+  ' ': ' ',       // non-breaking space
+  '§': 'section', // section sign
+  '·': '.',       // middle dot
+  '×': 'x',       // multiplication sign
+  '‐': '-',       // hyphen
+  '‑': '-',       // non-breaking hyphen
+  '–': '-',       // en dash
+  '—': '-',       // em dash
+  '‘': "'",       // left single quote
+  '’': "'",       // right single quote / apostrophe
+  '“': '"',       // left double quote
+  '”': '"',       // right double quote
+  '…': '...',     // horizontal ellipsis
+  '≈': '~=',      // almost equal to
+  '≠': '!=',      // not equal to
+  '≤': '<=',      // less-than or equal to
+  '≥': '>=',      // greater-than or equal to
+};
+
+/**
+ * Build a stable diagnostic name for a codepoint, e.g. "U+2264".
+ * @param {string} ch
+ */
+function codepointLabel(ch) {
+  return 'U+' + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+}
+
+/**
  * Check lines of C++ code for lint issues.
  * @param {string[]} lines
  * @param {string} filePath
@@ -34,6 +67,40 @@ export function checkLines(lines, filePath) {
     const lineNum = i + 1;
     const stripped = line.trim();
 
+    // Rule 0: Non-ASCII characters (banned in .h/.cpp; pre-commit hook will reject)
+    // Run before comment-skip so we catch glyphs in comments too — that is where
+    // they almost always slip in (smart quotes, en dashes, math symbols).
+    // Aggregate per line and per distinct glyph so a long comment with several
+    // glyphs reports compactly.
+    {
+      const counts = new Map();
+      for (const ch of line) {
+        const cp = ch.codePointAt(0);
+        if (cp > 0x7F) {
+          counts.set(ch, (counts.get(ch) ?? 0) + 1);
+        }
+      }
+      if (counts.size > 0) {
+        const parts = [];
+        for (const [ch, n] of counts) {
+          const replacement = NON_ASCII_REPLACEMENTS[ch];
+          const label = codepointLabel(ch);
+          if (replacement !== undefined) {
+            const shown = replacement === '' ? '<delete>' : `'${replacement}'`;
+            parts.push(`'${ch}' (${label}) x${n} -> ${shown}`);
+          } else {
+            parts.push(`'${ch}' (${label}) x${n} -> remove or replace with ASCII`);
+          }
+        }
+        issues.push(
+          `  LINT [${filePath}:${lineNum}] Non-ASCII character(s): ` +
+          parts.join(', ') + '. ' +
+          `Pre-commit hook rejects any non-ASCII byte in staged .h/.cpp files. ` +
+          `Line: ${stripped.slice(0, 80)}`
+        );
+      }
+    }
+
     // Rule: Generated headers must use bare filenames, not paths
     // Check before skipping preprocessor lines
     if (stripped.startsWith('#include')) {
@@ -41,7 +108,7 @@ export function checkLines(lines, filePath) {
       if (genMatch && genMatch[1].includes('/')) {
         issues.push(
           `  LINT [${filePath}:${lineNum}] Generated header path: ` +
-          `use bare filename '#include "${genMatch[1].split('/').pop()}"' — ` +
+          `use bare filename '#include "${genMatch[1].split('/').pop()}"' - ` +
           `UBT adds the generated-code directory to the include path automatically. ` +
           `Line: ${stripped.slice(0, 80)}`
         );
