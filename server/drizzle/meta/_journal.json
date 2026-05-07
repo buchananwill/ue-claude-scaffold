@@ -43,6 +43,13 @@
       "when": 1776710400000,
       "tag": "0005_add_agent_type_override",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778889600000,
+      "tag": "0006_add_container_sessions",
+      "breakpoints": true
     }
   ]
 }

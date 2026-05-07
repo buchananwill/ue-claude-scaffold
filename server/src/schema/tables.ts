@@ -213,3 +213,26 @@ export const teamMembers = pgTable('team_members', {
   primaryKey({ columns: [table.teamId, table.agentId] }),
   uniqueIndex('idx_team_leader').on(table.teamId).where(sql`is_leader = true`),
 ]);
+
+// 16. claudeCodeContainerSessions — records every `claude -p` invocation in a container
+export const claudeCodeContainerSessions = pgTable('claude_code_container_sessions', {
+  id: uuid('id').primaryKey(),
+  projectId: text('project_id').notNull().references(() => projects.id),
+  agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'restrict' }),
+  taskId: integer('task_id').references(() => tasks.id, { onDelete: 'set null' }),
+  status: text('status').notNull().default('running'),
+  startedAt: timestamp('started_at').notNull().defaultNow(),
+  endedAt: timestamp('ended_at'),
+  exitCode: integer('exit_code'),
+  inputTokens: integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  cacheReadTokens: integer('cache_read_tokens'),
+  cacheCreationTokens: integer('cache_creation_tokens'),
+  rawOutput: jsonb('raw_output'),
+}, (table) => [
+  check('ccs_status_check', sql`${table.status} IN ('running','complete','aborted','stopped')`),
+  index('idx_ccs_project').on(table.projectId),
+  index('idx_ccs_agent').on(table.agentId),
+  index('idx_ccs_task').on(table.taskId),
+  index('idx_ccs_project_started').on(table.projectId, table.startedAt.desc()),
+]);
