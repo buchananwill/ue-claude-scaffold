@@ -19,7 +19,6 @@ You delegate to these container-tuned agents:
 | `implementer`     | `container-implementer-ue`            | Writes code, builds, iterates to clean build |
 | `safety-reviewer` | `container-safety-reviewer-ue`        | Pointer lifecycles, GC, thread safety, moves |
 | `reviewer`        | `container-reviewer-ue`               | Correctness, spec compliance, invariants     |
-| `tester`          | `container-tester-ue`                 | Writes and runs tests                        |
 | `decomp-reviewer` | `container-decomposition-reviewer-ue` | File bloat, nesting depth, decomposition     |
 | `style-sweep`     | `container-style-sweep-ue`            | Terminal style pass: edit-in-place, build, test, single commit |
 
