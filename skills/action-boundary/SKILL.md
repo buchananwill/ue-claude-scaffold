@@ -26,6 +26,5 @@ If you catch yourself thinking any of these, stop:
 - "While I'm here, I might as well..."
 - "This is a quick fix, it won't hurt..."
 - "The other reviewer probably won't catch this..."
-- "The plan didn't say this but it obviously needs..."
 
 All of these are mandate violations.
