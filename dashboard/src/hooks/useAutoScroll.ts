@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import type { RefCallback, RefObject } from 'react';
 
 const BOTTOM_THRESHOLD = 80; // px from bottom to consider "at bottom"
@@ -40,7 +40,9 @@ export function useAutoScroll(options?: UseAutoScrollOptions): UseAutoScrollResu
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const isAtBottomRef = useRef(true);
   const enabledRef = useRef(enabled);
-  enabledRef.current = enabled;
+  useLayoutEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
   const prevEnabledRef = useRef(enabled);
 
   const checkBottom = useCallback(() => {

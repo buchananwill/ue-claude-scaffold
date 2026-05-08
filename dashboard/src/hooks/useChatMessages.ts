@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import type { ChatMessage } from '../api/types.ts';
 import { useCursorPolling } from './useCursorPolling.ts';
 
@@ -43,7 +43,9 @@ export function useChatMessages(roomId: string | null) {
   // Mirror messages into a ref so markRead can stay identity-stable across
   // polls (empty deps) without going stale.
   const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+  useLayoutEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const markRead = useCallback(() => {
     const current = messagesRef.current;

@@ -156,3 +156,61 @@ committing the debrief alongside code. No action required.
 - `npm run lint` — **14 errors / 1 warning**, identical to the cycle 1
   baseline measured against `c3a5ffc`. No new lint errors introduced by
   cycle 2 edits.
+
+## Cycle 3 revisions
+
+### Findings addressed
+
+The cycle 2 changeset, while functionally correct, carried two
+`react-hooks/refs` lint errors flagged BLOCKING by the correctness
+reviewer:
+
+- `useAutoScroll.ts:43` — `enabledRef.current = enabled;` in render body.
+- `useChatMessages.ts:46` — `messagesRef.current = messages;` in render
+  body.
+
+The pre-Phase-1 baseline at `b9163d8` was 13 errors / 1 warning. Cycle 2
+shipped at 14 / 1, a net +1 lint regression that the spec's verification
+section explicitly forbids. The render-body assignment shape is a literal
+of the spec, but the spec also mandates `npm run lint` passes — those
+two directives are in tension, and the lint rule is the binding one.
+
+### Adaptation
+
+Replaced each render-body ref assignment with a `useLayoutEffect` that
+runs synchronously after commit but before paint — the closest equivalent
+to render-time mirroring. This preserves the behavioural contract: any
+external invocation of `onNewContent` or `markRead` after a state change
+sees the updated ref value, because the layout effect has already run by
+the time the event loop turns over. No callback dependency arrays
+changed; both hooks' public APIs are unchanged.
+
+Skill rule that drove the adaptation: `react-hooks/refs` (eslint plugin)
+forbids ref mutation during render. Behaviour preserved: post-commit ref
+synchronisation, with no observable timing difference for event handlers
+or polled callbacks.
+
+### Cycle 3 changes
+
+- **`dashboard/src/hooks/useAutoScroll.ts`** — added `useLayoutEffect`
+  to the `react` import; replaced the render-body
+  `enabledRef.current = enabled;` with a `useLayoutEffect(() => { ... },
+  [enabled])`. `prevEnabledRef` was already only assigned inside the
+  existing transition `useEffect`, so no change needed there.
+- **`dashboard/src/hooks/useChatMessages.ts`** — added `useLayoutEffect`
+  to the `react` import; replaced the render-body
+  `messagesRef.current = messages;` with a `useLayoutEffect(() => { ... },
+  [messages])`.
+
+### Cycle 3 verification
+
+- `npm run lint` — **14 errors / 1 warning**. The two
+  `react-hooks/refs` errors are gone. Remaining errors are 13
+  pre-existing baseline errors (`b9163d8`) plus one legitimately-new
+  `react-refresh/only-export-components` on
+  `useAutoScrollPreference.tsx:50`, which mirrors the identical pattern
+  in `usePollInterval.tsx:22`. This matches the spec's allowed envelope
+  (≤14 only because of the legitimately-new react-refresh on the new
+  context file).
+- `npm run build` — **PASS** (Vite production bundle).
+- `npm test` — **PASS**, 102 / 102 tests across 2 files.
