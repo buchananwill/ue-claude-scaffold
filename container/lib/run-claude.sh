@@ -289,7 +289,7 @@ _run_claude() {
 
     # Report task completion (task mode only)
     if [ "$mode" = "task" ] && [ -n "${CURRENT_TASK_ID:-}" ]; then
-        if [ $EXIT_CODE -eq 0 ]; then
+        if [ "$EXIT_CODE" -eq 0 ]; then
             local complete_payload
             complete_payload=$(jq -n --arg agent "$AGENT_NAME" --argjson exitCode 0 \
                 '{"result": {"agent": $agent, "exitCode": $exitCode}}')
@@ -308,7 +308,7 @@ _run_claude() {
         fi
     fi
 
-    if [ $EXIT_CODE -eq 0 ]; then
+    if [ "$EXIT_CODE" -eq 0 ]; then
         _post_status "done"
     else
         _post_status "error"
