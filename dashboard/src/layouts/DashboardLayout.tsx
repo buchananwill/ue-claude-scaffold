@@ -5,6 +5,7 @@ import { Outlet, Link, useMatches } from '@tanstack/react-router';
 import { HealthBar } from '../components/HealthBar.tsx';
 import { useHealth } from '../hooks/useHealth.ts';
 import { usePollInterval } from '../hooks/usePollInterval.tsx';
+import { useAutoScrollPreference } from '../hooks/useAutoScrollPreference.tsx';
 import { SearchBar } from '../components/SearchBar.tsx';
 import { useProject } from '../contexts/ProjectContext.tsx';
 
@@ -18,6 +19,7 @@ interface NavItem {
 
 export function DashboardLayout() {
   const { intervalMs, setIntervalMs } = usePollInterval();
+  const { enabled: autoScrollEnabled, setEnabled: setAutoScrollEnabled } = useAutoScrollPreference();
   const health = useHealth();
   const matches = useMatches();
   const { projectId } = useProject();
@@ -44,6 +46,8 @@ export function DashboardLayout() {
           error={health.error ? String(health.error) : null}
           intervalMs={intervalMs}
           onIntervalChange={setIntervalMs}
+          autoScrollEnabled={autoScrollEnabled}
+          onAutoScrollChange={setAutoScrollEnabled}
           middle={<SearchBar />}
         />
       </AppShell.Header>

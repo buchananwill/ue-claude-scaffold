@@ -58,6 +58,7 @@ export function ChatPage() {
                 loadingOlder={chat.loadingOlder}
                 onLoadOlder={chat.loadOlder}
                 onMarkRead={chat.markRead}
+                unreadCount={chat.unreadCount}
               />
             ) : (
               <Text c="dimmed" ta="center">Select a room</Text>

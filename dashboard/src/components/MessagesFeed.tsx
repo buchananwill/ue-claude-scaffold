@@ -7,6 +7,7 @@ import { StatusBadge } from './StatusBadge.tsx';
 import { MarkdownContent } from './MarkdownContent.tsx';
 import { AgentMessageCard } from './AgentMessageCard.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
+import { useAutoScrollPreference } from '../hooks/useAutoScrollPreference.tsx';
 
 interface MessagesFeedProps {
   messages: Message[];
@@ -65,9 +66,14 @@ export function MessagesFeed({
   const highlightRef = useRef<HTMLDivElement>(null);
   const [flashId, setFlashId] = useState<number | undefined>(highlightMessageId);
   const onHighlightConsumedRef = useRef(onHighlightConsumed);
-  onHighlightConsumedRef.current = onHighlightConsumed;
+  useLayoutEffect(() => {
+    onHighlightConsumedRef.current = onHighlightConsumed;
+  }, [onHighlightConsumed]);
 
-  const { viewportRef, sentinelRef, showJumpToLatest, jumpToLatest, onNewContent } = useAutoScroll();
+  const { enabled: autoScrollEnabled } = useAutoScrollPreference();
+  const { viewportRef, sentinelRef, showJumpToLatest, jumpToLatest, onNewContent } = useAutoScroll({
+    enabled: autoScrollEnabled,
+  });
   // Keep a local ref to the viewport element for prepend scroll restoration
   const viewportElRef = useRef<HTMLDivElement | null>(null);
   const combinedViewportRef = (node: HTMLDivElement | null) => {

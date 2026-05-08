@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { ScrollArea, Box, Group, Text, TextInput, ActionIcon, Button, Transition, Stack } from '@mantine/core';
 import { IconSend, IconArrowDown } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
@@ -9,6 +9,13 @@ import { RelativeTime } from './RelativeTime.tsx';
 import { MarkdownContent } from './MarkdownContent.tsx';
 import { AgentMessageCard } from './AgentMessageCard.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
+import { useAutoScrollPreference } from '../hooks/useAutoScrollPreference.tsx';
+import {
+  buildJumpToLatestLabel,
+  shouldMarkReadOnAutoScrollTransition,
+  shouldMarkReadOnNewMessage,
+  shouldMountJumpToLatest,
+} from './chatTimelineHelpers.ts';
 import type { ChatMessage } from '../api/types.ts';
 
 interface ChatTimelineProps {
@@ -20,6 +27,7 @@ interface ChatTimelineProps {
   loadingOlder: boolean;
   onLoadOlder: () => void;
   onMarkRead: () => void;
+  unreadCount: number;
 }
 
 export function ChatTimeline({
@@ -31,23 +39,56 @@ export function ChatTimeline({
   loadingOlder,
   onLoadOlder,
   onMarkRead,
+  unreadCount,
 }: ChatTimelineProps) {
   const { projectId } = useProject();
+  const { enabled: autoScrollEnabled } = useAutoScrollPreference();
   const [inputValue, setInputValue] = useState('');
-  const { viewportRef, sentinelRef, showJumpToLatest, jumpToLatest, onNewContent } = useAutoScroll();
+  const { viewportRef, sentinelRef, showJumpToLatest, jumpToLatest, onNewContent } = useAutoScroll({
+    enabled: autoScrollEnabled,
+  });
   const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
   const lastSeenIdRef = useRef<number | null>(null);
 
+  // Mirror the latest onMarkRead into a ref so effects can call it without
+  // taking it as a dependency (its identity is stable today, but the ref
+  // makes that independence explicit for the `[roomId]` and
+  // `[autoScrollEnabled]` effects below).
+  const onMarkReadRef = useRef(onMarkRead);
+  useLayoutEffect(() => {
+    onMarkReadRef.current = onMarkRead;
+  }, [onMarkRead]);
+
+  // Reset unread count on room switch only — not on every poll-driven
+  // identity change of onMarkRead.
   useEffect(() => {
-    onMarkRead();
-  }, [roomId, onMarkRead]);
+    onMarkReadRef.current();
+  }, [roomId]);
 
   useEffect(() => {
     if (lastMessageId !== null && lastMessageId !== lastSeenIdRef.current) {
       lastSeenIdRef.current = lastMessageId;
       onNewContent();
+      if (shouldMarkReadOnNewMessage(autoScrollEnabled)) {
+        onMarkReadRef.current();
+      }
     }
-  }, [lastMessageId, onNewContent]);
+  }, [lastMessageId, onNewContent, autoScrollEnabled]);
+
+  // On a false → true transition of the global toggle, clear the unread
+  // count. The useAutoScroll hook itself handles the scroll-to-sentinel.
+  const prevAutoScrollEnabledRef = useRef(autoScrollEnabled);
+  useEffect(() => {
+    if (shouldMarkReadOnAutoScrollTransition(prevAutoScrollEnabledRef.current, autoScrollEnabled)) {
+      onMarkReadRef.current();
+    }
+    prevAutoScrollEnabledRef.current = autoScrollEnabled;
+  }, [autoScrollEnabled]);
+
+  const handleJumpToLatest = useCallback(() => {
+    jumpToLatest();
+    onMarkReadRef.current();
+  }, [jumpToLatest]);
 
   const handleSend = async () => {
     const content = inputValue.trim();
@@ -102,16 +143,20 @@ export function ChatTimeline({
               <div ref={sentinelRef} />
             </ScrollArea>
 
-            <Transition mounted={showJumpToLatest} transition="slide-up" duration={200}>
+            <Transition
+              mounted={shouldMountJumpToLatest(showJumpToLatest, autoScrollEnabled, unreadCount)}
+              transition="slide-up"
+              duration={200}
+            >
               {(styles) => (
                 <Button
                   style={{ ...styles, position: 'absolute', bottom: 'var(--mantine-spacing-md)', left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}
                   size="compact-sm"
                   variant="filled"
                   leftSection={<IconArrowDown size={14} />}
-                  onClick={jumpToLatest}
+                  onClick={handleJumpToLatest}
                 >
-                  Jump to latest
+                  {buildJumpToLatestLabel(unreadCount)}
                 </Button>
               )}
             </Transition>

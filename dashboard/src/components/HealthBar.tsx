@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Anchor, Group, Text, SegmentedControl, Indicator } from '@mantine/core';
+import { Anchor, Group, Text, SegmentedControl, Indicator, Switch } from '@mantine/core';
 import { Link } from '@tanstack/react-router';
 import type { HealthResponse } from '../api/types.js';
 import { useProject } from '../contexts/ProjectContext.js';
@@ -9,6 +9,8 @@ interface HealthBarProps {
   error: string | null;
   intervalMs: number;
   onIntervalChange: (ms: number) => void;
+  autoScrollEnabled: boolean;
+  onAutoScrollChange: (enabled: boolean) => void;
   middle?: ReactNode;
 }
 
@@ -18,7 +20,15 @@ const intervals = [
   { label: '10s', value: '10000' },
 ];
 
-export function HealthBar({ health, error, intervalMs, onIntervalChange, middle }: HealthBarProps) {
+export function HealthBar({
+  health,
+  error,
+  intervalMs,
+  onIntervalChange,
+  autoScrollEnabled,
+  onAutoScrollChange,
+  middle,
+}: HealthBarProps) {
   const connected = !error && !!health;
   const { projectName } = useProject();
 
@@ -37,6 +47,12 @@ export function HealthBar({ health, error, intervalMs, onIntervalChange, middle 
       </Group>
       {middle}
       <Group gap="sm">
+        <Text size="xs" c="dimmed">Auto-scroll:</Text>
+        <Switch
+          size="xs"
+          checked={autoScrollEnabled}
+          onChange={(e) => onAutoScrollChange(e.currentTarget.checked)}
+        />
         <Text size="xs" c="dimmed">Poll:</Text>
         <SegmentedControl
           size="xs"
