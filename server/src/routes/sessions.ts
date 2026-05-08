@@ -4,6 +4,8 @@ import { eq, and, desc } from 'drizzle-orm';
 import { getDb } from '../drizzle-instance.js';
 import { claudeCodeContainerSessions } from '../schema/tables.js';
 import * as agentsQ from '../queries/agents.js';
+import type { ScaffoldConfig } from '../config.js';
+import { resolveProject } from '../resolve-project.js';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -12,6 +14,15 @@ type SessionRow = typeof claudeCodeContainerSessions.$inferSelect;
 
 const TERMINAL_STATUSES = new Set(['complete', 'aborted', 'stopped']);
 const ALL_STATUSES = new Set(['running', 'complete', 'aborted', 'stopped']);
+
+/** Maximum size of the JSON-serialised rawOutput payload, in bytes. The
+ * expected payload is the Claude `result` event, which is well under this.
+ */
+const RAW_OUTPUT_MAX_BYTES = 64 * 1024;
+
+/** Tolerance for clock skew between caller and server when validating
+ * `endedAt`. Five seconds in the future is acceptable. */
+const ENDED_AT_FUTURE_TOLERANCE_MS = 5_000;
 
 export interface SessionResponse {
   id: string;
@@ -47,7 +58,14 @@ export function formatSession(row: SessionRow): SessionResponse {
   };
 }
 
-const sessionsPlugin: FastifyPluginAsync = async (fastify) => {
+interface PluginOpts {
+  config: ScaffoldConfig;
+}
+
+const sessionsPlugin: FastifyPluginAsync<PluginOpts> = async (
+  fastify,
+  { config },
+) => {
   // POST /sessions — create a running session
   fastify.post<{
     Body: {
@@ -70,8 +88,17 @@ const sessionsPlugin: FastifyPluginAsync = async (fastify) => {
     const db = getDb();
     const projectId = request.projectId;
 
+    try {
+      await resolveProject(config, db, projectId);
+    } catch {
+      return reply.notFound(`Unknown project: '${projectId}'`);
+    }
+
     const agent = await agentsQ.getByIdInProject(db, projectId, agentId);
     if (!agent) {
+      return reply.code(400).send({ error: 'invalid_agentId' });
+    }
+    if (agent.status === 'deleted') {
       return reply.code(400).send({ error: 'invalid_agentId' });
     }
 
@@ -109,6 +136,12 @@ const sessionsPlugin: FastifyPluginAsync = async (fastify) => {
 
     const db = getDb();
     const projectId = request.projectId;
+
+    try {
+      await resolveProject(config, db, projectId);
+    } catch {
+      return reply.notFound(`Unknown project: '${projectId}'`);
+    }
 
     const existing = await db
       .select()
@@ -153,6 +186,14 @@ const sessionsPlugin: FastifyPluginAsync = async (fastify) => {
       if (Number.isNaN(parsed.getTime())) {
         return reply.code(400).send({ error: 'invalid_endedAt' });
       }
+      // Reject endedAt more than 5 seconds in the future (clock-skew tolerance).
+      if (parsed.getTime() > Date.now() + ENDED_AT_FUTURE_TOLERANCE_MS) {
+        return reply.code(400).send({ error: 'invalid_endedAt' });
+      }
+      // Reject endedAt earlier than the row's startedAt.
+      if (current.startedAt && parsed < current.startedAt) {
+        return reply.code(400).send({ error: 'invalid_endedAt' });
+      }
       update.endedAt = parsed;
     }
 
@@ -172,18 +213,23 @@ const sessionsPlugin: FastifyPluginAsync = async (fastify) => {
     }
 
     if (body.rawOutput !== undefined) {
+      // Bound the rawOutput payload size to prevent unbounded jsonb growth.
+      const serialised = JSON.stringify(body.rawOutput);
+      if (serialised.length > RAW_OUTPUT_MAX_BYTES) {
+        return reply.code(400).send({ error: 'rawOutput_too_large' });
+      }
       update.rawOutput = body.rawOutput;
     }
 
     // If the resulting status is terminal and endedAt was not supplied,
     // server-stamp endedAt = now. Container clocks are not trusted as the
-    // authoritative finalize time.
-    const resultingStatus = update.status ?? current.status;
+    // authoritative finalize time. This stamp is unconditional on the
+    // existing endedAt value: a terminal-to-terminal re-patch (e.g.
+    // complete -> aborted) without an explicit endedAt re-stamps the time.
     if (
-      TERMINAL_STATUSES.has(resultingStatus) &&
-      update.endedAt === undefined &&
-      current.endedAt === null &&
-      update.status !== undefined // only stamp on actual transition into terminal
+      body.status !== undefined &&
+      TERMINAL_STATUSES.has(body.status) &&
+      body.endedAt === undefined
     ) {
       update.endedAt = new Date();
     }
@@ -222,6 +268,13 @@ const sessionsPlugin: FastifyPluginAsync = async (fastify) => {
   }>('/sessions', async (request, reply) => {
     const { agentId, taskId, status, limit } = request.query;
     const projectId = request.projectId;
+    const db = getDb();
+
+    try {
+      await resolveProject(config, db, projectId);
+    } catch {
+      return reply.notFound(`Unknown project: '${projectId}'`);
+    }
 
     const conditions = [
       eq(claudeCodeContainerSessions.projectId, projectId),
@@ -255,7 +308,7 @@ const sessionsPlugin: FastifyPluginAsync = async (fastify) => {
       Math.min(Number.isFinite(limitNum) && limitNum > 0 ? limitNum : 100, 500),
     );
 
-    const rows = await getDb()
+    const rows = await db
       .select()
       .from(claudeCodeContainerSessions)
       .where(and(...conditions))

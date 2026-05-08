@@ -1,14 +1,26 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { sql } from 'drizzle-orm';
+import { sql, eq } from 'drizzle-orm';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import { createTestConfig } from '../test-helper.js';
-import { claudeCodeContainerSessions, tasks } from '../schema/tables.js';
+import { claudeCodeContainerSessions, tasks, projects, agents } from '../schema/tables.js';
 import agentsPlugin from './agents.js';
 import sessionsPlugin from './sessions.js';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Build a test config that knows about both 'default' and 'proj-a'. */
+function makeConfig() {
+  const cfg = createTestConfig();
+  cfg.resolvedProjects['proj-a'] = {
+    name: 'Project A',
+    path: '/tmp/proj-a',
+    uprojectFile: '/tmp/proj-a/A.uproject',
+    bareRepoPath: '/tmp/proj-a-repo.git',
+  };
+  return cfg;
+}
 
 describe('sessions routes (drizzle)', () => {
   let ctx: DrizzleTestContext;
@@ -41,8 +53,13 @@ describe('sessions routes (drizzle)', () => {
       );
     `);
 
-    await ctx.app.register(agentsPlugin, { config: createTestConfig() });
-    await ctx.app.register(sessionsPlugin);
+    // Pre-seed 'proj-a' so the FK on agents/sessions is satisfied for
+    // cross-project assertions.
+    await ctx.db.insert(projects).values({ id: 'proj-a', name: 'Project A' }).onConflictDoNothing();
+
+    const config = makeConfig();
+    await ctx.app.register(agentsPlugin, { config });
+    await ctx.app.register(sessionsPlugin, { config });
 
     // Register two agents in 'default' so we have valid UUIDs to point at.
     const reg1 = await ctx.app.inject({
@@ -142,6 +159,36 @@ describe('sessions routes (drizzle)', () => {
     assert.ok(res.statusCode === 400 || res.statusCode === 404, `expected 400 or 404 got ${res.statusCode}`);
   });
 
+  it('POST /sessions rejects a soft-deleted agent', async () => {
+    // Soft-delete agent-1 directly via DB (route doesn't allow setting 'deleted').
+    await ctx.db
+      .update(agents)
+      .set({ status: 'deleted' })
+      .where(eq(agents.id, agent1Id));
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/sessions',
+      headers: { 'x-project-id': 'default' },
+      payload: { agentId: agent1Id },
+    });
+    assert.ok(
+      res.statusCode === 400 || res.statusCode === 404,
+      `expected 400/404 got ${res.statusCode}`,
+    );
+    assert.equal(res.json().error, 'invalid_agentId');
+  });
+
+  it('POST /sessions returns 404 when X-Project-Id is unknown', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/sessions',
+      headers: { 'x-project-id': 'no-such-project' },
+      payload: { agentId: agent1Id },
+    });
+    assert.equal(res.statusCode, 404);
+  });
+
   it('PATCH /sessions/:id updates token counts, status, exitCode, endedAt, rawOutput; returns 200 with updated row', async () => {
     const create = await ctx.app.inject({
       method: 'POST',
@@ -151,7 +198,9 @@ describe('sessions routes (drizzle)', () => {
     });
     const sessionId = create.json().id;
 
-    const endedAt = '2026-01-01T12:34:56.000Z';
+    // endedAt must be >= the row's startedAt (which was stamped at POST).
+    // Use "now" to be safely after startedAt and within future tolerance.
+    const endedAt = new Date().toISOString();
     const patchRes = await ctx.app.inject({
       method: 'PATCH',
       url: `/sessions/${sessionId}`,
@@ -205,6 +254,114 @@ describe('sessions routes (drizzle)', () => {
       stamped >= before - 1000 && stamped <= Date.now() + 1000,
       `server-stamped endedAt out of expected range: ${row.endedAt}`,
     );
+  });
+
+  it('PATCH /sessions/:id re-stamps endedAt on terminal-to-terminal transition without endedAt', async () => {
+    // Create the session via direct DB insert with a startedAt well in the
+    // past so we can plant a non-current endedAt that is still after
+    // startedAt — this lets us prove the server re-stamps to a current value.
+    const sessionId = crypto.randomUUID();
+    const startedAt = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes ago
+    const plantedEndedAt = new Date(Date.now() - 3 * 60 * 1000); // 3 minutes ago
+    await ctx.db.insert(claudeCodeContainerSessions).values({
+      id: sessionId,
+      projectId: 'default',
+      agentId: agent1Id,
+      taskId: null,
+      status: 'complete',
+      startedAt,
+      endedAt: plantedEndedAt,
+      exitCode: 0,
+    });
+
+    // Now flip to aborted without supplying endedAt — server must re-stamp.
+    // The spec rule: terminal status + no endedAt body field => server stamps,
+    // unconditional on whether the row already had an endedAt.
+    const before = Date.now();
+    const flipRes = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/sessions/${sessionId}`,
+      headers: { 'x-project-id': 'default' },
+      payload: { status: 'aborted' },
+    });
+    assert.equal(flipRes.statusCode, 200);
+    const row = flipRes.json();
+    assert.equal(row.status, 'aborted');
+    assert.ok(row.endedAt != null);
+    const restamped = new Date(row.endedAt).getTime();
+    const plantedMs = plantedEndedAt.getTime();
+    // The re-stamp must be strictly later than the planted (3-minutes-ago)
+    // stamp, proving the server re-set endedAt rather than leaving it.
+    assert.ok(
+      restamped > plantedMs,
+      `expected re-stamped endedAt (${row.endedAt}) > planted (${plantedEndedAt.toISOString()})`,
+    );
+    assert.ok(
+      restamped >= before - 1000 && restamped <= Date.now() + 1000,
+      `server-stamped endedAt out of expected range: ${row.endedAt}`,
+    );
+  });
+
+  it('PATCH /sessions/:id rejects rawOutput payloads that exceed the 64 KiB cap', async () => {
+    const create = await ctx.app.inject({
+      method: 'POST',
+      url: '/sessions',
+      headers: { 'x-project-id': 'default' },
+      payload: { agentId: agent1Id },
+    });
+    const sessionId = create.json().id;
+
+    // Build a > 64 KiB payload by stuffing a large string.
+    const huge = 'x'.repeat(70 * 1024);
+    const patchRes = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/sessions/${sessionId}`,
+      headers: { 'x-project-id': 'default' },
+      payload: { rawOutput: { blob: huge } },
+    });
+    assert.equal(patchRes.statusCode, 400);
+    assert.equal(patchRes.json().error, 'rawOutput_too_large');
+  });
+
+  it('PATCH /sessions/:id rejects an endedAt more than 5s in the future', async () => {
+    const create = await ctx.app.inject({
+      method: 'POST',
+      url: '/sessions',
+      headers: { 'x-project-id': 'default' },
+      payload: { agentId: agent1Id },
+    });
+    const sessionId = create.json().id;
+
+    const farFuture = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const patchRes = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/sessions/${sessionId}`,
+      headers: { 'x-project-id': 'default' },
+      payload: { status: 'complete', endedAt: farFuture },
+    });
+    assert.equal(patchRes.statusCode, 400);
+    assert.equal(patchRes.json().error, 'invalid_endedAt');
+  });
+
+  it('PATCH /sessions/:id rejects an endedAt earlier than startedAt', async () => {
+    const create = await ctx.app.inject({
+      method: 'POST',
+      url: '/sessions',
+      headers: { 'x-project-id': 'default' },
+      payload: { agentId: agent1Id },
+    });
+    const sessionId = create.json().id;
+
+    // Pick a clearly-prior timestamp (year 2000).
+    const longBefore = '2000-01-01T00:00:00.000Z';
+    const patchRes = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/sessions/${sessionId}`,
+      headers: { 'x-project-id': 'default' },
+      payload: { status: 'complete', endedAt: longBefore },
+    });
+    assert.equal(patchRes.statusCode, 400);
+    assert.equal(patchRes.json().error, 'invalid_endedAt');
   });
 
   it('PATCH /sessions/:id returns 404 when the session does not exist or belongs to a different project', async () => {
@@ -275,6 +432,15 @@ describe('sessions routes (drizzle)', () => {
     const idC = crypto.randomUUID();
     const idOther = crypto.randomUUID();
 
+    // Need an agent that exists in proj-a for the cross-project row.
+    const regOther = await ctx.app.inject({
+      method: 'POST',
+      url: '/agents/register',
+      headers: { 'x-project-id': 'proj-a' },
+      payload: { name: 'agent-pa', worktree: '/tmp/pa' },
+    });
+    const projAAgentId = regOther.json().id;
+
     await ctx.db.insert(claudeCodeContainerSessions).values([
       {
         id: idA,
@@ -304,7 +470,7 @@ describe('sessions routes (drizzle)', () => {
       {
         id: idOther,
         projectId: 'proj-a',
-        agentId: agent1Id,
+        agentId: projAAgentId,
         taskId: null,
         status: 'running',
         startedAt: new Date('2026-01-04T00:00:00Z'),
