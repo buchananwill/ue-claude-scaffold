@@ -117,3 +117,43 @@ under "Verification" and is not re-listed here.
   once we have post-rollout data on misclassification.
 - Consider tightening `set -euo pipefail` across `container/lib/*.sh` as a separate
   hygiene pass — out of scope here but the library is large enough now to benefit.
+
+## Cycle 1 fixes
+
+Safety review raised two findings on the Phase 3 commit (878b6cc); both addressed in this cycle.
+
+### [B1] BLOCKING — session-open `jq -n` lacks `|| true` guard
+
+**File:** `container/lib/run-claude.sh` (~line 210)
+
+The script runs under `set -euo pipefail` (entrypoint.sh line 2). The local `set +e`
+that brackets the `claude` invocation does not apply to the session-open `jq -n` call
+nine lines earlier. If `jq` exits non-zero before the `set +e`, the entire script
+aborts before claude ever launches — silently dropping the task and violating the
+"sessions instrumentation must never break primary work" contract.
+
+Appended `|| true` to the `jq -n ... > "$sess_open_tmp"` invocation so a failure
+cannot abort the script. `sess_open_tmp` is still cleaned up at the existing
+`rm -f` line, and `CURRENT_SESSION_ID` will end up empty (because `sess_resp` is
+empty / not valid JSON), short-circuiting `_finalize_session` to its no-op branch.
+
+### [W1] WARNING — `CURRENT_SESSION_ID` lacked UUID-shape validation
+
+**File:** `container/lib/run-claude.sh` (~lines 218-222)
+
+`CURRENT_SESSION_ID` was interpolated into the `_curl_server` PATCH URL without
+shape validation. The server currently always returns a `randomUUID()` value, but
+defence-in-depth requires UUID validation before embedding into a URL — analogous
+to the server-side `UUID_RE.test(id)` guard in `server/src/routes/sessions.ts:149`
+and to `pump-loop.sh`'s allowlist-regex check on `CURRENT_TASK_ID`.
+
+Added a UUID regex check immediately after the `jq -r '.id // empty'` extraction
+that blanks `CURRENT_SESSION_ID` if it does not match the canonical UUID shape
+(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`). A malformed,
+missing, or path-traversal value short-circuits `_finalize_session` to its no-op
+branch, keeping with the non-fatal philosophy.
+
+### Build verification
+
+- `bash -n container/lib/run-claude.sh` — PASS.
+- No `env.sh` changes; only `run-claude.sh` was touched.

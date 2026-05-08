@@ -207,7 +207,7 @@ _run_claude() {
     jq -n \
         --arg     agentId "$AGENT_ID" \
         --argjson taskId  "$task_id_json" \
-        '{"agentId":$agentId,"taskId":$taskId}' > "$sess_open_tmp" 2>/dev/null
+        '{"agentId":$agentId,"taskId":$taskId}' > "$sess_open_tmp" 2>/dev/null || true
     local sess_resp
     sess_resp=$(_curl_server -s -X POST "${SERVER_URL}/sessions" \
         -H "Content-Type: application/json" \
@@ -215,6 +215,11 @@ _run_claude() {
         --max-time 5 2>/dev/null) || sess_resp=""
     rm -f "$sess_open_tmp"
     CURRENT_SESSION_ID=$(echo "$sess_resp" | jq -r '.id // empty' 2>/dev/null) || CURRENT_SESSION_ID=""
+    # Defence-in-depth: validate UUID shape before embedding in PATCH URL.
+    # Malformed/missing values short-circuit _finalize_session to its no-op branch.
+    if [[ ! "${CURRENT_SESSION_ID:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+        CURRENT_SESSION_ID=""
+    fi
 
     set +e
     claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$CLAUDE_OUTPUT_LOG" &
