@@ -85,6 +85,56 @@ longer than 60 seconds, send a check-in message via \`reply\` to keep the conver
 All agents must remain in the meeting until the discussion leader posts DISCUSSION CONCLUDED."
 }
 
+_finalize_session() {
+    # Close an open session record with status, exit code, parsed token usage,
+    # and the raw `result` event captured from Claude's stream-json output.
+    # No-op if no session was opened (CURRENT_SESSION_ID empty). All failures
+    # are silent and non-fatal — the agent's primary work must never break
+    # because the sessions endpoint is unreachable.
+    local status="$1" exit_code="$2"
+    [ -z "$CURRENT_SESSION_ID" ] && return
+
+    # Extract result event (last line matching '"type":"result"')
+    local result_event=""
+    if [ -f "$CLAUDE_OUTPUT_LOG" ]; then
+        result_event=$(grep '"type":"result"' "$CLAUDE_OUTPUT_LOG" 2>/dev/null | tail -1 || true)
+    fi
+
+    # Parse token fields; fall back to null on any failure
+    local input_t output_t cache_read_t cache_create_t
+    input_t=$(echo "$result_event"       | jq -r '.usage.input_tokens                // empty' 2>/dev/null) || true
+    output_t=$(echo "$result_event"      | jq -r '.usage.output_tokens               // empty' 2>/dev/null) || true
+    cache_read_t=$(echo "$result_event"  | jq -r '.usage.cache_read_input_tokens     // empty' 2>/dev/null) || true
+    cache_create_t=$(echo "$result_event" | jq -r '.usage.cache_creation_input_tokens // empty' 2>/dev/null) || true
+
+    # Build PATCH payload in tmpfile
+    local patch_tmp
+    patch_tmp=$(mktemp)
+    if ! jq -n \
+            --arg     status              "$status" \
+            --argjson exitCode            "${exit_code}" \
+            --argjson inputTokens         "${input_t:-null}" \
+            --argjson outputTokens        "${output_t:-null}" \
+            --argjson cacheReadTokens     "${cache_read_t:-null}" \
+            --argjson cacheCreationTokens "${cache_create_t:-null}" \
+            --argjson rawOutput           "${result_event:-null}" \
+            '{status:$status,exitCode:$exitCode,
+              inputTokens:$inputTokens,outputTokens:$outputTokens,
+              cacheReadTokens:$cacheReadTokens,cacheCreationTokens:$cacheCreationTokens,
+              rawOutput:$rawOutput}' > "$patch_tmp" 2>/dev/null; then
+        # Graceful fallback: minimal patch without token fields
+        jq -n --arg status "$status" --argjson exitCode "${exit_code}" \
+            '{status:$status,exitCode:$exitCode}' > "$patch_tmp" 2>/dev/null || true
+    fi
+
+    _curl_server -s -X PATCH "${SERVER_URL}/sessions/${CURRENT_SESSION_ID}" \
+        -H "Content-Type: application/json" \
+        -d @"$patch_tmp" \
+        --max-time 10 >/dev/null 2>&1 || true
+    rm -f "$patch_tmp"
+    CURRENT_SESSION_ID=""
+}
+
 _run_claude() {
     # Unified Claude invocation.
     # Args: <prompt> <mode>
@@ -126,7 +176,8 @@ _run_claude() {
     local CLAUDE_ARGS=(
         -p "$full_prompt"
         --dangerously-skip-permissions
-        --output-format text
+        --output-format stream-json
+        --verbose
         --max-turns "$MAX_TURNS"
         --effort "${CLAUDE_EFFORT:-high}"
         --mcp-config /home/claude/.claude/mcp.json
@@ -143,6 +194,27 @@ _run_claude() {
     rm -f "$CLAUDE_OUTPUT_LOG"
     local CLAUDE_START_TS CLAUDE_END_TS CLAUDE_ELAPSED CLAUDE_PID WATCHDOG_PID EXIT_CODE
     CLAUDE_START_TS=$(date +%s)
+
+    # ── Open session record ─────────────────────────────────────────────────
+    # POST /sessions with our agent UUID and (optional) current task ID.
+    # On success, capture the returned session UUID; on any failure, leave
+    # CURRENT_SESSION_ID empty so _finalize_session is a no-op.
+    CURRENT_SESSION_ID=""
+    local task_id_json="null"
+    [ -n "${CURRENT_TASK_ID:-}" ] && task_id_json="$CURRENT_TASK_ID"
+    local sess_open_tmp
+    sess_open_tmp=$(mktemp)
+    jq -n \
+        --arg     agentId "$AGENT_ID" \
+        --argjson taskId  "$task_id_json" \
+        '{"agentId":$agentId,"taskId":$taskId}' > "$sess_open_tmp" 2>/dev/null
+    local sess_resp
+    sess_resp=$(_curl_server -s -X POST "${SERVER_URL}/sessions" \
+        -H "Content-Type: application/json" \
+        -d @"$sess_open_tmp" \
+        --max-time 5 2>/dev/null) || sess_resp=""
+    rm -f "$sess_open_tmp"
+    CURRENT_SESSION_ID=$(echo "$sess_resp" | jq -r '.id // empty' 2>/dev/null) || CURRENT_SESSION_ID=""
 
     set +e
     claude "${CLAUDE_ARGS[@]}" 2>&1 | tee "$CLAUDE_OUTPUT_LOG" &
@@ -173,6 +245,7 @@ _run_claude() {
     if [ -f /tmp/.stop_requested ]; then
         echo "Stopped by operator — skipping post-run status update"
         ABNORMAL_SHUTDOWN="stop_requested"
+        _finalize_session "stopped" "$EXIT_CODE"
         exit 0
     fi
 
@@ -200,6 +273,7 @@ _run_claude() {
         fi
         _post_status "error"
 
+        _finalize_session "aborted" "$EXIT_CODE"
         return 1
     fi
 
@@ -235,5 +309,6 @@ _run_claude() {
         _post_status "error"
     fi
 
+    _finalize_session "complete" "$EXIT_CODE"
     return $EXIT_CODE
 }

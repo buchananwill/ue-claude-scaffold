@@ -57,6 +57,7 @@ CURRENT_TASK_AC=""
 CURRENT_TASK_SOURCE=""
 CURRENT_TASK_FILES=""
 CURRENT_TASK_AGENT_TYPE=""
+CURRENT_SESSION_ID=""
 
 # Reset all CURRENT_TASK_* variables to empty strings.
 _reset_task_vars() {
@@ -67,6 +68,7 @@ _reset_task_vars() {
     CURRENT_TASK_SOURCE=""
     CURRENT_TASK_FILES=""
     CURRENT_TASK_AGENT_TYPE=""
+    CURRENT_SESSION_ID=""
 }
 
 PUMP_STATUS=""
