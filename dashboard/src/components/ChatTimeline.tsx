@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
+import { useState } from 'react';
 import { ScrollArea, Box, Group, Text, TextInput, ActionIcon, Button, Transition, Stack } from '@mantine/core';
 import { IconSend, IconArrowDown } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
@@ -10,12 +10,8 @@ import { MarkdownContent } from './MarkdownContent.tsx';
 import { AgentMessageCard } from './AgentMessageCard.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useAutoScrollPreference } from '../hooks/useAutoScrollPreference.tsx';
-import {
-  buildJumpToLatestLabel,
-  shouldMarkReadOnAutoScrollTransition,
-  shouldMarkReadOnNewMessage,
-  shouldMountJumpToLatest,
-} from './chatTimelineHelpers.ts';
+import { useChatMarkRead } from '../hooks/useChatMarkRead.ts';
+import { buildJumpToLatestLabel, shouldMountJumpToLatest } from './chatTimelineHelpers.ts';
 import type { ChatMessage } from '../api/types.ts';
 
 interface ChatTimelineProps {
@@ -48,47 +44,15 @@ export function ChatTimeline({
     enabled: autoScrollEnabled,
   });
   const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
-  const lastSeenIdRef = useRef<number | null>(null);
 
-  // Mirror the latest onMarkRead into a ref so effects can call it without
-  // taking it as a dependency (its identity is stable today, but the ref
-  // makes that independence explicit for the `[roomId]` and
-  // `[autoScrollEnabled]` effects below).
-  const onMarkReadRef = useRef(onMarkRead);
-  useLayoutEffect(() => {
-    onMarkReadRef.current = onMarkRead;
-  }, [onMarkRead]);
-
-  // Reset unread count on room switch only — not on every poll-driven
-  // identity change of onMarkRead.
-  useEffect(() => {
-    onMarkReadRef.current();
-  }, [roomId]);
-
-  useEffect(() => {
-    if (lastMessageId !== null && lastMessageId !== lastSeenIdRef.current) {
-      lastSeenIdRef.current = lastMessageId;
-      onNewContent();
-      if (shouldMarkReadOnNewMessage(autoScrollEnabled)) {
-        onMarkReadRef.current();
-      }
-    }
-  }, [lastMessageId, onNewContent, autoScrollEnabled]);
-
-  // On a false → true transition of the global toggle, clear the unread
-  // count. The useAutoScroll hook itself handles the scroll-to-sentinel.
-  const prevAutoScrollEnabledRef = useRef(autoScrollEnabled);
-  useEffect(() => {
-    if (shouldMarkReadOnAutoScrollTransition(prevAutoScrollEnabledRef.current, autoScrollEnabled)) {
-      onMarkReadRef.current();
-    }
-    prevAutoScrollEnabledRef.current = autoScrollEnabled;
-  }, [autoScrollEnabled]);
-
-  const handleJumpToLatest = useCallback(() => {
-    jumpToLatest();
-    onMarkReadRef.current();
-  }, [jumpToLatest]);
+  const { handleJumpToLatest } = useChatMarkRead({
+    roomId,
+    autoScrollEnabled,
+    onMarkRead,
+    lastMessageId,
+    onNewContent,
+    jumpToLatest,
+  });
 
   const handleSend = async () => {
     const content = inputValue.trim();

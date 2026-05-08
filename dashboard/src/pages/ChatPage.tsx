@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { Grid, Card, Title, Text } from '@mantine/core';
 import { useSearch } from '@tanstack/react-router';
 import { useRooms } from '../hooks/useRooms.ts';
@@ -11,18 +11,23 @@ export function ChatPage() {
   const search = useSearch({ strict: false }) as { room?: string };
   const { data: rooms } = useRooms();
   const { data: teams } = useTeams();
-  const [activeRoomId, setActiveRoomId] = useState<string | null>(search.room ?? null);
+  // Track explicit user selection (or the URL-derived initial room) only.
+  // The "first room when nothing is selected" fallback is derived below via
+  // useMemo so we don't trigger setState inside an effect.
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(search.room ?? null);
 
-  const roomList = rooms ?? [];
-  const teamList = teams ?? [];
-  const teamRoomIds = new Set(teamList.map((t) => t.id));
+  const roomList = useMemo(() => rooms ?? [], [rooms]);
+  const teamList = useMemo(() => teams ?? [], [teams]);
+  const teamRoomIds = useMemo(() => new Set(teamList.map((t) => t.id)), [teamList]);
 
-  // Initialize activeRoomId to first room if not set
-  useEffect(() => {
-    if (activeRoomId === null && roomList.length > 0) {
-      setActiveRoomId(roomList[0].id);
-    }
-  }, [activeRoomId, roomList]);
+  // Derive the effective active room from selection + the rooms list. When
+  // the user has not explicitly selected a room, fall back to the first
+  // available room. This replaces a previous useEffect that called
+  // setActiveRoomId synchronously inside its body (set-state-in-effect).
+  const activeRoomId = useMemo(
+    () => selectedRoomId ?? roomList[0]?.id ?? null,
+    [selectedRoomId, roomList],
+  );
 
   const chat = useChatMessages(activeRoomId);
 
@@ -41,7 +46,7 @@ export function ChatPage() {
                 activeRoomId={activeRoomId}
                 unreadCounts={activeRoomId ? { [activeRoomId]: chat.unreadCount } : {}}
                 teamRoomIds={teamRoomIds}
-                onSelect={setActiveRoomId}
+                onSelect={setSelectedRoomId}
               />
             )}
           </Card>
