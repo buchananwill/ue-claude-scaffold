@@ -86,8 +86,8 @@ export function useAutoScroll(options?: UseAutoScrollOptions): UseAutoScrollResu
     if (!prevEnabledRef.current && enabled) {
       requestAnimationFrame(() => {
         sentinelRef.current?.scrollIntoView({ behavior: 'smooth' });
+        setShowJumpToLatest(false);
       });
-      setShowJumpToLatest(false);
     }
     prevEnabledRef.current = enabled;
   }, [enabled]);

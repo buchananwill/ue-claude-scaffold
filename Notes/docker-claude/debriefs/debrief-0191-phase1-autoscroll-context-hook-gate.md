@@ -214,3 +214,46 @@ or polled callbacks.
   context file).
 - `npm run build` — **PASS** (Vite production bundle).
 - `npm test` — **PASS**, 102 / 102 tests across 2 files.
+
+## Cycle 4 revisions
+
+### Finding addressed
+
+Correctness reviewer raised one WARNING: the `false → true` transition
+`useEffect` in `useAutoScroll.ts` (~line 90) called
+`setShowJumpToLatest(false)` synchronously in the effect body, tripping a
+freshly-introduced `react-hooks/set-state-in-effect` lint error not present
+in the pre-Phase-1 baseline.
+
+### Adaptation
+
+Moved the `setShowJumpToLatest(false)` call inside the existing
+`requestAnimationFrame` callback alongside the sentinel `scrollIntoView`.
+Both behaviours mandated by the spec on the false → true transition are
+still scheduled — the scroll and the indicator clear are now batched in a
+single rAF tick at the next frame. Because the rAF callback runs
+asynchronously outside the effect tick, the lint rule no longer fires.
+
+Behaviour is preserved: any operator who flips auto-scroll back on from
+"off" still sees the viewport snap to the live tail and the
+jump-to-latest pill clear at the same paint. No public API change; the
+hook continues to use the same `useEffect` kind it had before.
+
+### Cycle 4 changes
+
+- **`dashboard/src/hooks/useAutoScroll.ts`** — moved
+  `setShowJumpToLatest(false)` from the effect body into the existing
+  `requestAnimationFrame` callback inside the same `useEffect`.
+
+### Cycle 4 verification
+
+- `npm run lint` — **13 errors / 1 warning**. The previously-flagged
+  `react-hooks/set-state-in-effect` at `useAutoScroll.ts:~90` is gone.
+  Remaining count is one below cycle 3's — that cycle's reported 14
+  included the now-removed offending error. The legitimately-new
+  `react-refresh/only-export-components` on
+  `useAutoScrollPreference.tsx:50` is still present (mirrors the same
+  pattern in `usePollInterval.tsx:22`). Total well within the spec's
+  "≤ 14 errors / 1 warning" envelope.
+- `npm run build` — **PASS** (Vite production bundle, 1.4 MB pre-gzip).
+- `npm test` — **PASS**, 102 / 102 tests across 2 files.
