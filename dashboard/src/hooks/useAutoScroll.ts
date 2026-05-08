@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import type { RefCallback, RefObject } from 'react';
 
 const BOTTOM_THRESHOLD = 80; // px from bottom to consider "at bottom"
 
@@ -12,9 +13,9 @@ interface UseAutoScrollOptions {
 
 interface UseAutoScrollResult {
   /** Ref to attach to the ScrollArea viewport */
-  viewportRef: React.RefCallback<HTMLDivElement>;
+  viewportRef: RefCallback<HTMLDivElement>;
   /** Ref for the sentinel element at the end of the list */
-  sentinelRef: React.RefObject<HTMLDivElement | null>;
+  sentinelRef: RefObject<HTMLDivElement | null>;
   /** Whether the user is currently scrolled near the bottom */
   isAtBottom: boolean;
   /**

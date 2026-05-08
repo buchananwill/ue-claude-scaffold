@@ -110,3 +110,49 @@ calling `useAutoScroll()` with no argument and behave exactly as on `main`.
 - Consider whether `useAutoScrollPreference`'s context default should warn
   when consumed outside a provider, similar to other context patterns in the
   codebase. Out of scope for this phase.
+
+## Cycle 2 revisions
+
+Two consolidated review findings addressed in this cycle, plus one dismissed by
+the orchestrator.
+
+### Finding 1 — React Quality W1 (FIXED)
+
+`useAutoScroll.ts` was using namespace-qualified `React.RefCallback` and
+`React.RefObject` types in `UseAutoScrollResult` without importing the `React`
+symbol. House style elsewhere (e.g. `AgentMessageCard.tsx:1`) uses named type
+imports.
+
+**Change:** Added `import type { RefCallback, RefObject } from 'react';` and
+replaced the two `React.*` references with the bare names. Pure type-only
+edit — runtime behaviour unchanged. Lint count unchanged (these references
+were not previously lint-flagged but the namespace usage was a style
+divergence the reviewer correctly identified).
+
+### Finding 2 — Browser Safety W1 (DOCUMENTED, key unchanged)
+
+The browser-safety reviewer flagged that `localStorage` key
+`dashboard.autoScroll` is not project-scoped. The orchestrator decided to keep
+the literal key as the plan specifies — this is a boolean UI preference (no
+PII, no credentials, no per-project state), and a single operator's
+auto-scroll choice is intentionally shared across all projects served by the
+same dashboard origin. The explicit baseline (`usePollInterval.tsx`) does not
+project-scope its preference either.
+
+**Change:** Added a 3-line comment above the `STORAGE_KEY` constant in
+`useAutoScrollPreference.tsx` documenting the deliberate global scope.
+No code change.
+
+### Finding 3 — Correctness B1 (DISMISSED by orchestrator)
+
+The correctness reviewer flagged the debrief file as out-of-scope. Dismissed
+by the orchestrator per the Debrief Protocol, which mandates writing and
+committing the debrief alongside code. No action required.
+
+### Cycle 2 verification
+
+- `npm run build` — **PASS** (Vite production bundle, 1.4 MB pre-gzip).
+- `npm test` — **PASS**, 102 / 102 tests across 2 files.
+- `npm run lint` — **14 errors / 1 warning**, identical to the cycle 1
+  baseline measured against `c3a5ffc`. No new lint errors introduced by
+  cycle 2 edits.

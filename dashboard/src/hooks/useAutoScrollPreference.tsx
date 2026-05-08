@@ -5,6 +5,9 @@ interface AutoScrollContextValue {
   setEnabled: (v: boolean) => void;
 }
 
+// Deliberately project-agnostic: this is a UI preference, not project data.
+// A single operator's auto-scroll choice is intentionally shared across all
+// projects served by the same dashboard origin.
 const STORAGE_KEY = "dashboard.autoScroll";
 
 function readInitialEnabled(): boolean {
