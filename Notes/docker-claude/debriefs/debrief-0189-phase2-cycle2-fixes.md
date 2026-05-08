@@ -97,3 +97,49 @@ Plan source: `Notes/container-session-token-tracking/phase-2-server-sessions-rou
 - Update the shared `server/src/queries/test-utils.ts` SCHEMA_DDL to include `claude_code_container_sessions` so other test files don't need the inline `CREATE TABLE`. (Carried over from cycle 1.)
 - Consider extracting a shared `validateAgentForProject(db, projectId, agentId, { allowDeleted: false })` helper if a third call site appears that needs the same not-found-OR-deleted gate.
 - Phase 3's container-side capture should explicitly omit `endedAt` from its PATCH payload so the server-side stamp path is exercised end-to-end.
+
+## Decomposition cycle 1
+
+### W1 — `resolveProject` try/catch dedup
+
+The same 5-line try/catch appeared in all three handlers (POST, PATCH, GET). Extracted a private `ensureProject` helper at the top of `sessions.ts` (above `formatSession`):
+
+```ts
+async function ensureProject(
+  config: ScaffoldConfig,
+  db: DrizzleDb,
+  projectId: string,
+  reply: FastifyReply,
+): Promise<boolean>
+```
+
+Returns `true` on success; on failure sends `reply.notFound("Unknown project: '<id>'")` (via `void reply.notFound(...)`) and returns `false`. Each handler's project-resolution block is now a single line:
+
+```ts
+if (!(await ensureProject(config, db, projectId, reply))) return;
+```
+
+Behaviour preserved: the 404 reply is still dispatched on unknown project (verified by the existing `POST /sessions returns 404 when X-Project-Id is unknown` test, which still passes). Type choices match the rest of the codebase: `DrizzleDb` from `drizzle-instance.ts` (matches `resolveProject`'s `db` parameter exactly), `ScaffoldConfig` from `config.js`, `FastifyReply` from `fastify`. Imports updated to bring in `FastifyReply` and `DrizzleDb`.
+
+Line counts: `sessions.ts` went from 322 to 330 lines (+8 net — helper added, three try/catch blocks each shrank from 5 lines to 1).
+
+### W2 — Add the four missing indexes to inline test DDL
+
+The inline `CREATE TABLE IF NOT EXISTS claude_code_container_sessions ...` in `sessions.test.ts` (~lines 37-54) did not include the four indexes from migration `0006_add_container_sessions.sql`. Added them as four separate `CREATE INDEX IF NOT EXISTS` statements via `ctx.db.execute(sql`...`)` immediately after the table creation:
+
+- `idx_ccs_project` ON `(project_id)`
+- `idx_ccs_agent` ON `(agent_id)`
+- `idx_ccs_task` ON `(task_id)`
+- `idx_ccs_project_started` ON `(project_id, started_at DESC)`
+
+This restores prod/test parity. Note: PGlite executes them as no-ops for query planning purposes (PGlite is single-process, no real plan caching), but it still validates that the DDL is syntactically accepted, which guards against future drift between migration syntax and PGlite's parser. The tests pass identically.
+
+### Scope-related follow-up not addressed in this cycle
+
+The decomposition reviewer's broader fix — moving the entire `claude_code_container_sessions` DDL (table + indexes + comment) into the shared `server/src/queries/test-utils.ts` SCHEMA_DDL block — was **out of scope** for this cycle's file ownership (Phase 2 owns `routes/sessions.ts` and `routes/sessions.test.ts` only; `queries/test-utils.ts` is owned elsewhere). Recorded as a separate suggested follow-up above (already present from cycle 1, reaffirmed here). The inline DDL with explicit indexes is the correct interim shape.
+
+### Build & Test Results (decomposition cycle 1)
+
+- `cd server && npm run typecheck` — PASS (exit 0, no output).
+- `cd server && npx tsx --test src/routes/sessions.test.ts` — PASS, 14/14 tests.
+- `cd server && npm test` — PASS, **644 tests across 84 suites, 0 failures**. No regressions.

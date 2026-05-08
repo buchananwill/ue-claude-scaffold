@@ -52,6 +52,10 @@ describe('sessions routes (drizzle)', () => {
         CONSTRAINT "ccs_status_check" CHECK ("status" IN ('running','complete','aborted','stopped'))
       );
     `);
+    await ctx.db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_ccs_project" ON "claude_code_container_sessions" ("project_id");`);
+    await ctx.db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_ccs_agent" ON "claude_code_container_sessions" ("agent_id");`);
+    await ctx.db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_ccs_task" ON "claude_code_container_sessions" ("task_id");`);
+    await ctx.db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_ccs_project_started" ON "claude_code_container_sessions" ("project_id", "started_at" DESC);`);
 
     // Pre-seed 'proj-a' so the FK on agents/sessions is satisfied for
     // cross-project assertions.

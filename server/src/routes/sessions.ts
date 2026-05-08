@@ -1,7 +1,7 @@
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { eq, and, desc } from 'drizzle-orm';
-import { getDb } from '../drizzle-instance.js';
+import { getDb, type DrizzleDb } from '../drizzle-instance.js';
 import { claudeCodeContainerSessions } from '../schema/tables.js';
 import * as agentsQ from '../queries/agents.js';
 import type { ScaffoldConfig } from '../config.js';
@@ -38,6 +38,26 @@ export interface SessionResponse {
   cacheReadTokens: number | null;
   cacheCreationTokens: number | null;
   rawOutput: unknown;
+}
+
+/**
+ * Resolve the project from the request, returning `true` on success. On
+ * failure (unknown project), sends a 404 reply and returns `false`. Callers
+ * MUST early-return when `false` is returned.
+ */
+async function ensureProject(
+  config: ScaffoldConfig,
+  db: DrizzleDb,
+  projectId: string,
+  reply: FastifyReply,
+): Promise<boolean> {
+  try {
+    await resolveProject(config, db, projectId);
+    return true;
+  } catch {
+    void reply.notFound(`Unknown project: '${projectId}'`);
+    return false;
+  }
 }
 
 export function formatSession(row: SessionRow): SessionResponse {
@@ -88,11 +108,7 @@ const sessionsPlugin: FastifyPluginAsync<PluginOpts> = async (
     const db = getDb();
     const projectId = request.projectId;
 
-    try {
-      await resolveProject(config, db, projectId);
-    } catch {
-      return reply.notFound(`Unknown project: '${projectId}'`);
-    }
+    if (!(await ensureProject(config, db, projectId, reply))) return;
 
     const agent = await agentsQ.getByIdInProject(db, projectId, agentId);
     if (!agent) {
@@ -137,11 +153,7 @@ const sessionsPlugin: FastifyPluginAsync<PluginOpts> = async (
     const db = getDb();
     const projectId = request.projectId;
 
-    try {
-      await resolveProject(config, db, projectId);
-    } catch {
-      return reply.notFound(`Unknown project: '${projectId}'`);
-    }
+    if (!(await ensureProject(config, db, projectId, reply))) return;
 
     const existing = await db
       .select()
@@ -270,11 +282,7 @@ const sessionsPlugin: FastifyPluginAsync<PluginOpts> = async (
     const projectId = request.projectId;
     const db = getDb();
 
-    try {
-      await resolveProject(config, db, projectId);
-    } catch {
-      return reply.notFound(`Unknown project: '${projectId}'`);
-    }
+    if (!(await ensureProject(config, db, projectId, reply))) return;
 
     const conditions = [
       eq(claudeCodeContainerSessions.projectId, projectId),
