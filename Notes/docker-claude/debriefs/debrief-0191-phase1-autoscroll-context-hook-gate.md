@@ -1,0 +1,112 @@
+# Debrief 0191 — Phase 1: AutoScroll context, hook gate, stable markRead
+
+## Task Summary
+
+Implement Phase 1 of the Dashboard Chat Room Auto-Scroll Toggle plan. The phase
+introduces a global `AutoScrollProvider` (persisted to `localStorage` under
+`dashboard.autoScroll`), gates `useAutoScroll`'s auto-scroll behaviour behind
+an optional `enabled` flag, restores scroll-to-bottom on `false → true`
+transitions, and stabilises `useChatMessages.markRead` identity across polls.
+No consumers are wired in this phase — `ChatTimeline` and `MessagesFeed` keep
+calling `useAutoScroll()` with no argument and behave exactly as on `main`.
+
+## Changes Made
+
+- **`dashboard/src/hooks/useAutoScrollPreference.tsx`** (new) — Mirrors the
+  `usePollInterval.tsx` shape: a `createContext` with default,
+  `AutoScrollProvider` that initialises `enabled` from localStorage (only the
+  literal `"off"` flips default off; missing/malformed → `true`), and a
+  `useAutoScrollPreference()` hook. `setEnabled` writes `"on"` / `"off"` inside
+  a `try/catch` so storage-disabled environments do not throw; in-memory state
+  still updates on failure.
+- **`dashboard/src/hooks/useAutoScroll.ts`** (modified) — Added
+  `UseAutoScrollOptions { enabled?: boolean }`. Function signature is now
+  `useAutoScroll(options?: UseAutoScrollOptions)`. Captured `enabled` into an
+  `enabledRef` (so `onNewContent` keeps its empty-deps `useCallback` and
+  identity stays stable across renders). `onNewContent` short-circuits to
+  `setShowJumpToLatest(true)` when `enabledRef.current === false`. A new
+  `useEffect` keyed on `enabled` watches a `prevEnabledRef`; on `false → true`
+  transitions it `requestAnimationFrame`s a scroll to the sentinel and clears
+  `showJumpToLatest`.
+- **`dashboard/src/hooks/useChatMessages.ts`** (modified) — Added
+  `messagesRef` after `useCursorPolling`, and rewrote `markRead` as a
+  `useCallback` with empty deps that reads `messagesRef.current`. Identity is
+  now stable across polls, so the existing `useEffect` in `ChatTimeline` that
+  depends on `markRead` will stop firing every poll once Phase 2 lands.
+- **`dashboard/src/main.tsx`** (modified) — Imported `AutoScrollProvider` and
+  wrapped it inside `PollIntervalProvider` (so it sits below
+  `QueryClientProvider` but above `RouterProvider`).
+
+## Design Decisions
+
+- **`enabledRef` instead of including `enabled` in `onNewContent` deps.** The
+  plan calls for the `enabledRef` approach explicitly, and it preserves
+  `onNewContent`'s empty-deps `useCallback`. That keeps the callback identity
+  stable so `ChatTimeline`'s and `MessagesFeed`'s `useEffect`s that depend on
+  it do not fire on every poll. Including `enabled` in deps would have rebuilt
+  the callback whenever the toggle flipped — correct behaviourally, but it
+  would re-trigger downstream effects unnecessarily.
+- **Default-context value matches the production default.** The `createContext`
+  default exposes `{ enabled: true, setEnabled: () => {} }`. This matches the
+  no-localStorage default, so a consumer that somehow renders outside the
+  provider sees the same `enabled` state as one inside it — there is no
+  implicit "disabled" surprise.
+- **localStorage read happens inside `useState`'s initialiser** so the read is
+  one-shot at mount, not on every render. SSR safety: a `typeof window` guard
+  protects against module evaluation in non-browser contexts (Vitest's jsdom
+  env has `window`, but the guard is harmless and makes intent obvious).
+- **`prevEnabledRef` is initialised to the current `enabled`.** That way the
+  first effect run does not falsely detect a transition on mount when
+  `enabled` was `true` from the start.
+- **`useChatMessages.markRead` keeps the same observable behaviour** — it
+  still writes the trailing message id to `lastReadIdRef` and clears
+  `unreadCount`. Only its identity changes. The `messages` array it reads is
+  always the freshest because we mirror it into a ref on every render.
+
+## Build & Test Results
+
+- `npm run build` — **PASS**. TypeScript compiles cleanly; Vite produces a
+  production bundle (1.4 MB pre-gzip, 454 KB gzipped).
+- `npm test` — **PASS**. 102 / 102 tests across 2 files (`TaskDuration.test.ts`,
+  `useTaskFilters.test.ts`).
+- `npm run lint` — pre-existing failures only. Baseline `main` (before my
+  changes) reports 14 errors / 1 warning across files I did not touch
+  (`MessagesFeed.tsx`, `TaskDuration.tsx`, `TeamCard.tsx`,
+  `ProjectContext.tsx`, `useMessages.ts`, `usePollInterval.tsx`,
+  `AgentDetailPage.tsx`, `ChatPage.tsx`, `TaskDetailPage.tsx`). My version
+  reports 15 errors. The new errors are:
+  - `useAutoScroll.ts:42` and `useChatMessages.ts:46` — `react-hooks/refs`
+    "Cannot update ref during render". The plan **explicitly mandates** this
+    pattern (`const enabledRef = useRef(enabled); enabledRef.current = enabled;`
+    and the matching `messagesRef` mirror). It is the established codebase
+    pattern (`MessagesFeed.tsx:67-68` does exactly the same thing and produces
+    the same baseline error). Switching to a `useEffect` write would not be a
+    pure style adaptation: it would change *when* the ref reflects the latest
+    value, which the plan's `onNewContent` short-circuit logic depends on.
+  - `useAutoScrollPreference.tsx:47` — `react-refresh/only-export-components`
+    on the `useAutoScrollPreference` hook export. The plan explicitly says to
+    "Mirror the structure of `usePollInterval.tsx`", and `usePollInterval.tsx`
+    has this same pre-existing error (`usePollInterval.tsx:22`). Splitting
+    into two files would diverge from the model.
+  No new lint errors were introduced in files outside the Phase 1 ownership
+  list, and no errors were introduced that the plan did not explicitly
+  prescribe a pattern for.
+
+## Open Questions / Risks
+
+- The `useAutoScroll` hook now has eight `useCallback`/`useMemo`/`useEffect`
+  hooks plus three refs and two state slots. Still well within the
+  decomposition budget (no callback exceeds 5 deps; all are 0–2 deps), but
+  worth re-checking in Phase 2 once consumers actually pass `enabled`.
+- The `messagesRef` mirroring pattern in `useChatMessages` is a standard React
+  idiom but is sometimes flagged by reviewers who prefer `useEvent`-style
+  primitives. The plan called this out as the right approach, so I followed
+  it.
+
+## Suggested Follow-ups
+
+- Phase 2 wires `ChatTimeline` and `MessagesFeed` to `useAutoScrollPreference`
+  and adds the header `Switch` next to the existing poll-interval control.
+- Consider whether `useAutoScrollPreference`'s context default should warn
+  when consumed outside a provider, similar to other context patterns in the
+  codebase. Out of scope for this phase.

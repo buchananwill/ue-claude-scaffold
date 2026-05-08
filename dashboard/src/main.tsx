@@ -7,6 +7,7 @@ import { RouterProvider } from '@tanstack/react-router';
 import { theme } from './theme.ts';
 import { router } from './router.tsx';
 import { PollIntervalProvider } from './hooks/usePollInterval.tsx';
+import { AutoScrollProvider } from './hooks/useAutoScrollPreference.tsx';
 
 import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
@@ -26,7 +27,9 @@ createRoot(document.getElementById('root')!).render(
       <Notifications position="top-right" />
       <QueryClientProvider client={queryClient}>
         <PollIntervalProvider>
-          <RouterProvider router={router} />
+          <AutoScrollProvider>
+            <RouterProvider router={router} />
+          </AutoScrollProvider>
         </PollIntervalProvider>
       </QueryClientProvider>
     </MantineProvider>

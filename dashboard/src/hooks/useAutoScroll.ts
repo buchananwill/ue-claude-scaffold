@@ -2,6 +2,14 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 
 const BOTTOM_THRESHOLD = 80; // px from bottom to consider "at bottom"
 
+interface UseAutoScrollOptions {
+  /**
+   * When false, onNewContent skips auto-scrolling and always raises the
+   * jump-to-latest indicator instead. Defaults to true.
+   */
+  enabled?: boolean;
+}
+
 interface UseAutoScrollResult {
   /** Ref to attach to the ScrollArea viewport */
   viewportRef: React.RefCallback<HTMLDivElement>;
@@ -22,12 +30,17 @@ interface UseAutoScrollResult {
   onNewContent: () => void;
 }
 
-export function useAutoScroll(): UseAutoScrollResult {
+export function useAutoScroll(options?: UseAutoScrollOptions): UseAutoScrollResult {
+  const enabled = options?.enabled ?? true;
+
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const viewportEl = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const isAtBottomRef = useRef(true);
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+  const prevEnabledRef = useRef(enabled);
 
   const checkBottom = useCallback(() => {
     const el = viewportEl.current;
@@ -64,12 +77,28 @@ export function useAutoScroll(): UseAutoScrollResult {
     };
   }, [checkBottom]);
 
+  // When the toggle flips false → true, scroll to the sentinel and clear the
+  // jump-to-latest indicator so the operator catches up to the live tail.
+  useEffect(() => {
+    if (!prevEnabledRef.current && enabled) {
+      requestAnimationFrame(() => {
+        sentinelRef.current?.scrollIntoView({ behavior: 'smooth' });
+      });
+      setShowJumpToLatest(false);
+    }
+    prevEnabledRef.current = enabled;
+  }, [enabled]);
+
   const jumpToLatest = useCallback(() => {
     sentinelRef.current?.scrollIntoView({ behavior: 'smooth' });
     setShowJumpToLatest(false);
   }, []);
 
   const onNewContent = useCallback(() => {
+    if (!enabledRef.current) {
+      setShowJumpToLatest(true);
+      return;
+    }
     if (isAtBottomRef.current) {
       // Auto-scroll
       requestAnimationFrame(() => {

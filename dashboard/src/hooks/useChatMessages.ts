@@ -40,12 +40,18 @@ export function useChatMessages(roomId: string | null) {
     transformOlder: (items) => [...items].reverse(),
   });
 
+  // Mirror messages into a ref so markRead can stay identity-stable across
+  // polls (empty deps) without going stale.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
   const markRead = useCallback(() => {
-    if (messages.length > 0) {
-      lastReadIdRef.current = messages[messages.length - 1].id;
+    const current = messagesRef.current;
+    if (current.length > 0) {
+      lastReadIdRef.current = current[current.length - 1].id;
     }
     setUnreadCount(0);
-  }, [messages]);
+  }, []);
 
   return { messages, loading, error, hasOlder, loadingOlder, loadOlder, unreadCount, markRead };
 }
