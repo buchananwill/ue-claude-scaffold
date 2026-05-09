@@ -73,7 +73,60 @@ describe("classifyExit — result event path", () => {
   });
 });
 
-describe("classifyExit — fallback when no result event present", () => {
+describe("classifyExit — exit-code path (no result event)", () => {
+  it("flags abnormal when exitCode is non-zero on a long run", () => {
+    // Regression: a 1-hour task that gets SIGKILLed mid-run produces lots
+    // of output, plenty of elapsed time, and NO terminal result event.
+    // Without exitCode plumbing this slips through as "clean" — wrong.
+    const result = classifyExit({
+      logTail: "sub-agent prose, lots of activity, then process killed",
+      elapsedSeconds: 3700,
+      outputLineCount: 12000,
+      exitCode: 137,
+    });
+    assert.equal(result.abnormal, true);
+    assert.match(result.reason!, /crashed without status/);
+    assert.match(result.reason!, /exit=137/);
+    assert.match(result.reason!, /3700s/);
+  });
+
+  it("flags abnormal when exitCode is 1 (generic failure) with no result event", () => {
+    const result = classifyExit({
+      logTail: "random output",
+      elapsedSeconds: 200,
+      outputLineCount: 50,
+      exitCode: 1,
+    });
+    assert.equal(result.abnormal, true);
+    assert.match(result.reason!, /crashed without status/);
+    assert.match(result.reason!, /exit=1/);
+  });
+
+  it("returns clean when exitCode is 0 on a long run with no result event", () => {
+    const result = classifyExit({
+      logTail: "lots of output, no terminal result event in the slice we got",
+      elapsedSeconds: 1800,
+      outputLineCount: 5000,
+      exitCode: 0,
+    });
+    assert.equal(result.abnormal, false);
+    assert.equal(result.reason, null);
+  });
+
+  it("result event with is_error:false beats a non-zero exitCode", () => {
+    const logTail =
+      '{"type":"result","subtype":"success","is_error":false,"api_error_status":null,"result":"done"}';
+    const result = classifyExit({
+      logTail,
+      elapsedSeconds: 600,
+      outputLineCount: 500,
+      exitCode: 1,
+    });
+    assert.equal(result.abnormal, false);
+  });
+});
+
+describe("classifyExit — rapid-exit fallback (no exitCode supplied)", () => {
   it("flags rapid exit (<10s, <5 lines)", () => {
     const result = classifyExit({
       logTail: "binary failed to start",

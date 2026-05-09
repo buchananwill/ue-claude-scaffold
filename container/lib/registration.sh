@@ -20,6 +20,7 @@ _detect_abnormal_exit() {
     # Returns 0 (true) if abnormal, 1 (false) if clean.
     # Sets ABNORMAL_REASON to a human-readable description.
     local log_file="$1"
+    local exit_code="${2:-0}"
     [ -f "$log_file" ] || return 1
 
     local log_tail elapsed output_lines response
@@ -47,8 +48,8 @@ _detect_abnormal_exit() {
     local classify_tmpfile
     classify_tmpfile="$(mktemp)"
 
-    jq -n --arg logTail "$log_tail" --argjson e "$elapsed" --argjson l "$output_lines" \
-        '{logTail: $logTail, elapsedSeconds: $e, outputLineCount: $l}' > "$classify_tmpfile" 2>/dev/null
+    jq -n --arg logTail "$log_tail" --argjson e "$elapsed" --argjson l "$output_lines" --argjson ec "$exit_code" \
+        '{logTail: $logTail, elapsedSeconds: $e, outputLineCount: $l, exitCode: $ec}' > "$classify_tmpfile" 2>/dev/null
 
     # If JSON encoding failed, fall back to not-abnormal
     if [ ! -s "$classify_tmpfile" ]; then

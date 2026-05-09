@@ -255,7 +255,7 @@ _run_claude() {
     fi
 
     # ── Abnormal exit detection ─────────────────────────────────────────────
-    if _detect_abnormal_exit "$CLAUDE_OUTPUT_LOG"; then
+    if _detect_abnormal_exit "$CLAUDE_OUTPUT_LOG" "$EXIT_CODE"; then
         echo "*** ABNORMAL EXIT DETECTED: ${ABNORMAL_REASON} ***"
         ABNORMAL_SHUTDOWN="true"
 

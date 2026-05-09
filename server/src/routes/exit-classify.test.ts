@@ -106,6 +106,41 @@ describe("POST /agents/:name/exit-classify", () => {
     assert.equal(res.statusCode, 400);
   });
 
+  it("returns abnormal=true for non-zero exitCode with no result event (long-run crash)", async () => {
+    const res = await ctx.app.inject({
+      method: "POST",
+      url: "/agents/test-agent/exit-classify",
+      payload: {
+        logTail: "lots of activity, then SIGKILL",
+        elapsedSeconds: 3700,
+        outputLineCount: 12000,
+        exitCode: 137,
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.abnormal, true);
+    assert.match(body.reason, /crashed without status/);
+    assert.match(body.reason, /exit=137/);
+  });
+
+  it("returns abnormal=false when exitCode=0 on a long run with no result event", async () => {
+    const res = await ctx.app.inject({
+      method: "POST",
+      url: "/agents/test-agent/exit-classify",
+      payload: {
+        logTail: "lots of activity, no terminal frame in the slice",
+        elapsedSeconds: 1800,
+        outputLineCount: 5000,
+        exitCode: 0,
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.abnormal, false);
+    assert.equal(body.reason, null);
+  });
+
   it("returns 400 for negative elapsedSeconds", async () => {
     const res = await ctx.app.inject({
       method: "POST",

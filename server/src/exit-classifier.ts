@@ -12,6 +12,12 @@ export interface ClassifyExitInput {
   elapsedSeconds: number;
   /** Total line count of the full log file, not the length of logTail. */
   outputLineCount: number;
+  /**
+   * The OS exit code of the claude process. Optional for backwards compat
+   * with containers that pre-date the exit-code plumbing — when absent the
+   * classifier falls back to the rapid-exit heuristic only.
+   */
+  exitCode?: number;
 }
 
 export interface ClassifyExitResult {
@@ -58,9 +64,19 @@ export function classifyExit(input: ClassifyExitInput): ClassifyExitResult {
     }
   }
 
-  // No result event — process didn't exit cleanly through the stream-json
-  // pipeline. Only flag as abnormal if it also exited too fast to have done
-  // anything (binary failed to start, immediate crash).
+  // No result event — process didn't reach the stream-json terminal frame.
+  // If the OS exit code is non-zero, the process crashed mid-run (OOM kill,
+  // SIGKILL, network drop, segfault). This catches long-running failures
+  // that the regex used to catch incidentally.
+  if (typeof input.exitCode === "number" && input.exitCode !== 0) {
+    return {
+      abnormal: true,
+      reason: `crashed without status (exit=${input.exitCode}, ${elapsedSeconds}s elapsed)`,
+    };
+  }
+
+  // Exit code was 0 (or unknown). Only flag if too quick to have done anything
+  // meaningful — catches the "binary failed to start" case.
   if (elapsedSeconds < 10 && outputLineCount < 5) {
     return {
       abnormal: true,
