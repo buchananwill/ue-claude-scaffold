@@ -1,6 +1,9 @@
 /**
- * Classifies Claude agent exit conditions by scanning log output for
- * known failure signatures. Ported from entrypoint.sh _detect_abnormal_exit.
+ * Classifies Claude agent exit conditions by reading the structured terminal
+ * `"type":"result"` event emitted by `claude -p --output-format stream-json`.
+ * Falls back to a rapid-exit heuristic when no result event is present
+ * (true crash, OOM kill, signal — process never reached the stream-json
+ * terminal frame).
  */
 
 export interface ClassifyExitInput {
@@ -16,18 +19,12 @@ export interface ClassifyExitResult {
   reason: string | null;
 }
 
-// Auth failure patterns (case-insensitive)
-const AUTH_PATTERN =
-  /authentication_error|Invalid authentication credentials|Failed to authenticate/i;
-
-// Token/session/rate exhaustion patterns (case-insensitive)
-const TOKEN_PATTERN =
-  /token.*limit|token.*exhaust|session.*limit|context.*limit|max.*token.*reached|rate.*limit.*exceeded|quota.*exceeded|billing.*error|overloaded_error/i;
-
 interface ClaudeResultEvent {
   type: "result";
   subtype?: string;
   is_error?: boolean;
+  api_error_status?: string | null;
+  stop_reason?: string | null;
   result?: string;
 }
 
@@ -47,51 +44,23 @@ function findResultEvent(logTail: string): ClaudeResultEvent | null {
   return null;
 }
 
-/**
- * Classify whether a Claude agent exit was abnormal based on log content
- * and runtime metrics. Returns `{ abnormal: true, reason }` if a known
- * failure signature is detected, or `{ abnormal: false, reason: null }`
- * for clean exits.
- */
 export function classifyExit(input: ClassifyExitInput): ClassifyExitResult {
-  const logTail = input.logTail;
   const elapsedSeconds = Math.floor(input.elapsedSeconds);
   const outputLineCount = Math.floor(input.outputLineCount);
 
-  // Trust Claude's own self-report when stream-json emitted a terminal result
-  // event. Supersedes the substring heuristics below, which produce false
-  // positives on long orchestrator logs that incidentally mention "context
-  // limit" / "session … limit" in agent prose.
-  const resultEvent = findResultEvent(logTail);
-  if (resultEvent) {
-    if (resultEvent.is_error === false && resultEvent.subtype === "success") {
-      return { abnormal: false, reason: null };
-    }
-    if (resultEvent.is_error === true) {
-      return {
-        abnormal: true,
-        reason: `claude reported error (subtype=${resultEvent.subtype ?? "unknown"})`,
-      };
+  // Authoritative path: stream-json emitted a terminal result event.
+  const ev = findResultEvent(input.logTail);
+  if (ev) {
+    if (ev.is_error === false) return { abnormal: false, reason: null };
+    if (ev.is_error === true) {
+      const why = ev.api_error_status ?? ev.subtype ?? "unknown";
+      return { abnormal: true, reason: `claude reported error (${why})` };
     }
   }
 
-  // Auth failure
-  if (AUTH_PATTERN.test(logTail)) {
-    return {
-      abnormal: true,
-      reason: "authentication failure (API credentials invalid or expired)",
-    };
-  }
-
-  // Token/rate limit exhaustion
-  if (TOKEN_PATTERN.test(logTail)) {
-    return {
-      abnormal: true,
-      reason: "token or rate limit exhaustion",
-    };
-  }
-
-  // Rapid exit heuristic: <10 seconds and <5 lines of output
+  // No result event — process didn't exit cleanly through the stream-json
+  // pipeline. Only flag as abnormal if it also exited too fast to have done
+  // anything (binary failed to start, immediate crash).
   if (elapsedSeconds < 10 && outputLineCount < 5) {
     return {
       abnormal: true,

@@ -19,39 +19,21 @@ describe("POST /agents/:name/exit-classify", () => {
     await ctx.cleanup();
   });
 
-  it("returns abnormal=true for auth failure log", async () => {
+  it("returns abnormal=true when result event reports is_error:true", async () => {
+    const logTail =
+      '{"type":"result","subtype":"error_during_execution","is_error":true,"api_error_status":"rate_limit_error","result":"hit a 429"}';
     const res = await ctx.app.inject({
       method: "POST",
       url: "/agents/test-agent/exit-classify",
-      payload: {
-        logTail: "Failed to authenticate. API Error: 401",
-        elapsedSeconds: 30,
-        outputLineCount: 10,
-      },
+      payload: { logTail, elapsedSeconds: 200, outputLineCount: 150 },
     });
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.equal(body.abnormal, true);
-    assert.match(body.reason, /authentication failure/);
+    assert.match(body.reason, /rate_limit_error/);
   });
 
-  it("returns abnormal=true for token exhaustion", async () => {
-    const res = await ctx.app.inject({
-      method: "POST",
-      url: "/agents/test-agent/exit-classify",
-      payload: {
-        logTail: "token limit exceeded for this session",
-        elapsedSeconds: 120,
-        outputLineCount: 200,
-      },
-    });
-    assert.equal(res.statusCode, 200);
-    const body = res.json();
-    assert.equal(body.abnormal, true);
-    assert.match(body.reason, /token or rate limit/);
-  });
-
-  it("returns abnormal=true for rapid exit", async () => {
+  it("returns abnormal=true for rapid exit when no result event present", async () => {
     const res = await ctx.app.inject({
       method: "POST",
       url: "/agents/test-agent/exit-classify",
@@ -83,6 +65,38 @@ describe("POST /agents/:name/exit-classify", () => {
     assert.equal(body.reason, null);
   });
 
+  it("returns abnormal=false when log contains trigger words alongside a successful result event", async () => {
+    const logTail = [
+      "sub-agent mentioned the session limit incidentally",
+      '{"type":"result","subtype":"success","is_error":false,"api_error_status":null,"duration_ms":1280009,"result":"done","stop_reason":"end_turn","session_id":"abc","terminal_reason":"completed"}',
+    ].join("\n");
+    const res = await ctx.app.inject({
+      method: "POST",
+      url: "/agents/test-agent/exit-classify",
+      payload: { logTail, elapsedSeconds: 1280, outputLineCount: 500 },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.abnormal, false);
+    assert.equal(body.reason, null);
+  });
+
+  it("returns abnormal=false when log mentions trigger words but no result event is present", async () => {
+    const res = await ctx.app.inject({
+      method: "POST",
+      url: "/agents/test-agent/exit-classify",
+      payload: {
+        logTail: "rate limit exceeded — but no terminal result event",
+        elapsedSeconds: 60,
+        outputLineCount: 50,
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.abnormal, false);
+    assert.equal(body.reason, null);
+  });
+
   it("returns 400 for missing required fields", async () => {
     const res = await ctx.app.inject({
       method: "POST",
@@ -103,21 +117,5 @@ describe("POST /agents/:name/exit-classify", () => {
       },
     });
     assert.equal(res.statusCode, 400);
-  });
-
-  it("returns abnormal=false when log contains trigger words alongside a successful result event", async () => {
-    const logTail = [
-      "sub-agent mentioned the session limit incidentally",
-      '{"type":"result","subtype":"success","is_error":false,"duration_ms":1280009,"result":"done","stop_reason":"end_turn","session_id":"abc","terminal_reason":"completed"}',
-    ].join("\n");
-    const res = await ctx.app.inject({
-      method: "POST",
-      url: "/agents/test-agent/exit-classify",
-      payload: { logTail, elapsedSeconds: 1280, outputLineCount: 500 },
-    });
-    assert.equal(res.statusCode, 200);
-    const body = res.json();
-    assert.equal(body.abnormal, false);
-    assert.equal(body.reason, null);
   });
 });
