@@ -23,7 +23,11 @@ _detect_abnormal_exit() {
     [ -f "$log_file" ] || return 1
 
     local log_tail elapsed output_lines response
-    log_tail="$(tail -200 "$log_file" | head -c 50000)"
+    # Use byte-tail (not line-tail-then-head) so the terminal "type":"result"
+    # event is always included. tail -200 | head -c 50000 kept the FIRST 50KB
+    # of the last 200 lines, which truncated the result event off the end on
+    # long stream-json runs and starved the server's success short-circuit.
+    log_tail="$(tail -c 50000 "$log_file")"
     output_lines="$(wc -l < "$log_file")"
 
     if [ -n "${CLAUDE_START_TS:-}" ]; then
