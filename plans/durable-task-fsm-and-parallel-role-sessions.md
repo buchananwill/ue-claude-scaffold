@@ -374,7 +374,9 @@ The debrief protocol is **not** touched in this plan. Migrating debriefs into Su
 
 7. Container shutdown handler (`stop.sh` path): do **not** clear claimed tasks. The startup probe will resume them. The orchestrator is now stateless from the container's perspective.
 
-8. **Preserve the existing pump-loop infrastructure.** The rewrite of `_pump_iteration` keeps the consecutive-non-complete circuit breaker (`_trip_noncomplete_circuit_breaker`), the abnormal-exit detection (`_detect_abnormal_exit` + `ABNORMAL_SHUTDOWN`), the agent-status pause/resume polling, the stop-signal sentinel (`/tmp/.stop_requested`), the agent-type-override fetch (`_ensure_agent_type`), and the per-task branch-reset between iterations. These are non-negotiable safety nets; the daisy-chain is layered *inside* this scaffolding, not in place of it.
+8. **Preserve the existing pump-loop infrastructure (minus the circuit breaker).** The rewrite of `_pump_iteration` keeps the abnormal-exit detection (`_detect_abnormal_exit` + `ABNORMAL_SHUTDOWN`), the agent-status pause/resume polling, the stop-signal sentinel (`/tmp/.stop_requested`), the agent-type-override fetch (`_ensure_agent_type`), and the per-task branch-reset between iterations. These remain non-negotiable safety nets; the daisy-chain is layered *inside* this scaffolding, not in place of it.
+
+   **Drop `_trip_noncomplete_circuit_breaker` entirely** (function and all call sites). It was load-bearing in the legacy design specifically because the pump-loop auto-posted `/complete` and `/fail` based on `claude -p` exit codes — a zombie container with broken auth could rapidly cycle through claimed tasks marking each one `failed` before the operator noticed. That auto-post path is removed in step 5 above. Under the new design, transitions are exclusively authored by living, signed-in role sessions: an auth-dead container exits non-zero and routes to `/release` (back to `pending`), never to a terminal state. The catastrophic fall-through the breaker protected against is structurally impossible. The remaining `role_session_no_op → failed` path (Phase 4 step 2) requires `claude -p` to exit cleanly *while* posting nothing, which is rare, not auth-correlated, and surfaceable via dashboard alerting on `failure_reason='role_session_no_op'` counts. A breaker is the wrong instrument for that signal.
 
 **Acceptance criteria:**
 - `GET /tasks?claimedByAgentId=<uuid>` returns only tasks claimed by that agent UUID; `GET /tasks?claimedByAgentId=not-a-uuid` returns 400.
@@ -384,7 +386,8 @@ The debrief protocol is **not** touched in this plan. Migrating debriefs into Su
 - A session that exits without posting a transition causes the task to land in `failed` with `failureReason='role_session_no_op'`.
 - A task with `agentRolesOverride={"reviewers": {"decomp": "custom-decomp-ue"}}` runs only the decomp reviewer for that task (safety + correctness are dropped because the override replaces the whole reviewers map). The engineer and arbitrator come from the project default.
 - Killing the container mid-`reviewing` (after one of three reviewers has posted, two pending) and restarting causes the container to re-fan-out only the missing reviewers, not the one already posted.
-- The circuit-breaker, pause/resume polling, stop-signal handling, agent-type-override fetch, and per-task branch reset all continue to function under the new daisy-chain shape (no regression vs. legacy `_pump_iteration`).
+- `_trip_noncomplete_circuit_breaker` is removed; `git grep _trip_noncomplete_circuit_breaker` returns zero matches in `container/` after the change.
+- Pause/resume polling, stop-signal handling, agent-type-override fetch, abnormal-exit detection, and per-task branch reset all continue to function under the new daisy-chain shape (no regression vs. legacy `_pump_iteration`).
 - The `.scratch/reviews/` directory in any project worktree is never staged by `git status`.
 
 <!-- PHASE-BOUNDARY -->
