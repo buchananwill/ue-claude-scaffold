@@ -5,10 +5,10 @@
  * We avoid drizzle-kit migrations because PGlite has issues with certain ALTER
  * statements (e.g., integer -> boolean). Instead we create the final schema directly.
  */
-import { PGlite } from '@electric-sql/pglite';
-import { drizzle } from 'drizzle-orm/pglite';
-import * as schema from '../schema/index.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
+import * as schema from "../schema/index.js";
+import type { DrizzleDb } from "../drizzle-instance.js";
 
 export interface TestDb {
   db: DrizzleDb;
@@ -45,6 +45,7 @@ INSERT INTO "projects" ("id", "name") VALUES ('limit-proj', 'Limit Project');
 INSERT INTO "projects" ("id", "name") VALUES ('header-proj', 'Header Project');
 INSERT INTO "projects" ("id", "name") VALUES ('alpha', 'Alpha');
 INSERT INTO "projects" ("id", "name") VALUES ('beta', 'Beta');
+INSERT INTO "projects" ("id", "name") VALUES ('test-proj', 'Test Project');
 
 CREATE TABLE "agents" (
   "id" uuid PRIMARY KEY NOT NULL,
@@ -214,7 +215,9 @@ export async function createTestDb(): Promise<TestDb> {
 
   return {
     db,
-    close: async () => { await client.close(); },
+    close: async () => {
+      await client.close();
+    },
   };
 }
 
@@ -225,7 +228,7 @@ export async function createTestDb(): Promise<TestDb> {
 export async function insertTestAgent(
   db: DrizzleDb,
   name: string,
-  projectId: string = 'default',
+  projectId: string = "default",
 ): Promise<string> {
   const id = crypto.randomUUID();
   await db.insert(schema.agents).values({

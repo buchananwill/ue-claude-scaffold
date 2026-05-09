@@ -1,9 +1,12 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
-import assert from 'node:assert/strict';
-import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
-import exitClassifyPlugin from './exit-classify.js';
+import { describe, it, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import {
+  createDrizzleTestApp,
+  type DrizzleTestContext,
+} from "../drizzle-test-helper.js";
+import exitClassifyPlugin from "./exit-classify.js";
 
-describe('POST /agents/:name/exit-classify', () => {
+describe("POST /agents/:name/exit-classify", () => {
   let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
@@ -16,12 +19,12 @@ describe('POST /agents/:name/exit-classify', () => {
     await ctx.cleanup();
   });
 
-  it('returns abnormal=true for auth failure log', async () => {
+  it("returns abnormal=true for auth failure log", async () => {
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/test-agent/exit-classify',
+      method: "POST",
+      url: "/agents/test-agent/exit-classify",
       payload: {
-        logTail: 'Failed to authenticate. API Error: 401',
+        logTail: "Failed to authenticate. API Error: 401",
         elapsedSeconds: 30,
         outputLineCount: 10,
       },
@@ -32,12 +35,12 @@ describe('POST /agents/:name/exit-classify', () => {
     assert.match(body.reason, /authentication failure/);
   });
 
-  it('returns abnormal=true for token exhaustion', async () => {
+  it("returns abnormal=true for token exhaustion", async () => {
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/test-agent/exit-classify',
+      method: "POST",
+      url: "/agents/test-agent/exit-classify",
       payload: {
-        logTail: 'token limit exceeded for this session',
+        logTail: "token limit exceeded for this session",
         elapsedSeconds: 120,
         outputLineCount: 200,
       },
@@ -48,12 +51,12 @@ describe('POST /agents/:name/exit-classify', () => {
     assert.match(body.reason, /token or rate limit/);
   });
 
-  it('returns abnormal=true for rapid exit', async () => {
+  it("returns abnormal=true for rapid exit", async () => {
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/test-agent/exit-classify',
+      method: "POST",
+      url: "/agents/test-agent/exit-classify",
       payload: {
-        logTail: 'exited',
+        logTail: "exited",
         elapsedSeconds: 2,
         outputLineCount: 1,
       },
@@ -64,12 +67,12 @@ describe('POST /agents/:name/exit-classify', () => {
     assert.match(body.reason, /rapid exit/);
   });
 
-  it('returns abnormal=false for clean exit', async () => {
+  it("returns abnormal=false for clean exit", async () => {
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/test-agent/exit-classify',
+      method: "POST",
+      url: "/agents/test-agent/exit-classify",
       payload: {
-        logTail: 'All tasks completed successfully.',
+        logTail: "All tasks completed successfully.",
         elapsedSeconds: 600,
         outputLineCount: 500,
       },
@@ -80,25 +83,41 @@ describe('POST /agents/:name/exit-classify', () => {
     assert.equal(body.reason, null);
   });
 
-  it('returns 400 for missing required fields', async () => {
+  it("returns 400 for missing required fields", async () => {
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/test-agent/exit-classify',
-      payload: { logTail: 'some log' },
+      method: "POST",
+      url: "/agents/test-agent/exit-classify",
+      payload: { logTail: "some log" },
     });
     assert.equal(res.statusCode, 400);
   });
 
-  it('returns 400 for negative elapsedSeconds', async () => {
+  it("returns 400 for negative elapsedSeconds", async () => {
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/test-agent/exit-classify',
+      method: "POST",
+      url: "/agents/test-agent/exit-classify",
       payload: {
-        logTail: 'test',
+        logTail: "test",
         elapsedSeconds: -1,
         outputLineCount: 5,
       },
     });
     assert.equal(res.statusCode, 400);
+  });
+
+  it("returns abnormal=false when log contains trigger words alongside a successful result event", async () => {
+    const logTail = [
+      "sub-agent mentioned the session limit incidentally",
+      '{"type":"result","subtype":"success","is_error":false,"duration_ms":1280009,"result":"done","stop_reason":"end_turn","session_id":"abc","terminal_reason":"completed"}',
+    ].join("\n");
+    const res = await ctx.app.inject({
+      method: "POST",
+      url: "/agents/test-agent/exit-classify",
+      payload: { logTail, elapsedSeconds: 1280, outputLineCount: 500 },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.abnormal, false);
+    assert.equal(body.reason, null);
   });
 });

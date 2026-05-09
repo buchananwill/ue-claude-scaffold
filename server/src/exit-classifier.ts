@@ -24,6 +24,29 @@ const AUTH_PATTERN =
 const TOKEN_PATTERN =
   /token.*limit|token.*exhaust|session.*limit|context.*limit|max.*token.*reached|rate.*limit.*exceeded|quota.*exceeded|billing.*error|overloaded_error/i;
 
+interface ClaudeResultEvent {
+  type: "result";
+  subtype?: string;
+  is_error?: boolean;
+  result?: string;
+}
+
+function findResultEvent(logTail: string): ClaudeResultEvent | null {
+  const lines = logTail.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line.startsWith("{") || !line.includes('"type":"result"')) continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed && parsed.type === "result")
+        return parsed as ClaudeResultEvent;
+    } catch {
+      // Malformed/truncated JSON — keep scanning earlier lines.
+    }
+  }
+  return null;
+}
+
 /**
  * Classify whether a Claude agent exit was abnormal based on log content
  * and runtime metrics. Returns `{ abnormal: true, reason }` if a known
@@ -35,11 +58,28 @@ export function classifyExit(input: ClassifyExitInput): ClassifyExitResult {
   const elapsedSeconds = Math.floor(input.elapsedSeconds);
   const outputLineCount = Math.floor(input.outputLineCount);
 
+  // Trust Claude's own self-report when stream-json emitted a terminal result
+  // event. Supersedes the substring heuristics below, which produce false
+  // positives on long orchestrator logs that incidentally mention "context
+  // limit" / "session … limit" in agent prose.
+  const resultEvent = findResultEvent(logTail);
+  if (resultEvent) {
+    if (resultEvent.is_error === false && resultEvent.subtype === "success") {
+      return { abnormal: false, reason: null };
+    }
+    if (resultEvent.is_error === true) {
+      return {
+        abnormal: true,
+        reason: `claude reported error (subtype=${resultEvent.subtype ?? "unknown"})`,
+      };
+    }
+  }
+
   // Auth failure
   if (AUTH_PATTERN.test(logTail)) {
     return {
       abnormal: true,
-      reason: 'authentication failure (API credentials invalid or expired)',
+      reason: "authentication failure (API credentials invalid or expired)",
     };
   }
 
@@ -47,7 +87,7 @@ export function classifyExit(input: ClassifyExitInput): ClassifyExitResult {
   if (TOKEN_PATTERN.test(logTail)) {
     return {
       abnormal: true,
-      reason: 'token or rate limit exhaustion',
+      reason: "token or rate limit exhaustion",
     };
   }
 

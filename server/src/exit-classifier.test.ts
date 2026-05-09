@@ -1,13 +1,13 @@
-import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
-import { classifyExit } from './exit-classifier.js';
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { classifyExit } from "./exit-classifier.js";
 
-describe('classifyExit', () => {
+describe("classifyExit", () => {
   // --- Auth failure ---
 
-  it('detects authentication_error', () => {
+  it("detects authentication_error", () => {
     const result = classifyExit({
-      logTail: 'Error: authentication_error - invalid key',
+      logTail: "Error: authentication_error - invalid key",
       elapsedSeconds: 30,
       outputLineCount: 10,
     });
@@ -17,7 +17,7 @@ describe('classifyExit', () => {
 
   it('detects "Invalid authentication credentials" (case-insensitive)', () => {
     const result = classifyExit({
-      logTail: 'API Error: invalid authentication credentials returned',
+      logTail: "API Error: invalid authentication credentials returned",
       elapsedSeconds: 45,
       outputLineCount: 20,
     });
@@ -27,7 +27,7 @@ describe('classifyExit', () => {
 
   it('detects "Failed to authenticate"', () => {
     const result = classifyExit({
-      logTail: 'Failed to authenticate. API Error: 401 Unauthorized',
+      logTail: "Failed to authenticate. API Error: 401 Unauthorized",
       elapsedSeconds: 5,
       outputLineCount: 2,
     });
@@ -38,9 +38,9 @@ describe('classifyExit', () => {
 
   // --- Token exhaustion ---
 
-  it('detects token limit', () => {
+  it("detects token limit", () => {
     const result = classifyExit({
-      logTail: 'You have exceeded your token limit for this session.',
+      logTail: "You have exceeded your token limit for this session.",
       elapsedSeconds: 300,
       outputLineCount: 500,
     });
@@ -48,9 +48,9 @@ describe('classifyExit', () => {
     assert.match(result.reason!, /token or rate limit/);
   });
 
-  it('detects rate limit exceeded', () => {
+  it("detects rate limit exceeded", () => {
     const result = classifyExit({
-      logTail: 'Error: rate limit exceeded, please wait before retrying',
+      logTail: "Error: rate limit exceeded, please wait before retrying",
       elapsedSeconds: 60,
       outputLineCount: 50,
     });
@@ -58,9 +58,10 @@ describe('classifyExit', () => {
     assert.match(result.reason!, /token or rate limit/);
   });
 
-  it('detects quota exceeded', () => {
+  it("detects quota exceeded", () => {
     const result = classifyExit({
-      logTail: 'Your organization quota exceeded for the current billing period',
+      logTail:
+        "Your organization quota exceeded for the current billing period",
       elapsedSeconds: 120,
       outputLineCount: 100,
     });
@@ -68,9 +69,9 @@ describe('classifyExit', () => {
     assert.match(result.reason!, /token or rate limit/);
   });
 
-  it('detects overloaded_error', () => {
+  it("detects overloaded_error", () => {
     const result = classifyExit({
-      logTail: 'API returned overloaded_error — try again later',
+      logTail: "API returned overloaded_error — try again later",
       elapsedSeconds: 200,
       outputLineCount: 150,
     });
@@ -78,9 +79,9 @@ describe('classifyExit', () => {
     assert.match(result.reason!, /token or rate limit/);
   });
 
-  it('detects billing error', () => {
+  it("detects billing error", () => {
     const result = classifyExit({
-      logTail: 'billing error: payment method declined',
+      logTail: "billing error: payment method declined",
       elapsedSeconds: 15,
       outputLineCount: 8,
     });
@@ -88,9 +89,9 @@ describe('classifyExit', () => {
     assert.match(result.reason!, /token or rate limit/);
   });
 
-  it('detects context limit', () => {
+  it("detects context limit", () => {
     const result = classifyExit({
-      logTail: 'context limit reached, conversation truncated',
+      logTail: "context limit reached, conversation truncated",
       elapsedSeconds: 600,
       outputLineCount: 1000,
     });
@@ -100,7 +101,7 @@ describe('classifyExit', () => {
 
   it('detects "session limit reached"', () => {
     const result = classifyExit({
-      logTail: 'Error: session limit reached, please start a new conversation',
+      logTail: "Error: session limit reached, please start a new conversation",
       elapsedSeconds: 500,
       outputLineCount: 300,
     });
@@ -110,7 +111,7 @@ describe('classifyExit', () => {
 
   it('detects "token exhausted"', () => {
     const result = classifyExit({
-      logTail: 'API token exhausted for current billing cycle',
+      logTail: "API token exhausted for current billing cycle",
       elapsedSeconds: 400,
       outputLineCount: 250,
     });
@@ -120,7 +121,7 @@ describe('classifyExit', () => {
 
   it('detects "max token reached for this request"', () => {
     const result = classifyExit({
-      logTail: 'Error: max token reached for this request, truncating response',
+      logTail: "Error: max token reached for this request, truncating response",
       elapsedSeconds: 200,
       outputLineCount: 150,
     });
@@ -130,9 +131,9 @@ describe('classifyExit', () => {
 
   // --- Rapid exit ---
 
-  it('detects rapid exit (<10s, <5 lines)', () => {
+  it("detects rapid exit (<10s, <5 lines)", () => {
     const result = classifyExit({
-      logTail: 'Some generic error',
+      logTail: "Some generic error",
       elapsedSeconds: 3,
       outputLineCount: 2,
     });
@@ -142,9 +143,9 @@ describe('classifyExit', () => {
     assert.match(result.reason!, /2 lines/);
   });
 
-  it('does not trigger rapid exit at exactly 10 seconds', () => {
+  it("does not trigger rapid exit at exactly 10 seconds", () => {
     const result = classifyExit({
-      logTail: 'Some generic output',
+      logTail: "Some generic output",
       elapsedSeconds: 10,
       outputLineCount: 3,
     });
@@ -152,9 +153,9 @@ describe('classifyExit', () => {
     assert.equal(result.reason, null);
   });
 
-  it('does not trigger rapid exit with 5+ lines', () => {
+  it("does not trigger rapid exit with 5+ lines", () => {
     const result = classifyExit({
-      logTail: 'Line output',
+      logTail: "Line output",
       elapsedSeconds: 5,
       outputLineCount: 5,
     });
@@ -164,9 +165,9 @@ describe('classifyExit', () => {
 
   // --- Clean exit ---
 
-  it('returns clean for normal exit', () => {
+  it("returns clean for normal exit", () => {
     const result = classifyExit({
-      logTail: 'Agent completed task successfully.\nAll tests pass.',
+      logTail: "Agent completed task successfully.\nAll tests pass.",
       elapsedSeconds: 600,
       outputLineCount: 500,
     });
@@ -174,9 +175,9 @@ describe('classifyExit', () => {
     assert.equal(result.reason, null);
   });
 
-  it('returns clean for empty log with sufficient runtime', () => {
+  it("returns clean for empty log with sufficient runtime", () => {
     const result = classifyExit({
-      logTail: '',
+      logTail: "",
       elapsedSeconds: 120,
       outputLineCount: 50,
     });
@@ -186,9 +187,9 @@ describe('classifyExit', () => {
 
   // --- Priority: auth > token > rapid ---
 
-  it('auth pattern takes priority over rapid exit', () => {
+  it("auth pattern takes priority over rapid exit", () => {
     const result = classifyExit({
-      logTail: 'Failed to authenticate',
+      logTail: "Failed to authenticate",
       elapsedSeconds: 2,
       outputLineCount: 1,
     });
@@ -196,11 +197,78 @@ describe('classifyExit', () => {
     assert.match(result.reason!, /authentication failure/);
   });
 
-  it('token pattern takes priority over rapid exit', () => {
+  it("token pattern takes priority over rapid exit", () => {
     const result = classifyExit({
-      logTail: 'token limit reached',
+      logTail: "token limit reached",
       elapsedSeconds: 3,
       outputLineCount: 2,
+    });
+    assert.equal(result.abnormal, true);
+    assert.match(result.reason!, /token or rate limit/);
+  });
+});
+
+describe("result event short-circuit", () => {
+  it("returns clean when a successful result event is present, even if logTail contains trigger words", () => {
+    // Regression for orchestrator runs whose 23-turn output mentions
+    // "context limit" / "session limit" in agent prose but the terminal
+    // stream-json result event reports success.
+    const logTail = [
+      "sub-agent: be careful about the context limit",
+      "sub-agent: session limit advice ignored",
+      '{"type":"result","subtype":"success","is_error":false,"duration_ms":1280009,"result":"done","stop_reason":"end_turn","session_id":"abc","terminal_reason":"completed"}',
+    ].join("\n");
+    const result = classifyExit({
+      logTail,
+      elapsedSeconds: 1280,
+      outputLineCount: 500,
+    });
+    assert.equal(result.abnormal, false);
+    assert.equal(result.reason, null);
+  });
+
+  it("returns abnormal when result event reports is_error:true", () => {
+    const logTail =
+      '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"max turns reached","session_id":"abc"}';
+    const result = classifyExit({
+      logTail,
+      elapsedSeconds: 12,
+      outputLineCount: 30,
+    });
+    assert.equal(result.abnormal, true);
+    assert.match(result.reason!, /claude reported error/);
+    assert.match(result.reason!, /error_max_turns/);
+  });
+
+  it("falls through to pattern matching when no result event is present", () => {
+    const result = classifyExit({
+      logTail: "rate limit exceeded — no terminal result event",
+      elapsedSeconds: 60,
+      outputLineCount: 50,
+    });
+    assert.equal(result.abnormal, true);
+    assert.match(result.reason!, /token or rate limit/);
+  });
+
+  it("uses the most recent result event when multiple are present", () => {
+    const logTail = [
+      '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"first attempt failed"}',
+      '{"type":"result","subtype":"success","is_error":false,"result":"retry succeeded"}',
+    ].join("\n");
+    const result = classifyExit({
+      logTail,
+      elapsedSeconds: 600,
+      outputLineCount: 500,
+    });
+    assert.equal(result.abnormal, false);
+  });
+
+  it("ignores malformed result-like lines and continues classification", () => {
+    const logTail = 'token limit reached\n{"type":"result", malformed';
+    const result = classifyExit({
+      logTail,
+      elapsedSeconds: 60,
+      outputLineCount: 50,
     });
     assert.equal(result.abnormal, true);
     assert.match(result.reason!, /token or rate limit/);
