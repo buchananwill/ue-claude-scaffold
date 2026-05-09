@@ -147,7 +147,12 @@ The debrief protocol is **not** touched in this plan. Migrating debriefs into Su
 
 **Work:**
 
-0. **Legacy lifecycle endpoint disposition.** Delete `POST /tasks/:id/complete` and `POST /tasks/:id/fail` from `server/src/routes/tasks-lifecycle.ts` and the corresponding query helpers (`tasksLifecycleQ.complete`, `tasksLifecycleQ.fail`) from `server/src/queries/tasks-lifecycle.ts`. Both are superseded by `POST /tasks/:id/transition`. Their existing `claimed | in_progress` precondition would break the moment the new schema lands (`'in_progress'` no longer exists), and keeping them as parallel write paths to the same FSM rows would split the source of truth. Keep `POST /tasks/:id/reset` (operator-facing, recovers a `failed`/`cycle` task to `pending`) and `POST /tasks/:id/integrate` + `/integrate-batch` + `/integrate-all` (operator-facing, marks `complete` rows as `integrated`) — these are unchanged in semantics and continue to coexist with `/transition`.
+0. **Legacy lifecycle endpoint disposition.** Delete `POST /tasks/:id/complete` and `POST /tasks/:id/fail` from `server/src/routes/tasks-lifecycle.ts` and the corresponding query helpers (`tasksLifecycleQ.complete`, `tasksLifecycleQ.fail`) from `server/src/queries/tasks-lifecycle.ts`. Both are superseded by `POST /tasks/:id/transition`. Their existing `claimed | in_progress` precondition would break the moment the new schema lands (`'in_progress'` no longer exists), and keeping them as parallel write paths to the same FSM rows would split the source of truth. Keep `POST /tasks/:id/reset` (operator-facing, recovers a `failed`/`cycle`/`complete` task to `pending`) and `POST /tasks/:id/integrate` + `/integrate-batch` + `/integrate-all` (operator-facing, marks `complete` rows as `integrated`) — these are unchanged in semantics and continue to coexist with `/transition`.
+
+   **Update the surviving endpoints' status checks** so they reference the new enum values rather than the deprecated `'completed'`. Concretely:
+   - `POST /tasks/:id/reset` ([server/src/routes/tasks-lifecycle.ts:57](../server/src/routes/tasks-lifecycle.ts)): change the precondition from `row.status !== 'completed' && row.status !== 'failed' && row.status !== 'cycle'` to `row.status !== 'complete' && row.status !== 'failed' && row.status !== 'cycle'`. Update the conflict message text to match.
+   - `POST /tasks/:id/integrate` ([server/src/routes/tasks-lifecycle.ts:109](../server/src/routes/tasks-lifecycle.ts)): change `row.status !== 'completed'` to `row.status !== 'complete'`. Update the bad-request message text.
+   - `tasksLifecycleQ.reset`, `tasksLifecycleQ.integrate`, `tasksLifecycleQ.integrateBatch`, `tasksLifecycleQ.integrateAll` in `server/src/queries/tasks-lifecycle.ts`: anywhere these reference `'completed'` in WHERE clauses or precondition checks, replace with `'complete'`. Without this sweep the surviving endpoints reject every task post-cutover (the new schema rejects `'completed'` at the CHECK; the queries would silently filter nothing).
 
 1. Add `POST /tasks/:id/transition` accepting:
    ```
@@ -235,7 +240,9 @@ The debrief protocol is **not** touched in this plan. Migrating debriefs into Su
 - `server/src/routes/reviews.test.ts` (new)
 - `server/src/routes/findings.ts` (new) — cross-task BLOCKING-list and NOTE-pattern aggregation
 - `server/src/routes/findings.test.ts` (new)
-- `server/src/routes/index.ts` (register the two new modules)
+- `server/src/routes/failures.ts` (new) — `failure_reason`-grouped count aggregation for the Phase 8 Failure-reasons panel
+- `server/src/routes/failures.test.ts` (new)
+- `server/src/routes/index.ts` (register the three new modules)
 
 **Work:**
 1. `POST /tasks/:id/reviews` body:
@@ -310,7 +317,17 @@ The debrief protocol is **not** touched in this plan. Migrating debriefs into Su
    ```
    Same shape as note-patterns but grouping on `(trigger, ruling)` and project-scoped via the `tasks` join.
 
-6. `X-Project-Id` header required on all five endpoints. The cross-task endpoints (`/findings`, `/findings/note-patterns`, `/arbitrations`) scope all results to the requesting project — no cross-project leakage.
+6. `GET /failures/reasons` — aggregated counts of `tasks.failure_reason` for rows where `status = 'failed'`, project-scoped. Query params: `since` (ISO date, default now-30d). Returns:
+   ```
+   {
+     "patterns": [
+       { "failureReason": string, "count": int, "exampleTaskIds": [int, int, int] }
+     ]
+   }
+   ```
+   Query: `SELECT failure_reason, COUNT(*) as count, ARRAY_AGG(id ORDER BY completed_at DESC LIMIT 3) as example_task_ids FROM tasks WHERE project_id = ? AND status = 'failed' AND failure_reason IS NOT NULL AND completed_at >= ? GROUP BY failure_reason ORDER BY count DESC`. The response includes one entry per `failure_reason` value that has at least one row in the window — the dashboard pads zero-count entries client-side so all six enum values render in the panel.
+
+7. `X-Project-Id` header required on all six endpoints. The cross-task endpoints (`/findings`, `/findings/note-patterns`, `/arbitrations`, `/failures/reasons`) scope all results to the requesting project — no cross-project leakage.
 
 **Acceptance criteria:**
 - `POST /tasks/:id/reviews` inserts the run plus N findings atomically; either both land or neither does.
@@ -320,6 +337,7 @@ The debrief protocol is **not** touched in this plan. Migrating debriefs into Su
 - `GET /findings?severity=BLOCKING&reviewer=safety&since=2026-04-01` returns matching rows project-scoped, sorted by `postedAt DESC`, paginated.
 - `GET /findings/note-patterns` returns NOTE-tier titles grouped by exact-match count, top-N descending.
 - `GET /arbitrations` returns arbitration counts grouped by `(trigger, ruling)` over the trailing 30 days.
+- `GET /failures/reasons` returns counts grouped by `failure_reason` for `status='failed'` rows over the trailing 30 days, with example task IDs per reason. A row with `failure_reason='role_session_no_op'` is included if any such failure occurred in the window.
 - All cross-task endpoints reject requests missing `X-Project-Id` with 400.
 - All cross-task endpoints scope to the requesting project — a finding from project A never appears in project B's results, even if `taskId` collides.
 
@@ -374,9 +392,11 @@ The debrief protocol is **not** touched in this plan. Migrating debriefs into Su
 
 7. Container shutdown handler (`stop.sh` path): do **not** clear claimed tasks. The startup probe will resume them. The orchestrator is now stateless from the container's perspective.
 
-8. **Preserve the existing pump-loop infrastructure (minus the circuit breaker).** The rewrite of `_pump_iteration` keeps the abnormal-exit detection (`_detect_abnormal_exit` + `ABNORMAL_SHUTDOWN`), the agent-status pause/resume polling, the stop-signal sentinel (`/tmp/.stop_requested`), the agent-type-override fetch (`_ensure_agent_type`), and the per-task branch-reset between iterations. These remain non-negotiable safety nets; the daisy-chain is layered *inside* this scaffolding, not in place of it.
+8. **Preserve the existing pump-loop infrastructure (minus the noncomplete breaker).** The rewrite of `_pump_iteration` keeps the abnormal-exit detection (`_detect_abnormal_exit` + `ABNORMAL_SHUTDOWN`), the **`CONSECUTIVE_ABNORMAL` counter and its `≥2 abnormal exits → PUMP_STATUS=circuit_break` path** (separate from the noncomplete breaker that's being dropped — these stay), the agent-status pause/resume polling, the stop-signal sentinel (`/tmp/.stop_requested`), the agent-type-override fetch (`_ensure_agent_type`), and the per-task branch-reset between iterations. These remain non-negotiable safety nets; the daisy-chain is layered *inside* this scaffolding, not in place of it.
 
-   **Drop `_trip_noncomplete_circuit_breaker` entirely** (function and all call sites). It was load-bearing in the legacy design specifically because the pump-loop auto-posted `/complete` and `/fail` based on `claude -p` exit codes — a zombie container with broken auth could rapidly cycle through claimed tasks marking each one `failed` before the operator noticed. That auto-post path is removed in step 5 above. Under the new design, transitions are exclusively authored by living, signed-in role sessions: an auth-dead container exits non-zero and routes to `/release` (back to `pending`), never to a terminal state. The catastrophic fall-through the breaker protected against is structurally impossible. The remaining `role_session_no_op → failed` path (Phase 4 step 2) requires `claude -p` to exit cleanly *while* posting nothing, which is rare, not auth-correlated, and surfaceable via dashboard alerting on `failure_reason='role_session_no_op'` counts. A breaker is the wrong instrument for that signal.
+   The `CONSECUTIVE_ABNORMAL` breaker is still load-bearing under the new design: a container with broken auth produces abnormal exits, which now route to `/release` instead of `/fail`, but without that breaker the pump would keep claiming and releasing in a tight loop — burning server capacity without terminally failing any task. The breaker stops that loop after 2 consecutive abnormal exits.
+
+   **Drop `_trip_noncomplete_circuit_breaker` entirely** (function and all call sites). It was load-bearing in the legacy design specifically because the pump-loop auto-posted `/complete` and `/fail` based on `claude -p` exit codes — a zombie container with broken auth could rapidly cycle through claimed tasks marking each one `failed` before the operator noticed. That auto-post path is removed in step 5 above. Under the new design, transitions are exclusively authored by living, signed-in role sessions: an auth-dead container exits non-zero and routes to `/release` (back to `pending`), never to a terminal state. The catastrophic fall-through the breaker protected against is structurally impossible. The remaining `role_session_no_op → failed` path (Phase 4 step 2) requires `claude -p` to exit cleanly *while* posting nothing, which is rare, not auth-correlated, and surfaceable via the Phase 8 Failure-reasons panel that aggregates `tasks.failure_reason` counts and flags `role_session_no_op` for operator attention. A breaker is the wrong instrument for that signal; observability is.
 
 **Acceptance criteria:**
 - `GET /tasks?claimedByAgentId=<uuid>` returns only tasks claimed by that agent UUID; `GET /tasks?claimedByAgentId=not-a-uuid` returns 400.
@@ -387,7 +407,8 @@ The debrief protocol is **not** touched in this plan. Migrating debriefs into Su
 - A task with `agentRolesOverride={"reviewers": {"decomp": "custom-decomp-ue"}}` runs only the decomp reviewer for that task (safety + correctness are dropped because the override replaces the whole reviewers map). The engineer and arbitrator come from the project default.
 - Killing the container mid-`reviewing` (after one of three reviewers has posted, two pending) and restarting causes the container to re-fan-out only the missing reviewers, not the one already posted.
 - `_trip_noncomplete_circuit_breaker` is removed; `git grep _trip_noncomplete_circuit_breaker` returns zero matches in `container/` after the change.
-- Pause/resume polling, stop-signal handling, agent-type-override fetch, abnormal-exit detection, and per-task branch reset all continue to function under the new daisy-chain shape (no regression vs. legacy `_pump_iteration`).
+- The `CONSECUTIVE_ABNORMAL` counter and its `≥2 abnormal exits → PUMP_STATUS=circuit_break` path are preserved. Verifiable: a container that produces 2 consecutive abnormal exits (e.g. auth death simulated by stubbing the auth check) trips the circuit breaker and stops the pump rather than continuing to claim/release tasks.
+- Pause/resume polling, stop-signal handling, agent-type-override fetch, abnormal-exit detection, and per-task branch reset all continue to function under the new daisy-chain shape — no regression in any retained safety net. The `_trip_noncomplete_circuit_breaker` removal is intentional (covered by step 8 and the prior two criteria); it is not counted as a regression.
 - The `.scratch/reviews/` directory in any project worktree is never staged by `git status`.
 
 <!-- PHASE-BOUNDARY -->
@@ -498,7 +519,7 @@ The debrief protocol is **not** touched in this plan. Migrating debriefs into Su
    - Reads each `<role>.md` and constructs `consolidated.md` by literal concatenation with section headers (`## [<ROLE> REVIEW]`). No LLM in this step.
    - Writes `.scratch/reviews/<task-id>/cycle-<N>/consolidated.md`.
    - Examines the `verdict` from each reviewer (read from the JSON payload each reviewer wrote alongside its markdown). If all `approve` or `out_of_scope`: `POST /tasks/:id/transition {to: 'complete'}`. If any `request_changes`: `POST /tasks/:id/transition {to: 'revising', payload: {latestReviewPath: '.scratch/reviews/<task-id>/cycle-<N>/consolidated.md'}}`.
-8. **Reviewer set is project-default with per-task override.** The fanout iterates `effectiveAgentRoles.reviewers` (Phase 4 step 2a). For piste-perfect's default config, that's safety + correctness + decomp every cycle. A task with a custom `agentRolesOverride.reviewers` will run whatever set the override declares — useful for one-off tasks where, e.g., decomp is irrelevant (a docs-only phase). The fanout has no opinion about which reviewers should run; it dispatches whoever is declared.
+8. **Reviewer set is project-default with per-task override.** The fanout iterates `effectiveAgentRoles.reviewers` (Phase 4 step 2a). For piste-perfect's default config, that's safety + correctness + decomp every cycle. The fanout has no opinion about which reviewers should run; it dispatches whoever is declared. **Override semantics are wholesale, not per-key:** an `agentRolesOverride.reviewers` value replaces the entire reviewers map. To run a subset of the default roles for one task, the override must restate the keepers. Example: a refactor task whose explicit goal is consolidating duplicates would set `agentRolesOverride.reviewers = {"safety": "container-safety-reviewer-ue", "correctness": "container-reviewer-ue"}` (omitting decomp, since decomp's BLOCKINGs would fight the work). A task that runs zero reviewers is currently invalid — the Phase 1 schema requires `reviewers` to have at least one entry.
 
 **Acceptance criteria:**
 - All declared reviewer subprocesses run concurrently (verifiable via `ps` or container logs showing overlapping start/end timestamps). For piste-perfect default config: three subprocesses (safety, correctness, decomp) every cycle.
@@ -610,7 +631,10 @@ The debrief protocol is **not** touched in this plan. Migrating debriefs into Su
 4. Add a "NOTE patterns" panel on the same view: calls `GET /findings/note-patterns?since=<date>&limit=20` (Phase 3). Aggregated NOTE-tier titles ranked by occurrence over the last 30 days. NOTEs are observability-only by design — the operator scans this panel to spot recurring patterns that warrant escalating into a system-prompt rule, a skill amendment, or a new reviewer mandate. Clicking an entry expands to the constituent findings (the endpoint returns up to 3 example finding IDs per pattern; click-through fetches full rows via `GET /tasks/:id/reviews/:cycle`).
 5. **Arbitration rendering on the task-detail page.** When a task has rows in `arbitrationRuns`, render an "Arbitration" section per row showing: the trigger, the ruling, the ruling markdown (markdown-rendered), the timestamp, and (for `ruling='rule'`) the upheld vs. retired finding IDs with click-through to each finding's full content. A task at `arbitrating` state shows a pending placeholder until the arbitrator posts.
 6. **Arbitration patterns panel.** On `/findings`, add a third panel alongside BLOCKING-recent and NOTE-patterns: calls `GET /arbitrations?since=<date>` (Phase 3). Aggregated counts grouped by `(trigger, ruling)` over the last 30 days. This is the operator's signal that one or both arbitrable failure modes are firing more than expected — a high `(review_cycle_budget_exhausted, escalate)` count means the cycle budget needs raising or reviewer prompts need tightening; a high `(reviewer_contradiction, *)` count means two reviewer mandates are systematically clashing.
-7. The existing message-board view continues to read from `messages` unchanged. **Reviewer findings are no longer relayed through `messages`** in the new flow (Phase 6 has reviewers POST directly to `/reviews`); update the dashboard's task-detail page so it reads review state from `review_runs`, not from message-board scraping.
+
+7. **Failure-reasons panel.** On `/findings`, add a fourth panel that aggregates `tasks.failure_reason` counts for `status='failed'` rows over the trailing 30 days, grouped by `failure_reason`, sorted by count descending. This requires a new server endpoint `GET /failures/reasons?since=<date>` returning `{ patterns: [{ failureReason, count, exampleTaskIds }] }` (parallel shape to `/findings/note-patterns` and `/arbitrations`); add this to Phase 3's file list and acceptance criteria as a follow-on. The panel renders all six enum values (`review_cycle_budget_exhausted`, `reviewer_contradiction`, `engineer_build_failure`, `reviewer_infrastructure_failure`, `role_session_no_op`, `arbitrator_escalated`) with counts; entries with count > 0 are emphasized. **`role_session_no_op` is specifically flagged for operator attention** (e.g. red badge or warning icon) because under the new design it is the only path where a clean Claude exit can terminally fail a task without surfacing through the abnormal-exit circuit breaker — the panel is the operator's only routine signal that this failure mode is firing.
+
+8. The existing message-board view continues to read from `messages` unchanged. **Reviewer findings are no longer relayed through `messages`** in the new flow (Phase 6 has reviewers POST directly to `/reviews`); update the dashboard's task-detail page so it reads review state from `review_runs`, not from message-board scraping.
 
 **Acceptance criteria:**
 - The task-detail page on a `reviewing`-state task shows three reviewer chips, the current cycle, and the cycle budget.
@@ -620,6 +644,7 @@ The debrief protocol is **not** touched in this plan. Migrating debriefs into Su
 - The NOTE patterns panel renders the top 20 `title`-grouped NOTEs by occurrence count over the trailing 30 days; clicking a row expands to the constituent finding rows.
 - A task with an `arbitrationRuns` row shows the "Arbitration" section with the rendered ruling markdown and (for contradictions) the upheld/retired finding callout.
 - The arbitration patterns panel renders aggregated counts by `(trigger, ruling)` over the trailing 30 days.
+- The Failure-reasons panel renders aggregated `tasks.failure_reason` counts for `status='failed'` rows over the trailing 30 days, with all six enum values listed and `role_session_no_op` visually flagged when its count is non-zero.
 
 <!-- PHASE-BOUNDARY -->
 
@@ -661,7 +686,7 @@ The coordination server is on-demand, not a hot service with external dependents
 
 5. **Delete the legacy orchestrator artifacts.** Remove `dynamic-agents/container-orchestrator-ue.md` and `.compiled-agents/container-orchestrator-ue.md`. Verify with `git grep container-orchestrator-ue`: zero matches outside `plans/` and `notes/`. The `pump-loop.sh` already lives entirely in its new daisy-chain shape from Phase 4 — there is no legacy branch in it to remove.
 6. **Document the breaking change.**
-   - In `D:/Coding/resort_game/PistePerfect_5_7/CLAUDE.md`, replace the coordination-server section's "Task Creation — Plan-to-Queue Protocol" / "Coordination Server (port 9100)" content where it references the orchestrator, the legacy status values, and the existing message-board-based review trail. The replacement names: the new task statuses (`engineering`, `built`, `reviewing`, `revising`, `arbitrating`, `complete`); the new transition endpoints (`POST /tasks/:id/transition`, `POST /tasks/:id/reviews`, `POST /tasks/:id/arbitrations`, `GET /findings`, `GET /findings/note-patterns`, `GET /arbitrations`); the `.scratch/reviews/` and `.scratch/arbitrations/` workspace paths and their gitignore status; the per-task `agentRolesOverride` mechanism for one-off reviewer-set changes; the dashboard's new Findings and Arbitration views.
+   - In `D:/Coding/resort_game/PistePerfect_5_7/CLAUDE.md`, replace the coordination-server section's "Task Creation — Plan-to-Queue Protocol" / "Coordination Server (port 9100)" content where it references the orchestrator, the legacy status values, and the existing message-board-based review trail. The replacement names: the new task statuses (`engineering`, `built`, `reviewing`, `revising`, `arbitrating`, `complete`); the new transition endpoints (`POST /tasks/:id/transition`, `POST /tasks/:id/reviews`, `POST /tasks/:id/arbitrations`, `GET /findings`, `GET /findings/note-patterns`, `GET /arbitrations`, `GET /failures/reasons`); the `.scratch/reviews/` and `.scratch/arbitrations/` workspace paths and their gitignore status; the per-task `agentRolesOverride` mechanism for one-off reviewer-set changes; the dashboard's new Findings, Arbitration, and Failure-reasons panels.
    - In `D:/Coding/ue-claude-scaffold/CLAUDE.md`, add a top-of-file note: *"Task execution model changed [DATE]. The in-container orchestrator agent has been removed. Task lifecycle is a server-managed FSM dispatched by `pump-loop.sh`. Per-project agent-role wiring lives in `scaffold.config.json` under the `agentRoles` field. See `plans/durable-task-fsm-and-parallel-role-sessions.md` and the schema migration file under `server/drizzle/` for the canonical reference."*
    - In `CHANGELOG.md`, log the change with the date, the list of removed agent files, and the schema migration filename.
 7. **Spin everything back up and validate end-to-end.** Start server + one container. Author one trivial single-phase plan, batch one task, watch it traverse `pending → claimed → engineering → built → reviewing → complete` cleanly. (`complete → integrated` is the existing manual flow and is out of scope for this validation.) Confirm the dashboard renders the FSM state, the per-reviewer chips, and the consolidated review markdown. Then run a deliberate-contradiction follow-up task to exercise the arbitrator path end-to-end.
