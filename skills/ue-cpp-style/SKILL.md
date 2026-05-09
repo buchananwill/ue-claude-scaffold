@@ -111,6 +111,45 @@ namespace Resort
       return;
   ```
 
+## Production Code Is for Production Concerns
+
+A production code file (a `.h` or `.cpp` outside `/Private/Tests/`, `*.spec.cpp`, or other test-only directories) must
+read as a description of what the system does, not how it is exercised. **Someone reading a production code file must
+not be able to discern anything about how tests are conducted. That is noise.** Reading the production code must only
+involve understanding production concerns.
+
+**Implementers — write production code that is inherently testable.** Tests reach the behaviour through the same public
+surface real callers use. Do **not** add arbitrary test-only functions, accessors, or callbacks to satisfy a simplistic
+or invasive test design. If a test cannot reach a behaviour through the production surface, the **test design** is
+wrong, not the production code — redesign the test.
+
+**Reviewers — BLOCKING.** Any of the following in a production code file is BLOCKING:
+
+- A function, member, or macro whose name contains `ForTesting`, `_ForTest`, `TestSeam`, `TestOnly`, `TestHook`, or any
+  equivalent.
+- A function whose only documented purpose is to be called from tests (Doxygen comments that begin "Test seam:", "Used
+  by tests to…", "Tier N specs use this to…", etc.).
+- A `friend` declaration against a test fixture whose only purpose is to expose private state to tests.
+- A public accessor whose comment explains the **test scenario** that needs it rather than the **production caller**
+  that needs it.
+- **Any occurrence of `WITH_DEV_AUTOMATION_TESTS`** in a file outside `/Private/Tests/`. This macro gates test
+  infrastructure; it must never appear in production code, full stop. A file outside `/Private/Tests/` that contains
+  this macro is suspect as a whole — investigate the entire file, not just the gated block, since the seam is rarely
+  isolated.
+
+Cite the exact symbol or comment as evidence. The fix is always to remove the seam from production and rewrite the test
+against the production surface.
+
+### What Is Not a Test Seam
+
+The following gates run code in **production modes** of the engine, not test modes, and are **not** covered by this
+rule:
+
+- `#if WITH_EDITOR` — gates code for the editor build configuration. Editor-gated members, callbacks, and overrides
+  (`PostEditChangeProperty`, `CanEditChange`, editor-only validation) are legitimate production code.
+- `#if WITH_EDITORONLY_DATA` — gates editor-only data fields. Same rationale: the editor is a production mode of the
+  engine.
+
 ## Commentary Density
 
 Signal thresholds for production files (comment percentage of total file lines):

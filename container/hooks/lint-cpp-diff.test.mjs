@@ -188,6 +188,27 @@ describe('Rule 3: Anonymous namespaces', () => {
   it('catches indented anonymous namespace', () => {
     expectCatch('    namespace {', 'indented anonymous namespace');
   });
+  it('catches Allman-style anonymous namespace (brace on next line)', () => {
+    const issues = checkLines(['namespace', '{'], 'Test.cpp');
+    assert.ok(
+      issues.some(s => s.includes('Anonymous namespace')),
+      `Should catch Allman-style anonymous namespace. Got: ${issues.join(' | ')}`
+    );
+  });
+  it('catches Allman-style with blank line between', () => {
+    const issues = checkLines(['namespace', '', '{'], 'Test.cpp');
+    assert.ok(
+      issues.some(s => s.includes('Anonymous namespace')),
+      `Should catch Allman with blank line. Got: ${issues.join(' | ')}`
+    );
+  });
+  it('catches anonymous namespace with block comment between', () => {
+    const issues = checkLines(['namespace /* anon helpers */', '{'], 'Test.cpp');
+    assert.ok(
+      issues.some(s => s.includes('Anonymous namespace')),
+      `Should catch namespace with block comment. Got: ${issues.join(' | ')}`
+    );
+  });
 
   it('allows named namespace', () => {
     expectAllow('namespace UE::ResortModule {', 'named namespace');
@@ -195,8 +216,22 @@ describe('Rule 3: Anonymous namespaces', () => {
   it('allows nested named namespace', () => {
     expectAllow('namespace UE::ResortModule::Private {', 'nested named namespace');
   });
+  it('allows Allman-style named namespace (brace on next line)', () => {
+    const issues = checkLines(['namespace UE::ResortModule', '{'], 'Test.cpp');
+    assert.equal(
+      issues.filter(s => s.includes('Anonymous namespace')).length, 0,
+      `Should allow Allman-style named namespace. Got: ${issues.join(' | ')}`
+    );
+  });
   it('allows commented anonymous namespace', () => {
     expectAllow('// namespace {', 'commented anonymous namespace');
+  });
+  it('allows anonymous namespace inside block comment', () => {
+    const issues = checkLines(['/* example:', 'namespace', '{', '*/'], 'Test.cpp');
+    assert.equal(
+      issues.filter(s => s.includes('Anonymous namespace')).length, 0,
+      `Should allow anonymous namespace inside block comment. Got: ${issues.join(' | ')}`
+    );
   });
 });
 

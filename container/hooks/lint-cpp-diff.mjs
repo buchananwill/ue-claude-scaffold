@@ -145,17 +145,6 @@ export function checkLines(lines, filePath) {
       );
     }
 
-    // Rule 3: Anonymous namespaces (break unity builds)
-    if (/\bnamespace\s*\{/.test(line)) {
-      issues.push(
-        `  LINT [${filePath}:${lineNum}] Anonymous namespace: ` +
-        `breaks unity builds. Before adding a named namespace like Resort::X::Private, ` +
-        `check: (1) does this helper already exist elsewhere in the module? ` +
-        `(2) should it be exposed in the header in a proper namespace instead? ` +
-        `Line: ${stripped.slice(0, 80)}`
-      );
-    }
-
     // Rule 4: Greedy lambda captures [&] or [=]
     // Two branches match Python's structure: one for (params) lambdas, one for {body} no-arg lambdas
     if (/\[&\]\s*\(/.test(line) || /\[=\]\s*\(/.test(line)) {
@@ -223,6 +212,28 @@ export function checkLines(lines, filePath) {
       `  LINT [${filePath}:${lineNum}] IILE: ` +
       `immediately invoked lambda — extract to a named variable or function. ` +
       `Line: ${context}`
+    );
+  }
+
+  // Rule 3: Anonymous namespaces (break unity builds).
+  // Multiline scan: catches both `namespace {` and the canonical Allman form
+  //   namespace
+  //   {
+  // Strip comments first (preserving newlines so line numbers stay stable) so
+  // `// namespace {` and `/* namespace { */` don't false-positive.
+  const noBlockComments = fullText.replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '));
+  const noComments = noBlockComments.replace(/\/\/[^\n]*/g, '');
+  const anonNsPattern = /\bnamespace\b\s*\{/g;
+  let nsMatch;
+  while ((nsMatch = anonNsPattern.exec(noComments)) !== null) {
+    const lineNum = noComments.slice(0, nsMatch.index).split('\n').length;
+    const origLine = (lines[lineNum - 1] ?? '').trim();
+    issues.push(
+      `  LINT [${filePath}:${lineNum}] Anonymous namespace: ` +
+      `breaks unity builds. Before adding a named namespace like Resort::X::Private, ` +
+      `check: (1) does this helper already exist elsewhere in the module? ` +
+      `(2) should it be exposed in the header in a proper namespace instead? ` +
+      `Line: ${origLine.slice(0, 80)}`
     );
   }
 

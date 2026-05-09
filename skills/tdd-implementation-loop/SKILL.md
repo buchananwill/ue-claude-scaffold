@@ -119,3 +119,19 @@ Do not:
 ## Scope Constraint
 
 If your write scope is restricted to certain directories (e.g. test directories only), honour that restriction absolutely. Flag files outside your scope that need changes and return without modifying them.
+
+## Production Code Is for Production Concerns
+
+The production code file you write describes what the system does — not how a test exercises it. **A reader of production code must not be able to discern anything about how tests are conducted. That is noise.**
+
+Write production code that is **inherently testable**. Tests reach behaviour through the same public surface real callers use. Do **not** add any of the following to a production `.h` or `.cpp` (anything outside `/Private/Tests/`, `*.spec.cpp`, or other test-only directories):
+
+- Functions, members, or macros whose names contain `ForTesting`, `_ForTest`, `TestSeam`, `TestOnly`, `TestHook`, or any equivalent.
+- Functions whose only purpose is to be called from tests, regardless of name (Doxygen comments that say "Test seam:", "Used by tests to…", "Tier N specs use this to…", etc.).
+- `friend` declarations against test fixtures whose only purpose is to expose private state to tests.
+- Public accessors whose comments explain the test scenario rather than a production caller.
+- **`WITH_DEV_AUTOMATION_TESTS`** anywhere outside `/Private/Tests/`. This macro gates test infrastructure; it must never appear in production code, full stop.
+
+If a test cannot reach a behaviour through the production surface, the **test design** is wrong, not the production code. Redesign the test — do not add a seam to production.
+
+`#if WITH_EDITOR` and `#if WITH_EDITORONLY_DATA` gate **production modes** of the engine, not test modes, and are not covered by this rule. Editor-gated members, callbacks, and overrides are legitimate production code.
