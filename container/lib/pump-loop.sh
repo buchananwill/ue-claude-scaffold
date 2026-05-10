@@ -200,13 +200,11 @@ _run_daisy_chain() {
         # Phase 6 wires the reviewer fan-out via _run_reviewer_fanout
         # (sourced from container/lib/reviewer-fanout.sh by entrypoint.sh and
         # dispatched from _run_claude on DAISY_CHAIN_ROLE=reviewer-fanout).
-        # Phase 7 will wire arbitrator the same way; until then it stays
-        # stubbed here so the loop halts cleanly on `arbitrating` status.
-        if [ "$role" = "arbitrator" ]; then
-            echo "Daisy-chain: role '${role}' is stubbed pending Phase 7. Halting loop for task ${task_id} (status='${status}')."
-            rm -f "$roles_file"
-            return 0
-        fi
+        # Phase 7 wires the arbitrator the same way: _run_role_session below
+        # invokes _run_claude with DAISY_CHAIN_ROLE=arbitrator, which sources
+        # container/lib/arbitrator-dispatch.sh and hands off to
+        # _run_arbitrator_dispatch. The arbitrator branch is no longer
+        # stubbed here.
 
         echo "Daisy-chain cycle ${cycle}: status='${status}' → role='${role}'"
         last_status="$status"

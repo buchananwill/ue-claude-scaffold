@@ -509,6 +509,40 @@ _run_claude() {
         return "$fanout_rc"
     fi
 
+    # Arbitrator dispatch (Phase 7). When the daisy-chain invokes us with
+    # DAISY_CHAIN_ROLE=arbitrator, we hand off to _run_arbitrator_dispatch.
+    # Like the reviewer-fanout above, that dispatcher launches its own scoped
+    # `claude -p` subprocess (read-only, Opus, no Edit/Write), so this path
+    # does NOT fall through to the normal --dangerously-skip-permissions
+    # invocation below. The arbitrator session itself posts
+    # `POST /tasks/:id/arbitrations`, which drives the FSM transition out of
+    # `arbitrating` atomically with the arbitrationRuns insert on the server
+    # side; this dispatcher only captures output. The helper file is sourced
+    # lazily here rather than from entrypoint.sh so the Phase 7 changes stay
+    # contained to run-claude.sh.
+    if [ "${DAISY_CHAIN_ROLE:-}" = "arbitrator" ] && [ -n "${CURRENT_TASK_ID:-}" ]; then
+        echo "Daisy-chain: dispatching arbitrator for task ${CURRENT_TASK_ID}"
+        # shellcheck source=lib/arbitrator-dispatch.sh
+        # Resolve the helper relative to this file's own location so a caller
+        # that sourced run-claude.sh from any cwd can still find the sibling
+        # script.
+        local _arb_lib_dir
+        _arb_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        # Guard against double-sourcing — declaring the function more than
+        # once is harmless but the source call is the load-bearing side
+        # effect we want exactly once.
+        if ! declare -F _run_arbitrator_dispatch >/dev/null 2>&1; then
+            # shellcheck disable=SC1091
+            source "${_arb_lib_dir}/arbitrator-dispatch.sh"
+        fi
+        local arb_rc
+        set +e
+        _run_arbitrator_dispatch "$CURRENT_TASK_ID"
+        arb_rc=$?
+        set -e
+        return "$arb_rc"
+    fi
+
     # Clear any stale stop sentinel from a prior container run
     rm -f /tmp/.stop_requested
 

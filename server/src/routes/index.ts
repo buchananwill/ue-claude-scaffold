@@ -24,3 +24,4 @@ export { default as sessionsPlugin } from './sessions.js';
 export { default as reviewsPlugin } from './reviews.js';
 export { default as findingsPlugin } from './findings.js';
 export { default as failuresPlugin } from './failures.js';
+export { default as arbitrationsPlugin } from './arbitrations.js';
