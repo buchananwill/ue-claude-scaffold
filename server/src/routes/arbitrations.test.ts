@@ -15,7 +15,7 @@ describe('arbitrations routes', () => {
     const config = createTestConfig();
     await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
-    await ctx.app.register(arbitrationsPlugin);
+    await ctx.app.register(arbitrationsPlugin, { config });
     await registerAgent(ctx.app, 'agent-1');
   });
 

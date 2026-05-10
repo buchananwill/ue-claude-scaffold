@@ -26,6 +26,17 @@ import { eq, and } from 'drizzle-orm';
 import { getDb } from '../drizzle-instance.js';
 import { arbitrationRuns, tasks } from '../schema/tables.js';
 import { requireProjectIdHeader } from './_project-id-guard.js';
+import type { ScaffoldConfig } from '../config.js';
+
+// Phase 7 cycle 1 (safety W2): accept `{ config }` at plugin registration so
+// the arbitrations route exposes the same shape as other state-transition
+// plugins that may need configuration (tasks, branchOps, syncPlugin). The
+// route handler does not currently consume config fields, but the typed
+// option surface matches the established pattern at the registration site in
+// `server/src/index.ts`.
+interface ArbitrationsOpts {
+  config: ScaffoldConfig;
+}
 
 const ARBITRATION_TRIGGERS = [
   'review_cycle_budget_exhausted',
@@ -270,7 +281,7 @@ function buildStatusUpdate(
   }
 }
 
-const arbitrationsPlugin: FastifyPluginAsync = async (fastify) => {
+const arbitrationsPlugin: FastifyPluginAsync<ArbitrationsOpts> = async (fastify) => {
   fastify.post<{
     Params: { id: string };
     Body: unknown;

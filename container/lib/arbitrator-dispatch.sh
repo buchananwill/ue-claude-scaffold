@@ -22,9 +22,15 @@
 # successful POST drives the task to complete / revising / failed.
 #
 # A second arbitration POST for the same (taskId, trigger) returns 409 from
-# the server. The dispatch treats that as a normal exit (the agent's curl
-# logged the 409) and the daisy-chain's role_session_no_op detector will
-# eventually fail the task — the intended brake against arbitration loops.
+# the server. The arbitrator agent is instructed (see container-arbitrator-ue.md)
+# to log the conflict to its captured output and **exit 0** on 409 — NOT
+# non-zero. The dispatch therefore sees a clean exit, the task's status
+# remains `arbitrating` (no transition was posted), and the daisy-chain's
+# role_session_no_op detector at pump-loop.sh fires
+# (sess_exit == 0 && post_status == last_status) and posts
+# role_session_no_op → failed. This is the intended brake against arbitration
+# loops; the alternative (agent exits non-zero) would trip the pump-loop's
+# non-zero-exit bail-out at pump-loop.sh and strand the task in `arbitrating`.
 
 # ── Internal helpers ────────────────────────────────────────────────────────
 
@@ -221,6 +227,46 @@ _run_arbitrator_dispatch() {
             ;;
     esac
 
+    # Phase 7 cycle 1 (safety W1): allowlist-scrub server-derived strings
+    # before they enter the arbitrator prompt. Reuses _scrub_engineer_path_field
+    # from run-claude.sh (which sources this file), keeping the allowlist
+    # consistent with the engineer-prompt scrub posture. The allowlist regex is
+    # `^[-A-Za-z0-9_./ ]+$` — alnum, hyphen, underscore, dot, slash, space —
+    # so any shell metacharacter or control byte in a hostile title / path
+    # collapses to empty before reaching the prompt body.
+    #
+    # task_title may legitimately contain characters outside this set (colons,
+    # parens, etc.). On reject the title degrades to empty in the prompt; the
+    # arbitrator can still read task context from the plan and reviews.
+    task_title=$(_scrub_engineer_path_field "$task_title" "task_title") || true
+    source_path=$(_scrub_engineer_path_field "$source_path" "source_path") || true
+
+    # files_csv is "path1, path2, path3" — comma is not in the path allowlist,
+    # so scrub each file individually and rebuild the csv. Files that fail the
+    # allowlist drop out of the list silently (the helper warns on stderr).
+    if [ -n "$files_csv" ]; then
+        local _files_clean=""
+        local _f
+        local _IFS_OLD="$IFS"
+        IFS=','
+        for _f in $files_csv; do
+            # Strip leading/trailing whitespace.
+            _f="${_f#"${_f%%[![:space:]]*}"}"
+            _f="${_f%"${_f##*[![:space:]]}"}"
+            local _scrubbed
+            _scrubbed=$(_scrub_engineer_path_field "$_f" "files_csv[entry]") || _scrubbed=""
+            if [ -n "$_scrubbed" ]; then
+                if [ -z "$_files_clean" ]; then
+                    _files_clean="$_scrubbed"
+                else
+                    _files_clean="${_files_clean}, ${_scrubbed}"
+                fi
+            fi
+        done
+        IFS="$_IFS_OLD"
+        files_csv="$_files_clean"
+    fi
+
     echo "arbitrator-dispatch: task=${task_id} status=${status} trigger=${trigger}"
 
     # Resolve the arbitrator agent basename from the daisy-chain roles file.
@@ -270,26 +316,49 @@ _run_arbitrator_dispatch() {
     mkdir -p "$scratch_dir"
     local tmpfile="${scratch_dir}/${trigger}.md.tmp"
     local finalfile="${scratch_dir}/${trigger}.md"
-    local stderr_log="${scratch_dir}/${trigger}.stderr"
+    # Phase 7 cycle 1 (safety B2): stderr goes to /dev/null rather than a
+    # persistent log file in the scratch dir. The reviewer-fanout history shows
+    # the .stderr file is rarely useful for diagnosis and risks leaking
+    # diagnostic info about the run.
 
     _post_status "working"
 
     # Launch the arbitrator. Scoped tools mirror the reviewer-fanout posture
-    # plus `curl` for the agent's own POST /arbitrations. We explicitly name
-    # the Opus model here because the plan calls this out as load-bearing —
-    # the arbitrator runs at most twice per task and is the most consequential
-    # single judgment in the FSM. WebFetch is excluded; the arbitrator works
-    # exclusively from local plan / commit / review-markdown files.
+    # plus a *narrowed* `curl` permission for the agent's own POST
+    # /arbitrations. We explicitly name the Opus model here because the plan
+    # calls this out as load-bearing — the arbitrator runs at most twice per
+    # task and is the most consequential single judgment in the FSM. WebFetch
+    # is excluded; the arbitrator works exclusively from local plan / commit /
+    # review-markdown files.
+    #
+    # SECURITY (Phase 7 cycle 1, safety B1): the curl permission is bound to
+    # POSTing to the arbitrations endpoint for THIS task on THIS server only.
+    # The pattern below substitutes ${SERVER_URL} and ${task_id} at script
+    # time (bash expansion, before claude sees the string), so the literal
+    # constraint claude enforces is a fully-qualified URL prefix anchored to
+    # ${SERVER_URL}/tasks/${task_id}/arbitrations. The trailing `*` permits
+    # the curl flags / body / headers that follow the URL in the agent's
+    # invocation but not a different endpoint or host.
+    #
+    # If the underlying allowlist engine in any future Claude Code release
+    # stops honouring URL-constrained globs and falls back to literal-prefix
+    # matching only, the agent's curl will be denied (since it would no
+    # longer match the constructed pattern) and the arbitration will be
+    # surfaced as `role_session_no_op` rather than silently succeeding. The
+    # mitigation in that failure mode is the post-hoc server-side audit:
+    # every successful POST writes a row to `arbitrationRuns` that the
+    # operator can review.
+    local curl_pattern="curl * ${SERVER_URL}/tasks/${task_id}/arbitrations*"
     echo "arbitrator-dispatch: launching claude (agent=${agent_basename}, model=opus)"
     set +e
     claude \
-        --allowed-tools "Read,Grep,Glob,Bash(git diff:*,git log:*,git show:*,wc:*,ls:*,curl:*)" \
+        --allowed-tools "Read,Grep,Glob,Bash(git diff:*,git log:*,git show:*,wc:*,ls:*),Bash(${curl_pattern})" \
         -p "$prompt" \
         --append-system-prompt "$agent_body" \
         --output-format json \
         --model claude-opus-4-7 \
         --mcp-config /home/claude/.claude/mcp.json \
-        > "$tmpfile" 2> "$stderr_log"
+        > "$tmpfile" 2>/dev/null
     local rc=$?
     set -e
 

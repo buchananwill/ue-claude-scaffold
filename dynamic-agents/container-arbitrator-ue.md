@@ -91,4 +91,6 @@ When ruling `rule`, also write a separate addendum file at `.scratch/arbitration
 
 Do NOT edit any reviewer's `consolidated.md` or per-role `.md` file. The addendum is a separate file; the engineer's prompt branch already handles reading both.
 
-After your POST returns 200, exit cleanly. If the POST returns 409, that means an arbitration row already exists for this `(taskId, trigger)` — log and exit non-zero; the dispatch will treat the run as a no-op and the daisy-chain will surface it via `role_session_no_op`.
+After your POST returns 200, exit cleanly (exit 0).
+
+If the POST returns 409, that means an arbitration row already exists for this `(taskId, trigger)` — log the conflict to your output (so the operator can see it in your captured ruling markdown) and **exit cleanly (exit 0)**. Do NOT exit non-zero. The task's status will remain `arbitrating` (since you posted no new transition), and the daisy-chain's `role_session_no_op` detector will observe `sess_exit == 0 && post_status == last_status` and route the task to `failed` via `role_session_no_op`. Exiting non-zero would instead trip the pump-loop's non-zero-exit bail-out and strand the task in `arbitrating` — that is the wrong outcome.
