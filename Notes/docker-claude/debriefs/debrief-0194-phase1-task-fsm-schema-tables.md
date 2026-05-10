@@ -162,3 +162,33 @@ new shape.
   rename it (e.g. `dependency_cycle`) or formally model it in the new FSM
   diagram so future readers don't mistake it for a transient state of the
   new flow.
+
+## Cycle 2 fix — constraint name aligned with plan text
+
+**Finding (W1, CORRECTNESS — WARNING):** the `reviewRuns.verdict` CHECK
+constraint was authored as `review_runs_verdict_check` (matching the table
+name), but the plan's literal text on line 83 specifies
+`reviewer_runs_verdict_check` (note the `reviewer_` prefix). All other
+constraint names in the Cycle 1 commit (`tasks_status_check`,
+`tasks_build_status_check`, `tasks_failure_reason_check`,
+`arbitration_runs_*_check`, `review_findings_severity_check`) match the
+plan's literal text — only this one drifted.
+
+**Fix:** renamed the constraint to `reviewer_runs_verdict_check` in
+`server/src/schema/tables.ts` around line 307. The CHECK expression itself
+is unchanged; only the constraint identifier moved.
+
+**Reasoning:** the plan is the source of truth. Phase 9 hand-authors the
+cutover migration directly from the plan's literal text, so the constraint
+name in the Drizzle source-of-truth file must match the plan exactly or
+Phase 9's migration and Phase 1's schema declaration will reference
+different identifiers. The plan-text-wins rule applies even when the
+deviating name is a sensible alternative — Phase 1's job is to mirror the
+spec, not to improve it.
+
+**Build verification:** post-rename `npm run typecheck` in `server/`
+yields the same 6 expected downstream errors at projects-insert sites
+(documented in the original Build & Test Results section above) and zero
+new errors. `tables.ts` itself compiles cleanly. No other source file was
+touched in this cycle. No file under `server/drizzle/` was added,
+modified, or deleted; `server/src/migrate.ts` is unchanged.

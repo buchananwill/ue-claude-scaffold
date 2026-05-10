@@ -304,7 +304,7 @@ export const reviewRuns = pgTable('review_runs', {
 }, (table) => [
   unique('review_runs_task_cycle_role_unique').on(table.taskId, table.cycle, table.reviewerRole),
   check(
-    'review_runs_verdict_check',
+    'reviewer_runs_verdict_check',
     sql`${table.verdict} IN ('approve','request_changes','out_of_scope')`,
   ),
   index('idx_review_runs_task_cycle').on(table.taskId, table.cycle),
