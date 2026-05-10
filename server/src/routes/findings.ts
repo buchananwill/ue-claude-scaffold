@@ -26,16 +26,19 @@ import {
   tasks,
 } from '../schema/tables.js';
 import { requireProjectIdHeader } from './_project-id-guard.js';
+import {
+  normalizeIdArray,
+  parseSinceParam,
+  reviewerRoleError,
+  rowsOf,
+} from './_route-helpers.js';
 
 const DEFAULT_FINDINGS_LIMIT = 50;
 const MAX_FINDINGS_LIMIT = 200;
 const DEFAULT_NOTE_PATTERNS_LIMIT = 20;
 const MAX_NOTE_PATTERNS_LIMIT = 50;
-const DEFAULT_SINCE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const SEVERITIES = ['BLOCKING', 'NOTE'] as const;
 type Severity = typeof SEVERITIES[number];
-const REVIEWER_ROLE_RE = /^[A-Za-z0-9_-]+$/;
-const REVIEWER_ROLE_MAX = 64;
 
 /**
  * Sentinel for parseLimit failures. A return of `null` means "value supplied
@@ -70,21 +73,6 @@ function parseOffset(raw: string | undefined): number {
   return Math.floor(n);
 }
 
-/**
- * Parse a `since` query parameter as an ISO date string. Returns the parsed
- * Date or the default (now − 30 days) if absent. Returns `null` if the
- * supplied value is non-empty but unparseable — the caller turns that into a
- * 400.
- */
-function parseSince(raw: string | undefined): Date | null {
-  if (raw === undefined || raw === '') {
-    return new Date(Date.now() - DEFAULT_SINCE_MS);
-  }
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return null;
-  return d;
-}
-
 const findingsPlugin: FastifyPluginAsync = async (fastify) => {
   // ── GET /findings ────────────────────────────────────────────────────
   fastify.get<{
@@ -110,21 +98,13 @@ const findingsPlugin: FastifyPluginAsync = async (fastify) => {
     }
     const severity: Severity = q.severity === 'NOTE' ? 'NOTE' : 'BLOCKING';
 
-    const since = parseSince(q.since);
-    if (since === null) {
-      return reply.badRequest('since must be an ISO 8601 date');
-    }
+    const since = parseSinceParam(reply, q.since);
+    if (since === null) return;
 
     let reviewer: string | null = null;
     if (typeof q.reviewer === 'string' && q.reviewer.length > 0) {
-      if (q.reviewer.length > REVIEWER_ROLE_MAX) {
-        return reply.badRequest(
-          `reviewer exceeds maximum length of ${REVIEWER_ROLE_MAX}`,
-        );
-      }
-      if (!REVIEWER_ROLE_RE.test(q.reviewer)) {
-        return reply.badRequest('reviewer must match /^[A-Za-z0-9_-]+$/');
-      }
+      const err = reviewerRoleError(q.reviewer, 'reviewer');
+      if (err !== null) return reply.badRequest(err);
       reviewer = q.reviewer;
     }
 
@@ -199,10 +179,8 @@ const findingsPlugin: FastifyPluginAsync = async (fastify) => {
     const projectId = request.projectId;
     const q = request.query ?? {};
 
-    const since = parseSince(q.since);
-    if (since === null) {
-      return reply.badRequest('since must be an ISO 8601 date');
-    }
+    const since = parseSinceParam(reply, q.since);
+    if (since === null) return;
     const limit = parseLimit(q.limit, DEFAULT_NOTE_PATTERNS_LIMIT, MAX_NOTE_PATTERNS_LIMIT);
     if (limit === LIMIT_INVALID) {
       return reply.badRequest('limit must be a positive integer');
@@ -242,11 +220,11 @@ const findingsPlugin: FastifyPluginAsync = async (fastify) => {
       LIMIT ${limit}
     `);
 
-    const rows = (result as unknown as { rows: Array<{
+    const rows = rowsOf<{
       title: string;
       count: number | string;
       example_finding_ids: number[] | string | null;
-    }> }).rows;
+    }>(result);
 
     return {
       patterns: rows.map((r) => ({
@@ -266,10 +244,8 @@ const findingsPlugin: FastifyPluginAsync = async (fastify) => {
     const projectId = request.projectId;
     const q = request.query ?? {};
 
-    const since = parseSince(q.since);
-    if (since === null) {
-      return reply.badRequest('since must be an ISO 8601 date');
-    }
+    const since = parseSinceParam(reply, q.since);
+    if (since === null) return;
 
     const db = getDb();
 
@@ -300,12 +276,12 @@ const findingsPlugin: FastifyPluginAsync = async (fastify) => {
       ORDER BY count DESC, trigger ASC, ruling ASC
     `);
 
-    const rows = (result as unknown as { rows: Array<{
+    const rows = rowsOf<{
       trigger: string;
       ruling: string;
       count: number | string;
       example_task_ids: number[] | string | null;
-    }> }).rows;
+    }>(result);
 
     return {
       patterns: rows.map((r) => ({
@@ -317,21 +293,5 @@ const findingsPlugin: FastifyPluginAsync = async (fastify) => {
     };
   });
 };
-
-/**
- * Normalise the shape of an array column returned by `db.execute(sql\`...\`)`.
- * Drivers vary: node-postgres returns a JS array, PGlite sometimes returns the
- * Postgres text representation `{1,2,3}`. Convert both to a `number[]`.
- */
-function normalizeIdArray(raw: number[] | string | null | undefined): number[] {
-  if (raw === null || raw === undefined) return [];
-  if (Array.isArray(raw)) return raw.map((n) => Number(n)).filter((n) => Number.isFinite(n));
-  if (typeof raw === 'string') {
-    const trimmed = raw.replace(/^\{|\}$/g, '');
-    if (trimmed.length === 0) return [];
-    return trimmed.split(',').map((s) => Number(s)).filter((n) => Number.isFinite(n));
-  }
-  return [];
-}
 
 export default findingsPlugin;

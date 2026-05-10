@@ -339,3 +339,114 @@ without requiring an integration harness on top of Node's raw HTTP server.
 None. The shared guard is a strict generalisation of the three previous
 local copies; the fallback tightening narrows behaviour without
 contradicting either driver's actual error shape.
+
+## Cycle 4 — decomposition fixes
+
+Addressed the decomposition reviewer's BLOCKING B1, B2 and WARNING W1, W2,
+W3 from the cycle-3 review pass. No behaviour change, no error-message
+content change — pure consolidation.
+
+### B1 / B2 / W1 / W2 — shared route helpers
+
+Created `server/src/routes/_route-helpers.ts` to house the parsing and
+validation helpers that were previously duplicated across `failures.ts` and
+`findings.ts` (and partially in `reviews.ts`). Exports:
+
+- `DEFAULT_SINCE_MS` — 30-day window constant.
+- `parseSince(raw)` — returns `Date | null` (null = unparseable).
+- `parseSinceParam(reply, raw)` — wrapper that sends a 400 on failure and
+  returns `null`. Collapses ~5 lines per call site to 2.
+- `normalizeIdArray(raw)` — normalises Postgres array column results across
+  drivers (node-postgres returns JS array; PGlite sometimes text `{1,2,3}`).
+- `rowsOf<T>(result)` — typed cast helper for `db.execute(sql\`...\`)`
+  results. Used by all three CTE call sites; the join shapes differ enough
+  that a fully-parameterised CTE helper would be worse than the duplication
+  (the reviewer explicitly preferred option (b) — cast only).
+- `REVIEWER_ROLE_RE`, `REVIEWER_ROLE_MAX` — regex / length cap constants.
+- `reviewerRoleError(value, fieldName)` — validates length/charset and
+  returns the 400 message or `null`. The `fieldName` parameter selects
+  `reviewerRole` vs. `reviewer` wording. Empty-string and wrong-type
+  rejection live at the call sites because their wording differs
+  (`reviewerRole must be a non-empty string` in the POST body validator
+  vs. the `findings.ts` reviewer query param which only enters the helper
+  when `length > 0`).
+
+### W3 — POST body validation extracted
+
+In `reviews.ts`, the 88-line inline body validator in
+`POST /tasks/:id/reviews` was extracted to two pure helpers in the same
+file:
+
+- `validatePostReviewBody(raw): ValidationResult<PostReviewBody>` — the
+  whole-body validator.
+- `validateFinding(f, i): ValidationResult<FindingInput>` — one per
+  `findings[]` element, indexed for error wording.
+
+Both helpers return a tagged union `{ ok: true, value } | { ok: false,
+message }`. The handler is now:
+
+```ts
+const v = validatePostReviewBody(request.body);
+if (!v.ok) return reply.badRequest(v.message);
+const body = v.value;
+// ... transaction logic unchanged
+```
+
+Note the `Body: PostBody` type annotation on the handler became `Body:
+unknown` because the validator now narrows from arbitrary input — the
+previous typed annotation was a lie (Fastify does not enforce it without
+a JSON schema, and the validator was already treating it as untrusted).
+
+The `PostBody`/`FindingInput` types tightened slightly: `verdict: Verdict`
+and `severity: Severity` instead of `string`, since the validator narrows
+to those enums before returning.
+
+Per the brief, kept all helpers in `reviews.ts` rather than splitting into
+a `reviews-validation.ts` file — the file lands at 432 lines, comfortably
+under the ~450 threshold.
+
+### Files
+
+- `server/src/routes/_route-helpers.ts` (new, 119 lines) — shared helpers.
+- `server/src/routes/failures.ts` (modified) — 103 → 75 lines. Imports
+  helpers; deletes local `DEFAULT_SINCE_MS`, `parseSince`,
+  `normalizeIdArray`; uses `parseSinceParam` and `rowsOf`.
+- `server/src/routes/findings.ts` (modified) — 337 → 297 lines. Imports
+  helpers; deletes local `DEFAULT_SINCE_MS`, `parseSince`,
+  `normalizeIdArray`, `REVIEWER_ROLE_RE`, `REVIEWER_ROLE_MAX`; uses
+  `parseSinceParam`, `reviewerRoleError`, and `rowsOf`. The 12-line
+  inline reviewer-validation block collapses to 4 lines.
+- `server/src/routes/reviews.ts` (modified) — 366 → 432 lines. Imports
+  `reviewerRoleError`. The 88-line inline validation lives in two
+  pure helpers (`validatePostReviewBody`, `validateFinding`) at the top
+  of the file; the handler body is reduced to a 3-line dispatch. Net
+  growth (+66 lines) reflects the validator's structured-result
+  scaffolding (tagged-union returns, explicit type narrowing); the
+  handler itself is dramatically shorter.
+
+The test files (`reviews.test.ts`, `findings.test.ts`,
+`failures.test.ts`) are unchanged.
+
+### Build & test results (cycle 4)
+
+- `npm run typecheck` — clean.
+- `npm run build` — clean.
+- `npx tsx --test src/routes/reviews.test.ts src/routes/findings.test.ts
+  src/routes/failures.test.ts` — 60/60 pass (29 + 25 + 6).
+- `npm test` (full server suite) — 673/727 pass; 54 fails. Pass and
+  fail counts unchanged from cycle 3. Same 54 environmental
+  `Author identity unknown / Run git config --global user.email`
+  failures in `agents.test.ts`, `projects.test.ts`,
+  `tasks-deps.test.ts`, `tasks.test.ts` — none in the files this
+  cycle touched.
+
+### Open questions / risks
+
+- The `Body: unknown` switch on the POST handler is a typing-honesty
+  improvement (previously `Body: PostBody` was a lie — Fastify does not
+  validate the body shape without a JSON schema, so the type was untrustworthy
+  anyway). The validator now establishes the narrowing instead.
+- `parseLimit` exists only in `findings.ts`; `failures.ts` does not have
+  a `limit` query param, so it does not need the helper. Left in place
+  to avoid scope expansion. If a future endpoint adopts `limit`, the
+  helper should be promoted into `_route-helpers.ts` at that time.

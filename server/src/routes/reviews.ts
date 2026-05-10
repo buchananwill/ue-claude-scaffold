@@ -16,6 +16,7 @@ import { eq, and, asc, inArray } from 'drizzle-orm';
 import { getDb } from '../drizzle-instance.js';
 import { reviewRuns, reviewFindings, tasks } from '../schema/tables.js';
 import { requireProjectIdHeader } from './_project-id-guard.js';
+import { reviewerRoleError } from './_route-helpers.js';
 
 const VERDICTS = ['approve', 'request_changes', 'out_of_scope'] as const;
 type Verdict = typeof VERDICTS[number];
@@ -23,8 +24,6 @@ type Verdict = typeof VERDICTS[number];
 const SEVERITIES = ['BLOCKING', 'NOTE'] as const;
 type Severity = typeof SEVERITIES[number];
 
-const REVIEWER_ROLE_RE = /^[A-Za-z0-9_-]+$/;
-const REVIEWER_ROLE_MAX = 64;
 const TITLE_MAX = 1024;
 const RAW_MARKDOWN_MAX = 512_000;
 const DESCRIPTION_MAX = 32_768;
@@ -32,7 +31,7 @@ const EVIDENCE_MAX = 32_768;
 const FIX_MAX = 32_768;
 
 interface FindingInput {
-  severity: string;
+  severity: Severity;
   ordinal: number;
   filePath?: string | null;
   line?: number | null;
@@ -42,13 +41,17 @@ interface FindingInput {
   fix?: string | null;
 }
 
-interface PostBody {
+interface PostReviewBody {
   cycle: number;
   reviewerRole: string;
-  verdict: string;
+  verdict: Verdict;
   rawMarkdown: string;
   findings: FindingInput[];
 }
+
+type ValidationResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; message: string };
 
 function isVerdict(v: unknown): v is Verdict {
   return typeof v === 'string' && (VERDICTS as readonly string[]).includes(v);
@@ -56,6 +59,157 @@ function isVerdict(v: unknown): v is Verdict {
 
 function isSeverity(v: unknown): v is Severity {
   return typeof v === 'string' && (SEVERITIES as readonly string[]).includes(v);
+}
+
+/**
+ * Validate one element of `findings[]`. Returns the parsed `FindingInput` on
+ * success, or a 400 error message keyed by index on failure.
+ *
+ * The error wording matches what the inline validator emitted before
+ * extraction, so existing tests keep passing without modification.
+ */
+function validateFinding(f: unknown, i: number): ValidationResult<FindingInput> {
+  if (!f || typeof f !== 'object') {
+    return { ok: false, message: `findings[${i}] must be an object` };
+  }
+  const o = f as Record<string, unknown>;
+
+  if (!isSeverity(o.severity)) {
+    return {
+      ok: false,
+      message: `findings[${i}].severity must be one of: ${SEVERITIES.join(', ')}`,
+    };
+  }
+  if (!Number.isInteger(o.ordinal) || (o.ordinal as number) < 0) {
+    return {
+      ok: false,
+      message: `findings[${i}].ordinal must be a non-negative integer`,
+    };
+  }
+  if (typeof o.title !== 'string' || o.title.length === 0) {
+    return { ok: false, message: `findings[${i}].title must be a non-empty string` };
+  }
+  if (o.title.length > TITLE_MAX) {
+    return {
+      ok: false,
+      message: `findings[${i}].title exceeds maximum length of ${TITLE_MAX}`,
+    };
+  }
+  if (typeof o.description !== 'string') {
+    return { ok: false, message: `findings[${i}].description must be a string` };
+  }
+  if (o.description.length > DESCRIPTION_MAX) {
+    return {
+      ok: false,
+      message: `findings[${i}].description exceeds maximum length of ${DESCRIPTION_MAX}`,
+    };
+  }
+  if (o.filePath !== undefined && o.filePath !== null && typeof o.filePath !== 'string') {
+    return { ok: false, message: `findings[${i}].filePath must be a string` };
+  }
+  if (
+    o.line !== undefined
+    && o.line !== null
+    && (!Number.isInteger(o.line) || (o.line as number) < 0)
+  ) {
+    return {
+      ok: false,
+      message: `findings[${i}].line must be a non-negative integer`,
+    };
+  }
+  if (o.evidence !== undefined && o.evidence !== null && typeof o.evidence !== 'string') {
+    return { ok: false, message: `findings[${i}].evidence must be a string` };
+  }
+  if (
+    o.evidence !== undefined
+    && o.evidence !== null
+    && (o.evidence as string).length > EVIDENCE_MAX
+  ) {
+    return {
+      ok: false,
+      message: `findings[${i}].evidence exceeds maximum length of ${EVIDENCE_MAX}`,
+    };
+  }
+  if (o.fix !== undefined && o.fix !== null && typeof o.fix !== 'string') {
+    return { ok: false, message: `findings[${i}].fix must be a string` };
+  }
+  if (o.fix !== undefined && o.fix !== null && (o.fix as string).length > FIX_MAX) {
+    return {
+      ok: false,
+      message: `findings[${i}].fix exceeds maximum length of ${FIX_MAX}`,
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      severity: o.severity,
+      ordinal: o.ordinal as number,
+      filePath: (o.filePath as string | null | undefined) ?? null,
+      line: (o.line as number | null | undefined) ?? null,
+      title: o.title,
+      description: o.description,
+      evidence: (o.evidence as string | null | undefined) ?? null,
+      fix: (o.fix as string | null | undefined) ?? null,
+    },
+  };
+}
+
+/**
+ * Validate the `POST /tasks/:id/reviews` request body. Returns the typed
+ * body on success, or a 400 error message on failure. Pure mechanical
+ * extraction of the inline validation that previously ran in the handler —
+ * no behaviour change, no message change.
+ */
+function validatePostReviewBody(raw: unknown): ValidationResult<PostReviewBody> {
+  const body = (raw ?? {}) as Record<string, unknown>;
+
+  if (!Number.isInteger(body.cycle) || (body.cycle as number) < 0) {
+    return { ok: false, message: 'cycle must be a non-negative integer' };
+  }
+  if (typeof body.reviewerRole !== 'string' || body.reviewerRole.length === 0) {
+    return { ok: false, message: 'reviewerRole must be a non-empty string' };
+  }
+  const reviewerErr = reviewerRoleError(body.reviewerRole, 'reviewerRole');
+  if (reviewerErr !== null) return { ok: false, message: reviewerErr };
+  if (!isVerdict(body.verdict)) {
+    return {
+      ok: false,
+      message: `verdict must be one of: ${VERDICTS.join(', ')}`,
+    };
+  }
+  if (typeof body.rawMarkdown !== 'string') {
+    return { ok: false, message: 'rawMarkdown must be a string' };
+  }
+  if ((body.rawMarkdown as string).length > RAW_MARKDOWN_MAX) {
+    return {
+      ok: false,
+      message: `rawMarkdown exceeds maximum length of ${RAW_MARKDOWN_MAX}`,
+    };
+  }
+
+  const findings = Array.isArray(body.findings) ? (body.findings as unknown[]) : null;
+  if (findings === null) {
+    return { ok: false, message: 'findings must be an array (use [] for none)' };
+  }
+
+  const validatedFindings: FindingInput[] = [];
+  for (let i = 0; i < findings.length; i++) {
+    const v = validateFinding(findings[i], i);
+    if (!v.ok) return { ok: false, message: v.message };
+    validatedFindings.push(v.value);
+  }
+
+  return {
+    ok: true,
+    value: {
+      cycle: body.cycle as number,
+      reviewerRole: body.reviewerRole,
+      verdict: body.verdict,
+      rawMarkdown: body.rawMarkdown as string,
+      findings: validatedFindings,
+    },
+  };
 }
 
 /**
@@ -96,7 +250,7 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
   // POST /tasks/:id/reviews — atomic run + findings insert
   fastify.post<{
     Params: { id: string };
-    Body: PostBody;
+    Body: unknown;
   }>('/tasks/:id/reviews', async (request, reply) => {
     // X-Project-Id is mandatory on this endpoint. The project-id plugin
     // silently substitutes 'default' on a missing header — the shared guard
@@ -108,97 +262,9 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.badRequest('invalid task id');
     }
 
-    const body = request.body ?? ({} as PostBody);
-
-    // ── body validation ────────────────────────────────────────────────
-    if (!Number.isInteger(body.cycle) || body.cycle < 0) {
-      return reply.badRequest('cycle must be a non-negative integer');
-    }
-    if (typeof body.reviewerRole !== 'string' || body.reviewerRole.length === 0) {
-      return reply.badRequest('reviewerRole must be a non-empty string');
-    }
-    if (body.reviewerRole.length > REVIEWER_ROLE_MAX) {
-      return reply.badRequest(
-        `reviewerRole exceeds maximum length of ${REVIEWER_ROLE_MAX}`,
-      );
-    }
-    if (!REVIEWER_ROLE_RE.test(body.reviewerRole)) {
-      return reply.badRequest('reviewerRole must match /^[A-Za-z0-9_-]+$/');
-    }
-    if (!isVerdict(body.verdict)) {
-      return reply.badRequest(
-        `verdict must be one of: ${VERDICTS.join(', ')}`,
-      );
-    }
-    if (typeof body.rawMarkdown !== 'string') {
-      return reply.badRequest('rawMarkdown must be a string');
-    }
-    if (body.rawMarkdown.length > RAW_MARKDOWN_MAX) {
-      return reply.badRequest(
-        `rawMarkdown exceeds maximum length of ${RAW_MARKDOWN_MAX}`,
-      );
-    }
-    const findings = Array.isArray(body.findings) ? body.findings : null;
-    if (findings === null) {
-      return reply.badRequest('findings must be an array (use [] for none)');
-    }
-
-    for (let i = 0; i < findings.length; i++) {
-      const f = findings[i];
-      if (!f || typeof f !== 'object') {
-        return reply.badRequest(`findings[${i}] must be an object`);
-      }
-      if (!isSeverity(f.severity)) {
-        return reply.badRequest(
-          `findings[${i}].severity must be one of: ${SEVERITIES.join(', ')}`,
-        );
-      }
-      if (!Number.isInteger(f.ordinal) || f.ordinal < 0) {
-        return reply.badRequest(
-          `findings[${i}].ordinal must be a non-negative integer`,
-        );
-      }
-      if (typeof f.title !== 'string' || f.title.length === 0) {
-        return reply.badRequest(`findings[${i}].title must be a non-empty string`);
-      }
-      if (f.title.length > TITLE_MAX) {
-        return reply.badRequest(
-          `findings[${i}].title exceeds maximum length of ${TITLE_MAX}`,
-        );
-      }
-      if (typeof f.description !== 'string') {
-        return reply.badRequest(`findings[${i}].description must be a string`);
-      }
-      if (f.description.length > DESCRIPTION_MAX) {
-        return reply.badRequest(
-          `findings[${i}].description exceeds maximum length of ${DESCRIPTION_MAX}`,
-        );
-      }
-      if (f.filePath !== undefined && f.filePath !== null && typeof f.filePath !== 'string') {
-        return reply.badRequest(`findings[${i}].filePath must be a string`);
-      }
-      if (f.line !== undefined && f.line !== null && (!Number.isInteger(f.line) || f.line < 0)) {
-        return reply.badRequest(
-          `findings[${i}].line must be a non-negative integer`,
-        );
-      }
-      if (f.evidence !== undefined && f.evidence !== null && typeof f.evidence !== 'string') {
-        return reply.badRequest(`findings[${i}].evidence must be a string`);
-      }
-      if (f.evidence !== undefined && f.evidence !== null && f.evidence.length > EVIDENCE_MAX) {
-        return reply.badRequest(
-          `findings[${i}].evidence exceeds maximum length of ${EVIDENCE_MAX}`,
-        );
-      }
-      if (f.fix !== undefined && f.fix !== null && typeof f.fix !== 'string') {
-        return reply.badRequest(`findings[${i}].fix must be a string`);
-      }
-      if (f.fix !== undefined && f.fix !== null && f.fix.length > FIX_MAX) {
-        return reply.badRequest(
-          `findings[${i}].fix exceeds maximum length of ${FIX_MAX}`,
-        );
-      }
-    }
+    const v = validatePostReviewBody(request.body);
+    if (!v.ok) return reply.badRequest(v.message);
+    const body = v.value;
 
     const db = getDb();
 
@@ -232,8 +298,8 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
         const runId = inserted[0]!.id;
 
         let findingIds: number[] = [];
-        if (findings.length > 0) {
-          const rows = findings.map((f) => ({
+        if (body.findings.length > 0) {
+          const rows = body.findings.map((f) => ({
             runId,
             severity: f.severity,
             ordinal: f.ordinal,

@@ -14,33 +14,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { sql } from 'drizzle-orm';
 import { getDb } from '../drizzle-instance.js';
 import { requireProjectIdHeader } from './_project-id-guard.js';
-
-const DEFAULT_SINCE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-
-function parseSince(raw: string | undefined): Date | null {
-  if (raw === undefined || raw === '') {
-    return new Date(Date.now() - DEFAULT_SINCE_MS);
-  }
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return null;
-  return d;
-}
-
-/**
- * Drivers vary in how they return Postgres array columns. node-postgres returns
- * a JS array; PGlite sometimes returns the Postgres text representation
- * `{1,2,3}`. Normalise both to `number[]`.
- */
-function normalizeIdArray(raw: number[] | string | null | undefined): number[] {
-  if (raw === null || raw === undefined) return [];
-  if (Array.isArray(raw)) return raw.map((n) => Number(n)).filter((n) => Number.isFinite(n));
-  if (typeof raw === 'string') {
-    const trimmed = raw.replace(/^\{|\}$/g, '');
-    if (trimmed.length === 0) return [];
-    return trimmed.split(',').map((s) => Number(s)).filter((n) => Number.isFinite(n));
-  }
-  return [];
-}
+import { normalizeIdArray, parseSinceParam, rowsOf } from './_route-helpers.js';
 
 const failuresPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
@@ -49,10 +23,8 @@ const failuresPlugin: FastifyPluginAsync = async (fastify) => {
     if (!requireProjectIdHeader(request, reply)) return;
 
     const projectId = request.projectId;
-    const since = parseSince(request.query?.since);
-    if (since === null) {
-      return reply.badRequest('since must be an ISO 8601 date');
-    }
+    const since = parseSinceParam(reply, request.query?.since);
+    if (since === null) return;
 
     const db = getDb();
 
@@ -84,11 +56,11 @@ const failuresPlugin: FastifyPluginAsync = async (fastify) => {
       ORDER BY count DESC, failure_reason ASC
     `);
 
-    const rows = (result as unknown as { rows: Array<{
+    const rows = rowsOf<{
       failure_reason: string;
       count: number | string;
       example_task_ids: number[] | string | null;
-    }> }).rows;
+    }>(result);
 
     return {
       patterns: rows.map((r) => ({
