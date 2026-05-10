@@ -264,3 +264,127 @@ Adversarial differences (intended):
 - Title with `\n` → newlines stripped from the rendered title.
 - Path with `$(...)`, `;`, `\`, `<`, `>` → path emptied, branch falls to
   cycle-0 inline-task instead of cycle-N or implement-from-plan.
+
+---
+
+## Cycle 2 — Correctness reviewer findings (W1, W2)
+
+The correctness reviewer requested changes with two WARNINGs, both in
+`container/lib/run-claude.sh::_build_engineer_prompt`. Safety reviewer
+approved (1 informational NOTE about path-traversal scoping, no action).
+Cycle 2 is a comment correction plus the propagation of the cycle-1
+sentinel pattern from `latest_review_path` to `addendum_path`.
+
+### W1 — Misleading comment about allowlist failure routing
+
+The cycle-1 comment said "On allowlist failure, treat the path as empty so
+the cycle-0 branch is taken instead of injecting a malformed path into the
+prompt." That was factually wrong: when `latest_review_path` failed the
+allowlist, the code stayed in Branch 2 (cycle > 0, no addendum) and used a
+`<latestReviewPath missing — refetch GET /tasks/${task_id}>` sentinel.
+Branch selection has always been driven by `cycle_count` (and now by
+`had_addendum_originally`), not by whether `latest_review_path` was set.
+
+Fix: replaced the comment with text that names the actual behaviour —
+clearing the path triggers the sentinel placeholder, and branch selection
+is determined by `cycle_count` and `had_addendum_originally`.
+
+### W2 — `arbitrationAddendumPath` allowlist rejection no longer downgrades Branch 3 to Branch 2
+
+Previously, when `addendum_path` failed the allowlist, it was cleared to
+`""`. The branch selector then fired Branch 2 (no-addendum revision) even
+though the server reported `arbitrationAddendumPath` non-null. The engineer
+would never see the arbitration ruling and could re-apply retired findings
+or re-trigger the contradiction.
+
+Fix mirrors the cycle-1 `latest_review_path` sentinel pattern:
+
+1. Capture `had_addendum_originally=1` BEFORE the allowlist scrub when the
+   server reported a non-null addendum.
+2. On allowlist failure, clear `addendum_path` but also set
+   `addendum_rejected=1`.
+3. The branch selector at line 233 was changed from
+   `elif [ -z "$addendum_path" ]` to
+   `elif [ "$had_addendum_originally" = "0" ]` — Branch 3 fires whenever
+   the server reported a non-null addendum, regardless of allowlist verdict.
+4. In Branch 3, a new `addendum_display` variable carries either the valid
+   path, the rejected-path sentinel, or a defensive "missing" sentinel.
+
+A legitimately-null server addendum (no arbitration has happened) leaves
+`had_addendum_originally=0` and routes to Branch 2 with no bogus sentinel,
+as required by the plan.
+
+### Changes
+
+- **`container/lib/run-claude.sh`** — `_build_engineer_prompt` only:
+  - Added `had_addendum_originally` and `addendum_rejected` flag locals
+    initialised to 0 (W2).
+  - Set `had_addendum_originally=1` after the `jq -r` extraction of
+    `addendum_path`, before any allowlist work, when the path is
+    non-empty (W2).
+  - Set `addendum_rejected=1` (in addition to clearing `addendum_path`)
+    when the allowlist check fails on addendum (W2).
+  - Updated the allowlist-block comment from the misleading cycle-0
+    wording to text that names the actual sentinel routing and
+    branch-selection drivers (W1).
+  - Updated the WARNING message on addendum allowlist failure to mention
+    the post-arbitration branch + sentinel placeholder (W2).
+  - Changed the branch selector from
+    `elif [ -z "$addendum_path" ]` to
+    `elif [ "$had_addendum_originally" = "0" ]` (W2).
+  - Added Branch 3 `addendum_display` derivation (rejected sentinel
+    vs defensive missing sentinel vs valid path) (W2).
+  - Added explanatory comments on Branch 2 and Branch 3 noting the
+    new branch-selection contract (W1 / W2 documentation).
+- **Env-fallback path** — `had_addendum_originally` stays 0, correctly
+  routing to Branch 1 / Branch 2 only (no server state, never claim a
+  rejected addendum).
+- No changes to `dynamic-agents/container-implementer-ue.md` or its
+  compiled outputs — both findings are in the prompt-builder shell only.
+
+### Build & Test Results — Cycle 2
+
+- `bash -n container/lib/run-claude.sh` — clean.
+
+### Branch re-trace for all requested scenarios
+
+The legend `cN` = `cycle_count=N`, `lrp` = `latest_review_path`,
+`add` = `addendum_path`, `had_add` = `had_addendum_originally`.
+
+**(a) Valid inputs**
+
+| input                              | branch | rendered |
+|------------------------------------|--------|----------|
+| c0, source_path="plans/x.md"       | 1      | `${source_path}=plans/x.md` |
+| c2, lrp="r.md", add=""             | 2      | `${lrp_display}=r.md` |
+| c2, lrp="r.md", add="a.md"         | 3      | `${lrp_display}=r.md`, `${addendum_display}=a.md` |
+
+**(b) latestReviewPath rejected by allowlist**
+
+| input                              | branch | rendered |
+|------------------------------------|--------|----------|
+| c2, lrp=`$(evil)`, add=""          | 2      | `${lrp_display}=<latestReviewPath missing — refetch GET /tasks/${task_id}>` |
+| c2, lrp=`$(evil)`, add="a.md"      | 3      | `${lrp_display}=<latestReviewPath missing>`, `${addendum_display}=a.md` |
+
+**(c) addendum_path rejected by allowlist**
+
+| input                              | branch | rendered |
+|------------------------------------|--------|----------|
+| c2, lrp="r.md", add=`$(evil)`      | 3      | `${lrp_display}=r.md`, `${addendum_display}=<arbitrationAddendumPath rejected — refetch GET /tasks/${task_id}>` |
+
+(Branch 3 fires because `had_add=1`, even though post-scrub `add=""`.)
+
+**(d) Both rejected**
+
+| input                              | branch | rendered |
+|------------------------------------|--------|----------|
+| c2, lrp=`$(a)`, add=`$(b)`         | 3      | `${lrp_display}=<latestReviewPath missing>`, `${addendum_display}=<arbitrationAddendumPath rejected — refetch GET /tasks/${task_id}>` |
+
+**(e) Addendum legitimately null (no arbitration yet)**
+
+| input                              | branch | rendered |
+|------------------------------------|--------|----------|
+| c2, lrp="r.md", add=""             | 2      | `${lrp_display}=r.md` — no addendum sentinel (correct) |
+
+All five scenarios produce the contractually-correct branch and sentinel.
+

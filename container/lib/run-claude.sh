@@ -94,6 +94,13 @@ _build_engineer_prompt() {
     fi
 
     local title source_path cycle_count latest_review_path addendum_path
+    # Whether the server reported a non-null arbitrationAddendumPath, captured
+    # BEFORE the allowlist scrub. Drives Branch 2 vs Branch 3 selection so a
+    # rejected-but-non-null addendum still routes to the post-arbitration
+    # branch with a sentinel placeholder, instead of silently masquerading as
+    # a no-addendum revision and losing the arbitration ruling.
+    local had_addendum_originally=0
+    local addendum_rejected=0
     if [ -n "$task_json" ]; then
         title=$(echo "$task_json"               | jq -r '.title                    // ""' | tr -d '\n')
         source_path=$(echo "$task_json"         | jq -r '.sourcePath               // ""' | tr -d '\n')
@@ -101,10 +108,17 @@ _build_engineer_prompt() {
         latest_review_path=$(echo "$task_json"  | jq -r '.latestReviewPath         // ""' | tr -d '\n')
         addendum_path=$(echo "$task_json"       | jq -r '.arbitrationAddendumPath  // ""' | tr -d '\n')
 
+        # Capture had_addendum_originally before any scrub so branch selection
+        # cannot be downgraded by a rejected-path verdict.
+        [ -n "$addendum_path" ] && had_addendum_originally=1
+
         # Conservative path allowlist — block prompt-manipulation via crafted
         # path fields. Title is free-form; newline scrubbing alone is enough.
-        # On allowlist failure, treat the path as empty so the cycle-0 branch
-        # is taken instead of injecting a malformed path into the prompt.
+        # On allowlist failure, clear the path so the sentinel placeholder is
+        # used instead of injecting a malformed path into the prompt. The
+        # cycle branch (0 / revision / post-arbitration) is determined by
+        # `cycle_count` and `had_addendum_originally`, not by whether
+        # `latest_review_path` or `addendum_path` passed the allowlist.
         # Allowlist regex: hyphen first (literal in bracket class), then
         # alnum/underscore/dot/slash/space. No backslash, so embedded
         # backslashes are also rejected.
@@ -118,8 +132,9 @@ _build_engineer_prompt() {
             latest_review_path=""
         fi
         if [ -n "$addendum_path" ] && ! [[ "$addendum_path" =~ $_path_allow ]]; then
-            echo "WARNING: _build_engineer_prompt rejecting non-allowlisted addendum_path; treating as empty." >&2
+            echo "WARNING: _build_engineer_prompt rejecting non-allowlisted addendum_path; routing to post-arbitration branch with sentinel placeholder." >&2
             addendum_path=""
+            addendum_rejected=1
         fi
     else
         echo "WARNING: _build_engineer_prompt could not fetch task ${task_id}; falling back to claim-time variables." >&2
@@ -131,6 +146,8 @@ _build_engineer_prompt() {
         cycle_count=0
         latest_review_path=""
         addendum_path=""
+        # had_addendum_originally stays 0 — env-fallback always routes to
+        # the cycle-0 branch (no server state available).
     fi
 
     # Sanitise non-numeric cycle_count to 0.
@@ -213,8 +230,13 @@ ${transitions}
 
 ${contradiction_escape}"
         fi
-    elif [ -z "$addendum_path" ]; then
+    elif [ "$had_addendum_originally" = "0" ]; then
         # Branch 2: revision cycle without an arbitration addendum.
+        # Branch selection is driven by had_addendum_originally (captured
+        # before the allowlist scrub), not by post-scrub emptiness of
+        # addendum_path. A legitimately-null server response sets
+        # had_addendum_originally=0 and lands here; a rejected-but-non-null
+        # addendum sets had_addendum_originally=1 and routes to Branch 3.
         # Note: avoid `${var:-<...${SERVER_URL}>}` here — bash parses the
         # default-substitution arm greedily and an unescaped inner `}` would
         # close the outer expansion early, splicing trailing literal text.
@@ -239,9 +261,23 @@ ${transitions}
 
 ${contradiction_escape}"
     else
-        # Branch 3: revision cycle with an arbitration addendum.
+        # Branch 3: revision cycle with an arbitration addendum (possibly
+        # rejected by the allowlist). Selected when the server reported a
+        # non-null arbitrationAddendumPath, regardless of allowlist verdict —
+        # the engineer must see the arbitration ruling even when the path
+        # itself is unrenderable, so it can refetch the task and read the
+        # addendum directly.
         local lrp_display="$latest_review_path"
         [ -z "$lrp_display" ] && lrp_display="<latestReviewPath missing>"
+        local addendum_display="$addendum_path"
+        if [ "$addendum_rejected" = "1" ]; then
+            addendum_display="<arbitrationAddendumPath rejected — refetch GET /tasks/${task_id}>"
+        elif [ -z "$addendum_display" ]; then
+            # Defensive: should not happen because had_addendum_originally
+            # is only set when addendum_path is non-empty, but keep a
+            # sentinel rather than emitting a blank line in the prompt.
+            addendum_display="<arbitrationAddendumPath missing — refetch GET /tasks/${task_id}>"
+        fi
         echo -n "${header}
 
 ## Revision cycle ${cycle_count} (post-arbitration)
@@ -249,7 +285,7 @@ ${contradiction_escape}"
 This task is in a revision cycle following an arbitrator ruling. Read both:
 
   Consolidated review: ${lrp_display}
-  Arbitrator addendum: ${addendum_path}
+  Arbitrator addendum: ${addendum_display}
 
 The addendum is AUTHORITATIVE where it conflicts with the consolidated
 review — it names which BLOCKING finding was upheld and which was retired.
