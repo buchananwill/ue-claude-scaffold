@@ -23,6 +23,11 @@ export interface TaskRow {
    * project default wholesale".
    */
   agentRolesOverride: unknown;
+  // FSM read-side fields surfaced for role-session prompt builders. Writes go
+  // through POST /tasks/:id/transition; these are read-only on the API.
+  reviewCycleCount: number;
+  latestReviewPath: string | null;
+  arbitrationAddendumPath: string | null;
   createdAt: string | Date | null;
 }
 
@@ -46,6 +51,9 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     progressLog: row.progressLog,
     agentTypeOverride: row.agentTypeOverride,
     agentRolesOverride: row.agentRolesOverride ?? null,
+    reviewCycleCount: row.reviewCycleCount ?? 0,
+    latestReviewPath: row.latestReviewPath ?? null,
+    arbitrationAddendumPath: row.arbitrationAddendumPath ?? null,
     createdAt: row.createdAt,
   };
 }
@@ -87,6 +95,9 @@ export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[],
     progressLog: row.progressLog,
     agentTypeOverride: row.agentTypeOverride,
     agentRolesOverride: row.agentRolesOverride ?? null,
+    reviewCycleCount: row.reviewCycleCount,
+    latestReviewPath: row.latestReviewPath,
+    arbitrationAddendumPath: row.arbitrationAddendumPath,
     createdAt: row.createdAt,
     projectId: row.projectId,
   };

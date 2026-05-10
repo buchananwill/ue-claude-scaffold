@@ -55,6 +55,182 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
     fi
 }
 
+# Build the engineer-session prompt by fetching fresh FSM state from the
+# coordination server and selecting one of three branches per the durable-
+# task FSM contract:
+#
+#   * cycle 0                              → standard implement-from-plan.
+#   * cycle > 0, no arbitration addendum   → revise per consolidated review.
+#   * cycle > 0, arbitration addendum set  → revise per addendum (authoritative
+#                                            over the consolidated review where
+#                                            they conflict).
+#
+# Fields read from GET /tasks/:id: title, sourcePath, reviewCycleCount,
+# latestReviewPath, arbitrationAddendumPath. The prompt names exact transition
+# endpoints and failureReason enum values literally so the engineer cannot
+# invent free-text values that trip the CHECK constraint. It does NOT inline
+# reviewer findings or anti-pattern language — the engineer reads
+# latestReviewPath / arbitrationAddendumPath on demand.
+_build_engineer_prompt() {
+    local task_id="$1"
+    local prefix
+    prefix="$(_build_task_prompt_prefix)"
+
+    # Fetch fresh task state. Empty / unreachable degrades to a minimal cycle-0
+    # prompt seeded from CURRENT_TASK_* variables — better to run with a stale
+    # but plausible prompt than to wedge the daisy-chain.
+    local task_json
+    task_json=$(_curl_server -sf "${SERVER_URL}/tasks/${task_id}" --max-time 10 2>/dev/null) || task_json=""
+
+    local title source_path cycle_count latest_review_path addendum_path
+    if [ -n "$task_json" ]; then
+        title=$(echo "$task_json"               | jq -r '.title                    // ""')
+        source_path=$(echo "$task_json"         | jq -r '.sourcePath               // ""')
+        cycle_count=$(echo "$task_json"         | jq -r '.reviewCycleCount         // 0')
+        latest_review_path=$(echo "$task_json"  | jq -r '.latestReviewPath         // ""')
+        addendum_path=$(echo "$task_json"       | jq -r '.arbitrationAddendumPath  // ""')
+    else
+        echo "WARNING: _build_engineer_prompt could not fetch task ${task_id}; falling back to claim-time variables." >&2
+        title="${CURRENT_TASK_TITLE:-}"
+        source_path="${CURRENT_TASK_SOURCE:-}"
+        cycle_count=0
+        latest_review_path=""
+        addendum_path=""
+    fi
+
+    # Sanitise non-numeric cycle_count to 0.
+    if ! [[ "$cycle_count" =~ ^[0-9]+$ ]]; then
+        cycle_count=0
+    fi
+
+    # Common header — TASK_ID/TITLE plus the transition contract the engineer
+    # session must honour. Same in all three branches.
+    local header transitions contradiction_escape
+    header="${prefix}TASK_ID: ${task_id}
+TASK_TITLE: ${title}
+PLAN_PATH: ${source_path:-<inline task — no plan file>}
+REVIEW_CYCLE_COUNT: ${cycle_count}
+
+File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
+
+    transitions="## Transition contract
+
+You are responsible for posting your own FSM transitions. The wrapper does not
+post /complete or /fail on your behalf.
+
+On a clean build + commit + debrief:
+  POST \${SERVER_URL}/tasks/${task_id}/transition
+    Content-Type: application/json
+    Body: {\"to\": \"built\", \"payload\": {\"buildStatus\": \"clean\", \"commitSha\": \"<sha>\"}}
+
+On an unrecoverable build failure (after retries):
+  POST \${SERVER_URL}/tasks/${task_id}/transition
+    Content-Type: application/json
+    Body: {\"to\": \"failed\", \"payload\": {\"failureReason\": \"engineer_build_failure\", \"failureDetail\": \"<concise build error summary>\"}}
+
+The failureReason value MUST be the literal string \`engineer_build_failure\`.
+Do not invent free-text values — the server enforces this with a CHECK
+constraint and will reject anything else with HTTP 400.
+
+Use \${SERVER_URL} (already exported in your shell) and include the standard
+\`X-Agent-Name\` and \`X-Project-Id\` headers (the inject-agent-header hook
+adds these automatically on outbound curl)."
+
+    contradiction_escape="## Contradiction escape hatch
+
+If two reviewer findings cannot both be satisfied (one says 'split this',
+another says 'lock this together'), do not pick one. Quote both findings
+verbatim and POST:
+
+  POST \${SERVER_URL}/tasks/${task_id}/transition
+    Content-Type: application/json
+    Body: {\"to\": \"arbitrating\", \"payload\": {\"trigger\": \"reviewer_contradiction\", \"contradiction\": {\"findingIds\": [\"<id-a>\", \"<id-b>\"], \"notes\": \"<why these conflict>\"}}}
+
+An arbitrator session will rule between the findings or escalate to the
+operator. The trigger value MUST be the literal string \`reviewer_contradiction\`."
+
+    if [ "$cycle_count" = "0" ]; then
+        # Branch 1: cycle 0 — standard implement-from-plan.
+        if [ -n "$source_path" ]; then
+            echo -n "${header}
+
+## Implement-from-plan (cycle 0)
+
+Read the plan at \`${source_path}\` and carry out the work for this phase in
+accordance with your standard protocol. The plan file is the complete
+specification — it contains all phases, file lists, and requirements. The
+phase identifier is encoded in TASK_TITLE above.
+
+${transitions}
+
+${contradiction_escape}"
+        else
+            echo -n "${header}
+
+## Implement-from-task (cycle 0)
+
+This task has no plan file (sourcePath is empty). Carry out the work using
+the title, description, and acceptance criteria of TASK_ID ${task_id} as the
+specification. Re-read the task body via \`GET \${SERVER_URL}/tasks/${task_id}\`
+if you need the full description text.
+
+${transitions}
+
+${contradiction_escape}"
+        fi
+    elif [ -z "$addendum_path" ]; then
+        # Branch 2: revision cycle without an arbitration addendum.
+        # Note: avoid `${var:-<...${SERVER_URL}>}` here — bash parses the
+        # default-substitution arm greedily and an unescaped inner `}` would
+        # close the outer expansion early, splicing trailing literal text.
+        local lrp_display="$latest_review_path"
+        [ -z "$lrp_display" ] && lrp_display="<latestReviewPath missing — refetch GET /tasks/${task_id}>"
+        echo -n "${header}
+
+## Revision cycle ${cycle_count} (no arbitration)
+
+This task is in a revision cycle. Read the consolidated review at:
+
+  ${lrp_display}
+
+Address every BLOCKING entry. NOTE entries are observability only — do not
+act on them. Re-build clean. Post the \`built\` transition with the new
+commitSha.
+
+Do not paraphrase the consolidated review into your working memory — read
+it directly when you need it, scoped to one fix pass.
+
+${transitions}
+
+${contradiction_escape}"
+    else
+        # Branch 3: revision cycle with an arbitration addendum.
+        local lrp_display="$latest_review_path"
+        [ -z "$lrp_display" ] && lrp_display="<latestReviewPath missing>"
+        echo -n "${header}
+
+## Revision cycle ${cycle_count} (post-arbitration)
+
+This task is in a revision cycle following an arbitrator ruling. Read both:
+
+  Consolidated review: ${lrp_display}
+  Arbitrator addendum: ${addendum_path}
+
+The addendum is AUTHORITATIVE where it conflicts with the consolidated
+review — it names which BLOCKING finding was upheld and which was retired.
+Address only the upheld findings; ignore the retired ones. NOTE entries are
+observability only. Re-build clean. Post the \`built\` transition with the
+new commitSha.
+
+Do not paraphrase either file into your working memory — read both directly
+when you need them, scoped to one fix pass.
+
+${transitions}
+
+${contradiction_escape}"
+    fi
+}
+
 _build_chat_prompt() {
     # Assemble the chat-agent prompt.
     local prefix
@@ -167,6 +343,20 @@ _run_claude() {
     if [ -n "$effective_agent_type" ] && ! _is_safe_name "$effective_agent_type"; then
         echo "ERROR: effective_agent_type contains invalid characters: $effective_agent_type" >&2
         return 1
+    fi
+
+    # Engineer-session prompt substitution (Phase 5). When the daisy-chain
+    # invokes us with DAISY_CHAIN_ROLE=engineer, the generic _build_task_prompt
+    # produced by the pump-loop is replaced with an engineer-specific prompt
+    # that selects one of three branches (cycle 0 / revision / post-arbitration)
+    # based on FSM state read from GET /tasks/:id. The engineer reads
+    # latestReviewPath / arbitrationAddendumPath on demand rather than having
+    # them inlined into the system prompt — this preserves the "engineers must
+    # not be primed with anti-pattern language" property called out in the
+    # plan.
+    if [ "${DAISY_CHAIN_ROLE:-}" = "engineer" ] && [ -n "${CURRENT_TASK_ID:-}" ]; then
+        echo "Daisy-chain: building engineer-session prompt for task ${CURRENT_TASK_ID} (cycle ${DAISY_CHAIN_CYCLE:-?})"
+        full_prompt="$(_build_engineer_prompt "$CURRENT_TASK_ID")"
     fi
 
     # Clear any stale stop sentinel from a prior container run
