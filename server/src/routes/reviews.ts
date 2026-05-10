@@ -15,6 +15,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { eq, and, asc, inArray } from 'drizzle-orm';
 import { getDb } from '../drizzle-instance.js';
 import { reviewRuns, reviewFindings, tasks } from '../schema/tables.js';
+import { requireProjectIdHeader } from './_project-id-guard.js';
 
 const VERDICTS = ['approve', 'request_changes', 'out_of_scope'] as const;
 type Verdict = typeof VERDICTS[number];
@@ -62,7 +63,13 @@ function isSeverity(v: unknown): v is Severity {
  * violation on `review_runs_task_cycle_role_unique`. Both PG (node-postgres)
  * and PGlite surface unique violations with SQLSTATE 23505; the constraint
  * name appears either in `.constraint_name`, `.constraint`, or in the message
- * text. We match permissively because driver shapes drift between releases.
+ * text.
+ *
+ * The fallback path (when neither `.constraint` nor `.constraint_name` is
+ * populated) requires the message to mention the specific constraint name
+ * `review_runs_task_cycle_role_unique`. A blanket 23505/"unique" match would
+ * misreport conflicts on any future unique index added to `review_runs` as a
+ * duplicate `(taskId, cycle, reviewerRole)` 409.
  */
 function isUniqueRunConflict(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
@@ -81,7 +88,8 @@ function isUniqueRunConflict(err: unknown): boolean {
   if (e.cause) {
     return isUniqueRunConflict(e.cause);
   }
-  return code === '23505' && message.toLowerCase().includes('unique');
+  return code === '23505'
+    && message.includes('review_runs_task_cycle_role_unique');
 }
 
 const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
@@ -91,13 +99,9 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
     Body: PostBody;
   }>('/tasks/:id/reviews', async (request, reply) => {
     // X-Project-Id is mandatory on this endpoint. The project-id plugin
-    // silently substitutes 'default' on a missing header — re-key off the raw
-    // header so a missing header surfaces as 400 rather than silently scoping
-    // the request to the wrong project.
-    const rawHeader = request.headers['x-project-id'];
-    if (rawHeader === undefined || rawHeader === '') {
-      return reply.badRequest('X-Project-Id header is required');
-    }
+    // silently substitutes 'default' on a missing header — the shared guard
+    // re-keys off the raw header so a missing or empty value surfaces as 400.
+    if (!requireProjectIdHeader(request, reply)) return;
 
     const taskId = Number(request.params.id);
     if (!Number.isInteger(taskId) || taskId <= 0) {
@@ -265,12 +269,10 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
     Params: { id: string; cycle: string };
   }>('/tasks/:id/reviews/:cycle', async (request, reply) => {
-    // X-Project-Id is mandatory on this endpoint. See the POST handler for the
-    // rationale on inspecting the raw header rather than `request.projectId`.
-    const rawHeader = request.headers['x-project-id'];
-    if (rawHeader === undefined || rawHeader === '') {
-      return reply.badRequest('X-Project-Id header is required');
-    }
+    // X-Project-Id is mandatory on this endpoint. See the POST handler for
+    // the rationale on inspecting the raw header rather than
+    // `request.projectId`.
+    if (!requireProjectIdHeader(request, reply)) return;
 
     const taskId = Number(request.params.id);
     const cycle = Number(request.params.cycle);

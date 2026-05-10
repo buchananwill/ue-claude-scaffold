@@ -17,7 +17,7 @@
  * `LIMIT` directly inside `array_agg`, so we use a CTE with `row_number()`
  * windowed over the grouping key, filter to `rn <= 3`, then aggregate.
  */
-import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { getDb } from '../drizzle-instance.js';
 import {
@@ -25,6 +25,7 @@ import {
   reviewFindings,
   tasks,
 } from '../schema/tables.js';
+import { requireProjectIdHeader } from './_project-id-guard.js';
 
 const DEFAULT_FINDINGS_LIMIT = 50;
 const MAX_FINDINGS_LIMIT = 200;
@@ -42,27 +43,6 @@ const REVIEWER_ROLE_MAX = 64;
  * limit (clamped) or the default for a missing value.
  */
 const LIMIT_INVALID = null;
-
-/**
- * Confirm that `X-Project-Id` was supplied. Empty / undefined → 400.
- * The format validation lives in the project-id plugin; we re-key off the raw
- * header here because the plugin's silent default-to-`'default'` would
- * otherwise hide a missing header. Duplicate (array-form) headers still count
- * as "supplied" iff the first element is non-empty — this matches the
- * project-id plugin's behaviour of taking `[0]`.
- */
-function requireProjectIdHeader(
-  request: FastifyRequest,
-  reply: FastifyReply,
-): boolean {
-  const raw = request.headers['x-project-id'];
-  const first = Array.isArray(raw) ? raw[0] : raw;
-  if (first === undefined || first === '') {
-    reply.badRequest('X-Project-Id header is required');
-    return false;
-  }
-  return true;
-}
 
 /**
  * Parse and clamp the `limit` query param.

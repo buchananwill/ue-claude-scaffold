@@ -437,6 +437,49 @@ describe('reviews routes', () => {
     assert.equal(res.statusCode, 400, res.body);
   });
 
+  // Array-form `X-Project-Id` (header sent twice) must be rejected when the
+  // first element is empty. Note: Fastify's `app.inject` (via light-my-request)
+  // joins duplicate headers into a single comma-separated string before
+  // dispatching to the route, so passing `['', '']` here actually arrives as
+  // the string `,` — which the guard treats as a non-empty value and accepts.
+  // This makes the array branch unreachable through the test injector. The
+  // shared guard exercises the array path defensively for real HTTP traffic
+  // (Node's `http` module preserves duplicate headers as `string[]`); we
+  // exercise the guard directly to keep that contract under test.
+  it('shared guard rejects array-form X-Project-Id when first element is empty', async () => {
+    const { requireProjectIdHeader } = await import('./_project-id-guard.js');
+    let captured: { code?: number; message?: unknown } = {};
+    const fakeReply = {
+      badRequest(message: unknown) {
+        captured = { code: 400, message };
+        return this;
+      },
+    } as unknown as Parameters<typeof requireProjectIdHeader>[1];
+    const fakeRequest = {
+      headers: { 'x-project-id': ['', 'proj-a'] as string[] },
+    } as unknown as Parameters<typeof requireProjectIdHeader>[0];
+
+    const ok = requireProjectIdHeader(fakeRequest, fakeReply);
+    assert.equal(ok, false);
+    assert.equal(captured.code, 400);
+    assert.equal(captured.message, 'X-Project-Id header is required');
+  });
+
+  it('shared guard accepts array-form X-Project-Id when first element is non-empty', async () => {
+    const { requireProjectIdHeader } = await import('./_project-id-guard.js');
+    const fakeReply = {
+      badRequest() {
+        throw new Error('should not have been called');
+      },
+    } as unknown as Parameters<typeof requireProjectIdHeader>[1];
+    const fakeRequest = {
+      headers: { 'x-project-id': ['proj-a', 'proj-b'] as string[] },
+    } as unknown as Parameters<typeof requireProjectIdHeader>[0];
+
+    const ok = requireProjectIdHeader(fakeRequest, fakeReply);
+    assert.equal(ok, true);
+  });
+
   it('POST returns 404 when task belongs to a different project', async () => {
     // Plant a task directly in proj-a, bypassing tasksPlugin so we can pick
     // the projectId. Then attempt to POST a review run against it from the

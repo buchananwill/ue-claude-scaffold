@@ -10,24 +10,12 @@
  * six enum values render in the panel; the server only returns reasons that
  * actually occurred in the window.
  */
-import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import { sql } from 'drizzle-orm';
 import { getDb } from '../drizzle-instance.js';
+import { requireProjectIdHeader } from './_project-id-guard.js';
 
 const DEFAULT_SINCE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-
-function requireProjectIdHeader(
-  request: FastifyRequest,
-  reply: FastifyReply,
-): boolean {
-  const raw = request.headers['x-project-id'];
-  const first = Array.isArray(raw) ? raw[0] : raw;
-  if (first === undefined || first === '') {
-    reply.badRequest('X-Project-Id header is required');
-    return false;
-  }
-  return true;
-}
 
 function parseSince(raw: string | undefined): Date | null {
   if (raw === undefined || raw === '') {

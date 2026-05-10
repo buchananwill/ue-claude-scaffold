@@ -233,3 +233,109 @@ existing tests cover.
   through.
 - W5 (409 message reflection) — left as-is; `reviewerRole` is regex-validated
   on the way in, so the 409 reflection is safe.
+
+## Cycle 3 — safety review fixes (W1, W2)
+
+Addressed the two remaining safety WARNINGs from the cycle-2 review.
+
+### W1 — `X-Project-Id` array-header guard asymmetry
+
+The inline guards in `reviews.ts` (`POST /tasks/:id/reviews` and
+`GET /tasks/:id/reviews/:cycle`) checked `rawHeader === undefined ||
+rawHeader === ''` — they did not unpack the array form that Node's HTTP
+layer produces when a header is sent twice. `findings.ts` and `failures.ts`
+already handled this correctly via local `requireProjectIdHeader` helpers
+that did `Array.isArray(raw) ? raw[0] : raw` before the empty check.
+
+**Design choice**: extracted a shared helper module at
+`server/src/routes/_project-id-guard.ts`, exporting
+`requireProjectIdHeader(request, reply): boolean`. Updated all three route
+modules to import it; removed the duplicated local helpers from
+`findings.ts` and `failures.ts` and replaced the inline guards in
+`reviews.ts`. Behaviour is identical for every input the existing tests
+cover. The shared module name is prefixed with `_` to mark it as an internal
+helper — Fastify auto-loaders that scan `routes/` for `FastifyPluginAsync`
+default exports will simply ignore it because it has no default export.
+
+The fall-back to inlining the array unpack (matching the previous
+`findings.ts` shape) was the alternative; I rejected it because it would
+have left three nearly-identical copies of the same guard floating around
+the codebase, making future drift more likely (which is exactly the bug
+class W1 calls out).
+
+### W2 — `isUniqueRunConflict` fallback too broad
+
+The previous fallback path `code === '23505' && message.toLowerCase()
+.includes('unique')` would have misreported any future unique-violation on
+`review_runs` — say, an index added later for an unrelated workflow — as a
+duplicate `(taskId, cycle, reviewerRole)` 409. Tightened the fallback to
+require the message to mention the specific constraint name:
+
+```ts
+return code === '23505'
+  && message.includes('review_runs_task_cycle_role_unique');
+```
+
+The primary path (matching `.constraint` or `.constraint_name`) is
+unchanged, and the recursive `cause` walk is unchanged. The existing 409
+conflict test still passes — both PGlite and Postgres surface the
+constraint name in the error message text, so the narrowed match still
+catches the real-world conflict.
+
+If a migration ever renames the constraint, the cycle-2 test
+`returns 409 on duplicate (taskId, cycle, reviewerRole)` will break and the
+diff author will be forced to update both the migration and this matcher in
+the same change. That is the correct trade-off — silent misclassification
+is worse than a loud test failure.
+
+### Array-header test (Fastify-injector caveat)
+
+I added two unit-level tests for the shared guard in `reviews.test.ts`:
+
+- `shared guard rejects array-form X-Project-Id when first element is empty`
+- `shared guard accepts array-form X-Project-Id when first element is
+  non-empty`
+
+These test the helper directly because Fastify's `app.inject` (via
+light-my-request) **flattens** an array-valued header into a single
+comma-joined string before dispatching to the route. I confirmed this with
+a small experiment: `inject({ headers: { 'x-project-id': ['', ''] } })`
+arrives at the handler as the literal string `,` (non-empty, accepted by
+the guard's empty check). The array branch in the guard is therefore
+unreachable through the test injector, but it is exercised by real HTTP
+traffic — Node's `http` module preserves duplicate same-named headers as
+`string[]`. The unit tests construct fake request/reply objects to drive
+the guard directly; this keeps the array-handling contract under test
+without requiring an integration harness on top of Node's raw HTTP server.
+
+### Files
+
+- `server/src/routes/_project-id-guard.ts` (new) — shared helper.
+- `server/src/routes/reviews.ts` (modified) — imports shared guard, removes
+  inline checks; tightens `isUniqueRunConflict` fallback to require the
+  specific constraint name.
+- `server/src/routes/findings.ts` (modified) — removes local guard, imports
+  shared one. No `FastifyRequest` / `FastifyReply` imports needed any more.
+- `server/src/routes/failures.ts` (modified) — same.
+- `server/src/routes/reviews.test.ts` (modified) — adds two unit tests for
+  the shared guard's array-header path.
+
+### Build & test results (cycle 3)
+
+- `npm run typecheck` — clean.
+- `npm run build` — clean.
+- `npx tsx --test src/routes/reviews.test.ts` — 29/29 pass (was 27).
+- `npx tsx --test src/routes/findings.test.ts` — 25/25 pass.
+- `npx tsx --test src/routes/failures.test.ts` — 6/6 pass.
+- `npm test` (full server suite) — 673/727 pass; 54 fails. Pass count up
+  by 2 (the two new shared-guard tests); fail count unchanged at 54.
+  The 54 environmental failures are the same pre-existing
+  `Author identity unknown / Run git config --global user.email` failures
+  in `agents.test.ts`, `projects.test.ts`, `tasks-deps.test.ts`, and
+  `tasks.test.ts` carried over from cycles 1 and 2.
+
+### Open questions / risks
+
+None. The shared guard is a strict generalisation of the three previous
+local copies; the fallback tightening narrows behaviour without
+contradicting either driver's actual error shape.
