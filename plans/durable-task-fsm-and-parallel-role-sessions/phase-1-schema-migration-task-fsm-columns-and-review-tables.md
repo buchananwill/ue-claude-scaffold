@@ -5,12 +5,13 @@
 Part of [Plan: Durable Task FSM and Parallel Role Sessions](./_index.md). See the index for the shared goal and context — this phase body assumes them.
 
 **Files:**
-- `server/src/schema/tables.ts`
-- `server/src/migrate.ts` (verify the migration runner picks up the new schema diff)
-- `server/drizzle/<NNNN>_fsm_schema.sql` (Drizzle-generated migration; the actual cutover migration that forks the old `tasks` table is authored in Phase 9)
+- `server/src/schema/tables.ts` — declare the new shape (the only file this phase modifies)
 
 **Work:**
-1. **Schema-fork strategy.** The new `tasks` table is born fresh, not ALTER-ed in place. `tables.ts` declares the final shape below; the cutover migration in Phase 9 step 3 archives the old `tasks` (and its dependents `task_files`, `task_dependencies`) by rename, then creates the new tables from scratch. No row migration — pre-cutover task rows live in `tasks_pre_fsm_archive` only and never transit the schema boundary. Phase 1's job is to author the new shape; Phase 9's job is to perform the rename-and-create cutover.
+
+0. **Phase 1 is a source-code-only phase.** The deliverable is the updated `tables.ts` declaring the new shape, plus passing TypeScript compilation and lint. **Do NOT run `drizzle-kit generate`. Do NOT commit any file under `server/drizzle/`. Do NOT touch `server/src/migrate.ts`.** Auto-generated ALTER migrations from the diff between the old and new shapes would defeat the schema-fork strategy below. The single migration that applies the new shape to the live database is hand-authored (or post-edited from a Drizzle stub) as part of Phase 9; this phase only declares the source-of-truth.
+
+1. **Schema-fork strategy.** The new `tasks` table is born fresh, not ALTER-ed in place. `tables.ts` declares the final shape below; the cutover migration in Phase 9 step 3 archives the old `tasks` (and its dependents `task_files`, `task_dependencies`) by rename, then creates the new tables from scratch. No row migration — pre-cutover task rows live in `tasks_pre_fsm_archive` only and never transit the schema boundary. Phase 1's job is to author the new shape in `tables.ts`; Phase 9's job is to perform the rename-and-create cutover.
 
    On the new `tasks` table, define columns (existing carry-overs from the legacy table plus the new FSM columns):
    - `reviewCycleCount: integer('review_cycle_count').notNull().default(0)`
@@ -114,14 +115,12 @@ Part of [Plan: Durable Task FSM and Parallel Role Sessions](./_index.md). See th
    The schema barrel `server/src/schema/index.ts` is `export * from './tables.js'` already; new tables added to `tables.ts` are re-exported automatically. No manual edit needed there.
 
 **Acceptance criteria:**
-- `npm run --prefix server migrate` applies cleanly against a Supabase-equivalent local Postgres and against the live Supabase instance.
-- `INSERT INTO tasks (project_id, title, status) VALUES ('piste-perfect','x','engineering')` succeeds.
-- `INSERT INTO tasks (project_id, title, status) VALUES ('piste-perfect','x','garbage')` fails the CHECK.
-- `INSERT INTO review_runs (task_id, cycle, reviewer_role, verdict, raw_markdown) VALUES (1, 1, 'safety', 'approve', '...')` succeeds.
-- A second insert with the same `(task_id, cycle, reviewer_role)` fails the unique constraint.
-- `INSERT INTO arbitration_runs (task_id, trigger, ruling, ruling_markdown) VALUES (1, 'review_cycle_budget_exhausted', 'approve', '...')` succeeds.
-- A second insert with the same `(task_id, trigger)` fails the unique constraint.
-- `INSERT INTO arbitration_runs ... ruling='rule'` without `contradictionResolution` fails the rule-resolution CHECK; with it, succeeds.
-- `INSERT INTO projects (id, name, agent_roles) VALUES ('piste-perfect', 'Piste Perfect', '{"engineer":"container-implementer-ue","arbitrator":"container-arbitrator-ue","reviewers":{"safety":"container-safety-reviewer-ue","correctness":"container-reviewer-ue","decomp":"container-decomposition-reviewer-ue"}}')` succeeds.
-- The application-layer Zod validator rejects an `agentRoles` jsonb missing `engineer`, missing `arbitrator`, missing `reviewers`, with an empty `reviewers`, with a reviewer-role slug containing uppercase, or with an unknown top-level key.
-- After Phase 9's cutover migration runs, the new `tasks` table is empty; an INSERT with one of the new statuses (`'engineering'`, `'reviewing'`, etc.) succeeds; an INSERT carrying a legacy value (`'in_progress'`, `'completed'`) fails the new CHECK. Pre-cutover task rows survive untouched in `tasks_pre_fsm_archive`.
+
+This phase modifies a single source file (`tables.ts`); acceptance is therefore static, not database-runtime. The runtime database behaviour is verified in Phase 9 once the cutover migration has actually applied the new shape.
+
+- `tsc` (or whatever the server's TypeScript build command is) compiles `server/src/schema/tables.ts` without errors against the new shape.
+- `eslint server/src/schema/tables.ts` (or project equivalent) passes.
+- The diff against `main` for this phase touches only `server/src/schema/tables.ts`. Specifically: `git diff <branch-base>..HEAD --name-only` returns exactly that one path. **No file under `server/drizzle/` is added, modified, or deleted.** **`server/src/migrate.ts` is unchanged.**
+- Static inspection: `tables.ts` exports `tasks`, `reviewRuns`, `reviewFindings`, `arbitrationRuns` with the column sets specified in the work steps above; the `projects` export carries the new `agentRoles` jsonb column; the `tasks` table's `status` column has the new CHECK enumeration including `'arbitrating'` and the legacy `'cycle'` carry-over; `failure_reason` has the constrained-enum CHECK; `build_status` has its CHECK.
+- The schema barrel `server/src/schema/index.ts` requires no manual edit (it is `export * from './tables.js'`); confirm by reading the file.
+- All runtime/SQL acceptance — `npm run migrate` applying cleanly, INSERT round-trips against the new tables, jsonb constraint behaviour, the application-layer Zod validator on `agentRoles` — is verified in **Phase 9** acceptance after the cutover migration has actually been applied. It is intentionally out-of-scope for this phase.
