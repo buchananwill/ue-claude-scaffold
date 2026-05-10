@@ -55,34 +55,59 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
     fi
 }
 
-# Build the engineer-session prompt by fetching fresh FSM state from the
-# coordination server and selecting one of three branches per the durable-
-# task FSM contract:
+# Apply a conservative path allowlist to a single prompt-bound path field.
+# Echoes the original value on accept and empty on reject; in both cases the
+# exit code reports whether the value passed (0 = pass, 1 = reject) so the
+# caller can set a side-flag (e.g. addendum_rejected). The warning suffix is
+# customisable so the addendum case can name the post-arbitration sentinel
+# routing while the others use the default "treating as empty." text.
 #
-#   * cycle 0                              → standard implement-from-plan.
-#   * cycle > 0, no arbitration addendum   → revise per consolidated review.
-#   * cycle > 0, arbitration addendum set  → revise per addendum (authoritative
-#                                            over the consolidated review where
-#                                            they conflict).
-#
-# Fields read from GET /tasks/:id: title, sourcePath, reviewCycleCount,
-# latestReviewPath, arbitrationAddendumPath. The prompt names exact transition
-# endpoints and failureReason enum values literally so the engineer cannot
-# invent free-text values that trip the CHECK constraint. It does NOT inline
-# reviewer findings or anti-pattern language — the engineer reads
-# latestReviewPath / arbitrationAddendumPath on demand.
-_build_engineer_prompt() {
-    local task_id="$1"
-    local prefix
-    prefix="$(_build_task_prompt_prefix)"
+# Allowlist regex (hyphen first inside the bracket class so it stays literal):
+# alnum/underscore/dot/slash/space. No backslash, so embedded backslashes are
+# rejected; no shell metacharacters (`$`, backtick, `;`, `&`, `|`, `<`, `>`,
+# quotes) so they cannot land in the prompt.
+_scrub_engineer_path_field() {
+    local value="$1"
+    local label="$2"
+    local suffix="${3:-treating as empty.}"
+    local _path_allow='^[-A-Za-z0-9_./ ]+$'
+    if [ -n "$value" ] && ! [[ "$value" =~ $_path_allow ]]; then
+        echo "WARNING: _build_engineer_prompt rejecting non-allowlisted ${label}; ${suffix}" >&2
+        echo ""
+        return 1
+    fi
+    echo "$value"
+    return 0
+}
 
-    # Defence-in-depth: tasks.id is a serial (integer) on the server. The
-    # claim-path regex in pump-loop.sh is looser (`^[0-9a-zA-Z_-]+$`), so a
-    # value like `123-foo` could in principle land here. Refuse to embed a
-    # non-numeric value into the outbound `${SERVER_URL}/tasks/${task_id}`
-    # URL — fall through to the env-fallback (cycle-0 inline-task) branch
-    # instead of aborting the daisy-chain. The prompt's literal references
-    # to `${task_id}` further down are model-facing text, not curl targets.
+# Fetch fresh FSM state from GET /tasks/:id and populate the engineer prompt's
+# input variables in the caller's scope. Relies on bash's dynamic scoping —
+# the caller declares the following locals before calling, and this function
+# assigns into them:
+#
+#   title source_path cycle_count latest_review_path addendum_path
+#   had_addendum_originally addendum_rejected
+#
+# Behaviour:
+#   * Non-numeric task_id (defence-in-depth against the looser pump-loop claim
+#     regex `^[0-9a-zA-Z_-]+$`) → skip the curl, warn to stderr, fall through
+#     to the env-fallback branch.
+#   * Server unreachable / empty response → env-fallback: seed from
+#     CURRENT_TASK_TITLE / CURRENT_TASK_SOURCE, cycle_count=0, no review/
+#     addendum paths.
+#   * Server response present → newline-scrub all string fields, capture
+#     had_addendum_originally BEFORE the allowlist scrub (so a rejected-but-
+#     non-null addendum still routes to Branch 3 with a sentinel placeholder
+#     instead of silently masquerading as a no-addendum revision), then
+#     allowlist-scrub the three path fields via _scrub_engineer_path_field.
+#   * Non-numeric cycle_count → sanitised to 0.
+_fetch_engineer_fsm_fields() {
+    local task_id="$1"
+
+    # Defence-in-depth: refuse to embed a non-numeric value into the outbound
+    # `${SERVER_URL}/tasks/${task_id}` URL. The prompt's literal `${task_id}`
+    # references further down are model-facing text, not curl targets, so
+    # they do not re-introduce the URL hazard.
     local task_json=""
     if [[ "$task_id" =~ ^[0-9]+$ ]]; then
         # Fetch fresh task state. Empty / unreachable degrades to a minimal
@@ -93,14 +118,6 @@ _build_engineer_prompt() {
         echo "WARNING: _build_engineer_prompt received non-numeric task_id '${task_id}'; skipping server fetch and falling back to claim-time variables." >&2
     fi
 
-    local title source_path cycle_count latest_review_path addendum_path
-    # Whether the server reported a non-null arbitrationAddendumPath, captured
-    # BEFORE the allowlist scrub. Drives Branch 2 vs Branch 3 selection so a
-    # rejected-but-non-null addendum still routes to the post-arbitration
-    # branch with a sentinel placeholder, instead of silently masquerading as
-    # a no-addendum revision and losing the arbitration ruling.
-    local had_addendum_originally=0
-    local addendum_rejected=0
     if [ -n "$task_json" ]; then
         title=$(echo "$task_json"               | jq -r '.title                    // ""' | tr -d '\n')
         source_path=$(echo "$task_json"         | jq -r '.sourcePath               // ""' | tr -d '\n')
@@ -112,28 +129,22 @@ _build_engineer_prompt() {
         # cannot be downgraded by a rejected-path verdict.
         [ -n "$addendum_path" ] && had_addendum_originally=1
 
-        # Conservative path allowlist — block prompt-manipulation via crafted
-        # path fields. Title is free-form; newline scrubbing alone is enough.
-        # On allowlist failure, clear the path so the sentinel placeholder is
-        # used instead of injecting a malformed path into the prompt. The
-        # cycle branch (0 / revision / post-arbitration) is determined by
-        # `cycle_count` and `had_addendum_originally`, not by whether
-        # `latest_review_path` or `addendum_path` passed the allowlist.
-        # Allowlist regex: hyphen first (literal in bracket class), then
-        # alnum/underscore/dot/slash/space. No backslash, so embedded
-        # backslashes are also rejected.
-        local _path_allow='^[-A-Za-z0-9_./ ]+$'
-        if [ -n "$source_path" ] && ! [[ "$source_path" =~ $_path_allow ]]; then
-            echo "WARNING: _build_engineer_prompt rejecting non-allowlisted source_path; treating as empty." >&2
-            source_path=""
-        fi
-        if [ -n "$latest_review_path" ] && ! [[ "$latest_review_path" =~ $_path_allow ]]; then
-            echo "WARNING: _build_engineer_prompt rejecting non-allowlisted latest_review_path; treating as empty." >&2
-            latest_review_path=""
-        fi
-        if [ -n "$addendum_path" ] && ! [[ "$addendum_path" =~ $_path_allow ]]; then
-            echo "WARNING: _build_engineer_prompt rejecting non-allowlisted addendum_path; routing to post-arbitration branch with sentinel placeholder." >&2
-            addendum_path=""
+        # Allowlist-scrub the three path fields. Title is free-form; newline
+        # scrubbing alone is enough. On allowlist failure, the helper echoes
+        # empty so the sentinel placeholder is used instead of injecting a
+        # malformed path into the prompt. The cycle branch (0 / revision /
+        # post-arbitration) is determined by `cycle_count` and
+        # `had_addendum_originally`, not by whether `latest_review_path` or
+        # `addendum_path` passed the allowlist.
+        # `|| true` on the source_path / latest_review_path scrubs: the
+        # helper returns 1 on rejection, which would trip the parent's
+        # `set -e` if left unguarded. We only consult the return code for
+        # addendum_path (to set addendum_rejected). The empty echo on reject
+        # is identical in all three cases.
+        source_path=$(_scrub_engineer_path_field "$source_path" "source_path") || true
+        latest_review_path=$(_scrub_engineer_path_field "$latest_review_path" "latest_review_path") || true
+        if ! addendum_path=$(_scrub_engineer_path_field "$addendum_path" "addendum_path" \
+                "routing to post-arbitration branch with sentinel placeholder."); then
             addendum_rejected=1
         fi
     else
@@ -154,6 +165,45 @@ _build_engineer_prompt() {
     if ! [[ "$cycle_count" =~ ^[0-9]+$ ]]; then
         cycle_count=0
     fi
+}
+
+# Build the engineer-session prompt by fetching fresh FSM state from the
+# coordination server and selecting one of three branches per the durable-
+# task FSM contract:
+#
+#   * cycle 0                              → standard implement-from-plan.
+#   * cycle > 0, no arbitration addendum   → revise per consolidated review.
+#   * cycle > 0, arbitration addendum set  → revise per addendum (authoritative
+#                                            over the consolidated review where
+#                                            they conflict).
+#
+# Fields read from GET /tasks/:id: title, sourcePath, reviewCycleCount,
+# latestReviewPath, arbitrationAddendumPath. The prompt names exact transition
+# endpoints and failureReason enum values literally so the engineer cannot
+# invent free-text values that trip the CHECK constraint. It does NOT inline
+# reviewer findings or anti-pattern language — the engineer reads
+# latestReviewPath / arbitrationAddendumPath on demand.
+#
+# This dispatcher delegates field acquisition to _fetch_engineer_fsm_fields
+# (which uses bash dynamic scoping to populate the locals declared here) and
+# emits one of three prompt bodies inline. The emission stays inline because
+# the heredoc-style strings interleave `${header}`, `${transitions}`, and
+# `${contradiction_escape}` so densely that extracting per-branch emitters
+# would cost more in plumbing than it saves in line count.
+_build_engineer_prompt() {
+    local task_id="$1"
+    local prefix
+    prefix="$(_build_task_prompt_prefix)"
+
+    local title source_path cycle_count latest_review_path addendum_path
+    # Whether the server reported a non-null arbitrationAddendumPath, captured
+    # BEFORE the allowlist scrub. Drives Branch 2 vs Branch 3 selection so a
+    # rejected-but-non-null addendum still routes to the post-arbitration
+    # branch with a sentinel placeholder, instead of silently masquerading as
+    # a no-addendum revision and losing the arbitration ruling.
+    local had_addendum_originally=0
+    local addendum_rejected=0
+    _fetch_engineer_fsm_fields "$task_id"
 
     # Common header — TASK_ID/TITLE plus the transition contract the engineer
     # session must honour. Same in all three branches.
@@ -267,6 +317,12 @@ ${contradiction_escape}"
         # the engineer must see the arbitration ruling even when the path
         # itself is unrenderable, so it can refetch the task and read the
         # addendum directly.
+        # Note: Branch 2 and Branch 3 use DIFFERENT lrp_display sentinels by
+        # design (Branch 2 mentions refetching the task; Branch 3 keeps it
+        # terse because the addendum_display sentinel already names the
+        # refetch in the same prompt). Do not lift this above the branch
+        # split — the byte-identical-output constraint requires the divergence
+        # to be preserved.
         local lrp_display="$latest_review_path"
         [ -z "$lrp_display" ] && lrp_display="<latestReviewPath missing>"
         local addendum_display="$addendum_path"

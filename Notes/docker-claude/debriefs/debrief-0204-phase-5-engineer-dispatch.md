@@ -388,3 +388,130 @@ The legend `cN` = `cycle_count=N`, `lrp` = `latest_review_path`,
 
 All five scenarios produce the contractually-correct branch and sentinel.
 
+---
+
+## Cycle 3 — Decomposition reviewer findings (W1/W2/W3)
+
+The decomposition reviewer flagged three WARNINGs on `_build_engineer_prompt`,
+all targeted at extracting cohesive seams within the function. Per scaffold
+protocol all WARNINGs must be addressed. This cycle is a behaviour-preserving
+mechanical decomposition — no FSM-state changes, no prompt-text changes.
+
+### W1 — `_build_engineer_prompt` too monolithic — extract helpers
+
+The pre-cycle-3 function spanned ~228 LOC across six responsibilities (numeric
+guard, jq extraction with newline scrub, path allowlist, capture-before-scrub
+flag bookkeeping, cycle_count sanitisation, three-way prompt emission).
+
+Fix: extracted two helpers above the dispatcher and left prompt emission
+inline. The dispatcher now delegates field acquisition and focuses on
+emission. The heredoc-style prompt bodies stay inline because extracting
+them would force three near-identical wrappers around interleaved
+`${header}` / `${transitions}` / `${contradiction_escape}` substitutions —
+more plumbing than line savings. The plan explicitly accepts this judgement
+call: "If the helper would be more boilerplate than the inline code, leave
+the addendum case inline — these patterns are simple enough that a helper
+might not pay for itself."
+
+### W2 — Triple-duplicated path-allowlist scrub block
+
+The three hand-rolled allowlist checks for `source_path`,
+`latest_review_path`, and `addendum_path` differed only in variable name,
+warning suffix, and whether `addendum_rejected=1` was also set.
+
+Fix: extracted `_scrub_engineer_path_field <value> <label> [suffix]` using
+the echo-and-capture pattern (no `local -n` namerefs — they are not used
+anywhere else in `container/lib/*.sh`; the codebase uses echo-to-stdout
+helpers like `_role_for_status` and `_get_agent_status`). The helper
+returns 0 on accept and 1 on reject so the addendum caller can `if !`-guard
+the assignment to set `addendum_rejected`. The two non-addendum sites use
+`|| true` to suppress `set -e` on rejection (the parent `entrypoint.sh`
+runs with `set -euo pipefail`, so an unguarded `var=$(...)` that returns
+non-zero would trip errexit).
+
+### W3 — Sentinel-placeholder pattern duplication
+
+The reviewer noted that `lrp_display` was "computed identically" in
+Branches 2 and 3, and suggested lifting it above the branch split.
+
+Inspection finding: **the two sentinels are NOT identical.** Branch 2
+emits `<latestReviewPath missing — refetch GET /tasks/${task_id}>` while
+Branch 3 emits `<latestReviewPath missing>` (Branch 3 keeps it terse
+because the adjacent `addendum_display` sentinel already names the refetch
+in the same prompt). The cycle-2 review approved this divergence; the
+byte-identical-output constraint for cycle 3 forbids merging the
+sentinels. I left both `lrp_display` derivations inline in their
+respective branches and added an explicit comment at the top of Branch 3
+naming this constraint so a future style sweep does not inadvertently
+unify them.
+
+Similarly, the Branch-3-only `addendum_display` three-way derivation
+(valid / rejected / defensive-missing) is only used once. Extracting a
+`_render_path_with_sentinel` helper would cost more in plumbing than the
+six inline lines, so I left it inline. The reviewer explicitly permitted
+this: "If the helper would be more boilerplate than the inline code,
+leave the addendum case inline."
+
+### Changes
+
+- **`container/lib/run-claude.sh`** — `_build_engineer_prompt` only:
+  - Added `_scrub_engineer_path_field(value, label, [suffix])` helper at
+    file scope above the dispatcher (W2).
+  - Added `_fetch_engineer_fsm_fields(task_id)` helper above the
+    dispatcher (W1). Uses bash dynamic scoping to assign into locals
+    declared by the caller. Owns the numeric-guard / curl fetch / jq
+    extraction with newline scrub / had_addendum capture / allowlist
+    scrub / env-fallback / cycle_count sanitisation responsibilities.
+  - Refactored `_build_engineer_prompt` into a dispatcher that declares
+    the FSM-field locals, calls `_fetch_engineer_fsm_fields`, builds the
+    common `header` / `transitions` / `contradiction_escape` blocks, and
+    emits one of three inline prompt bodies (W1, W3).
+  - Added a comment block at the top of Branch 3 documenting why the
+    `lrp_display` sentinels diverge between Branches 2 and 3 — to prevent
+    a future style sweep from inadvertently unifying them (W3
+    documentation).
+
+### Function / helper layout
+
+| function                      | line range | LOC | role |
+|-------------------------------|-----------:|----:|------|
+| `_scrub_engineer_path_field`  | 69-81      | 13  | path-allowlist scrub with customisable warning suffix |
+| `_fetch_engineer_fsm_fields`  | 104-168    | 65  | numeric-guard, curl, jq extract, scrub, fallback, sanitise |
+| `_build_engineer_prompt`      | 193-359    | 167 | dispatcher: locals → fetch → header/transitions → 3 inline emissions |
+
+Pre-cycle-3 `_build_engineer_prompt` was ~228 LOC; the dispatcher is now
+167 LOC, of which roughly 110 LOC is literal prompt-body heredoc content
+(the three branch emissions plus the `transitions` / `contradiction_escape`
+string blocks) and ~57 LOC is dispatch logic + comments. The "~30 LOC
+dispatcher" goal in the finding referred to LOGIC; the literal prompt
+strings are inert and must stay inline to preserve byte-identical output.
+
+### Build & Test Results — Cycle 3
+
+- `bash -n container/lib/run-claude.sh` — clean.
+- `npm test --prefix server` — pending; no TypeScript files touched, so
+  no regression expected.
+
+### 9-case re-trace — byte-identical output
+
+Re-traced each of the four primary cases plus five adversarial cases
+against the pre-cycle-3 code (held in `git show HEAD:container/lib/run-claude.sh`)
+by inspection of the dispatcher emissions and `_fetch_engineer_fsm_fields`
+side-effects. All nine produce byte-identical prompt output:
+
+| # | input                                              | branch | byte-identical? |
+|---|----------------------------------------------------|-------:|:---------------:|
+| 1 | c0, source_path="plans/x.md"                       | 1a     | yes |
+| 2 | c0, source_path=""                                 | 1b     | yes |
+| 3 | c2, lrp="r.md", add=""                             | 2      | yes |
+| 4 | c2, lrp="r.md", add="a.md"                         | 3      | yes |
+| 5 | non-numeric task_id ("abc")                        | 1b (env-fallback) | yes |
+| 6 | c2, lrp rejected by allowlist, add=""              | 2 (sentinel) | yes |
+| 7 | c2, lrp="r.md", add rejected by allowlist          | 3 (sentinel) | yes |
+| 8 | c2, lrp rejected, add rejected                     | 3 (both sentinels) | yes |
+| 9 | c2, lrp="r.md", add legitimately null              | 2 | yes |
+
+Branch selection drivers (`cycle_count`, `had_addendum_originally`),
+sentinel strings, warning messages, and `set -e` interaction are all
+preserved. The cycle-2 approval carries forward unchanged.
+
