@@ -64,8 +64,8 @@ describe('tasks-lifecycle routes', () => {
     return get.json() as Record<string, unknown>;
   }
 
-  /** Read the FSM-only fields directly from the DB (not exposed by GET /tasks). */
-  async function getFsmRow(id: number): Promise<{
+  /** Shape of the FSM-only columns selected by `getFsmRow` below. */
+  type FsmRowShape = {
     status: string;
     review_cycle_count: number;
     reviewer_verdicts: Record<string, string>;
@@ -75,24 +75,16 @@ describe('tasks-lifecycle routes', () => {
     arbitration_pending_trigger: string | null;
     failure_reason: string | null;
     failure_detail: string | null;
-  }> {
+  };
+
+  /** Read the FSM-only fields directly from the DB (not exposed by GET /tasks). */
+  async function getFsmRow(id: number): Promise<FsmRowShape> {
     const result = await ctx.db.execute(sql`
       SELECT status, review_cycle_count, reviewer_verdicts, build_status, commit_sha,
              latest_review_path, arbitration_pending_trigger, failure_reason, failure_detail
         FROM tasks
        WHERE id = ${id}
     `);
-    type FsmRowShape = {
-      status: string;
-      review_cycle_count: number;
-      reviewer_verdicts: Record<string, string>;
-      build_status: string;
-      commit_sha: string | null;
-      latest_review_path: string | null;
-      arbitration_pending_trigger: string | null;
-      failure_reason: string | null;
-      failure_detail: string | null;
-    };
     const rows = (result as unknown as { rows: FsmRowShape[] }).rows;
     return rows[0];
   }

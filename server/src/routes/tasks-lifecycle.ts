@@ -154,9 +154,9 @@ function readVerdicts(raw: unknown): Record<string, string> {
  * least one declared reviewer.
  */
 function allReviewersClear(verdicts: Record<string, string>): boolean {
-  const keys = Object.keys(verdicts);
-  if (keys.length === 0) return false;
-  return keys.every((k) => verdicts[k] === 'approve' || verdicts[k] === 'out_of_scope');
+  const values = Object.values(verdicts);
+  if (values.length === 0) return false;
+  return values.every((v) => v === 'approve' || v === 'out_of_scope');
 }
 
 function anyRequestChanges(verdicts: Record<string, string>): boolean {
