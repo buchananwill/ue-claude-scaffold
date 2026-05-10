@@ -1,4 +1,4 @@
-import { eq, and, or, desc, asc, sql, count as countFn, inArray, notInArray, isNull, type SQL } from 'drizzle-orm';
+import { eq, and, or, desc, asc, count as countFn, inArray, notInArray, isNull, type SQL } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 import { validateAgentTypeOverride } from '../branch-naming.js';

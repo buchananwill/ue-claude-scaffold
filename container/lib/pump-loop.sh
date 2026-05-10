@@ -27,10 +27,8 @@
 # lockstep — there is no compile-time link between them.
 _role_for_status() {
     case "$1" in
-        claimed|revising)              echo "engineer" ;;
-        engineering)                   echo "engineer" ;;
-        built)                         echo "reviewer-fanout" ;;
-        reviewing)                     echo "reviewer-fanout" ;;
+        claimed|revising|engineering)  echo "engineer" ;;
+        built|reviewing)               echo "reviewer-fanout" ;;
         arbitrating)                   echo "arbitrator" ;;
         complete|failed|integrated)    echo "" ;;
         *)                             echo "" ;;
