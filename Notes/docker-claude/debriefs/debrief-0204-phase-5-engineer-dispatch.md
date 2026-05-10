@@ -156,3 +156,111 @@ fixture rendered `consolidated.md/tasks/42>}` instead of just
 - The `_build_engineer_prompt` helper is ~150 lines. If Phase 6/7 grow it
   with reviewer/arbitrator-specific helpers, consider splitting the
   prompt builders into `container/lib/role-prompts.sh`. Not warranted yet.
+
+---
+
+## Cycle 1 — Safety reviewer findings (W1, W2)
+
+The safety reviewer approved with two WARNINGs, both in
+`container/lib/run-claude.sh::_build_engineer_prompt`. Correctness reviewer
+approved with no findings. Cycle 1 is a defence-in-depth hardening pass
+only — no behaviour change for valid inputs.
+
+### W1 — Numeric guard on `task_id`
+
+`tasks.id` is a serial (integer) on the server, but the claim-path regex in
+`container/lib/pump-loop.sh:376` is `^[0-9a-zA-Z_-]+$` (looser than the
+resume-probe regex `^[0-9]+$` at `pump-loop.sh:293`). A value like
+`123-foo` could in principle land in `${SERVER_URL}/tasks/${task_id}`.
+
+`pump-loop.sh` is out of scope for this task. The fix lives at the URL
+construction site instead: a `^[0-9]+$` guard at the top of
+`_build_engineer_prompt`. On a non-numeric `task_id` the function skips the
+outbound `GET /tasks/${task_id}` curl entirely and falls through to the
+existing env-fallback (cycle-0) path that the function already takes when
+the server is unreachable. The daisy-chain is not aborted, and a stderr
+warning records the rejected value. The literal `${task_id}` references in
+the prompt body are model-facing text — not curl targets — so they do not
+re-introduce the URL hazard.
+
+### W2 — Newline scrubbing on server-supplied prompt fields
+
+`title`, `sourcePath`, `latestReviewPath`, `arbitrationAddendumPath` are
+extracted via `jq -r` and flow into the prompt verbatim. There is no shell
+injection risk (the prompt is passed via `claude -p "$full_prompt"`,
+expansion is at assignment time), but a crafted task title containing
+`\n`, `$(...)`, or `;` literals would appear in the model's prompt — a
+low-severity prompt-manipulation surface.
+
+Fix: pipe each `jq -r` extraction through `tr -d '\n'`. For path fields,
+also enforce a conservative allowlist `^[-A-Za-z0-9_./ ]+$`; on a path
+that fails the allowlist, treat it as empty so the cycle-0 branch is taken
+instead of injecting a malformed path. Title need not be allowlisted —
+newline scrubbing alone is sufficient. The same newline scrub is applied
+to `CURRENT_TASK_TITLE` and `CURRENT_TASK_SOURCE` on the env-fallback
+branch for consistency, even though those values originated from the same
+upstream server response at claim time.
+
+The allowlist is intentionally loose enough to accept normal POSIX paths
+including spaces (`plans/phase 5.md` is accepted). It rejects the
+prompt-manipulation classes that matter: `$()`, backticks, `;`, `&`, `|`,
+`\n`, `\r`, `\\`, `<`, `>`, quotes. It does NOT enforce path-traversal
+protection (`../etc/passwd` would be accepted) — that is a server-side
+concern, not a prompt-builder concern.
+
+### Changes
+
+- **`container/lib/run-claude.sh`** — `_build_engineer_prompt` only:
+  - Wrapped the `_curl_server` call in `if [[ "$task_id" =~ ^[0-9]+$ ]]`;
+    on non-numeric, log to stderr and leave `task_json` empty so the
+    existing env-fallback path is taken (W1).
+  - Added `| tr -d '\n'` to the four `jq -r` extractions of `title`,
+    `source_path`, `latest_review_path`, `addendum_path` (W2).
+  - Added a `^[-A-Za-z0-9_./ ]+$` allowlist gate on the three path fields;
+    on failure, log to stderr and reset to empty (W2).
+  - Routed the env-fallback `title` and `source_path` through
+    `printf '%s' "..." | tr -d '\n'` for consistency (W2).
+- No changes to `dynamic-agents/container-implementer-ue.md` or its
+  compiled outputs — both findings are in the prompt-builder shell only.
+
+### Build & Test Results — Cycle 1
+
+- `bash -n container/lib/run-claude.sh` — clean.
+- Synthetic prompt-builder simulation (in-process source of the function
+  with stubbed `_curl_server` and `_build_task_prompt_prefix`) covering
+  six scenarios: cycle 0 valid, cycle 2 no-addendum valid, non-numeric
+  task_id, title with embedded newlines, source_path with `$(...)` shell
+  metacharacters, env-fallback with newline in `CURRENT_TASK_TITLE`. All
+  six produce the expected output: valid inputs render byte-identical to
+  pre-change; adversarial inputs degrade safely with stderr warnings.
+- `npm test --prefix server` — 683 pass / 54 fail / 737 total. Identical
+  counts on two consecutive runs, so deterministic. The failures are
+  pre-existing on the branch tip (cycle 1 only modifies a bash file —
+  nothing on the TypeScript test surface could be affected). The original
+  Phase 5 debrief noted 2 pre-existing failures in `tasks.test.ts`; the
+  larger 54-failure count appears across the wider suite under the same
+  PGlite/parallelism conditions and is environmental, not a regression
+  introduced here.
+
+### Branch re-trace (verified by inspection + simulation)
+
+For each branch, valid inputs produce identical output to pre-change:
+
+1. **Cycle 0 with source_path** — implement-from-plan branch. `${title}`,
+   `${source_path}`, `${task_id}` substituted as before. `tr -d '\n'` is
+   a no-op on titles/paths without embedded newlines.
+2. **Cycle 0 without source_path** — implement-from-task (inline)
+   branch. Same as above, with the `<inline task — no plan file>`
+   placeholder.
+3. **Cycle > 0, no addendum** — revision branch. `${lrp_display}` /
+   `${cycle_count}` substituted as before.
+4. **Cycle > 0, with addendum** — post-arbitration branch. Both
+   `${lrp_display}` and `${addendum_path}` substituted as before.
+
+Adversarial differences (intended):
+
+- Non-numeric task_id → cycle-0 inline-task branch instead of cycle-N
+  branch (since cycle_count defaults to 0 in the env-fallback).
+- Title with `\n` → newlines stripped from the rendered title.
+- Path with `$(...)`, `;`, `\`, `<`, `>` → path emptied, branch falls to
+  cycle-0 inline-task instead of cycle-N or implement-from-plan.

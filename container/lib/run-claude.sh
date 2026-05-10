@@ -76,23 +76,58 @@ _build_engineer_prompt() {
     local prefix
     prefix="$(_build_task_prompt_prefix)"
 
-    # Fetch fresh task state. Empty / unreachable degrades to a minimal cycle-0
-    # prompt seeded from CURRENT_TASK_* variables — better to run with a stale
-    # but plausible prompt than to wedge the daisy-chain.
-    local task_json
-    task_json=$(_curl_server -sf "${SERVER_URL}/tasks/${task_id}" --max-time 10 2>/dev/null) || task_json=""
+    # Defence-in-depth: tasks.id is a serial (integer) on the server. The
+    # claim-path regex in pump-loop.sh is looser (`^[0-9a-zA-Z_-]+$`), so a
+    # value like `123-foo` could in principle land here. Refuse to embed a
+    # non-numeric value into the outbound `${SERVER_URL}/tasks/${task_id}`
+    # URL — fall through to the env-fallback (cycle-0 inline-task) branch
+    # instead of aborting the daisy-chain. The prompt's literal references
+    # to `${task_id}` further down are model-facing text, not curl targets.
+    local task_json=""
+    if [[ "$task_id" =~ ^[0-9]+$ ]]; then
+        # Fetch fresh task state. Empty / unreachable degrades to a minimal
+        # cycle-0 prompt seeded from CURRENT_TASK_* variables — better to run
+        # with a stale but plausible prompt than to wedge the daisy-chain.
+        task_json=$(_curl_server -sf "${SERVER_URL}/tasks/${task_id}" --max-time 10 2>/dev/null) || task_json=""
+    else
+        echo "WARNING: _build_engineer_prompt received non-numeric task_id '${task_id}'; skipping server fetch and falling back to claim-time variables." >&2
+    fi
 
     local title source_path cycle_count latest_review_path addendum_path
     if [ -n "$task_json" ]; then
-        title=$(echo "$task_json"               | jq -r '.title                    // ""')
-        source_path=$(echo "$task_json"         | jq -r '.sourcePath               // ""')
+        title=$(echo "$task_json"               | jq -r '.title                    // ""' | tr -d '\n')
+        source_path=$(echo "$task_json"         | jq -r '.sourcePath               // ""' | tr -d '\n')
         cycle_count=$(echo "$task_json"         | jq -r '.reviewCycleCount         // 0')
-        latest_review_path=$(echo "$task_json"  | jq -r '.latestReviewPath         // ""')
-        addendum_path=$(echo "$task_json"       | jq -r '.arbitrationAddendumPath  // ""')
+        latest_review_path=$(echo "$task_json"  | jq -r '.latestReviewPath         // ""' | tr -d '\n')
+        addendum_path=$(echo "$task_json"       | jq -r '.arbitrationAddendumPath  // ""' | tr -d '\n')
+
+        # Conservative path allowlist — block prompt-manipulation via crafted
+        # path fields. Title is free-form; newline scrubbing alone is enough.
+        # On allowlist failure, treat the path as empty so the cycle-0 branch
+        # is taken instead of injecting a malformed path into the prompt.
+        # Allowlist regex: hyphen first (literal in bracket class), then
+        # alnum/underscore/dot/slash/space. No backslash, so embedded
+        # backslashes are also rejected.
+        local _path_allow='^[-A-Za-z0-9_./ ]+$'
+        if [ -n "$source_path" ] && ! [[ "$source_path" =~ $_path_allow ]]; then
+            echo "WARNING: _build_engineer_prompt rejecting non-allowlisted source_path; treating as empty." >&2
+            source_path=""
+        fi
+        if [ -n "$latest_review_path" ] && ! [[ "$latest_review_path" =~ $_path_allow ]]; then
+            echo "WARNING: _build_engineer_prompt rejecting non-allowlisted latest_review_path; treating as empty." >&2
+            latest_review_path=""
+        fi
+        if [ -n "$addendum_path" ] && ! [[ "$addendum_path" =~ $_path_allow ]]; then
+            echo "WARNING: _build_engineer_prompt rejecting non-allowlisted addendum_path; treating as empty." >&2
+            addendum_path=""
+        fi
     else
         echo "WARNING: _build_engineer_prompt could not fetch task ${task_id}; falling back to claim-time variables." >&2
-        title="${CURRENT_TASK_TITLE:-}"
-        source_path="${CURRENT_TASK_SOURCE:-}"
+        # Apply the same newline scrub on the env-fallback path for
+        # consistency, even though these values originated from the same
+        # upstream server response at claim time.
+        title="$(printf '%s' "${CURRENT_TASK_TITLE:-}" | tr -d '\n')"
+        source_path="$(printf '%s' "${CURRENT_TASK_SOURCE:-}" | tr -d '\n')"
         cycle_count=0
         latest_review_path=""
         addendum_path=""
