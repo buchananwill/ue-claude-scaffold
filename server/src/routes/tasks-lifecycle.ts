@@ -61,6 +61,12 @@ type FailureReason = typeof FAILURE_REASONS[number];
 const BUILD_STATUSES = ['clean', 'dirty', 'failed'] as const;
 type BuildStatus = typeof BUILD_STATUSES[number];
 
+// Identifier conventions match agent/project naming (see branch-naming.ts).
+const REVIEWER_ROLE_RE = /^[A-Za-z0-9_-]+$/;
+const REVIEWER_ROLE_MAX = 64;
+const COMMIT_SHA_MAX = 128;
+const LATEST_REVIEW_PATH_MAX = 4096;
+
 interface TransitionPayload {
   // engineering → built
   buildStatus?: string;
@@ -103,7 +109,7 @@ const FSM: Record<string, ReadonlySet<RequestedTarget>> = {
   claimed: new Set(['engineering', 'failed'] as const),
   engineering: new Set(['built', 'arbitrating', 'failed'] as const),
   built: new Set(['reviewing', 'failed'] as const),
-  reviewing: new Set(['reviewing', 'complete', 'revising', 'arbitrating', 'failed'] as const),
+  reviewing: new Set(['reviewing', 'complete', 'revising', 'failed'] as const),
   revising: new Set(['engineering', 'failed'] as const),
   arbitrating: new Set(['complete', 'revising', 'failed'] as const),
   complete: new Set([]),
@@ -352,6 +358,11 @@ async function handleTransition(
     if (typeof payload.commitSha !== 'string' || payload.commitSha.length === 0) {
       return reply.badRequest('payload.commitSha is required (non-empty string)');
     }
+    if (payload.commitSha.length > COMMIT_SHA_MAX) {
+      return reply.badRequest(
+        `payload.commitSha exceeds maximum length of ${COMMIT_SHA_MAX} characters`,
+      );
+    }
     update.buildStatus = payload.buildStatus;
     update.commitSha = payload.commitSha;
   } else if (target === 'reviewing') {
@@ -366,6 +377,16 @@ async function handleTransition(
       if (typeof role !== 'string' || role.length === 0) {
         return reply.badRequest('payload.reviewerRole is required on reviewing→reviewing');
       }
+      if (role.length > REVIEWER_ROLE_MAX) {
+        return reply.badRequest(
+          `payload.reviewerRole exceeds maximum length of ${REVIEWER_ROLE_MAX} characters`,
+        );
+      }
+      if (!REVIEWER_ROLE_RE.test(role)) {
+        return reply.badRequest(
+          'payload.reviewerRole must match /^[A-Za-z0-9_-]+$/',
+        );
+      }
       if (!isVerdict(verdict)) {
         return reply.badRequest(
           `payload.verdict is required and must be one of: ${VERDICTS.join(', ')}`,
@@ -378,18 +399,43 @@ async function handleTransition(
   } else if (target === 'revising') {
     // Two legal sources per the FSM:
     //   reviewing → revising   : engineer reads accumulated verdicts and
-    //                            decides to revise. Subject to the cycle-budget
-    //                            reroute below — if it would push the count
-    //                            past the budget, we silently flip the write
-    //                            to `arbitrating` with the cycle-budget trigger.
+    //                            decides to revise. Requires latestReviewPath
+    //                            (workspace pointer) and at least one
+    //                            request_changes verdict already on file.
+    //                            Subject to the cycle-budget reroute below —
+    //                            if it would push the count past the budget,
+    //                            we silently flip the write to `arbitrating`
+    //                            with the cycle-budget trigger and DO NOT
+    //                            write latestReviewPath.
     //   arbitrating → revising : Phase 7 arbitrator ruled 'rule'; clear the
     //                            pending trigger and move on.
-    if (typeof payload.latestReviewPath !== 'string' || payload.latestReviewPath.length === 0) {
-      return reply.badRequest('payload.latestReviewPath is required on transitions to revising');
-    }
-    update.latestReviewPath = payload.latestReviewPath;
-
+    //                            latestReviewPath is OPTIONAL on this path —
+    //                            the arbitrator's ruling is the workspace
+    //                            pointer of record. If supplied, validate and
+    //                            write it; otherwise leave it untouched.
     if (current === 'reviewing') {
+      // Validate latestReviewPath up front: it is required on this edge,
+      // even though we may end up not writing it (cycle-budget reroute path).
+      if (typeof payload.latestReviewPath !== 'string' || payload.latestReviewPath.length === 0) {
+        return reply.badRequest('payload.latestReviewPath is required on reviewing→revising');
+      }
+      if (payload.latestReviewPath.length > LATEST_REVIEW_PATH_MAX) {
+        return reply.badRequest(
+          `payload.latestReviewPath exceeds maximum length of ${LATEST_REVIEW_PATH_MAX} characters`,
+        );
+      }
+
+      // Verdict gate: at least one reviewer must have posted request_changes.
+      // The transition table edge is "any verdict == request_changes". An
+      // engineer-initiated revising with only approvals/out_of_scope on file
+      // would be incoherent.
+      const verdicts = readVerdicts(row.reviewerVerdicts);
+      if (!anyRequestChanges(verdicts)) {
+        return reply.conflict(
+          `cannot transition '${current}' → '${target}': no reviewer has posted request_changes`,
+        );
+      }
+
       // Cycle-budget guard: increment first, then check.
       const nextCount = (row.reviewCycleCount ?? 0) + 1;
       if (nextCount > (row.reviewCycleBudget ?? 5)) {
@@ -404,18 +450,34 @@ async function handleTransition(
         update.status = 'arbitrating';
         update.arbitrationPendingTrigger = trigger;
         update.reviewCycleCount = nextCount;
-        // Drop the latestReviewPath write — we are not entering revising.
-        delete update.latestReviewPath;
+        // Do not write latestReviewPath — we are not entering revising.
       } else {
+        update.latestReviewPath = payload.latestReviewPath;
         update.reviewCycleCount = nextCount;
       }
     } else if (current === 'arbitrating') {
+      // arbitrator ruled 'rule'; latestReviewPath optional.
+      if (payload.latestReviewPath !== undefined) {
+        if (typeof payload.latestReviewPath !== 'string' || payload.latestReviewPath.length === 0) {
+          return reply.badRequest(
+            'payload.latestReviewPath, if supplied, must be a non-empty string',
+          );
+        }
+        if (payload.latestReviewPath.length > LATEST_REVIEW_PATH_MAX) {
+          return reply.badRequest(
+            `payload.latestReviewPath exceeds maximum length of ${LATEST_REVIEW_PATH_MAX} characters`,
+          );
+        }
+        update.latestReviewPath = payload.latestReviewPath;
+      }
       update.arbitrationPendingTrigger = null;
     }
   } else if (target === 'arbitrating') {
-    // Legal sources: engineering (reviewer_contradiction) and reviewing
-    // (review_cycle_budget_exhausted; usually reached via the revising-reroute
-    // branch above, but allowed directly for clients that bypass it).
+    // Only legal client-driven source: engineering (reviewer_contradiction).
+    // The reviewing → arbitrating edge exists only as a server-side reroute
+    // inside the `target === 'revising'` branch above (cycle-budget exhausted),
+    // and never via a direct `to: 'arbitrating'` request — direct posting
+    // would bypass the central cycle-budget check.
     if (!isArbitrationTrigger(payload.trigger)) {
       return reply.badRequest(
         `payload.trigger is required and must be one of: ${ARBITRATION_TRIGGERS.join(', ')}`,
