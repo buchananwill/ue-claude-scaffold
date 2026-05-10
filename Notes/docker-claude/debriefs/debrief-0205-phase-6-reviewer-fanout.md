@@ -59,6 +59,83 @@ No build failures; no test failures. Container-side shell isn't unit-tested in t
 
 3. **`_run_role_session` builds and discards a generic prompt for fanout.** Pump-loop calls `_build_task_prompt` and passes it into `_run_claude` even on the fanout path. `_run_claude` then ignores the prompt entirely and dispatches to `_run_reviewer_fanout`. Wasted work but cheap (one `jq` invocation per cycle); not worth a special case in pump-loop given the dispatcher already special-cases engineer the same way.
 
+## Cycle 1 review fixes
+
+Parallel review of the initial Phase 6 commit produced:
+
+- **Correctness:** APPROVE with three NOTEs (N1, N2, N3).
+- **Safety:** REQUEST CHANGES with one BLOCKING (B1) + two NOTEs.
+
+This cycle addresses Safety B1, Correctness N1, and Correctness N3. Safety
+NOTE N1 (curl allowlist breadth) and Correctness N2 (cycle-dir naming
+divergence) are deferred to follow-up plans by orchestrator decision —
+neither is resolvable inside Phase 6's file ownership without touching
+Phase 7 / Phase 9 surface. Safety NOTE N2 was confirmatory only.
+
+### Safety B1 — Heredoc command injection in `_rfan_build_reviewer_prompt` (FIXED)
+
+`_rfan_build_reviewer_prompt` previously emitted the prompt via an expanding
+`<<EOF` heredoc and spliced three server-controlled strings — `task_title`,
+`source_path`, and `files_csv` — directly into it. `tr -d '\n'` on the jq
+extraction strips newlines but not `$(...)` or backticks, so a task whose
+title contained `$(cmd)` would have caused `cmd` to execute in the fanout
+parent process at heredoc-expansion time. Server-side task ingestion does
+not validate these fields for shell metacharacters, so any client that can
+POST a task (including engineer containers running with
+`--dangerously-skip-permissions`) could have driven arbitrary execution.
+
+Resolution: split the prompt into two emissions. The variable header is now
+built via `printf '%s'` (no shell parsing of values, only `%s` substitution),
+and the static body is emitted via a non-expanding `<<'PROMPT'` heredoc.
+The body's reader-facing `${SERVER_URL}`, `${REVIEWER_ROLE}`, `${TASK_ID}`,
+and `${REVIEW_CYCLE}` are now literal placeholders the reviewer reads from
+its header section — they no longer pass through any shell expansion site at
+function-call time.
+
+Verification (one-shot manual test, not committed): sourced the rewritten
+function with malicious title `BAD$(echo PWNED >&2)END`, source path
+`/tmp/plan$(echo SRC_PWNED >&2).md`, and files_csv containing
+`$(echo FILES_PWNED >&2)`. Confirmed: (a) all three literal strings appear
+verbatim in the function output, (b) zero PWNED/SRC_PWNED/FILES_PWNED markers
+on stderr — no `$(...)` was evaluated.
+
+Mechanical safety property now holds: every `${var}` expansion site inside
+`_rfan_build_reviewer_prompt` references a locally-validated source
+(task_id is `[0-9]+`-checked at line 252; role is `_is_safe_name`-checked at
+line 327; cycle is `[0-9]+`-checked at line 256 or set to 0). `task_title`,
+`source_path`, and `files_csv` only enter the prompt via `printf %s`.
+
+### Correctness N1 — Double retry-counter bump for unresolvable agent basename (FIXED)
+
+When `agent_basename` was empty or failed `_is_safe_name`, the pre-spawn
+branch bumped `retries[$role]` and then issued `continue`. The role was still
+present in `spawn_set`, so the post-wait loop at the bottom of the iteration
+bumped `retries[$role]` again — a persistently unresolvable role exhausted
+its budget after one full iteration instead of two retries.
+
+Resolution: removed the pre-spawn bump. The post-wait loop is now the single
+increment site. A persistently unresolvable role no longer triggers the
+budget guard prematurely; the bump cadence matches the design (1 attempt + 2
+retries = 3 iterations).
+
+### Correctness N3 — stderr from claude lands in the per-role `.md` file (FIXED)
+
+`_rfan_spawn_reviewer` previously routed claude's stderr to the same tmpfile
+as stdout (`> "$tmpfile" 2>&1`). The tmpfile is renamed to `<role>.md` and
+concatenated into `consolidated.md` — claude's diagnostic noise was bleeding
+into the human-readable consolidated review.
+
+Resolution: stderr now redirects to `${scratch_dir}/${role}.stderr` instead.
+The markdown output remains clean; diagnostic output is preserved for
+debugging.
+
+### Build & verify (cycle 1)
+
+- `bash -n container/lib/reviewer-fanout.sh`: pass.
+- Injection test (one-shot, see B1 section above): pass — `$(...)` payloads
+  never evaluate.
+- `cd server && npm run typecheck`: pass.
+
 ## Suggested Follow-ups
 
 - Add `Bash(curl:*)` to the reviewer allowlist OR add an MCP tool that proxies POST /reviews — required to make the reviewer flow actually function (see Risk 1).

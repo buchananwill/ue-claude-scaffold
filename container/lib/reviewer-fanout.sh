@@ -63,6 +63,14 @@ _rfan_fetch_cycle_runs() {
 # cycle, plan path, and changed-files list, plus the JSON-shadow API contract.
 # It is NOT shown other reviewers' findings or the consolidated file (Phase 6
 # step 6 — reviewers are blind to each other).
+#
+# SECURITY: server-derived strings (task_title, source_path, files_csv) are
+# NOT sanitized for shell metacharacters. They must therefore never enter a
+# shell expansion site. We emit the variable header via printf (only %s
+# substitution, no shell parsing of values) and emit the static body via a
+# NON-EXPANDING heredoc (`<<'PROMPT'`). The only locally-validated values
+# spliced via printf are task_id (numeric-checked at line 252), cycle
+# (numeric-checked at line 256), and role (_is_safe_name-checked at line 327).
 _rfan_build_reviewer_prompt() {
     local task_id="$1"
     local cycle="$2"
@@ -71,16 +79,23 @@ _rfan_build_reviewer_prompt() {
     local files_csv="$5"
     local task_title="$6"
 
-    cat <<EOF
-You are running as the **${role}** reviewer for task ${task_id}, review cycle ${cycle}.
+    local plan_display="${source_path:-<inline task — no plan file>}"
+    local files_display="${files_csv:-<use git diff origin/<branch>..HEAD --name-only>}"
 
-TASK_ID: ${task_id}
-TASK_TITLE: ${task_title}
-PLAN_PATH: ${source_path:-<inline task — no plan file>}
-REVIEWER_ROLE: ${role}
-REVIEW_CYCLE: ${cycle}
-CHANGED_FILES: ${files_csv:-<use git diff origin/${WORK_BRANCH}..HEAD --name-only>}
+    # Header: only %s splices, no shell parsing of server-derived values.
+    printf 'You are running as the **%s** reviewer for task %s, review cycle %s.\n\nTASK_ID: %s\nTASK_TITLE: %s\nPLAN_PATH: %s\nREVIEWER_ROLE: %s\nREVIEW_CYCLE: %s\nCHANGED_FILES: %s\n\n' \
+        "$role" "$task_id" "$cycle" \
+        "$task_id" "$task_title" "$plan_display" \
+        "$role" "$cycle" "$files_display"
 
+    # Body: non-expanding heredoc. ${SERVER_URL}, ${role}, ${task_id},
+    # ${cycle} below are LITERAL placeholders shown to the reviewer — the
+    # reviewer's curl hook (inject-agent-header.sh) supplies the real
+    # SERVER_URL at POST time, and the role/cycle/task_id are also visible to
+    # the reviewer in the header section above. Keeping them literal here
+    # ensures no server-controlled string can ever reach a shell expansion
+    # site at function-call time.
+    cat <<'PROMPT'
 ## What to review
 
 Read the plan (if PLAN_PATH is set) and the changed files. Apply your domain
@@ -92,7 +107,7 @@ findings; you cannot see them.
 ## Tool scope
 
 You have read-only tools: Read, Grep, Glob, and a narrow Bash allowlist
-(\`git diff\`, \`git log\`, \`wc\`, \`ls\`, \`curl\`). \`curl\` is permitted
+(`git diff`, `git log`, `wc`, `ls`, `curl`). `curl` is permitted
 solely so you can POST your final verdict to the coordination server (see
 "Final action — POST /reviews" below). You CANNOT Edit, Write, or run
 broad Bash. If you find yourself needing to edit a file, that is a finding
@@ -108,23 +123,26 @@ verdict / rawMarkdown / findings[]).
 
 Your LAST action before exiting is to POST your verdict and findings to:
 
-  POST \${SERVER_URL}/tasks/${task_id}/reviews
+  POST ${SERVER_URL}/tasks/${TASK_ID}/reviews
   Content-Type: application/json
   Body: {
-    "cycle": ${cycle},
-    "reviewerRole": "${role}",
+    "cycle": ${REVIEW_CYCLE},
+    "reviewerRole": "${REVIEWER_ROLE}",
     "verdict": "approve" | "request_changes" | "out_of_scope",
     "rawMarkdown": "<full markdown report verbatim>",
     "findings": [ ...structured findings... ]
   }
 
-The standard \`X-Agent-Name\` and \`X-Project-Id\` headers are injected by the
+(Use the TASK_ID, REVIEW_CYCLE, and REVIEWER_ROLE values from the header
+above when constructing the URL and body.)
+
+The standard `X-Agent-Name` and `X-Project-Id` headers are injected by the
 container's curl hook. Do NOT POST /transition — the reviewer-fanout owns that
 transition. Do NOT POST /reviews more than once for this (task, cycle, role)
 triple — the server returns 409 on duplicate posts.
 
 After your POST returns 200, exit cleanly.
-EOF
+PROMPT
 }
 
 # Run a single reviewer subprocess. Captures stdout to <role>.md.tmp; on a
@@ -159,6 +177,10 @@ _rfan_spawn_reviewer() {
     local agent_body
     agent_body=$(cat "$agent_md")
 
+    # stdout → tmpfile (becomes .md after rename); stderr → separate log file
+    # so claude's diagnostic noise does not contaminate the consolidated.md
+    # that humans and the engineer revise from.
+    local stderr_log="${scratch_dir}/${role}.stderr"
     set +e
     claude \
         --allowed-tools "Read,Grep,Glob,Bash(git diff:*,git log:*,wc:*,ls:*,curl:*)" \
@@ -166,7 +188,7 @@ _rfan_spawn_reviewer() {
         --append-system-prompt "$agent_body" \
         --output-format json \
         --mcp-config /home/claude/.claude/mcp.json \
-        > "$tmpfile" 2>&1
+        > "$tmpfile" 2> "$stderr_log"
     local rc=$?
     set -e
 
@@ -387,9 +409,10 @@ _run_reviewer_fanout() {
                 || agent_basename=""
             if [ -z "$agent_basename" ] || ! _is_safe_name "$agent_basename"; then
                 echo "ERROR: reviewer-fanout: invalid agent basename for role '${role}': '${agent_basename}'" >&2
-                # Force this role into a failed retry — bump retries so the
-                # next iteration trips the budget guard if still unresolvable.
-                retries[$role]=$(( ${retries[$role]} + 1 ))
+                # Skip spawn; the post-wait loop below is the single retry-
+                # increment site, so a persistently unresolvable role bumps
+                # exactly once per iteration. No pre-spawn bump here would
+                # cause a double-bump (N1).
                 continue
             fi
 
