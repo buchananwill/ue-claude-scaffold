@@ -787,12 +787,15 @@ describe('DELETE /agents task release (drizzle)', () => {
     assert.equal(after.claimedByAgentId, null);
   });
 
-  it('DELETE /agents/:name releases in_progress tasks to pending', async () => {
+  it('DELETE /agents/:name releases FSM mid-state tasks (engineering) to pending', async () => {
+    // Under the FSM, the legacy 'in_progress' status is gone; agent deletion
+    // must release tasks held in any FSM mid-state. 'engineering' represents
+    // the post-claim work state where a deletion would otherwise strand.
     const agentId = await registerAgent('agent-1');
-    const taskId = await createTask('in-progress-task', 'in_progress', agentId);
+    const taskId = await createTask('engineering-task', 'engineering', agentId);
 
     const before = await getTask(taskId);
-    assert.equal(before.status, 'in_progress');
+    assert.equal(before.status, 'engineering');
     assert.equal(before.claimedByAgentId, agentId);
 
     const del = await ctx.app.inject({

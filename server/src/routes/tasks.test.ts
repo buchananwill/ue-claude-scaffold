@@ -947,9 +947,25 @@ describe('tasks routes', () => {
       assert.ok(body.message.includes('cannot bulk-delete'));
     });
 
-    it('returns 409 for engineering status (protected FSM mid-state)', async () => {
-      const res = await ctx.app.inject({ method: 'DELETE', url: '/tasks?status=engineering', headers: { 'x-project-id': 'test' } });
-      assert.equal(res.statusCode, 409);
+    it('returns 409 for every FSM in-flight status (protected mid-states)', async () => {
+      // Cover every member of FSM_ACTIVE_STATUSES, not just one. The bulk-
+      // delete guard must refuse all six in-flight statuses; the loop guards
+      // against a future contributor adding a new mid-state to the schema
+      // CHECK without also adding it to the route guard.
+      const fsmInFlight = ['claimed', 'engineering', 'built', 'reviewing', 'revising', 'arbitrating'] as const;
+      for (const status of fsmInFlight) {
+        const res = await ctx.app.inject({
+          method: 'DELETE',
+          url: `/tasks?status=${status}`,
+          headers: { 'x-project-id': 'test' },
+        });
+        assert.equal(res.statusCode, 409, `DELETE ?status=${status} should return 409`);
+        const body = res.json();
+        assert.ok(
+          body.message.includes('cannot bulk-delete'),
+          `DELETE ?status=${status} body should mention bulk-delete refusal`,
+        );
+      }
     });
 
     it('scopes deletion to the requesting project', async () => {

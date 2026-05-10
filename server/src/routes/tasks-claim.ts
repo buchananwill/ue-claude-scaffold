@@ -202,7 +202,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
     return reply.conflict('task was claimed by another agent');
   });
 
-  // POST /tasks/:id/release — return a claimed/in_progress task to pending
+  // POST /tasks/:id/release — return a claimed or FSM mid-state task to pending
   fastify.post<{
     Params: { id: string };
   }>('/tasks/:id/release', async (request, reply) => {
@@ -211,7 +211,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
 
     const ok = await tasksLifecycleQ.release(db, request.projectId, id);
     if (!ok) {
-      return reply.conflict('task not in claimed or in_progress state');
+      return reply.conflict('task not in claimed or FSM mid-state (engineering/built/reviewing/revising/arbitrating)');
     }
     return { ok: true };
   });
@@ -232,7 +232,7 @@ const tasksClaimPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) =>
 
     const ok = await tasksLifecycleQ.updateProgress(db, request.projectId, id, progress);
     if (!ok) {
-      return reply.conflict('task not in claimed or in_progress state');
+      return reply.conflict('task not in claimed or FSM mid-state (engineering/built/reviewing/revising/arbitrating)');
     }
     return { ok: true };
   });

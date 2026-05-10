@@ -1,7 +1,8 @@
-import { eq, and, or, desc, asc, sql, count as countFn, inArray, isNull, type SQL } from 'drizzle-orm';
+import { eq, and, or, desc, asc, sql, count as countFn, inArray, notInArray, isNull, type SQL } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 import { validateAgentTypeOverride } from '../branch-naming.js';
+import { ACTIVE_STATUSES } from './query-helpers.js';
 
 /** Drizzle inferred row type for the tasks table. */
 export type TaskDbRow = typeof tasks.$inferSelect;
@@ -256,12 +257,16 @@ export async function deleteByStatus(db: DrizzleDb, status: string, projectId: s
 }
 
 export async function deleteById(db: DrizzleDb, id: number): Promise<boolean> {
+  // Refuse to delete tasks that are claimed or in any FSM mid-state. Mirrors
+  // the route-layer guard at routes/tasks.ts; the inner guard exists so
+  // direct callers of this helper (e.g. CLI-style consumers) cannot bypass
+  // the FSM contract. Single source of truth: ACTIVE_STATUSES.
   const rows = await db
     .delete(tasks)
     .where(
       and(
         eq(tasks.id, id),
-        sql`${tasks.status} NOT IN ('claimed', 'in_progress')`,
+        notInArray(tasks.status, [...ACTIVE_STATUSES]),
       ),
     )
     .returning();

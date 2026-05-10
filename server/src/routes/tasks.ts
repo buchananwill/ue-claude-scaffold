@@ -19,13 +19,8 @@ import {
 import tasksReplanPlugin, { runReplan } from './tasks-replan.js';
 import tasksClaimPlugin from './tasks-claim.js';
 import tasksLifecyclePlugin from './tasks-lifecycle.js';
+import { ACTIVE_STATUSES_SET } from '../queries/query-helpers.js';
 export { formatTask, toTaskRow, type TaskRow } from './tasks-types.js';
-
-/** Statuses representing in-flight work — refused by the legacy DELETE guards.
- *  Mirrors the FSM mid-states defined by the schema CHECK at tables.ts. */
-const FSM_ACTIVE_STATUSES: ReadonlySet<string> = new Set([
-  'claimed', 'engineering', 'built', 'reviewing', 'revising', 'arbitrating',
-]);
 
 /**
  * Parse a comma-separated query string into an array of non-empty strings.
@@ -644,7 +639,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     // cutover the live mid-flight statuses are claimed plus the engineer/
     // reviewer/arbitrator states; the legacy 'in_progress' value is gone from
     // VALID_TASK_STATUSES. Operators must release/transition first.
-    if (FSM_ACTIVE_STATUSES.has(task.status)) {
+    if (ACTIVE_STATUSES_SET.has(task.status)) {
       return reply.conflict('cannot delete a task that is claimed or in progress — release it first');
     }
     await tasksCore.deleteById(db, id);
@@ -662,7 +657,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if (!(tasksCore.VALID_TASK_STATUSES as readonly string[]).includes(status)) {
       return reply.badRequest(`Invalid status value: "${status.slice(0, 32)}". Valid statuses: ${tasksCore.VALID_TASK_STATUSES.join(', ')}`);
     }
-    if (FSM_ACTIVE_STATUSES.has(status)) {
+    if (ACTIVE_STATUSES_SET.has(status)) {
       return reply.conflict('cannot bulk-delete tasks that are claimed or in progress');
     }
     const db = getDb();

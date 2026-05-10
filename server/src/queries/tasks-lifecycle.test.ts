@@ -75,6 +75,34 @@ describe('tasks-lifecycle queries', () => {
     assert.equal(ok, false);
   });
 
+  it('should release a task in an FSM mid-state (engineering, reviewing)', async () => {
+    // Step 5 of the FSM cutover lets the abnormal-exit branch in run-claude.sh
+    // POST /tasks/:id/release to hand work back when a container dies. That
+    // path must succeed for tasks already past 'claimed' — otherwise an agent
+    // killed mid-engineering would strand the task.
+    for (const fsmStatus of ['engineering', 'reviewing'] as const) {
+      const task = await tasksCore.insert(db, { title: `Mid ${fsmStatus}`, projectId: 'default' });
+      await lifecycle.claim(db, 'default', task.id, agent1Id);
+      await db.execute(sql`UPDATE tasks SET status = ${fsmStatus} WHERE id = ${task.id}`);
+      const ok = await lifecycle.release(db, 'default', task.id);
+      assert.equal(ok, true, `release should succeed for status=${fsmStatus}`);
+      const updated = await tasksCore.getById(db, task.id);
+      assert.equal(updated?.status, 'pending');
+      assert.equal(updated?.claimedByAgentId, null);
+    }
+  });
+
+  it('should not release a task in a terminal status (complete, failed, integrated)', async () => {
+    for (const terminal of ['complete', 'failed', 'integrated'] as const) {
+      const task = await tasksCore.insert(db, { title: `Terminal ${terminal}`, projectId: 'default' });
+      await db.execute(sql`UPDATE tasks SET status = ${terminal} WHERE id = ${task.id}`);
+      const ok = await lifecycle.release(db, 'default', task.id);
+      assert.equal(ok, false, `release should no-op for status=${terminal}`);
+      const after = await tasksCore.getById(db, task.id);
+      assert.equal(after?.status, terminal);
+    }
+  });
+
   it('should reset a complete task', async () => {
     const task = await tasksCore.insert(db, { title: 'Resettable', projectId: 'default' });
     await lifecycle.claim(db, 'default', task.id, agent1Id);

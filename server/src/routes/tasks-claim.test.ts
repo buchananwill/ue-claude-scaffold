@@ -95,10 +95,12 @@ describe('tasks-claim routes', () => {
     assert.equal(update.statusCode, 200);
     assert.deepEqual(update.json(), { ok: true });
 
-    // Verify progress log contains the update text
+    // Verify progress log contains the update text. Under the FSM, /update
+    // appends to progress_log without changing status (status transitions are
+    // owned by role sessions); the task remains 'claimed' here.
     const get = await ctx.app.inject({ method: 'GET', url: `/tasks/${id}` });
     const task = get.json();
-    assert.equal(task.status, 'in_progress');
+    assert.equal(task.status, 'claimed');
     assert.ok(task.progressLog.includes('Step 1 done'));
   });
 

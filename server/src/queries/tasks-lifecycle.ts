@@ -18,10 +18,15 @@ export async function claim(db: DrizzleDb, projectId: string, id: number, agentI
 }
 
 export async function updateProgress(db: DrizzleDb, projectId: string, id: number, progress: string): Promise<boolean> {
+  // Append a timestamped line to progress_log without touching status.
+  // Pre-FSM this helper transitioned 'claimed' -> 'in_progress' as a side
+  // effect; under the FSM, role sessions own their own status transitions and
+  // the legacy 'in_progress' value is no longer in the schema CHECK. The WHERE
+  // clause restricts updates to tasks actively held by an agent (claimed or
+  // any FSM mid-state) so a no-op caller still sees the conflict response.
   const rows = await db
     .update(tasks)
     .set({
-      status: 'in_progress',
       progressLog: sql`COALESCE(${tasks.progressLog}, '') || now()::text || ': ' || ${progress} || chr(10)`,
     })
     .where(and(eq(tasks.id, id), eq(tasks.projectId, projectId), inArray(tasks.status, [...ACTIVE_STATUSES])))

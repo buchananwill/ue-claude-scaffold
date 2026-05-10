@@ -26,10 +26,11 @@ describe('coalesce queries', () => {
     pump2Id = p2.id;
     single1Id = s1.id;
 
-    // Seed tasks using agent UUIDs
+    // Seed tasks using agent UUIDs. Both 'claimed' and the FSM mid-state
+    // 'engineering' count as in-flight work — ACTIVE_STATUSES covers both.
     await db.insert(tasks).values([
       { title: 'Task A', status: 'claimed', claimedByAgentId: pump1Id, projectId: 'default', priority: 0, basePriority: 0 },
-      { title: 'Task B', status: 'in_progress', claimedByAgentId: pump1Id, projectId: 'default', priority: 0, basePriority: 0 },
+      { title: 'Task B', status: 'engineering', claimedByAgentId: pump1Id, projectId: 'default', priority: 0, basePriority: 0 },
       { title: 'Task C', status: 'pending', projectId: 'default', priority: 0, basePriority: 0 },
       { title: 'Task D', status: 'completed', projectId: 'default', priority: 0, basePriority: 0 },
     ]);
