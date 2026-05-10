@@ -197,11 +197,13 @@ _run_daisy_chain() {
             return 0
         fi
 
-        # Phase 4 leaves reviewer fan-out (Phase 6) and arbitrator (Phase 7)
-        # as stubs. The mapping is wired so the loop is structurally complete;
-        # a real session will not run for these roles until those phases land.
-        if [ "$role" = "reviewer-fanout" ] || [ "$role" = "arbitrator" ]; then
-            echo "Daisy-chain: role '${role}' is stubbed pending Phase 6/7. Halting loop for task ${task_id} (status='${status}')."
+        # Phase 6 wires the reviewer fan-out via _run_reviewer_fanout
+        # (sourced from container/lib/reviewer-fanout.sh by entrypoint.sh and
+        # dispatched from _run_claude on DAISY_CHAIN_ROLE=reviewer-fanout).
+        # Phase 7 will wire arbitrator the same way; until then it stays
+        # stubbed here so the loop halts cleanly on `arbitrating` status.
+        if [ "$role" = "arbitrator" ]; then
+            echo "Daisy-chain: role '${role}' is stubbed pending Phase 7. Halting loop for task ${task_id} (status='${status}')."
             rm -f "$roles_file"
             return 0
         fi

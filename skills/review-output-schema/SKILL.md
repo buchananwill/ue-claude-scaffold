@@ -1,6 +1,6 @@
 ---
 name: review-output-schema
-description: Use when a review agent must produce structured output. Defines the BLOCKING/WARNING/Summary/Verdict template and scoring rubric. Compose with review-process and a domain skill.
+description: Use when a review agent must produce structured output. Defines the BLOCKING/NOTE/Summary/Verdict template, the two-tier confidence rubric, and the JSON shadow block consumed by POST /tasks/:id/reviews. Compose with review-process and a domain skill.
 ---
 
 # Review Output Schema
@@ -17,33 +17,72 @@ Standard output format for all code reviewers. Domain-specific sections can be a
 
 ## BLOCKING
 
-### [B1] <Title> — `<file>:<line>` (confidence: <90-100>)
+### [B1] <Title> — `<file>:<line>` (confidence: <75-100>)
 **Category**: <domain-specific category>
 **Description**: <what's wrong>
 **Evidence**: <the specific code path or rule reference>
 **Fix**: <specific correction>
 
-## WARNING
+## NOTE
 
-### [W1] <Title> — `<file>:<line>` (confidence: <75-89>)
+### [N1] <Title> — `<file>:<line>` (confidence: <50-89>)
 **Category**: <category>
-**Description**: <what's concerning>
+**Description**: <what's worth aggregating across tasks, or what you're not confident enough to block on>
 **Evidence**: <code path or rule reference>
-**Fix**: <recommendation>
+**Fix**: <recommendation, optional>
 
 ## Summary
 - BLOCKING: N issues
-- WARNING: N issues
+- NOTE: N issues
 - Verdict: **APPROVE** / **REQUEST CHANGES**
 ```
 
 ## Rules
 
 - Every finding must include `file:line` and a rule or evidence reference.
-- Use sequential IDs: B1, B2... for BLOCKING; W1, W2... for WARNING.
-- Verdict is REQUEST CHANGES if any BLOCKING or WARNING exists.
-- Some domains add a NOTE tier (confidence 50-74, informational only). If present, NOTEs do not affect the verdict.
-- **All WARNINGs are treated as blocking by the orchestrator.** Only report issues you are confident about and can substantiate with specific code evidence. Do not pad with borderline nitpicks.
+- Use sequential IDs: B1, B2, ... for BLOCKING; N1, N2, ... for NOTE. Do not use W-prefixed IDs.
+- BLOCK any finding you're at least 75% confident about and that requires action this cycle. NOTE any finding below 75% confidence OR any finding that does not require action but is worth aggregating across tasks. Do not report findings below 50% confidence.
+- Verdict is REQUEST CHANGES if any BLOCKING exists; APPROVE otherwise. NOTEs do not affect the verdict.
+- NOTE is a first-class tier alongside BLOCKING; every reviewer may emit NOTEs and they never affect the verdict.
+- NOTE entries are observability-only and never block a cycle. BLOCKING entries always block. Do not pad either tier with borderline calls; if you cannot substantiate the finding with specific code evidence, omit it.
+
+## JSON shadow block
+
+In addition to the markdown report above, every reviewer MUST emit a JSON shadow block following the markdown. The markdown report is the source of truth for human readers; the JSON is a structured shadow for Supabase queries and is consumed by `POST /tasks/:id/reviews`.
+
+After the markdown report, emit a single fenced JSON code block (```json … ```) with this exact shape:
+
+```json
+{
+  "cycle": <int>,
+  "reviewerRole": "<role>",
+  "verdict": "approve" | "request_changes" | "out_of_scope",
+  "rawMarkdown": "<full markdown report verbatim>",
+  "findings": [
+    {
+      "severity": "BLOCKING" | "NOTE",
+      "ordinal": <int>,
+      "filePath": "<path>" | null,
+      "line": <int> | null,
+      "title": "<title>",
+      "description": "<text>",
+      "evidence": "<text>" | null,
+      "fix": "<text>" | null
+    }
+  ]
+}
+```
+
+Rules for the JSON shadow:
+
+- `cycle` is the integer review cycle supplied in your prompt.
+- `reviewerRole` is the role slug supplied in your prompt (e.g. `safety`, `correctness`, `decomp`) — not the agent definition basename.
+- `verdict` is `request_changes` if any BLOCKING exists, otherwise `approve`. Use `out_of_scope` only when your domain has nothing to assess on this task (e.g. a docs-only change reviewed by a safety reviewer).
+- `rawMarkdown` is the full markdown report above, verbatim, as a single JSON string.
+- `findings[]` mirrors every BLOCKING and NOTE entry from the markdown, with `ordinal` matching the sequential ID number (B1 → 1, N1 → 1, etc.). Severity values are upper-case `BLOCKING` / `NOTE`.
+- Parse your own markdown into the JSON before emitting it. Do not abbreviate or paraphrase; the markdown stays authoritative.
+
+The reviewer's last action before exiting is to POST this JSON payload to `${SERVER_URL}/tasks/<task-id>/reviews`. Do NOT post `/transition` — the reviewer-fanout owns that transition.
 
 ## Spec-Fidelity Finding Resolution
 

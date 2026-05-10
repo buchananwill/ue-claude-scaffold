@@ -16,6 +16,9 @@ source "${SCRIPT_DIR}/lib/workspace-setup.sh"
 # shellcheck source=lib/finalize.sh
 source "${SCRIPT_DIR}/lib/finalize.sh"
 
+# shellcheck source=lib/reviewer-fanout.sh
+source "${SCRIPT_DIR}/lib/reviewer-fanout.sh"
+
 # shellcheck source=lib/run-claude.sh
 source "${SCRIPT_DIR}/lib/run-claude.sh"
 

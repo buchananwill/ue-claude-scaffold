@@ -486,6 +486,29 @@ _run_claude() {
         full_prompt="$(_build_engineer_prompt "$CURRENT_TASK_ID")"
     fi
 
+    # Reviewer-fanout dispatch (Phase 6). When the daisy-chain invokes us with
+    # DAISY_CHAIN_ROLE=reviewer-fanout, we hand off to _run_reviewer_fanout
+    # entirely — the fanout itself spawns scoped per-reviewer claude
+    # subprocesses, so this path does NOT fall through to the normal
+    # `claude … --dangerously-skip-permissions` invocation below. The fanout
+    # owns all FSM transitions (built→reviewing entry, per-role verdict
+    # merges, and the final complete/revising transition).
+    if [ "${DAISY_CHAIN_ROLE:-}" = "reviewer-fanout" ] && [ -n "${CURRENT_TASK_ID:-}" ]; then
+        echo "Daisy-chain: dispatching reviewer-fanout for task ${CURRENT_TASK_ID} (cycle ${DAISY_CHAIN_CYCLE:-?})"
+        _post_status "working"
+        local fanout_rc
+        set +e
+        _run_reviewer_fanout "$CURRENT_TASK_ID" "${DAISY_CHAIN_CYCLE:-0}"
+        fanout_rc=$?
+        set -e
+        if [ "$fanout_rc" -eq 0 ]; then
+            _post_status "done"
+        else
+            _post_status "error"
+        fi
+        return "$fanout_rc"
+    fi
+
     # Clear any stale stop sentinel from a prior container run
     rm -f /tmp/.stop_requested
 
