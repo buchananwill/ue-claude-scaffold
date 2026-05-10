@@ -92,7 +92,9 @@ findings; you cannot see them.
 ## Tool scope
 
 You have read-only tools: Read, Grep, Glob, and a narrow Bash allowlist
-(\`git diff\`, \`git log\`, \`wc\`, \`ls\`). You CANNOT Edit, Write, or run
+(\`git diff\`, \`git log\`, \`wc\`, \`ls\`, \`curl\`). \`curl\` is permitted
+solely so you can POST your final verdict to the coordination server (see
+"Final action — POST /reviews" below). You CANNOT Edit, Write, or run
 broad Bash. If you find yourself needing to edit a file, that is a finding
 to report — not an action you can take.
 
@@ -159,7 +161,7 @@ _rfan_spawn_reviewer() {
 
     set +e
     claude \
-        --allowed-tools "Read,Grep,Glob,Bash(git diff:*,git log:*,wc:*,ls:*)" \
+        --allowed-tools "Read,Grep,Glob,Bash(git diff:*,git log:*,wc:*,ls:*,curl:*)" \
         -p "$prompt" \
         --append-system-prompt "$agent_body" \
         --output-format json \
