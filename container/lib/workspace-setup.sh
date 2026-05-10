@@ -27,8 +27,14 @@ _setup_workspace() {
     git config core.autocrlf false
 
     # ── Exclude Claude Code runtime metadata from git ───────────────────────
+    # Also exclude the .scratch/ trees written by the daisy-chain loop
+    # (reviewer transcripts, arbitrator addenda) so they never accidentally
+    # land in the agent's commits. We rewrite the file each setup so reruns
+    # never accumulate duplicate lines.
     cat > .git/info/exclude <<'EXCL'
 .claude/
+.scratch/reviews/
+.scratch/arbitrations/
 EXCL
 }
 

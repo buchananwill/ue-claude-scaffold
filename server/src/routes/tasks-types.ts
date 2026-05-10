@@ -16,6 +16,13 @@ export interface TaskRow {
   basePriority: number;
   progressLog: string | null;
   agentTypeOverride: string | null;
+  /**
+   * Per-task FSM agent-role wiring override. jsonb in the schema; the route
+   * layer ships it to the container so pump-loop.sh's _resolve_roles_for_task
+   * can shallow-merge it over the project default. `null` means "use the
+   * project default wholesale".
+   */
+  agentRolesOverride: unknown;
   createdAt: string | Date | null;
 }
 
@@ -38,6 +45,7 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     basePriority: row.basePriority,
     progressLog: row.progressLog,
     agentTypeOverride: row.agentTypeOverride,
+    agentRolesOverride: row.agentRolesOverride ?? null,
     createdAt: row.createdAt,
   };
 }
@@ -78,6 +86,7 @@ export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[],
     completedBy,
     progressLog: row.progressLog,
     agentTypeOverride: row.agentTypeOverride,
+    agentRolesOverride: row.agentRolesOverride ?? null,
     createdAt: row.createdAt,
     projectId: row.projectId,
   };

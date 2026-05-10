@@ -186,6 +186,14 @@ _register_agent() {
     export SESSION_TOKEN
     AGENT_ID=$(echo "$REG_BODY" | jq -r '.id // empty')
     export AGENT_ID
+    # Defence-in-depth: AGENT_ID is interpolated into URLs (see
+    # pump-loop.sh:_resume_in_flight_tasks). The server would reject malformed
+    # input, but we mirror the UUID-shape check that run-claude.sh applies to
+    # CURRENT_SESSION_ID so the failure is loud and local rather than silent.
+    if [[ ! "${AGENT_ID:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+        echo "ERROR: AGENT_ID returned by server is not a valid UUID: ${AGENT_ID:-<empty>}" >&2
+        exit 1
+    fi
     echo "Registered with coordination server (token: ${SESSION_TOKEN:0:8}..., id: ${AGENT_ID:0:8}...)"
 }
 

@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { sql } from 'drizzle-orm';
 import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import tasksPlugin from './tasks.js';
@@ -128,11 +129,38 @@ describe('tasks routes', () => {
     assert.equal(body1.tasks.length, 2);
     assert.equal(body1.total, 2);
 
-    // Multi-status: pending,completed (only pending exist)
-    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,completed', headers: { 'x-project-id': 'default' } });
+    // Multi-status: pending,complete (only pending exist)
+    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,complete', headers: { 'x-project-id': 'default' } });
     const body2 = res2.json() as TaskListBody;
     assert.equal(body2.tasks.length, 2);
     assert.equal(body2.total, 2);
+  });
+
+  it('GET /tasks accepts every FSM mid-state status (engineering, built, reviewing, revising, arbitrating)', async () => {
+    // Phase 4 startup probe queries `?status=engineering,built,reviewing,
+    // revising,arbitrating&claimedByAgentId=...` to recover in-flight tasks.
+    // VALID_TASK_STATUSES must list every FSM mid-state or the probe 400s
+    // and the agent silently fails to resume work.
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/tasks?status=engineering,built,reviewing,revising,arbitrating',
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as TaskListBody;
+    assert.equal(body.total, 0); // no tasks in those states; just verifying acceptance
+    assert.deepEqual(body.tasks, []);
+  });
+
+  it('GET /tasks rejects an unknown status with 400', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/tasks?status=bogus_state',
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 400);
+    const body = res.json();
+    assert.ok(body.message.includes('Invalid status value'));
   });
 
   it('GET /tasks with priority filter', async () => {
@@ -386,6 +414,53 @@ describe('tasks routes', () => {
   it('GET /tasks/:id returns 404 for missing task', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/tasks/99999', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 404);
+  });
+
+  it('GET /tasks/:id round-trips agentRolesOverride from the jsonb column', async () => {
+    // No POST/PATCH path exposes agentRolesOverride yet (it is seeded via
+    // tasks-ingest in production). Insert via raw SQL and verify the route
+    // surfaces the value verbatim — pump-loop.sh's _resolve_roles_for_task
+    // depends on .agentRolesOverride being present on the task JSON.
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Task with role override' },
+      headers: { 'x-project-id': 'default' },
+    });
+    const id = post.json().id;
+
+    const override = { reviewers: { decomp: 'custom-decomp-ue' } };
+    await ctx.db.execute(
+      sql`UPDATE tasks SET agent_roles_override = ${JSON.stringify(override)}::jsonb WHERE id = ${id}`,
+    );
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/tasks/${id}`,
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 200);
+    const task = res.json();
+    assert.deepEqual(task.agentRolesOverride, override);
+  });
+
+  it('GET /tasks/:id returns null agentRolesOverride when the column is null', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Task without role override' },
+      headers: { 'x-project-id': 'default' },
+    });
+    const id = post.json().id;
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/tasks/${id}`,
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 200);
+    const task = res.json();
+    assert.equal(task.agentRolesOverride, null);
   });
 
   // ── PATCH /tasks/:id ─────────────────────────────────────────────────
@@ -872,8 +947,8 @@ describe('tasks routes', () => {
       assert.ok(body.message.includes('cannot bulk-delete'));
     });
 
-    it('returns 409 for in_progress status (protected)', async () => {
-      const res = await ctx.app.inject({ method: 'DELETE', url: '/tasks?status=in_progress', headers: { 'x-project-id': 'test' } });
+    it('returns 409 for engineering status (protected FSM mid-state)', async () => {
+      const res = await ctx.app.inject({ method: 'DELETE', url: '/tasks?status=engineering', headers: { 'x-project-id': 'test' } });
       assert.equal(res.statusCode, 409);
     });
 

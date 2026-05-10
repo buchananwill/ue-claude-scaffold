@@ -62,8 +62,15 @@ export type SortColumn = keyof typeof SORTABLE_COLUMNS;
 
 export const VALID_SORT_COLUMNS: readonly string[] = Object.keys(SORTABLE_COLUMNS);
 
-/** Known task status values accepted by the API. */
-export const VALID_TASK_STATUSES = ['pending', 'claimed', 'in_progress', 'completed', 'failed', 'integrated', 'cycle'] as const;
+/** Known task status values accepted by the API. Mirrors the schema CHECK
+ *  constraint at server/src/schema/tables.ts (tasks_status_check) exactly:
+ *  pending, claimed, the FSM mid-states (engineering, built, reviewing,
+ *  revising, arbitrating), the FSM terminals (complete, failed, integrated),
+ *  and the legacy 'cycle' sentinel still used by the dependency-graph code. */
+export const VALID_TASK_STATUSES = [
+  'pending', 'claimed', 'engineering', 'built', 'reviewing', 'revising',
+  'arbitrating', 'complete', 'failed', 'integrated', 'cycle',
+] as const;
 
 export interface ListOpts {
   status?: string[];
