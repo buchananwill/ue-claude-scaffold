@@ -18,6 +18,13 @@
 # Map FSM status to the role that should run next. Echoes the role name on
 # stdout for non-terminal states; echoes empty on terminal states. The caller
 # decides whether to exit the daisy-chain loop based on emptiness.
+#
+# FSM-status alignment: the non-terminal cases below mirror the active-state
+# set in server/src/queries/query-helpers.ts (ACTIVE_STATUSES), which is the
+# TS source of truth for "task is actively held". When the schema CHECK
+# (server/src/schema/tables.ts:tasks_status_check) gains or drops a non-
+# terminal status, both this case and ACTIVE_STATUSES must be updated in
+# lockstep — there is no compile-time link between them.
 _role_for_status() {
     case "$1" in
         claimed|revising)              echo "engineer" ;;
@@ -28,6 +35,59 @@ _role_for_status() {
         complete|failed|integrated)    echo "" ;;
         *)                             echo "" ;;
     esac
+}
+
+# Post a `failed` transition with reason `role_session_no_op` and the given
+# detail string. Used by the daisy-chain (when a session exits cleanly without
+# transitioning) and by _pump_iteration (when an agent-type fetch fails before
+# any session can run). The single seam keeps the failure-reason vocabulary
+# consistent and gives Phase 8's failure-reason aggregator one place to wire
+# structured logging. Errors are intentionally swallowed: a failed POST here
+# leaves the task in its current state, which the next iteration will detect.
+_post_role_session_no_op() {
+    local task_id="$1"
+    local detail="$2"
+    local payload
+    payload=$(jq -n \
+        --arg reason "role_session_no_op" \
+        --arg detail "$detail" \
+        '{to: "failed", payload: {failureReason: $reason, failureDetail: $detail}}')
+    _curl_server -s -X POST "${SERVER_URL}/tasks/${task_id}/transition" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        --max-time 10 >/dev/null 2>&1 || true
+}
+
+# Fetch the agent's current status from the coordination server. Echoes the
+# parsed status string on stdout, or "unknown" on any error. Both the claim-
+# loop stop-detection probe and the post-iteration pause/stop probe go through
+# this helper so the curl/jq plumbing lives in one place.
+_get_agent_status() {
+    _curl_server -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
+        --max-time 5 2>/dev/null | jq -r '.status // "unknown"' \
+        || echo "unknown"
+}
+
+# Block while the agent's status is `paused`, polling every WORKER_POLL_INTERVAL
+# seconds. Returns 0 when the agent resumes (status changes to anything other
+# than `paused`). Returns 1 if the agent transitions to `stopping` while we
+# wait — the caller must propagate that as a shutdown.
+#
+# This is the post-iteration variant: it expects to be entered only when the
+# caller has already observed status == `paused`. The claim-loop probe in
+# _poll_and_claim_task does not block on `paused` (it surfaces the status to
+# the per-iteration sleep instead), so it stays inline.
+_wait_while_paused() {
+    local agent_status="paused"
+    while [ "$agent_status" = "paused" ]; do
+        sleep "$WORKER_POLL_INTERVAL"
+        agent_status=$(_get_agent_status)
+        if [ "$agent_status" = "stopping" ]; then
+            return 1
+        fi
+    done
+    echo "Agent resumed (status: ${agent_status})."
+    return 0
 }
 
 # Resolve effective agent-roles for the current task by shallow-merging
@@ -166,15 +226,8 @@ _run_daisy_chain() {
 
         if [ "$sess_exit" -eq 0 ] && [ "$post_status" = "$last_status" ]; then
             echo "*** role_session_no_op: role '${role}' returned without transitioning task ${task_id} (cycle ${cycle}). ***"
-            local fail_payload
-            fail_payload=$(jq -n \
-                --arg reason "role_session_no_op" \
-                --arg detail "role session for ${role} returned without posting transition (cycle ${cycle})" \
-                '{to: "failed", payload: {failureReason: $reason, failureDetail: $detail}}')
-            _curl_server -s -X POST "${SERVER_URL}/tasks/${task_id}/transition" \
-                -H "Content-Type: application/json" \
-                -d "$fail_payload" \
-                --max-time 10 >/dev/null 2>&1 || true
+            _post_role_session_no_op "$task_id" \
+                "role session for ${role} returned without posting transition (cycle ${cycle})"
             rm -f "$roles_file"
             return 1
         fi
@@ -201,6 +254,13 @@ _resume_in_flight_tasks() {
         return 0
     fi
 
+    # Probe set: ACTIVE_STATUSES from server/src/queries/query-helpers.ts minus
+    # `claimed`. A freshly-claimed task has not yet had any role session run,
+    # so it has no in-progress work to "resume" — the normal claim path in
+    # _poll_and_claim_task is responsible for picking it up via daisy-chain on
+    # the next iteration. Listing `claimed` here would race with that path and
+    # double-process the row. When ACTIVE_STATUSES grows or shrinks in TS, this
+    # list must be updated in lockstep (see also _role_for_status above).
     local active_statuses="engineering,built,reviewing,revising,arbitrating"
     local resp
     resp=$(_curl_server -sf "${SERVER_URL}/tasks?status=${active_statuses}&claimedByAgentId=${AGENT_ID}&limit=50" \
@@ -269,9 +329,11 @@ _poll_and_claim_task() {
     while [ $attempt -lt $max_attempts ]; do
         attempt=$((attempt + 1))
 
-        # Stop detection
+        # Stop detection. Note: this probe only acts on `stopping`, not
+        # `paused` — pausing during the claim-poll is naturally absorbed by
+        # the per-iteration sleep below, so blocking here would be redundant.
         local agent_st
-        agent_st=$(_curl_server -sf "${SERVER_URL}/agents/${AGENT_NAME}" --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || agent_st="unknown"
+        agent_st=$(_get_agent_status)
         if [ "$agent_st" = "stopping" ]; then
             echo "Stop signal received during task poll — shutting down."
             ABNORMAL_SHUTDOWN="stop_requested"
@@ -376,16 +438,9 @@ _pump_iteration() {
         echo "Task has agent type override: ${CURRENT_TASK_AGENT_TYPE}"
         if ! _ensure_agent_type "$CURRENT_TASK_AGENT_TYPE"; then
             local fail_id="$CURRENT_TASK_ID"
-            local fail_payload
-            fail_payload=$(jq -n \
-                --arg reason "role_session_no_op" \
-                --arg detail "agent-type-fetch-failed:${CURRENT_TASK_AGENT_TYPE}" \
-                '{to: "failed", payload: {failureReason: $reason, failureDetail: $detail}}')
             echo "ERROR: Could not fetch agent definition '${CURRENT_TASK_AGENT_TYPE}'. Failing task #${fail_id}." >&2
-            _curl_server -s -X POST "${SERVER_URL}/tasks/${fail_id}/transition" \
-                -H "Content-Type: application/json" \
-                -d "$fail_payload" \
-                --max-time 10 >/dev/null 2>&1 || true
+            _post_role_session_no_op "$fail_id" \
+                "agent-type-fetch-failed:${CURRENT_TASK_AGENT_TYPE}"
             _reset_task_vars
             return
         fi
@@ -425,8 +480,7 @@ _pump_iteration() {
 
     # Check if agent has been stopped or paused
     local agent_status
-    agent_status=$(_curl_server -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
-        --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || agent_status="unknown"
+    agent_status=$(_get_agent_status)
     if [ "$agent_status" = "stopping" ]; then
         echo "Agent deregistered — shutting down."
         PUMP_STATUS="stop"
@@ -435,20 +489,11 @@ _pump_iteration() {
 
     if [ "$agent_status" = "paused" ]; then
         echo "Agent is paused. Waiting for resume..."
-        while true; do
-            sleep "$WORKER_POLL_INTERVAL"
-            agent_status=$(_curl_server -sf "${SERVER_URL}/agents/${AGENT_NAME}" \
-                --max-time 5 2>/dev/null | jq -r '.status // "unknown"') || agent_status="unknown"
-            if [ "$agent_status" = "stopping" ]; then
-                echo "Agent deregistered — shutting down."
-                PUMP_STATUS="stop"
-                return
-            fi
-            if [ "$agent_status" != "paused" ]; then
-                echo "Agent resumed (status: ${agent_status})."
-                break
-            fi
-        done
+        if ! _wait_while_paused; then
+            echo "Agent deregistered — shutting down."
+            PUMP_STATUS="stop"
+            return
+        fi
     fi
 
     echo ""
