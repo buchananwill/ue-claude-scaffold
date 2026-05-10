@@ -71,7 +71,13 @@ _get_agent_status() {
 # Block while the agent's status is `paused`, polling every WORKER_POLL_INTERVAL
 # seconds. Returns 0 when the agent resumes (status changes to anything other
 # than `paused`). Returns 1 if the agent transitions to `stopping` while we
-# wait — the caller must propagate that as a shutdown.
+# wait, or if /tmp/.stop_requested appears — the caller must propagate that as
+# a shutdown.
+#
+# The /tmp/.stop_requested check covers SIGTERM-style shutdowns that bypass the
+# server-side pause→stop status transition (run-claude.sh writes that sentinel
+# in its stop hook). Without it, a direct SIGTERM during pause would be ignored
+# for up to one WORKER_POLL_INTERVAL (default 30s) while sleep blocks.
 #
 # This is the post-iteration variant: it expects to be entered only when the
 # caller has already observed status == `paused`. The claim-loop probe in
@@ -80,7 +86,10 @@ _get_agent_status() {
 _wait_while_paused() {
     local agent_status="paused"
     while [ "$agent_status" = "paused" ]; do
-        sleep "$WORKER_POLL_INTERVAL"
+        if [ -f /tmp/.stop_requested ]; then
+            return 1
+        fi
+        sleep "${WORKER_POLL_INTERVAL:-30}"
         agent_status=$(_get_agent_status)
         if [ "$agent_status" = "stopping" ]; then
             return 1
@@ -352,7 +361,12 @@ _poll_and_claim_task() {
 
         if [ "$http_status" != "200" ]; then
             echo "claim-next request failed (HTTP ${http_status})"
-            sleep "$WORKER_POLL_INTERVAL"
+            if [ -f /tmp/.stop_requested ]; then
+                echo "Stop signal received during claim-poll — shutting down."
+                ABNORMAL_SHUTDOWN="stop_requested"
+                exit 0
+            fi
+            sleep "${WORKER_POLL_INTERVAL:-30}"
             continue
         fi
 
@@ -398,7 +412,12 @@ _poll_and_claim_task() {
         blocked=$(echo "$body" | jq -r '.blocked // 0')
         _post_status "idle"
         echo "No claimable tasks (${pending} pending, ${blocked} blocked by file ownership). Waiting ${WORKER_POLL_INTERVAL}s... (${attempt}/${max_attempts})"
-        sleep "$WORKER_POLL_INTERVAL"
+        if [ -f /tmp/.stop_requested ]; then
+            echo "Stop signal received during claim-poll — shutting down."
+            ABNORMAL_SHUTDOWN="stop_requested"
+            exit 0
+        fi
+        sleep "${WORKER_POLL_INTERVAL:-30}"
     done
 
     echo "ERROR: No claimable tasks found after ${max_attempts} attempts"
