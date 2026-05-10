@@ -66,6 +66,7 @@ const REVIEWER_ROLE_RE = /^[A-Za-z0-9_-]+$/;
 const REVIEWER_ROLE_MAX = 64;
 const COMMIT_SHA_MAX = 128;
 const LATEST_REVIEW_PATH_MAX = 4096;
+const FAILURE_DETAIL_MAX = 4096;
 
 interface TransitionPayload {
   // engineering → built
@@ -340,6 +341,11 @@ async function handleTransition(
     if (payload.failureDetail !== undefined) {
       if (typeof payload.failureDetail !== 'string') {
         return reply.badRequest('payload.failureDetail must be a string');
+      }
+      if (payload.failureDetail.length > FAILURE_DETAIL_MAX) {
+        return reply.badRequest(
+          `payload.failureDetail exceeds maximum length of ${FAILURE_DETAIL_MAX} characters`,
+        );
       }
       update.failureDetail = payload.failureDetail;
     }

@@ -741,6 +741,21 @@ describe('tasks-lifecycle routes', () => {
     assert.equal(res.statusCode, 400);
   });
 
+  it('any → failed returns 400 when failureDetail exceeds length cap', async () => {
+    const id = await createTask();
+    await claim(id);
+    await transition(id, { to: 'engineering' });
+
+    const res = await transition(id, {
+      to: 'failed',
+      payload: {
+        failureReason: 'engineer_build_failure',
+        failureDetail: 'a'.repeat(4097),
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
   // ── 13. legacy endpoints removed ──────────────────────────────────────
 
   it('POST /tasks/:id/complete returns 404 (endpoint removed)', async () => {
