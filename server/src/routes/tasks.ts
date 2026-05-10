@@ -50,11 +50,20 @@ export function parseCommaFilter(
   return { values: filtered };
 }
 
+/**
+ * Matches a v1-v8 UUID in canonical hyphenated form (case-insensitive). The
+ * scaffold issues v7 UUIDs for agents but accepts any RFC-4122 layout — the
+ * filter is identity-only, not version-specific.
+ */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 interface TaskListQueryInput {
   status?: string;
   agent?: string;
   priority?: string;
   agentTypeOverride?: string;
+  claimedByAgentId?: string;
   sort?: string;
   dir?: string;
   limit?: string;
@@ -66,6 +75,7 @@ interface ParsedTaskListQuery {
   agentArr: string[] | undefined;
   priorityArr: number[] | undefined;
   agentTypeOverrideArr: string[] | undefined;
+  claimedByAgentId: string | undefined;
   sortCol: tasksCore.SortColumn | undefined;
   dirVal: 'asc' | 'desc' | undefined;
   limitNum: number;
@@ -84,7 +94,7 @@ type ParseResult =
 export function parseTaskListQuery(
   query: TaskListQueryInput,
 ): ParseResult {
-  const { status, agent: agentFilter, priority: priorityFilter, agentTypeOverride, sort, dir, limit, offset } = query;
+  const { status, agent: agentFilter, priority: priorityFilter, agentTypeOverride, claimedByAgentId, sort, dir, limit, offset } = query;
   const limitNum = Math.min(Math.max(1, Number.isFinite(Number(limit)) ? Number(limit) : tasksCore.DEFAULT_LIST_LIMIT), 500);
   const offsetNum = Math.max(0, Number.isFinite(Number(offset)) ? Number(offset) : 0);
 
@@ -144,6 +154,13 @@ export function parseTaskListQuery(
     }
   }
 
+  // --- claimedByAgentId UUID filter (single-value, identity-only) ---
+  // Supports the container's startup probe: `?claimedByAgentId=<own-AGENT_ID>`
+  // recovers tasks claimed by *this* agent's UUID without name-slot fan-out.
+  if (claimedByAgentId !== undefined && !UUID_RE.test(claimedByAgentId)) {
+    return { ok: false, error: `Invalid claimedByAgentId: "${claimedByAgentId.slice(0, 64)}". Must be a UUID.` };
+  }
+
   // Validate sort column
   let sortCol: tasksCore.SortColumn | undefined;
   if (sort) {
@@ -165,7 +182,7 @@ export function parseTaskListQuery(
     dirVal = dir;
   }
 
-  return { ok: true, data: { statusArr, agentArr, priorityArr, agentTypeOverrideArr, sortCol, dirVal, limitNum, offsetNum } };
+  return { ok: true, data: { statusArr, agentArr, priorityArr, agentTypeOverrideArr, claimedByAgentId, sortCol, dirVal, limitNum, offsetNum } };
 }
 
 const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
@@ -443,6 +460,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       agent?: string;
       priority?: string;
       agentTypeOverride?: string;
+      claimedByAgentId?: string;
       sort?: string;
       dir?: string;
       limit?: string;
@@ -453,7 +471,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
 
     const parsed = parseTaskListQuery(request.query);
     if (!parsed.ok) return reply.badRequest(parsed.error);
-    const { statusArr, agentArr, priorityArr, agentTypeOverrideArr, sortCol, dirVal, limitNum, offsetNum } = parsed.data;
+    const { statusArr, agentArr, priorityArr, agentTypeOverrideArr, claimedByAgentId, sortCol, dirVal, limitNum, offsetNum } = parsed.data;
 
     const db = getDb();
     const filterOpts = {
@@ -461,6 +479,7 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       agent: agentArr,
       priority: priorityArr,
       agentTypeOverride: agentTypeOverrideArr,
+      claimedByAgentId,
       projectId,
     };
     const rows = await tasksCore.list(db, { ...filterOpts, limit: limitNum, offset: offsetNum, sort: sortCol, dir: dirVal });

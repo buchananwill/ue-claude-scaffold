@@ -142,8 +142,26 @@ _run_claude() {
     local full_prompt="$1"
     local mode="$2"
 
-    # Use per-task agent type override when set, otherwise fall back to container default
-    local effective_agent_type="${CURRENT_TASK_AGENT_TYPE:-$AGENT_TYPE}"
+    # Daisy-chain role selection (Phase 4): when invoked from _run_role_session,
+    # DAISY_CHAIN_ROLE and DAISY_CHAIN_ROLES_FILE are set. We look up the
+    # agent-definition basename for the requested role from the resolved roles
+    # JSON. Falls back to the container default if the role is unmapped — the
+    # daisy-chain itself enforces that unmapped reviewer/arbitrator slots are
+    # stubbed out, so this fallback only fires for engineer in early phases.
+    local effective_agent_type=""
+    if [ -n "${DAISY_CHAIN_ROLE:-}" ] && [ -n "${DAISY_CHAIN_ROLES_FILE:-}" ] && [ -f "$DAISY_CHAIN_ROLES_FILE" ]; then
+        local role_agent
+        role_agent=$(jq -r --arg r "$DAISY_CHAIN_ROLE" '.[$r] // empty' "$DAISY_CHAIN_ROLES_FILE" 2>/dev/null) || role_agent=""
+        if [ -n "$role_agent" ] && _is_safe_name "$role_agent"; then
+            effective_agent_type="$role_agent"
+            echo "Daisy-chain: role '${DAISY_CHAIN_ROLE}' → agent '${effective_agent_type}'"
+        fi
+    fi
+
+    # Per-task agent type override beats default; daisy-chain role wins above both
+    if [ -z "$effective_agent_type" ]; then
+        effective_agent_type="${CURRENT_TASK_AGENT_TYPE:-$AGENT_TYPE}"
+    fi
 
     # Defence-in-depth: validate effective_agent_type against allowlist
     if [ -n "$effective_agent_type" ] && ! _is_safe_name "$effective_agent_type"; then
@@ -287,26 +305,13 @@ _run_claude() {
         _finalize_workspace
     fi
 
-    # Report task completion (task mode only)
-    if [ "$mode" = "task" ] && [ -n "${CURRENT_TASK_ID:-}" ]; then
-        if [ "$EXIT_CODE" -eq 0 ]; then
-            local complete_payload
-            complete_payload=$(jq -n --arg agent "$AGENT_NAME" --argjson exitCode 0 \
-                '{"result": {"agent": $agent, "exitCode": $exitCode}}')
-            _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/complete" \
-                -H "Content-Type: application/json" \
-                -d "$complete_payload" \
-                --max-time 10 >/dev/null 2>&1 || true
-        else
-            local fail_payload
-            fail_payload=$(jq -n --arg error "Claude exited with code ${EXIT_CODE}" \
-                '{"error": $error}')
-            _curl_server -s -X POST "${SERVER_URL}/tasks/${CURRENT_TASK_ID}/fail" \
-                -H "Content-Type: application/json" \
-                -d "$fail_payload" \
-                --max-time 10 >/dev/null 2>&1 || true
-        fi
-    fi
+    # Phase 4: the wrapper no longer auto-posts /tasks/:id/complete or /fail
+    # based on Claude's exit code. Under the durable-task FSM, transitions are
+    # owned exclusively by the role session itself (which posts /transition
+    # with the appropriate target). The daisy-chain in pump-loop.sh detects
+    # the role_session_no_op case (clean exit + unchanged status) and posts
+    # /transition with failureReason='role_session_no_op' from there.
+    # The /release post on the abnormal-exit branch above is unchanged.
 
     if [ "$EXIT_CODE" -eq 0 ]; then
         _post_status "done"

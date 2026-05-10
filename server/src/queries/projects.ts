@@ -4,6 +4,19 @@ import type { DrizzleDb } from '../drizzle-instance.js';
 import { isValidProjectId } from '../branch-naming.js';
 
 
+/**
+ * Per-project FSM role wiring. Maps role names (engineer, arbitrator, plus a
+ * nested `reviewers` map keyed by reviewer slot) to compiled-agent basenames.
+ * Persisted as jsonb on `projects.agent_roles`; validated at config-load and
+ * task-ingest, not in the schema. Read-only for now — the dashboard and the
+ * container daisy-chain consume this; no API endpoint mutates it yet.
+ */
+export type AgentRoleMap = {
+  engineer?: string;
+  arbitrator?: string;
+  reviewers?: Record<string, string>;
+} & Record<string, unknown>;
+
 export interface ProjectRow {
   id: string;
   name: string;
@@ -11,6 +24,7 @@ export interface ProjectRow {
   seedBranch: string | null;
   buildTimeoutMs: number | null;
   testTimeoutMs: number | null;
+  agentRoles: AgentRoleMap;
   createdAt: Date | null;
 }
 

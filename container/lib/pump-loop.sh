@@ -1,54 +1,265 @@
 #!/bin/bash
 # container/lib/pump-loop.sh — Task polling, claiming, and pump iteration.
 # Sourced by entrypoint.sh; do not execute directly.
+#
+# Phase 4 of the durable-task FSM rework replaces the per-task body of
+# `_pump_iteration` with a state-driven daisy-chain. After a task is claimed,
+# we read `task.status`, pick a role from the FSM, run that role as a top-level
+# `claude -p` session, re-read the task to pick up any transition the session
+# posted, and repeat until the task reaches a terminal state.
+#
+# The legacy noncomplete-circuit-breaker (and its CONSECUTIVE_NONCOMPLETE
+# counter) is gone: under the new design, terminal transitions are exclusively
+# authored by living, signed-in role sessions, so a zombie auth-dead container
+# can no longer cycle through tasks marking them `failed`. Auth-dead containers
+# route to `/release` (not `/fail`) and trip the preserved CONSECUTIVE_ABNORMAL
+# breaker after two consecutive abnormal exits.
 
-# Increment the consecutive-non-complete counter and remember the last few task
-# IDs so the circuit-breaker message names what was happening when it tripped.
-_bump_consecutive_noncomplete() {
-    local task_id="$1"
-    CONSECUTIVE_NONCOMPLETE=$((CONSECUTIVE_NONCOMPLETE + 1))
-    if [ -n "$task_id" ]; then
-        RECENT_NONCOMPLETE_TASK_IDS+=("$task_id")
-        # Keep only the last 3 entries
-        if [ "${#RECENT_NONCOMPLETE_TASK_IDS[@]}" -gt 3 ]; then
-            RECENT_NONCOMPLETE_TASK_IDS=("${RECENT_NONCOMPLETE_TASK_IDS[@]:${#RECENT_NONCOMPLETE_TASK_IDS[@]}-3}")
-        fi
-    fi
+# Map FSM status to the role that should run next. Echoes the role name on
+# stdout for non-terminal states; echoes empty on terminal states. The caller
+# decides whether to exit the daisy-chain loop based on emptiness.
+_role_for_status() {
+    case "$1" in
+        claimed|revising)              echo "engineer" ;;
+        engineering)                   echo "engineer" ;;
+        built)                         echo "reviewer-fanout" ;;
+        reviewing)                     echo "reviewer-fanout" ;;
+        arbitrating)                   echo "arbitrator" ;;
+        complete|failed|integrated)    echo "" ;;
+        *)                             echo "" ;;
+    esac
 }
 
-# Trip the non-complete circuit breaker: post a visible message, set status to
-# error, set PUMP_STATUS to circuit_break. Caller must `return` after this.
-_trip_noncomplete_circuit_breaker() {
-    local recent_ids="${RECENT_NONCOMPLETE_TASK_IDS[*]:-(none)}"
-    echo "*** CIRCUIT BREAKER: ${CONSECUTIVE_NONCOMPLETE} consecutive non-completed task cycles. ***" >&2
-    echo "*** Recent task IDs: ${recent_ids} ***" >&2
-    echo "*** Presumed infrastructural failure. Stopping pump for operator review. ***" >&2
+# Resolve effective agent-roles for the current task by shallow-merging
+# project.agentRoles with task.agentRolesOverride. Top-level keys (engineer,
+# arbitrator, reviewers) replace wholesale — a `{"reviewers": {...}}` override
+# replaces the entire reviewers map; partial-reviewer overrides require
+# restating the whole reviewers object.
+#
+# Side effect: writes the resolved roles JSON to $1 (a tmpfile path).
+# The caller is responsible for removing it.
+_resolve_roles_for_task() {
+    local out_file="$1"
+    local task_json="$2"
 
-    # Post a message to the general channel so the dashboard surfaces this.
-    local body_text msg_payload
-    body_text="Container shutting down: ${CONSECUTIVE_NONCOMPLETE} consecutive non-completed task cycles (limit ${CONSECUTIVE_NONCOMPLETE_LIMIT}). Recent task IDs: ${recent_ids}. Presumed infrastructural failure."
-    msg_payload=$(jq -n \
-        --arg agent "$AGENT_NAME" \
-        --arg body "$body_text" \
-        --argjson limit "$CONSECUTIVE_NONCOMPLETE_LIMIT" \
-        --argjson count "$CONSECUTIVE_NONCOMPLETE" \
-        '{
-            channel: "general",
-            type: "circuit_breaker",
-            payload: {
-                agent: $agent,
-                summary: $body,
-                consecutiveNonComplete: $count,
-                limit: $limit
-            }
-        }')
-    _curl_server -s -X POST "${SERVER_URL}/messages" \
-        -H "Content-Type: application/json" \
-        -d "$msg_payload" \
-        --max-time 5 >/dev/null 2>&1 || true
+    local proj_resp
+    proj_resp=$(_curl_server -sf "${SERVER_URL}/projects/${PROJECT_ID}" --max-time 10 2>/dev/null) || proj_resp=""
+    local proj_roles="{}"
+    if [ -n "$proj_resp" ]; then
+        proj_roles=$(echo "$proj_resp" | jq -c '.agentRoles // {}' 2>/dev/null) || proj_roles="{}"
+    fi
 
-    _post_status "error"
-    PUMP_STATUS="circuit_break"
+    local task_override
+    task_override=$(echo "$task_json" | jq -c '.agentRolesOverride // {}' 2>/dev/null) || task_override="{}"
+
+    # Shallow merge: override keys replace project keys wholesale (jq's `*`
+    # operator on objects merges recursively, but a top-level `+` replaces).
+    jq -nc \
+        --argjson base "$proj_roles" \
+        --argjson over "$task_override" \
+        '$base + $over' > "$out_file" 2>/dev/null || echo '{}' > "$out_file"
+}
+
+# Run a single role session: invoke claude -p and capture output. Returns the
+# claude exit code. The session is responsible for posting its own FSM
+# transition; this wrapper only invokes the binary and writes a per-cycle log
+# under .scratch/reviews/<task-id>/cycle-<N>/.
+_run_role_session() {
+    local role="$1"
+    local task_id="$2"
+    local cycle="$3"
+    local roles_file="$4"
+
+    local scratch_dir="/workspace/.scratch/reviews/${task_id}/cycle-${cycle}"
+    mkdir -p "$scratch_dir"
+
+    local logfile="${scratch_dir}/${role}.log"
+    echo "── Daisy-chain: role=${role} task=${task_id} cycle=${cycle} ──"
+
+    # Build the per-role prompt. Phases 5/6/7 will replace this with role-
+    # specific prompt construction; for now we reuse the standard task prompt
+    # and let `run-claude.sh` pick the agent definition from the resolved roles
+    # map via DAISY_CHAIN_ROLE / DAISY_CHAIN_ROLES_FILE.
+    local prompt
+    prompt="$(_build_task_prompt)"
+
+    DAISY_CHAIN_ROLE="$role" \
+    DAISY_CHAIN_ROLES_FILE="$roles_file" \
+    DAISY_CHAIN_CYCLE="$cycle" \
+    DAISY_CHAIN_LOG="$logfile" \
+    _run_claude "$prompt" "task"
+    return $?
+}
+
+# Drive a single claimed task through the FSM until terminal. Reads task
+# status, picks a role, runs the session, re-reads, repeats. If a session
+# exits cleanly but the task status is unchanged, post `failed` with
+# `role_session_no_op`.
+_run_daisy_chain() {
+    local task_id="$1"
+    local cycle=0
+    local last_status=""
+    local roles_file
+    roles_file=$(mktemp)
+
+    # Resolve effective agent-roles once per task (cached for the loop).
+    # Re-read task fresh so the override (if any) is the latest committed.
+    local initial_task
+    initial_task=$(_curl_server -sf "${SERVER_URL}/tasks/${task_id}" --max-time 10 2>/dev/null) || initial_task=""
+    _resolve_roles_for_task "$roles_file" "$initial_task"
+
+    while true; do
+        cycle=$((cycle + 1))
+
+        # Re-read the task each iteration to pick up FSM transitions posted
+        # by the previous session.
+        local task_json status
+        task_json=$(_curl_server -sf "${SERVER_URL}/tasks/${task_id}" --max-time 10 2>/dev/null) || task_json=""
+        if [ -z "$task_json" ]; then
+            echo "ERROR: could not re-read task ${task_id}; aborting daisy-chain." >&2
+            rm -f "$roles_file"
+            return 1
+        fi
+        status=$(echo "$task_json" | jq -r '.status // empty')
+
+        local role
+        role=$(_role_for_status "$status")
+        if [ -z "$role" ]; then
+            echo "Task ${task_id} reached terminal status '${status}'; daisy-chain complete."
+            rm -f "$roles_file"
+            return 0
+        fi
+
+        # Phase 4 leaves reviewer fan-out (Phase 6) and arbitrator (Phase 7)
+        # as stubs. The mapping is wired so the loop is structurally complete;
+        # a real session will not run for these roles until those phases land.
+        if [ "$role" = "reviewer-fanout" ] || [ "$role" = "arbitrator" ]; then
+            echo "Daisy-chain: role '${role}' is stubbed pending Phase 6/7. Halting loop for task ${task_id} (status='${status}')."
+            rm -f "$roles_file"
+            return 0
+        fi
+
+        echo "Daisy-chain cycle ${cycle}: status='${status}' → role='${role}'"
+        last_status="$status"
+
+        local sess_exit
+        set +e
+        _run_role_session "$role" "$task_id" "$cycle" "$roles_file"
+        sess_exit=$?
+        set -e
+
+        # Abnormal exit: the session wrapper has already posted /release and
+        # set ABNORMAL_SHUTDOWN. Bail out — the pump loop's outer breaker
+        # handles consecutive abnormals.
+        if [ -n "$ABNORMAL_SHUTDOWN" ]; then
+            echo "Daisy-chain: abnormal exit detected; surrendering task ${task_id}."
+            rm -f "$roles_file"
+            return 1
+        fi
+
+        # Re-read status: if the session exited cleanly but did not transition,
+        # post role_session_no_op → failed. This is the only path that can
+        # take a task to `failed` from the wrapper now.
+        local post_json post_status
+        post_json=$(_curl_server -sf "${SERVER_URL}/tasks/${task_id}" --max-time 10 2>/dev/null) || post_json=""
+        post_status=$(echo "$post_json" | jq -r '.status // empty')
+
+        if [ "$sess_exit" -eq 0 ] && [ "$post_status" = "$last_status" ]; then
+            echo "*** role_session_no_op: role '${role}' returned without transitioning task ${task_id} (cycle ${cycle}). ***"
+            local fail_payload
+            fail_payload=$(jq -n \
+                --arg reason "role_session_no_op" \
+                --arg detail "role session for ${role} returned without posting transition (cycle ${cycle})" \
+                '{to: "failed", payload: {failureReason: $reason, failureDetail: $detail}}')
+            _curl_server -s -X POST "${SERVER_URL}/tasks/${task_id}/transition" \
+                -H "Content-Type: application/json" \
+                -d "$fail_payload" \
+                --max-time 10 >/dev/null 2>&1 || true
+            rm -f "$roles_file"
+            return 1
+        fi
+
+        # If the role session exited non-zero (other than abnormal, which is
+        # handled above), bail. The session itself should have transitioned
+        # the task to a meaningful state; if not, the next iteration will
+        # detect role_session_no_op or read a terminal status.
+        if [ "$sess_exit" -ne 0 ]; then
+            echo "Daisy-chain: role '${role}' exited ${sess_exit}; halting loop for task ${task_id}."
+            rm -f "$roles_file"
+            return "$sess_exit"
+        fi
+    done
+}
+
+# Resume any tasks already mid-cycle for *this* agent UUID. Used at container
+# startup so OAuth expiries / host reboots do not strand work. We filter by
+# AGENT_ID (UUID, identity), not AGENT_NAME (slot label) — names are reusable
+# UI labels and another container could be re-using the slot.
+_resume_in_flight_tasks() {
+    if [ -z "${AGENT_ID:-}" ]; then
+        echo "Startup probe: AGENT_ID not set; skipping resume."
+        return 0
+    fi
+
+    local active_statuses="engineering,built,reviewing,revising,arbitrating"
+    local resp
+    resp=$(_curl_server -sf "${SERVER_URL}/tasks?status=${active_statuses}&claimedByAgentId=${AGENT_ID}&limit=50" \
+        --max-time 10 2>/dev/null) || resp=""
+    if [ -z "$resp" ]; then
+        echo "Startup probe: no in-flight tasks (or server unreachable)."
+        return 0
+    fi
+
+    local count
+    count=$(echo "$resp" | jq -r '.total // 0' 2>/dev/null) || count=0
+    if [ "$count" = "0" ]; then
+        echo "Startup probe: no in-flight tasks for agent ${AGENT_ID:0:8}..."
+        return 0
+    fi
+
+    echo "Startup probe: ${count} in-flight task(s) found for agent ${AGENT_ID:0:8}...; resuming daisy-chain."
+
+    local ids
+    ids=$(echo "$resp" | jq -r '.tasks[].id' 2>/dev/null) || ids=""
+    local id
+    for id in $ids; do
+        if [[ ! "$id" =~ ^[0-9]+$ ]]; then
+            echo "Startup probe: skipping malformed id '${id}'." >&2
+            continue
+        fi
+        echo "Startup probe: resuming task #${id}"
+        # Hydrate CURRENT_TASK_* from the row so _build_task_prompt has a
+        # complete record. We don't re-claim — the row is already claimed.
+        local row
+        row=$(echo "$resp" | jq -c --argjson tid "$id" '.tasks[] | select(.id == $tid)')
+        CURRENT_TASK_ID="$id"
+        CURRENT_TASK_TITLE=$(echo "$row" | jq -r '.title // "Untitled"')
+        CURRENT_TASK_DESC=$(echo "$row" | jq -r '.description // ""')
+        CURRENT_TASK_AC=$(echo "$row" | jq -r '.acceptanceCriteria // "None specified"')
+        CURRENT_TASK_SOURCE=$(echo "$row" | jq -r '.sourcePath // ""')
+        CURRENT_TASK_FILES=$(echo "$row" | jq -r '(.files // []) | join(", ")')
+        CURRENT_TASK_AGENT_TYPE=$(echo "$row" | jq -r '.agentTypeOverride // ""')
+        if [ -n "$CURRENT_TASK_AGENT_TYPE" ] && ! _is_safe_name "$CURRENT_TASK_AGENT_TYPE"; then
+            echo "Startup probe: agentTypeOverride contains invalid characters; clearing." >&2
+            CURRENT_TASK_AGENT_TYPE=""
+        fi
+        if [ -n "${CURRENT_TASK_AGENT_TYPE:-}" ]; then
+            _ensure_agent_type "$CURRENT_TASK_AGENT_TYPE" || true
+        fi
+
+        ABNORMAL_SHUTDOWN=""
+        ABNORMAL_REASON=""
+        set +e
+        _run_daisy_chain "$id"
+        set -e
+
+        # Per-task branch reset between resumes
+        cd /workspace
+        git fetch origin 2>/dev/null || true
+        git reset --hard "origin/${WORK_BRANCH}" 2>/dev/null || git reset --hard HEAD
+        git clean -fd
+        _reset_task_vars
+    done
 }
 
 _poll_and_claim_task() {
@@ -135,8 +346,15 @@ _poll_and_claim_task() {
 
 # _pump_iteration runs one task cycle and returns a status enum.
 # Returns via PUMP_STATUS variable: continue | stop | circuit_break
+#
+# Phase 4: the per-task body is now a state-driven daisy-chain. Surrounding
+# scaffolding — abnormal-exit detection, CONSECUTIVE_ABNORMAL breaker, agent-
+# status pause/resume polling, agent-type-override fetch, per-task branch
+# reset — is preserved. The legacy CONSECUTIVE_NONCOMPLETE breaker is dropped
+# because terminal state is now exclusively authored by living role sessions:
+# auth-dead containers route to /release (back to pending), not /fail.
 _pump_iteration() {
-    local TASK_EXIT
+    local CHAIN_EXIT
     PUMP_STATUS="continue"
     ABNORMAL_SHUTDOWN=""  # Reset per-task
     ABNORMAL_REASON=""    # Keep in sync with ABNORMAL_SHUTDOWN
@@ -150,40 +368,34 @@ _pump_iteration() {
     fi
 
     # If the task has an agent type override, fetch and cache the definition.
-    # Fetch failure marks the task as 'failed' (not 'released') so it does not
-    # immediately re-claim itself in a tight loop. The operator can /reset it
-    # once the agent definition is fixed.
+    # Fetch failure transitions the task to 'failed' with role_session_no_op
+    # via the daisy-chain's no-op handler (the wrapper can no longer post
+    # /fail directly). For now we still emit a status post and skip the loop
+    # so the task does not re-claim in a tight loop.
     if [ -n "${CURRENT_TASK_AGENT_TYPE:-}" ]; then
         echo "Task has agent type override: ${CURRENT_TASK_AGENT_TYPE}"
         if ! _ensure_agent_type "$CURRENT_TASK_AGENT_TYPE"; then
             local fail_id="$CURRENT_TASK_ID"
             local fail_payload
-            fail_payload=$(jq -n --arg err "agent-type-fetch-failed:${CURRENT_TASK_AGENT_TYPE}" '{"error": $err}')
+            fail_payload=$(jq -n \
+                --arg reason "role_session_no_op" \
+                --arg detail "agent-type-fetch-failed:${CURRENT_TASK_AGENT_TYPE}" \
+                '{to: "failed", payload: {failureReason: $reason, failureDetail: $detail}}')
             echo "ERROR: Could not fetch agent definition '${CURRENT_TASK_AGENT_TYPE}'. Failing task #${fail_id}." >&2
-            _curl_server -s -X POST "${SERVER_URL}/tasks/${fail_id}/fail" \
+            _curl_server -s -X POST "${SERVER_URL}/tasks/${fail_id}/transition" \
                 -H "Content-Type: application/json" \
                 -d "$fail_payload" \
                 --max-time 10 >/dev/null 2>&1 || true
-            _bump_consecutive_noncomplete "$fail_id"
-            if [ "$CONSECUTIVE_NONCOMPLETE" -ge "$CONSECUTIVE_NONCOMPLETE_LIMIT" ]; then
-                _trip_noncomplete_circuit_breaker
-                _reset_task_vars
-                return
-            fi
             _reset_task_vars
             return
         fi
     fi
 
-    local task_prompt
-    task_prompt="$(_build_task_prompt)"
-
-    # Capture the task ID before _run_claude clears it on completion/failure.
     local task_id_before="$CURRENT_TASK_ID"
 
     set +e
-    _run_claude "$task_prompt" "task"
-    TASK_EXIT=$?
+    _run_daisy_chain "$task_id_before"
+    CHAIN_EXIT=$?
     set -e
 
     # ── Circuit breaker: stop the pump after consecutive abnormal exits ──
@@ -200,23 +412,6 @@ _pump_iteration() {
         echo "Will retry once more before triggering circuit breaker."
     else
         CONSECUTIVE_ABNORMAL=0
-    fi
-
-    # ── Hard failsafe: too many non-completed cycles in a row ──
-    # Completed = exit 0 AND no abnormal shutdown. Anything else (fail, release,
-    # abnormal) increments the non-complete streak. Sustained streaks indicate
-    # an infrastructural failure (e.g. unfetchable agent type, broken plan)
-    # that no amount of retrying will resolve.
-    if [ "$TASK_EXIT" -eq 0 ] && [ -z "$ABNORMAL_SHUTDOWN" ]; then
-        CONSECUTIVE_NONCOMPLETE=0
-        RECENT_NONCOMPLETE_TASK_IDS=()
-    else
-        _bump_consecutive_noncomplete "$task_id_before"
-        if [ "$CONSECUTIVE_NONCOMPLETE" -ge "$CONSECUTIVE_NONCOMPLETE_LIMIT" ]; then
-            _trip_noncomplete_circuit_breaker
-            _reset_task_vars
-            return
-        fi
     fi
 
     # Clean workspace for next task
@@ -257,6 +452,6 @@ _pump_iteration() {
     fi
 
     echo ""
-    echo "=== Task complete (exit $TASK_EXIT). Polling for next task... ==="
+    echo "=== Daisy-chain complete (chain exit $CHAIN_EXIT). Polling for next task... ==="
     echo ""
 }

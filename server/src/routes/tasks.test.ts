@@ -281,6 +281,76 @@ describe('tasks routes', () => {
     assert.ok(res.json().message.includes('Too many'));
   });
 
+  // ── claimedByAgentId UUID filter ──────────────────────────────────────
+  // Used by the container's startup probe to recover only tasks claimed by
+  // *this* agent's UUID (identity), not by anyone occupying the same name slot.
+
+  it('GET /tasks?claimedByAgentId=<valid-uuid> returns only tasks claimed by that agent', async () => {
+    // Two tasks, only one is claimed by agent-1.
+    const r1 = await ctx.app.inject({
+      method: 'POST', url: '/tasks',
+      payload: { title: 'Mine to claim' },
+      headers: { 'x-project-id': 'default' },
+    });
+    await ctx.app.inject({
+      method: 'POST', url: '/tasks',
+      payload: { title: 'Left unclaimed' },
+      headers: { 'x-project-id': 'default' },
+    });
+    const claimedId = r1.json().id;
+
+    await ctx.app.inject({
+      method: 'POST', url: `/tasks/${claimedId}/claim`,
+      headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
+    });
+
+    // Look up agent-1's UUID via the agent record
+    const agentRes = await ctx.app.inject({
+      method: 'GET', url: '/agents/agent-1',
+      headers: { 'x-project-id': 'default' },
+    });
+    const agentId = agentRes.json().id as string;
+    assert.match(agentId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
+    const res = await ctx.app.inject({
+      method: 'GET', url: `/tasks?claimedByAgentId=${agentId}`,
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as TaskListBody;
+    assert.equal(body.total, 1);
+    assert.equal(body.tasks.length, 1);
+    assert.equal(body.tasks[0].id, claimedId);
+    assert.equal(body.tasks[0].claimedBy, agentId);
+  });
+
+  it('GET /tasks?claimedByAgentId=<malformed> returns 400', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET', url: '/tasks?claimedByAgentId=not-a-uuid',
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('claimedByAgentId'));
+  });
+
+  it('GET /tasks?claimedByAgentId=<unknown-uuid> returns empty list', async () => {
+    await ctx.app.inject({
+      method: 'POST', url: '/tasks',
+      payload: { title: 'Anything' },
+      headers: { 'x-project-id': 'default' },
+    });
+    // A well-formed UUID that no agent has been issued.
+    const phantomUuid = '00000000-0000-4000-8000-000000000000';
+    const res = await ctx.app.inject({
+      method: 'GET', url: `/tasks?claimedByAgentId=${phantomUuid}`,
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as TaskListBody;
+    assert.equal(body.total, 0);
+    assert.equal(body.tasks.length, 0);
+  });
+
   it('GET /tasks filtered total matches filtered count, not global count', async () => {
     await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 }, headers: { 'x-project-id': 'default' }});
     await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 }, headers: { 'x-project-id': 'default' }});

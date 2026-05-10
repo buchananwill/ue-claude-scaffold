@@ -70,6 +70,13 @@ export interface ListOpts {
   agent?: string[];
   priority?: number[];
   agentTypeOverride?: string[];
+  /**
+   * Filter by `tasks.claimed_by_agent_id` (an agent UUID, not a name slot).
+   * Agent UUIDs are stable identity; names are reusable UI labels — the
+   * container's startup probe uses this to recover only tasks claimed by
+   * *this* agent's UUID, not by anyone who happens to share the name slot.
+   */
+  claimedByAgentId?: string;
   projectId?: string;
   limit?: number;
   offset?: number;
@@ -109,6 +116,7 @@ function buildFilterConditions(opts: {
   agent?: string[];
   priority?: number[];
   agentTypeOverride?: string[];
+  claimedByAgentId?: string;
   projectId?: string;
 }): SQL[] {
   const conditions: SQL[] = [];
@@ -125,6 +133,9 @@ function buildFilterConditions(opts: {
   }
   if (opts.agentTypeOverride && opts.agentTypeOverride.length > 0) {
     conditions.push(buildNullableSentinelFilter(tasks.agentTypeOverride, opts.agentTypeOverride, '__default__'));
+  }
+  if (opts.claimedByAgentId) {
+    conditions.push(eq(tasks.claimedByAgentId, opts.claimedByAgentId));
   }
   if (opts.priority && opts.priority.length > 0) {
     if (opts.priority.length === 1) {
@@ -175,6 +186,7 @@ export interface CountOpts {
   agent?: string[];
   priority?: number[];
   agentTypeOverride?: string[];
+  claimedByAgentId?: string;
   projectId?: string;
 }
 
