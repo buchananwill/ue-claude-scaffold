@@ -21,7 +21,8 @@ function requireProjectIdHeader(
   reply: FastifyReply,
 ): boolean {
   const raw = request.headers['x-project-id'];
-  if (raw === undefined || raw === '') {
+  const first = Array.isArray(raw) ? raw[0] : raw;
+  if (first === undefined || first === '') {
     reply.badRequest('X-Project-Id header is required');
     return false;
   }

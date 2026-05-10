@@ -33,19 +33,31 @@ const MAX_NOTE_PATTERNS_LIMIT = 50;
 const DEFAULT_SINCE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const SEVERITIES = ['BLOCKING', 'NOTE'] as const;
 type Severity = typeof SEVERITIES[number];
+const REVIEWER_ROLE_RE = /^[A-Za-z0-9_-]+$/;
+const REVIEWER_ROLE_MAX = 64;
+
+/**
+ * Sentinel for parseLimit failures. A return of `null` means "value supplied
+ * but invalid" (caller should reply 400); any number return is the parsed
+ * limit (clamped) or the default for a missing value.
+ */
+const LIMIT_INVALID = null;
 
 /**
  * Confirm that `X-Project-Id` was supplied. Empty / undefined → 400.
  * The format validation lives in the project-id plugin; we re-key off the raw
  * header here because the plugin's silent default-to-`'default'` would
- * otherwise hide a missing header.
+ * otherwise hide a missing header. Duplicate (array-form) headers still count
+ * as "supplied" iff the first element is non-empty — this matches the
+ * project-id plugin's behaviour of taking `[0]`.
  */
 function requireProjectIdHeader(
   request: FastifyRequest,
   reply: FastifyReply,
 ): boolean {
   const raw = request.headers['x-project-id'];
-  if (raw === undefined || raw === '') {
+  const first = Array.isArray(raw) ? raw[0] : raw;
+  if (first === undefined || first === '') {
     reply.badRequest('X-Project-Id header is required');
     return false;
   }
@@ -53,12 +65,22 @@ function requireProjectIdHeader(
 }
 
 /**
- * Parse and clamp `limit` and `offset` query params. Returns null on invalid
- * input (caller should already have replied with 400 if needed).
+ * Parse and clamp the `limit` query param.
+ *
+ * - Undefined or empty → return `def`.
+ * - Non-positive (`0`, negative) or non-numeric → return `LIMIT_INVALID` so
+ *   the caller can reply 400. Silently falling back to the default would mask
+ *   client bugs.
+ * - Positive finite numbers are floored and clamped to `max`.
  */
-function parseLimit(raw: string | undefined, def: number, max: number): number {
+function parseLimit(
+  raw: string | undefined,
+  def: number,
+  max: number,
+): number | typeof LIMIT_INVALID {
+  if (raw === undefined || raw === '') return def;
   const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return def;
+  if (!Number.isFinite(n) || n <= 0) return LIMIT_INVALID;
   return Math.min(Math.floor(n), max);
 }
 
@@ -99,23 +121,37 @@ const findingsPlugin: FastifyPluginAsync = async (fastify) => {
     const projectId = request.projectId;
     const q = request.query ?? {};
 
-    const severity: Severity =
-      q.severity === 'NOTE' ? 'NOTE'
-      : q.severity === 'BLOCKING' || q.severity === undefined ? 'BLOCKING'
-      : 'BLOCKING';
+    // Validate the supplied severity *before* narrowing it. Falling through
+    // with a default would silently drop bad client input.
     if (q.severity !== undefined && !(SEVERITIES as readonly string[]).includes(q.severity)) {
       return reply.badRequest(
         `severity must be one of: ${SEVERITIES.join(', ')}`,
       );
     }
+    const severity: Severity = q.severity === 'NOTE' ? 'NOTE' : 'BLOCKING';
 
     const since = parseSince(q.since);
     if (since === null) {
       return reply.badRequest('since must be an ISO 8601 date');
     }
 
-    const reviewer = (typeof q.reviewer === 'string' && q.reviewer.length > 0) ? q.reviewer : null;
+    let reviewer: string | null = null;
+    if (typeof q.reviewer === 'string' && q.reviewer.length > 0) {
+      if (q.reviewer.length > REVIEWER_ROLE_MAX) {
+        return reply.badRequest(
+          `reviewer exceeds maximum length of ${REVIEWER_ROLE_MAX}`,
+        );
+      }
+      if (!REVIEWER_ROLE_RE.test(q.reviewer)) {
+        return reply.badRequest('reviewer must match /^[A-Za-z0-9_-]+$/');
+      }
+      reviewer = q.reviewer;
+    }
+
     const limit = parseLimit(q.limit, DEFAULT_FINDINGS_LIMIT, MAX_FINDINGS_LIMIT);
+    if (limit === LIMIT_INVALID) {
+      return reply.badRequest('limit must be a positive integer');
+    }
     const offset = parseOffset(q.offset);
 
     const db = getDb();
@@ -188,6 +224,9 @@ const findingsPlugin: FastifyPluginAsync = async (fastify) => {
       return reply.badRequest('since must be an ISO 8601 date');
     }
     const limit = parseLimit(q.limit, DEFAULT_NOTE_PATTERNS_LIMIT, MAX_NOTE_PATTERNS_LIMIT);
+    if (limit === LIMIT_INVALID) {
+      return reply.badRequest('limit must be a positive integer');
+    }
 
     const db = getDb();
 

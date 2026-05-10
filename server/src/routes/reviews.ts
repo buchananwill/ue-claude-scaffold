@@ -25,6 +25,10 @@ type Severity = typeof SEVERITIES[number];
 const REVIEWER_ROLE_RE = /^[A-Za-z0-9_-]+$/;
 const REVIEWER_ROLE_MAX = 64;
 const TITLE_MAX = 1024;
+const RAW_MARKDOWN_MAX = 512_000;
+const DESCRIPTION_MAX = 32_768;
+const EVIDENCE_MAX = 32_768;
+const FIX_MAX = 32_768;
 
 interface FindingInput {
   severity: string;
@@ -86,6 +90,15 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
     Params: { id: string };
     Body: PostBody;
   }>('/tasks/:id/reviews', async (request, reply) => {
+    // X-Project-Id is mandatory on this endpoint. The project-id plugin
+    // silently substitutes 'default' on a missing header — re-key off the raw
+    // header so a missing header surfaces as 400 rather than silently scoping
+    // the request to the wrong project.
+    const rawHeader = request.headers['x-project-id'];
+    if (rawHeader === undefined || rawHeader === '') {
+      return reply.badRequest('X-Project-Id header is required');
+    }
+
     const taskId = Number(request.params.id);
     if (!Number.isInteger(taskId) || taskId <= 0) {
       return reply.badRequest('invalid task id');
@@ -115,6 +128,11 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
     }
     if (typeof body.rawMarkdown !== 'string') {
       return reply.badRequest('rawMarkdown must be a string');
+    }
+    if (body.rawMarkdown.length > RAW_MARKDOWN_MAX) {
+      return reply.badRequest(
+        `rawMarkdown exceeds maximum length of ${RAW_MARKDOWN_MAX}`,
+      );
     }
     const findings = Array.isArray(body.findings) ? body.findings : null;
     if (findings === null) {
@@ -147,6 +165,11 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
       if (typeof f.description !== 'string') {
         return reply.badRequest(`findings[${i}].description must be a string`);
       }
+      if (f.description.length > DESCRIPTION_MAX) {
+        return reply.badRequest(
+          `findings[${i}].description exceeds maximum length of ${DESCRIPTION_MAX}`,
+        );
+      }
       if (f.filePath !== undefined && f.filePath !== null && typeof f.filePath !== 'string') {
         return reply.badRequest(`findings[${i}].filePath must be a string`);
       }
@@ -158,19 +181,33 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
       if (f.evidence !== undefined && f.evidence !== null && typeof f.evidence !== 'string') {
         return reply.badRequest(`findings[${i}].evidence must be a string`);
       }
+      if (f.evidence !== undefined && f.evidence !== null && f.evidence.length > EVIDENCE_MAX) {
+        return reply.badRequest(
+          `findings[${i}].evidence exceeds maximum length of ${EVIDENCE_MAX}`,
+        );
+      }
       if (f.fix !== undefined && f.fix !== null && typeof f.fix !== 'string') {
         return reply.badRequest(`findings[${i}].fix must be a string`);
+      }
+      if (f.fix !== undefined && f.fix !== null && f.fix.length > FIX_MAX) {
+        return reply.badRequest(
+          `findings[${i}].fix exceeds maximum length of ${FIX_MAX}`,
+        );
       }
     }
 
     const db = getDb();
 
-    // Ensure the task exists; without this the FK cascade would simply reject
-    // the run insert, but we want a clean 404 for the operator.
+    // Ensure the task exists in the requesting project; without this the FK
+    // cascade would simply reject the run insert (or, worse, accept a row
+    // pointing at a task in another project), but we want a clean 404 for the
+    // operator. We deliberately use the same response shape for "no such task"
+    // and "task in another project" to avoid leaking task existence across
+    // projects.
     const taskRow = await db
       .select({ id: tasks.id })
       .from(tasks)
-      .where(eq(tasks.id, taskId))
+      .where(and(eq(tasks.id, taskId), eq(tasks.projectId, request.projectId)))
       .limit(1);
     if (taskRow.length === 0) {
       return reply.notFound('task not found');
@@ -228,6 +265,13 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.get<{
     Params: { id: string; cycle: string };
   }>('/tasks/:id/reviews/:cycle', async (request, reply) => {
+    // X-Project-Id is mandatory on this endpoint. See the POST handler for the
+    // rationale on inspecting the raw header rather than `request.projectId`.
+    const rawHeader = request.headers['x-project-id'];
+    if (rawHeader === undefined || rawHeader === '') {
+      return reply.badRequest('X-Project-Id header is required');
+    }
+
     const taskId = Number(request.params.id);
     const cycle = Number(request.params.cycle);
     if (!Number.isInteger(taskId) || taskId <= 0) {
@@ -239,13 +283,27 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
 
     const db = getDb();
 
+    // Confirm the task exists in this project before exposing review markdown.
+    // A task that belongs to another project must surface as 404 to match the
+    // POST endpoint's symmetry and to avoid leaking review content cross-
+    // project. An "absent cycle" still returns the empty-runs shape — that
+    // distinction matters because the dashboard polls for cycles that have not
+    // yet been posted.
+    const taskRow = await db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), eq(tasks.projectId, request.projectId)))
+      .limit(1);
+    if (taskRow.length === 0) {
+      return reply.notFound('task not found');
+    }
+
     const runs = await db
       .select({
         id: reviewRuns.id,
         reviewerRole: reviewRuns.reviewerRole,
         verdict: reviewRuns.verdict,
         rawMarkdown: reviewRuns.rawMarkdown,
-        postedAt: reviewRuns.postedAt,
       })
       .from(reviewRuns)
       .where(and(eq(reviewRuns.taskId, taskId), eq(reviewRuns.cycle, cycle)))
@@ -287,7 +345,6 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
         reviewerRole: r.reviewerRole,
         verdict: r.verdict,
         rawMarkdown: r.rawMarkdown,
-        postedAt: r.postedAt,
         findings: (byRun.get(r.id) ?? []).map((f) => ({
           id: f.id,
           severity: f.severity,

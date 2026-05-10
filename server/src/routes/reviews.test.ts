@@ -6,6 +6,7 @@ import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-h
 import tasksPlugin from './tasks.js';
 import agentsPlugin from './agents.js';
 import reviewsPlugin from './reviews.js';
+import { tasks } from '../schema/tables.js';
 
 describe('reviews routes', () => {
   let ctx: DrizzleTestContext;
@@ -230,6 +231,52 @@ describe('reviews routes', () => {
     assert.equal((runs as unknown as { rows: Array<{ c: number }> }).rows[0].c, 0);
   });
 
+  it('on unique conflict leaves DB with one run and zero new findings', async () => {
+    // Validates the transactional behaviour at the DB level: when the run
+    // insert hits the (taskId, cycle, reviewerRole) unique constraint, the
+    // surrounding transaction must roll back so that no findings from the
+    // second POST land in review_findings.
+    const id = await createTask();
+
+    const first = await postReview(id, {
+      cycle: 1,
+      reviewerRole: 'safety',
+      verdict: 'request_changes',
+      rawMarkdown: 'first',
+      findings: [
+        { severity: 'BLOCKING', ordinal: 0, title: 'first finding', description: '' },
+      ],
+    });
+    assert.equal(first.statusCode, 200, first.body);
+
+    const dup = await postReview(id, {
+      cycle: 1,
+      reviewerRole: 'safety',
+      verdict: 'approve',
+      rawMarkdown: 'second',
+      findings: [
+        { severity: 'NOTE', ordinal: 0, title: 'second finding A', description: '' },
+        { severity: 'NOTE', ordinal: 1, title: 'second finding B', description: '' },
+      ],
+    });
+    assert.equal(dup.statusCode, 409, dup.body);
+
+    // Exactly one run, with the original verdict and rawMarkdown intact.
+    const runs = await ctx.db.execute(sql`SELECT verdict, raw_markdown FROM review_runs WHERE task_id = ${id}`);
+    const runRows = (runs as unknown as { rows: Array<{ verdict: string; raw_markdown: string }> }).rows;
+    assert.equal(runRows.length, 1);
+    assert.equal(runRows[0].verdict, 'request_changes');
+    assert.equal(runRows[0].raw_markdown, 'first');
+
+    // The second POST's findings must NOT be present — only the first
+    // finding survives. This is the load-bearing assertion: it proves the
+    // failed second POST committed nothing to review_findings.
+    const findings = await ctx.db.execute(sql`SELECT title FROM review_findings ORDER BY id ASC`);
+    const findingRows = (findings as unknown as { rows: Array<{ title: string }> }).rows;
+    assert.equal(findingRows.length, 1);
+    assert.equal(findingRows[0].title, 'first finding');
+  });
+
   // ── POST /tasks/:id/reviews — body validation ─────────────────────────
 
   it('rejects missing cycle', async () => {
@@ -365,5 +412,142 @@ describe('reviews routes', () => {
       headers: { 'x-project-id': 'default' },
     });
     assert.equal(res.statusCode, 400);
+  });
+
+  // ── project scoping ──────────────────────────────────────────────────
+
+  it('POST rejects missing X-Project-Id with 400', async () => {
+    const id = await createTask();
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/tasks/${id}/reviews`,
+      payload: {
+        cycle: 1, reviewerRole: 'safety', verdict: 'approve', rawMarkdown: '', findings: [],
+      },
+    });
+    assert.equal(res.statusCode, 400, res.body);
+  });
+
+  it('GET rejects missing X-Project-Id with 400', async () => {
+    const id = await createTask();
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/tasks/${id}/reviews/1`,
+    });
+    assert.equal(res.statusCode, 400, res.body);
+  });
+
+  it('POST returns 404 when task belongs to a different project', async () => {
+    // Plant a task directly in proj-a, bypassing tasksPlugin so we can pick
+    // the projectId. Then attempt to POST a review run against it from the
+    // default project — must 404 and create no row.
+    const planted = await ctx.db.insert(tasks).values({
+      projectId: 'proj-a',
+      title: 'foreign task',
+      status: 'pending',
+    }).returning();
+    const foreignId = planted[0].id;
+
+    const res = await postReview(
+      foreignId,
+      {
+        cycle: 1, reviewerRole: 'safety', verdict: 'approve', rawMarkdown: 'x', findings: [],
+      },
+      { 'x-project-id': 'default' },
+    );
+    assert.equal(res.statusCode, 404, res.body);
+
+    const runs = await ctx.db.execute(
+      sql`SELECT COUNT(*)::int AS c FROM review_runs WHERE task_id = ${foreignId}`,
+    );
+    assert.equal((runs as unknown as { rows: Array<{ c: number }> }).rows[0].c, 0);
+  });
+
+  it('GET returns 404 when task belongs to a different project', async () => {
+    // Plant a task and a review run in proj-a. A request from default must
+    // not see the run, even though the numeric task id is otherwise
+    // accessible.
+    const planted = await ctx.db.insert(tasks).values({
+      projectId: 'proj-a',
+      title: 'foreign task',
+      status: 'pending',
+    }).returning();
+    const foreignId = planted[0].id;
+
+    const post = await postReview(
+      foreignId,
+      {
+        cycle: 1, reviewerRole: 'safety', verdict: 'approve', rawMarkdown: 'secret', findings: [],
+      },
+      { 'x-project-id': 'proj-a' },
+    );
+    assert.equal(post.statusCode, 200, post.body);
+
+    const cross = await getCycle(foreignId, 1, { 'x-project-id': 'default' });
+    assert.equal(cross.statusCode, 404, cross.body);
+  });
+
+  // ── body length caps ─────────────────────────────────────────────────
+
+  it('rejects rawMarkdown exceeding the maximum length', async () => {
+    const id = await createTask();
+    // 512_000 + 1 chars
+    const oversize = 'x'.repeat(512_001);
+    const res = await postReview(id, {
+      cycle: 1,
+      reviewerRole: 'safety',
+      verdict: 'approve',
+      rawMarkdown: oversize,
+      findings: [],
+    });
+    assert.equal(res.statusCode, 400, res.body);
+
+    const runs = await ctx.db.execute(sql`SELECT COUNT(*)::int AS c FROM review_runs WHERE task_id = ${id}`);
+    assert.equal((runs as unknown as { rows: Array<{ c: number }> }).rows[0].c, 0);
+  });
+
+  it('rejects finding description exceeding the maximum length', async () => {
+    const id = await createTask();
+    const oversize = 'd'.repeat(32_769);
+    const res = await postReview(id, {
+      cycle: 1,
+      reviewerRole: 'safety',
+      verdict: 'request_changes',
+      rawMarkdown: 'r',
+      findings: [
+        { severity: 'BLOCKING', ordinal: 0, title: 't', description: oversize },
+      ],
+    });
+    assert.equal(res.statusCode, 400, res.body);
+  });
+
+  it('rejects finding evidence exceeding the maximum length', async () => {
+    const id = await createTask();
+    const oversize = 'e'.repeat(32_769);
+    const res = await postReview(id, {
+      cycle: 1,
+      reviewerRole: 'safety',
+      verdict: 'request_changes',
+      rawMarkdown: 'r',
+      findings: [
+        { severity: 'BLOCKING', ordinal: 0, title: 't', description: '', evidence: oversize },
+      ],
+    });
+    assert.equal(res.statusCode, 400, res.body);
+  });
+
+  it('rejects finding fix exceeding the maximum length', async () => {
+    const id = await createTask();
+    const oversize = 'f'.repeat(32_769);
+    const res = await postReview(id, {
+      cycle: 1,
+      reviewerRole: 'safety',
+      verdict: 'request_changes',
+      rawMarkdown: 'r',
+      findings: [
+        { severity: 'BLOCKING', ordinal: 0, title: 't', description: '', fix: oversize },
+      ],
+    });
+    assert.equal(res.statusCode, 400, res.body);
   });
 });

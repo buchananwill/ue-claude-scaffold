@@ -247,6 +247,52 @@ describe('findings routes', () => {
       assert.equal(j2.findings[1].title, 'f-1');
     });
 
+    it('rejects reviewer with disallowed characters', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/findings?reviewer=bad%20role!',
+        headers: { 'x-project-id': 'default' },
+      });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('rejects reviewer exceeding the maximum length', async () => {
+      const longReviewer = 'a'.repeat(65);
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/findings?reviewer=${longReviewer}`,
+        headers: { 'x-project-id': 'default' },
+      });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('rejects limit=0 with 400', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/findings?limit=0',
+        headers: { 'x-project-id': 'default' },
+      });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('rejects negative limit with 400', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/findings?limit=-1',
+        headers: { 'x-project-id': 'default' },
+      });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('rejects non-numeric limit with 400', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/findings?limit=abc',
+        headers: { 'x-project-id': 'default' },
+      });
+      assert.equal(res.statusCode, 400);
+    });
+
     it('does not leak across projects when taskId values collide numerically', async () => {
       // Create a task in proj-a and force a finding into it.
       const tA = await insertTask(ctx.db, { projectId: 'proj-a' });
@@ -340,6 +386,22 @@ describe('findings routes', () => {
         headers: { 'x-project-id': 'default' },
       });
       assert.equal(res.json().patterns.length, 2);
+    });
+
+    it('rejects limit=0 with 400', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET', url: '/findings/note-patterns?limit=0',
+        headers: { 'x-project-id': 'default' },
+      });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('rejects negative limit with 400', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET', url: '/findings/note-patterns?limit=-1',
+        headers: { 'x-project-id': 'default' },
+      });
+      assert.equal(res.statusCode, 400);
     });
 
     it('does not leak across projects', async () => {
