@@ -51,6 +51,10 @@ export async function create(db: DrizzleDb, opts: CreateProjectOpts): Promise<Pr
       seedBranch: opts.seedBranch ?? null,
       buildTimeoutMs: opts.buildTimeoutMs ?? null,
       testTimeoutMs: opts.testTimeoutMs ?? null,
+      // agentRoles is required by the schema (added in Phase 1 of the
+      // durable-task-FSM rework). Phase 9 will replace this default with the
+      // operator's per-project mapping seeded from scaffold.config.json.
+      agentRoles: {},
     })
     .returning();
   return rows[0] as ProjectRow;

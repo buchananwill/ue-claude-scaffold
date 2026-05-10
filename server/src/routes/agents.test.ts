@@ -15,7 +15,7 @@ const PROJECT_BETA = 'beta';
 
 /** Ensure a project row exists so the FK on agents is satisfied. */
 async function ensureProject(ctx: DrizzleTestContext, id: string) {
-  await ctx.db.insert(projects).values({ id, name: `Project ${id}` }).onConflictDoNothing();
+  await ctx.db.insert(projects).values({ id, name: `Project ${id}`, agentRoles: {} }).onConflictDoNothing();
 }
 
 describe('agents routes (drizzle)', () => {

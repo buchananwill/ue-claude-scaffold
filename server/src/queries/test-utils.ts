@@ -24,6 +24,7 @@ CREATE TABLE "projects" (
   "seed_branch" text,
   "build_timeout_ms" integer,
   "test_timeout_ms" integer,
+  "agent_roles" jsonb NOT NULL DEFAULT '{}'::jsonb,
   "created_at" timestamp DEFAULT now(),
   CONSTRAINT "projects_id_check" CHECK ("id" ~ '^[a-zA-Z0-9_-]{1,64}$')
 );
@@ -124,12 +125,88 @@ CREATE TABLE "tasks" (
   "result" jsonb,
   "progress_log" text,
   "agent_type_override" text,
+  -- FSM columns added in Phase 1 of the durable-task-FSM rework. The DDL here
+  -- is hand-authored to mirror server/src/schema/tables.ts so PGlite-backed
+  -- tests can exercise the new endpoints. Until Phase 9's coordinated cutover,
+  -- the status CHECK lists *both* the legacy values ('in_progress','completed')
+  -- and the new FSM values so that tests written against either schema run
+  -- side-by-side. After Phase 9 the legacy values are dropped from this CHECK.
+  "review_cycle_count" integer NOT NULL DEFAULT 0,
+  "review_cycle_budget" integer NOT NULL DEFAULT 5,
+  "reviewer_verdicts" jsonb NOT NULL DEFAULT '{}'::jsonb,
+  "latest_review_path" text,
+  "build_status" text NOT NULL DEFAULT 'pending',
+  "commit_sha" text,
+  "arbitration_pending_trigger" text,
+  "arbitration_addendum_path" text,
+  "failure_reason" text,
+  "failure_detail" text,
+  "agent_roles_override" jsonb,
   "created_at" timestamp DEFAULT now(),
-  CONSTRAINT "tasks_status_check" CHECK ("status" IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')),
-  CONSTRAINT "tasks_agent_type_override_check" CHECK ("agent_type_override" IS NULL OR "agent_type_override" ~ '^[a-zA-Z0-9_-]{1,64}$')
+  CONSTRAINT "tasks_status_check" CHECK ("status" IN (
+    'pending','claimed','in_progress','engineering','built','reviewing','revising',
+    'arbitrating','completed','complete','failed','integrated','cycle'
+  )),
+  CONSTRAINT "tasks_agent_type_override_check" CHECK ("agent_type_override" IS NULL OR "agent_type_override" ~ '^[a-zA-Z0-9_-]{1,64}$'),
+  CONSTRAINT "tasks_build_status_check" CHECK ("build_status" IN ('pending','clean','dirty','failed')),
+  CONSTRAINT "tasks_failure_reason_check" CHECK ("failure_reason" IS NULL OR "failure_reason" IN (
+    'review_cycle_budget_exhausted',
+    'reviewer_contradiction',
+    'engineer_build_failure',
+    'reviewer_infrastructure_failure',
+    'role_session_no_op',
+    'arbitrator_escalated'
+  ))
 );
 CREATE INDEX "idx_tasks_status" ON "tasks" ("status");
 CREATE INDEX "idx_tasks_priority" ON "tasks" ("priority" DESC, "id" ASC);
+
+CREATE TABLE "review_runs" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "task_id" integer NOT NULL REFERENCES "tasks"("id") ON DELETE CASCADE,
+  "cycle" integer NOT NULL,
+  "reviewer_role" text NOT NULL,
+  "verdict" text NOT NULL,
+  "raw_markdown" text NOT NULL,
+  "posted_at" timestamp NOT NULL DEFAULT now(),
+  CONSTRAINT "review_runs_task_cycle_role_unique" UNIQUE("task_id", "cycle", "reviewer_role"),
+  CONSTRAINT "reviewer_runs_verdict_check" CHECK ("verdict" IN ('approve','request_changes','out_of_scope'))
+);
+CREATE INDEX "idx_review_runs_task_cycle" ON "review_runs" ("task_id", "cycle");
+
+CREATE TABLE "arbitration_runs" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "task_id" integer NOT NULL REFERENCES "tasks"("id") ON DELETE CASCADE,
+  "trigger" text NOT NULL,
+  "ruling" text NOT NULL,
+  "ruling_markdown" text NOT NULL,
+  "contradiction_resolution" jsonb,
+  "posted_at" timestamp NOT NULL DEFAULT now(),
+  CONSTRAINT "arbitration_runs_task_trigger_unique" UNIQUE("task_id", "trigger"),
+  CONSTRAINT "arbitration_runs_trigger_check" CHECK ("trigger" IN ('review_cycle_budget_exhausted','reviewer_contradiction')),
+  CONSTRAINT "arbitration_runs_ruling_check" CHECK ("ruling" IN ('approve','rule','escalate')),
+  CONSTRAINT "arbitration_runs_rule_resolution_check" CHECK (
+    ("ruling" = 'rule' AND "contradiction_resolution" IS NOT NULL)
+    OR ("ruling" <> 'rule' AND "contradiction_resolution" IS NULL)
+  )
+);
+CREATE INDEX "idx_arbitration_runs_task" ON "arbitration_runs" ("task_id");
+
+CREATE TABLE "review_findings" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "run_id" integer NOT NULL REFERENCES "review_runs"("id") ON DELETE CASCADE,
+  "severity" text NOT NULL,
+  "ordinal" integer NOT NULL,
+  "file_path" text,
+  "line" integer,
+  "title" text NOT NULL,
+  "description" text NOT NULL,
+  "evidence" text,
+  "fix" text,
+  CONSTRAINT "review_findings_severity_check" CHECK ("severity" IN ('BLOCKING','NOTE'))
+);
+CREATE INDEX "idx_review_findings_run" ON "review_findings" ("run_id");
+CREATE INDEX "idx_review_findings_task_severity" ON "review_findings" ("severity");
 
 CREATE TABLE "files" (
   "project_id" text NOT NULL REFERENCES "projects"("id"),
