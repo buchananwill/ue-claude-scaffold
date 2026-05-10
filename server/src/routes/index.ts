@@ -21,3 +21,6 @@ export { default as exitClassifyPlugin } from './exit-classify.js';
 export { default as statusPlugin } from './status.js';
 export { default as agentDefinitionsPlugin } from './agent-definitions.js';
 export { default as sessionsPlugin } from './sessions.js';
+export { default as reviewsPlugin } from './reviews.js';
+export { default as findingsPlugin } from './findings.js';
+export { default as failuresPlugin } from './failures.js';

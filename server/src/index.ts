@@ -33,6 +33,9 @@ import {
   statusPlugin,
   agentDefinitionsPlugin,
   sessionsPlugin,
+  reviewsPlugin,
+  findingsPlugin,
+  failuresPlugin,
 } from "./routes/index.js";
 import { sweepStaleLock } from "./routes/ubt.js";
 import { seedFromConfig } from "./queries/projects.js";
@@ -99,6 +102,9 @@ await server.register(exitClassifyPlugin);
 await server.register(statusPlugin);
 await server.register(agentDefinitionsPlugin, { config });
 await server.register(sessionsPlugin, { config });
+await server.register(reviewsPlugin);
+await server.register(findingsPlugin);
+await server.register(failuresPlugin);
 
 // Compile-probe every dynamic-agents/*.md once at startup so broken definitions
 // surface here instead of failing at the first runtime fetch. Non-blocking:
