@@ -1,25 +1,49 @@
-import { useParams } from "@tanstack/react-router";
-import { Link } from "@tanstack/react-router";
+import { useState } from 'react';
+import { useParams, Link } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
 import {
-  Stack,
-  Group,
-  Card,
-  Title,
-  Text,
-  Code,
-  Loader,
+  Accordion,
+  Alert,
   Badge,
-} from "@mantine/core";
-import { useTask } from "../hooks/useTask.ts";
-import { StatusBadge } from "../components/StatusBadge.tsx";
-import { RelativeTime } from "../components/RelativeTime.tsx";
-import { TaskDuration } from "../components/TaskDuration.tsx";
-import { useProject } from "../contexts/ProjectContext.tsx";
-import { useAgentNameMap } from "../hooks/useAgentNameMap.ts";
-import { formatAgentRef } from "../utils/agentRef.ts";
+  Card,
+  Code,
+  Group,
+  Loader,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
+import { useTask } from '../hooks/useTask.ts';
+import { StatusBadge } from '../components/StatusBadge.tsx';
+import { RelativeTime } from '../components/RelativeTime.tsx';
+import { TaskDuration } from '../components/TaskDuration.tsx';
+import { MarkdownContent } from '../components/MarkdownContent.tsx';
+import { useProject } from '../contexts/ProjectContext.tsx';
+import { useAgentNameMap } from '../hooks/useAgentNameMap.ts';
+import { formatAgentRef } from '../utils/agentRef.ts';
+import { usePollInterval } from '../hooks/usePollInterval.tsx';
+import { fetchReviewCycle, fetchTaskArbitrations } from '../api/client.ts';
+import type {
+  ArbitrationRun,
+  ReviewFinding,
+  ReviewRun,
+  ReviewerVerdict,
+} from '../api/types.ts';
+
+const VERDICT_COLORS: Record<ReviewerVerdict, string> = {
+  pending: 'gray',
+  approve: 'green',
+  request_changes: 'red',
+  out_of_scope: 'blue',
+};
+
+function severityColor(severity: 'BLOCKING' | 'NOTE'): string {
+  return severity === 'BLOCKING' ? 'red' : 'gray';
+}
 
 export function TaskDetailPage() {
-  const params = useParams({ from: "/$projectId/tasks/$taskId" });
+  const params = useParams({ from: '/$projectId/tasks/$taskId' });
   const { projectId } = useProject();
   const agentNames = useAgentNameMap();
   const taskId = Number(params.taskId);
@@ -27,18 +51,20 @@ export function TaskDetailPage() {
 
   if (isNaN(taskId)) return <Text c="red">Invalid task ID</Text>;
   if (isLoading) return <Loader display="block" mx="auto" my="xl" />;
-  if (error)
+  if (error) {
     return (
       <Text c="red" ta="center" py="xl">
         {error instanceof Error ? error.message : String(error)}
       </Text>
     );
-  if (!task)
+  }
+  if (!task) {
     return (
       <Text c="dimmed" ta="center" py="xl">
         Task not found
       </Text>
     );
+  }
 
   return (
     <Stack gap="md">
@@ -47,8 +73,9 @@ export function TaskDetailPage() {
         <Link
           to="/$projectId"
           params={{ projectId }}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           search={(prev: any) => prev}
-          style={{ textDecoration: "none" }}
+          style={{ textDecoration: 'none' }}
         >
           &larr; Back to overview
         </Link>
@@ -84,7 +111,7 @@ export function TaskDetailPage() {
               Acceptance Criteria
             </Text>
             {task.acceptanceCriteria ? (
-              <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                 {task.acceptanceCriteria}
               </Text>
             ) : (
@@ -151,7 +178,7 @@ export function TaskDetailPage() {
                       <Link
                         to="/$projectId/tasks/$taskId"
                         params={{ projectId, taskId: String(depId) }}
-                        style={{ textDecoration: "none" }}
+                        style={{ textDecoration: 'none' }}
                       >
                         #{depId}
                       </Link>
@@ -206,7 +233,7 @@ export function TaskDetailPage() {
               Created: <RelativeTime date={task.createdAt} />
             </Text>
             <Text size="xs" c="dimmed">
-              Claimed:{" "}
+              Claimed:{' '}
               {task.claimedAt ? (
                 <RelativeTime date={task.claimedAt} />
               ) : (
@@ -216,7 +243,7 @@ export function TaskDetailPage() {
               )}
             </Text>
             <Text size="xs" c="dimmed">
-              Completed:{" "}
+              Completed:{' '}
               {task.completedAt ? (
                 <RelativeTime date={task.completedAt} />
               ) : (
@@ -227,7 +254,7 @@ export function TaskDetailPage() {
             </Text>
           </Group>
           <Text size="xs" c="dimmed">
-            Duration:{" "}
+            Duration:{' '}
             <TaskDuration
               claimedAt={task.claimedAt}
               completedAt={task.completedAt}
@@ -259,6 +286,389 @@ export function TaskDetailPage() {
           </div>
         </Stack>
       </Card>
+
+      <FsmStrip
+        status={task.status}
+        cycleCount={task.reviewCycleCount}
+        cycleBudget={task.reviewCycleBudget}
+        verdicts={task.reviewerVerdicts}
+        failureReason={task.failureReason}
+        failureDetail={task.failureDetail}
+        arbitrationPendingTrigger={task.arbitrationPendingTrigger}
+      />
+
+      <ArbitrationSection taskId={task.id} projectId={projectId} />
+
+      <ReviewsSection
+        taskId={task.id}
+        projectId={projectId}
+        currentCycle={task.reviewCycleCount}
+        verdicts={task.reviewerVerdicts}
+      />
     </Stack>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// FSM strip — status, cycle counter, reviewer-verdict chips, failure banner.
+// ---------------------------------------------------------------------------
+
+interface FsmStripProps {
+  status: string;
+  cycleCount: number;
+  cycleBudget: number;
+  verdicts: import('../api/types.ts').ReviewerVerdictMap;
+  failureReason: import('../api/types.ts').FailureReason | null;
+  failureDetail: string | null;
+  arbitrationPendingTrigger: string | null;
+}
+
+function FsmStrip({
+  status,
+  cycleCount,
+  cycleBudget,
+  verdicts,
+  failureReason,
+  failureDetail,
+  arbitrationPendingTrigger,
+}: FsmStripProps) {
+  const verdictEntries = Object.entries(verdicts ?? {}) as [string, ReviewerVerdict][];
+
+  return (
+    <Card withBorder p="md">
+      <Title order={5} mb="xs">Review state</Title>
+      <Group gap="md" mb="xs">
+        <Group gap={6}>
+          <Text size="xs" c="dimmed">Status:</Text>
+          <StatusBadge value={status} />
+        </Group>
+        <Group gap={6}>
+          <Text size="xs" c="dimmed">Cycle:</Text>
+          <Text size="sm" fw={500}>
+            {cycleCount} / {cycleBudget}
+          </Text>
+        </Group>
+      </Group>
+
+      {verdictEntries.length > 0 ? (
+        <Group gap="xs">
+          {verdictEntries.map(([role, verdict]) => (
+            <Badge
+              key={role}
+              color={VERDICT_COLORS[verdict] ?? 'gray'}
+              variant={verdict === 'pending' ? 'outline' : 'light'}
+              size="md"
+            >
+              {role}: {verdict}
+            </Badge>
+          ))}
+        </Group>
+      ) : (
+        <Text size="sm" c="dimmed" fs="italic">
+          No reviewer verdicts recorded yet.
+        </Text>
+      )}
+
+      {status === 'arbitrating' && (
+        <Alert color="pink" mt="md" icon={<IconAlertTriangle size={16} />} title="Arbitration pending">
+          Trigger: <Code>{arbitrationPendingTrigger ?? 'unspecified'}</Code>. Waiting for arbitrator ruling.
+        </Alert>
+      )}
+
+      {status === 'failed' && failureReason && (
+        <Alert color="red" mt="md" icon={<IconAlertTriangle size={16} />} title={`Failed: ${failureReason}`}>
+          {failureDetail ? (
+            <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{failureDetail}</Text>
+          ) : (
+            <Text size="sm" c="dimmed" fs="italic">No additional detail recorded.</Text>
+          )}
+        </Alert>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Reviews — per-cycle, per-reviewer markdown + structured findings.
+// ---------------------------------------------------------------------------
+
+interface ReviewsSectionProps {
+  taskId: number;
+  projectId: string;
+  currentCycle: number;
+  verdicts: import('../api/types.ts').ReviewerVerdictMap;
+}
+
+function ReviewsSection({ taskId, projectId, currentCycle, verdicts }: ReviewsSectionProps) {
+  // Track which reviewer the operator clicked from the FSM strip so we can
+  // open the matching Accordion item in the current cycle.
+  const [pinnedReviewer, setPinnedReviewer] = useState<string | null>(null);
+
+  if (currentCycle <= 0) {
+    return (
+      <Card withBorder p="md">
+        <Title order={5} mb="xs">Reviews</Title>
+        <Text size="sm" c="dimmed" fs="italic">No review cycles recorded yet.</Text>
+      </Card>
+    );
+  }
+
+  // Render cycles in descending order so the current one is at the top.
+  const cycleNumbers: number[] = [];
+  for (let c = currentCycle; c >= 1; c -= 1) cycleNumbers.push(c);
+
+  return (
+    <Card withBorder p="md">
+      <Title order={5} mb="xs">Reviews</Title>
+
+      {/* Quick-jump chip strip: clicking a request_changes reviewer pins the
+          accordion open on that reviewer's run in the current cycle. */}
+      {Object.keys(verdicts ?? {}).length > 0 && (
+        <Group gap="xs" mb="sm">
+          <Text size="xs" c="dimmed">Jump to reviewer:</Text>
+          {(Object.entries(verdicts ?? {}) as [string, ReviewerVerdict][]).map(([role, verdict]) => (
+            <Badge
+              key={role}
+              component="button"
+              color={VERDICT_COLORS[verdict] ?? 'gray'}
+              variant={pinnedReviewer === role ? 'filled' : 'light'}
+              size="sm"
+              style={{ cursor: 'pointer', background: 'none', border: 'none' }}
+              onClick={() => setPinnedReviewer((cur) => (cur === role ? null : role))}
+            >
+              {role}: {verdict}
+            </Badge>
+          ))}
+        </Group>
+      )}
+
+      <Stack gap="sm">
+        {cycleNumbers.map((cycle) => (
+          <CycleBlock
+            key={cycle}
+            taskId={taskId}
+            projectId={projectId}
+            cycle={cycle}
+            isCurrent={cycle === currentCycle}
+            pinnedReviewer={cycle === currentCycle ? pinnedReviewer : null}
+          />
+        ))}
+      </Stack>
+    </Card>
+  );
+}
+
+interface CycleBlockProps {
+  taskId: number;
+  projectId: string;
+  cycle: number;
+  isCurrent: boolean;
+  pinnedReviewer: string | null;
+}
+
+function CycleBlock({ taskId, projectId, cycle, isCurrent, pinnedReviewer }: CycleBlockProps) {
+  const { intervalMs } = usePollInterval();
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['task-reviews', taskId, cycle, projectId],
+    queryFn: ({ signal }) => fetchReviewCycle(taskId, cycle, signal, projectId),
+    refetchInterval: isCurrent ? intervalMs : false,
+    staleTime: 2000,
+  });
+
+  const accordionValue = pinnedReviewer ?? undefined;
+
+  return (
+    <Card withBorder p="sm" bg={isCurrent ? 'var(--mantine-color-gray-0)' : undefined}>
+      <Group gap="sm" mb="xs">
+        <Title order={6}>Cycle {cycle}</Title>
+        {isCurrent && <Badge size="xs" variant="light">current</Badge>}
+      </Group>
+
+      {isLoading ? (
+        <Loader size="sm" />
+      ) : error ? (
+        <Text c="red" size="sm">
+          {error instanceof Error ? error.message : String(error)}
+        </Text>
+      ) : !data || data.runs.length === 0 ? (
+        <Text size="sm" c="dimmed" fs="italic">No reviewer runs posted for this cycle.</Text>
+      ) : (
+        <Accordion variant="separated" multiple defaultValue={accordionValue ? [accordionValue] : []}>
+          {data.runs.map((run) => (
+            <ReviewRunItem key={run.reviewerRole} run={run} />
+          ))}
+        </Accordion>
+      )}
+    </Card>
+  );
+}
+
+function ReviewRunItem({ run }: { run: ReviewRun }) {
+  return (
+    <Accordion.Item value={run.reviewerRole}>
+      <Accordion.Control>
+        <Group gap="sm" wrap="nowrap">
+          <Text size="sm" fw={600}>{run.reviewerRole}</Text>
+          <Badge color={VERDICT_COLORS[run.verdict] ?? 'gray'} variant="light" size="sm">
+            {run.verdict}
+          </Badge>
+          <Text size="xs" c="dimmed">
+            <RelativeTime date={run.postedAt} />
+          </Text>
+          {run.findings.length > 0 && (
+            <Text size="xs" c="dimmed">
+              {run.findings.length} finding{run.findings.length === 1 ? '' : 's'}
+            </Text>
+          )}
+        </Group>
+      </Accordion.Control>
+      <Accordion.Panel>
+        <Stack gap="sm">
+          <MarkdownContent content={run.rawMarkdown} />
+          <FindingsTable findings={run.findings} />
+        </Stack>
+      </Accordion.Panel>
+    </Accordion.Item>
+  );
+}
+
+function FindingsTable({ findings }: { findings: ReviewFinding[] }) {
+  if (findings.length === 0) {
+    return <Text size="xs" c="dimmed" fs="italic">No structured findings.</Text>;
+  }
+
+  return (
+    <Accordion variant="contained" multiple>
+      {findings.map((f) => (
+        <Accordion.Item key={f.id} value={String(f.id)}>
+          <Accordion.Control>
+            <Group gap="sm" wrap="nowrap">
+              <Badge color={severityColor(f.severity)} variant="light" size="xs">
+                {f.severity}
+              </Badge>
+              <Text size="xs" c="dimmed">B{f.ordinal}</Text>
+              {f.filePath && (
+                <Text size="xs" ff="monospace">
+                  {f.filePath}{f.line !== null ? `:${f.line}` : ''}
+                </Text>
+              )}
+              <Text size="sm">{f.title}</Text>
+            </Group>
+          </Accordion.Control>
+          <Accordion.Panel>
+            <Stack gap={6}>
+              <div>
+                <Text size="xs" fw={600} c="dimmed">Description</Text>
+                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{f.description}</Text>
+              </div>
+              {f.evidence && (
+                <div>
+                  <Text size="xs" fw={600} c="dimmed">Evidence</Text>
+                  <Code block>{f.evidence}</Code>
+                </div>
+              )}
+              {f.fix && (
+                <div>
+                  <Text size="xs" fw={600} c="dimmed">Fix</Text>
+                  <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{f.fix}</Text>
+                </div>
+              )}
+            </Stack>
+          </Accordion.Panel>
+        </Accordion.Item>
+      ))}
+    </Accordion>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Arbitration — list of arbitration rulings (at most one per trigger).
+// ---------------------------------------------------------------------------
+
+interface ArbitrationSectionProps {
+  taskId: number;
+  projectId: string;
+}
+
+function ArbitrationSection({ taskId, projectId }: ArbitrationSectionProps) {
+  const { intervalMs } = usePollInterval();
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['task-arbitrations', taskId, projectId],
+    queryFn: ({ signal }) => fetchTaskArbitrations(taskId, signal, projectId),
+    refetchInterval: intervalMs,
+    staleTime: 2000,
+  });
+
+  if (isLoading) {
+    return (
+      <Card withBorder p="md">
+        <Title order={5} mb="xs">Arbitration</Title>
+        <Loader size="sm" />
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card withBorder p="md">
+        <Title order={5} mb="xs">Arbitration</Title>
+        <Text c="red" size="sm">
+          {error instanceof Error ? error.message : String(error)}
+        </Text>
+      </Card>
+    );
+  }
+
+  const runs = data?.runs ?? [];
+  if (runs.length === 0) {
+    return null;
+  }
+
+  return (
+    <Card withBorder p="md">
+      <Title order={5} mb="xs">Arbitration</Title>
+      <Stack gap="sm">
+        {runs.map((run) => (
+          <ArbitrationRunBlock key={run.id} run={run} />
+        ))}
+      </Stack>
+    </Card>
+  );
+}
+
+function ArbitrationRunBlock({ run }: { run: ArbitrationRun }) {
+  return (
+    <Card withBorder p="sm" bg="var(--mantine-color-gray-0)">
+      <Group gap="sm" mb="xs">
+        <Badge color="pink" variant="light" size="sm">{run.trigger}</Badge>
+        <Badge color={run.ruling === 'escalate' ? 'red' : run.ruling === 'rule' ? 'orange' : 'green'} variant="filled" size="sm">
+          {run.ruling}
+        </Badge>
+        <Text size="xs" c="dimmed">
+          <RelativeTime date={run.postedAt} />
+        </Text>
+      </Group>
+
+      <MarkdownContent content={run.rulingMarkdown} />
+
+      {run.ruling === 'rule' && run.contradictionResolution && (
+        <Alert color="orange" mt="sm" title="Contradiction resolution">
+          <Stack gap={4}>
+            <Text size="sm">
+              Upheld finding: <Code>#{run.contradictionResolution.upheldFindingId}</Code>
+            </Text>
+            <Text size="sm">
+              Retired finding: <Code>#{run.contradictionResolution.retiredFindingId}</Code>
+            </Text>
+            <div>
+              <Text size="xs" fw={600} c="dimmed">Rationale</Text>
+              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                {run.contradictionResolution.rationale}
+              </Text>
+            </div>
+          </Stack>
+        </Alert>
+      )}
+    </Card>
   );
 }

@@ -14,6 +14,7 @@ import { BuildLogPage } from './pages/BuildLogPage.js';
 import { ChatPage } from './pages/ChatPage.js';
 import { TeamsPage } from './pages/TeamsPage.js';
 import { SearchPage } from './pages/SearchPage.js';
+import { FindingsPage } from './pages/FindingsPage.js';
 import { TASK_STATUSES } from './constants/task-statuses.js';
 import { VALID_SORT_COLUMNS } from './hooks/useTaskFilters.js';
 
@@ -174,6 +175,31 @@ const searchRoute = createRoute({
   }),
 });
 
+const VALID_FINDING_SEVERITIES = new Set(['BLOCKING', 'NOTE']);
+// Reviewer-role slugs follow the same pattern enforced server-side in
+// projects.agent_roles (Phase 1): lowercase alnum + dash/underscore, length 1–32.
+const VALID_REVIEWER_SLUG = /^[a-z][a-z0-9_-]{0,31}$/;
+// ISO 8601 date or date-time prefix; we only need a coarse guard against
+// obviously bogus values — the server validates strictly.
+const VALID_SINCE = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]{1,30})?$/;
+
+const findingsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: '/findings',
+  component: FindingsPage,
+  validateSearch: (search: Record<string, unknown>) => {
+    const rawSeverity = boundedString(search.severity, 10);
+    const rawReviewer = boundedString(search.reviewer, 40);
+    const rawSince = boundedString(search.since, 40);
+    return {
+      severity: rawSeverity && VALID_FINDING_SEVERITIES.has(rawSeverity) ? (rawSeverity as 'BLOCKING' | 'NOTE') : undefined,
+      reviewer: rawReviewer && VALID_REVIEWER_SLUG.test(rawReviewer) ? rawReviewer : undefined,
+      since: rawSince && VALID_SINCE.test(rawSince) ? rawSince : undefined,
+      page: Number(search.page) > 0 ? Math.floor(Number(search.page)) : undefined,
+    };
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   projectRoute.addChildren([
@@ -186,6 +212,7 @@ const routeTree = rootRoute.addChildren([
     chatRoute,
     teamsRoute,
     searchRoute,
+    findingsRoute,
   ]),
 ]);
 

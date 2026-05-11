@@ -168,6 +168,17 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     progressLog: null,
     agentTypeOverride: null,
     createdAt: new Date(2025, 0, id).toISOString(),
+    reviewCycleCount: 0,
+    reviewCycleBudget: 5,
+    reviewerVerdicts: {},
+    latestReviewPath: null,
+    arbitrationPendingTrigger: null,
+    arbitrationAddendumPath: null,
+    failureReason: null,
+    failureDetail: null,
+    agentRolesOverride: null,
+    buildStatus: 'pending',
+    commitSha: null,
     ...overrides,
   };
 }
