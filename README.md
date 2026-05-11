@@ -430,16 +430,33 @@ Scaffold-side orchestrators (`scaffold-orchestrator`, `scaffold-server-orchestra
 
 ### Customising for your project
 
-Add an `### Orchestrator Role Mapping` section to your project's CLAUDE.md:
+Per-project role wiring lives in `scaffold.config.json` under the project's `agentRoles` field. The server-managed
+task FSM reads this map to dispatch each phase of a task to the correct agent definition.
 
-```markdown
-### Orchestrator Role Mapping
+Required shape:
 
-| Role          | Agent              | Notes                          |
-|---------------|--------------------|--------------------------------|
-| `reviewer`    | `my-code-reviewer` | Project-specific review rules  |
-| `implementer` | (default)          |                                |
+- `engineer` — bare agent definition name (lowercase slug, no `.md` extension) that runs the engineering role.
+- `arbitrator` — bare agent definition name that runs the arbitration role when reviewers contradict or the cycle
+  budget is exhausted.
+- `reviewers` — non-empty map of reviewer slot (lowercase slug, e.g. `safety`, `correctness`, `decomp`) to agent
+  definition name. Each entry is dispatched in parallel against the engineer's commit.
+
+Example block (see `scaffold.config.example.json` for the canonical working configuration):
+
+```json
+"agentRoles": {
+  "engineer": "container-implementer-ue",
+  "arbitrator": "container-arbitrator-ue",
+  "reviewers": {
+    "safety": "container-safety-reviewer-ue",
+    "correctness": "container-reviewer-ue",
+    "decomp": "container-decomposition-reviewer-ue"
+  }
+}
 ```
+
+A Zod validator rejects malformed shapes (missing required keys, empty `reviewers`, non-string values) at
+config-load time, so misconfiguration fails fast at server start rather than surfacing mid-task.
 
 ### Writing a Plan Document
 

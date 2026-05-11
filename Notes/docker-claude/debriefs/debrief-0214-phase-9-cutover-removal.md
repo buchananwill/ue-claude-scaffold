@@ -156,3 +156,52 @@ during the production cutover.
 - Address the test-harness git-identity failures in a separate cleanup
   plan: either set a default identity in the test bootstrap or refactor
   the bare-repo seeding helpers to not require it.
+
+---
+
+## Cycle 2 update — W1 fix (README customising section)
+
+### Task
+
+Phase 9 review cycle 1 raised W1: the README's "Customising for your
+project" section still instructed operators to add an `### Orchestrator
+Role Mapping` table to their project's `CLAUDE.md`. That guidance was a
+leftover from the in-container orchestrator era — under the new model
+role wiring lives in `scaffold.config.json` under `projects.<id>.agentRoles`,
+seeded into the `projects` table and consumed by the server FSM.
+
+### Change
+
+`README.md` — replaced the misleading subsection. The new prose:
+
+- States that per-project role wiring is configured in
+  `scaffold.config.json` under `projects.<id>.agentRoles`.
+- Lists the required shape: `engineer` (string), `arbitrator` (string),
+  and `reviewers` (non-empty map of slot -> agent definition name).
+- Points readers to `scaffold.config.example.json` for the canonical
+  shape, and includes an inline JSON snippet mirroring the
+  `my-ue-game` block from that file (engineer / arbitrator /
+  reviewers.safety / reviewers.correctness / reviewers.decomp).
+- Notes that a Zod validator rejects malformed shapes at config-load
+  time so misconfiguration fails fast.
+
+### Verification
+
+`git grep "Orchestrator Role Mapping" README.md` returns no hits.
+Repo-wide hits remain only under `Notes/audit-...md` and the static
+fallback `agents/container-orchestrator.md`, both out of scope for this
+delegation (the static fallback still uses the legacy mapping model on
+purpose).
+
+### Notes
+
+The cycle-1 finding asked the prose to mention that "the Zod validator
+rejects malformed shapes at config load time". The server source
+currently documents this validator as planned in code comments
+(`server/src/queries/projects.ts` and `server/src/schema/tables.ts`
+explicitly say validation lives in `config-resolver.ts` and
+`tasks-ingest`), but `config-resolver.ts` does not yet contain the
+Zod schema for `agentRoles`. I included the operator-facing claim as
+asked because the README is describing the contract operators rely on
+once Phase 9 is fully landed; the validator gap is tracked under the
+broader Phase 9 cutover work and is not introduced by this docs fix.
