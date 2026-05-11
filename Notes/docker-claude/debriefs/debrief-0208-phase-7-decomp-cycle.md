@@ -49,3 +49,21 @@ Verified the peer ingestion routes (`reviews.ts`, `findings.ts`, `failures.ts`) 
 
 - The engineer dispatch never scrubs `title` (`_build_engineer_prompt` reads `title=$(... | tr -d '\n')` and uses it raw in the header). For consistency with arbitrator and reviewer-fanout, a future cleanup could apply `_scrub_prompt_path_field` to engineer `title` too. Out of scope for this cycle — the decomp finding was about parity *between* the two new dispatchers, not extension to the engineer path. Flagged here only.
 - The pre-existing test failures (missing `git config user.email`) are an environmental issue worth investigating — separate cleanup task.
+
+---
+
+## Cycle 4 addendum — comment cleanup
+
+Follow-up correctness WARNING + two safety NOTEs all pointed at stale comments left over from the decomposition pass. Comment-only changes; no code paths altered.
+
+### Changes
+
+- **`container/lib/reviewer-fanout.sh`** — rewrote the `SECURITY:` block above `_rfan_build_reviewer_prompt` to describe the actual two-layer posture. Layer 1 is the caller `_run_reviewer_fanout` allowlist-scrubbing `task_title`, `source_path`, and `files_csv` via `_scrub_prompt_path_field` / `_scrub_prompt_path_csv` BEFORE the prompt builder runs (added in cycle 2 / decomp pass, commit `db18016`). Layer 2 is the existing `printf %s` + non-expanding heredoc defence at this site. The old comment claimed the values were "NOT sanitized" which is no longer true.
+- **`container/lib/run-claude.sh:70`** — block comment above `_scrub_prompt_path_field` no longer names the old `_scrub_engineer_path_field` symbol; reads "renamed from the original engineer-only helper" instead. The rename context is preserved without leaving the dangling identifier in the source.
+- **`container/lib/run-claude.sh:147`** — docstring inside `_fetch_engineer_fsm_fields` updated to reference `_scrub_prompt_path_field` (the actual function it calls).
+
+### Verification
+
+- `bash -n container/lib/reviewer-fanout.sh container/lib/run-claude.sh` — clean.
+- `git grep -n _scrub_engineer_path_field` returns hits only in `Notes/docker-claude/debriefs/debrief-0204-*.md`, `debrief-0207-*.md`, and `debrief-0208-*.md` (this file). These are immutable point-in-time audit records that correctly reference the helper's name as it existed at the time of writing; rewriting them would falsify the historical record. No code or active prose references the old name.
+- Server tests skipped per the cycle-4 instruction (no server changes).

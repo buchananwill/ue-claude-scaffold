@@ -67,11 +67,11 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
 # rejected; no shell metacharacters (`$`, backtick, `;`, `&`, `|`, `<`, `>`,
 # quotes) so they cannot land in the prompt.
 #
-# Phase 7 cycle 2 (decomp N1/W2): renamed from `_scrub_engineer_path_field` —
-# the helper is now called from the engineer dispatch, the arbitrator
-# dispatch, and the reviewer fanout. The warning string drops the caller
-# reference (`_build_engineer_prompt`) and relies on the per-call `${label}`
-# to identify the field being scrubbed.
+# Phase 7 cycle 2 (decomp N1/W2): renamed from the original engineer-only
+# helper — the helper is now called from the engineer dispatch, the
+# arbitrator dispatch, and the reviewer fanout. The warning string drops
+# the caller reference (`_build_engineer_prompt`) and relies on the
+# per-call `${label}` to identify the field being scrubbed.
 _scrub_prompt_path_field() {
     local value="$1"
     local label="$2"
@@ -144,7 +144,7 @@ _scrub_prompt_path_csv() {
 #     had_addendum_originally BEFORE the allowlist scrub (so a rejected-but-
 #     non-null addendum still routes to Branch 3 with a sentinel placeholder
 #     instead of silently masquerading as a no-addendum revision), then
-#     allowlist-scrub the three path fields via _scrub_engineer_path_field.
+#     allowlist-scrub the three path fields via _scrub_prompt_path_field.
 #   * Non-numeric cycle_count → sanitised to 0.
 _fetch_engineer_fsm_fields() {
     local task_id="$1"

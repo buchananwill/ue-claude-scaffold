@@ -64,13 +64,18 @@ _rfan_fetch_cycle_runs() {
 # It is NOT shown other reviewers' findings or the consolidated file (Phase 6
 # step 6 — reviewers are blind to each other).
 #
-# SECURITY: server-derived strings (task_title, source_path, files_csv) are
-# NOT sanitized for shell metacharacters. They must therefore never enter a
-# shell expansion site. We emit the variable header via printf (only %s
+# SECURITY: two-layer posture. Layer 1 — the caller `_run_reviewer_fanout`
+# allowlist-scrubs task_title, source_path, and files_csv via
+# `_scrub_prompt_path_field` / `_scrub_prompt_path_csv` BEFORE invoking this
+# prompt builder, so values arrive here already filtered to the path
+# allowlist (alnum/underscore/dot/slash/space/hyphen). Layer 2 — defence in
+# depth at this site: we still emit the variable header via printf (only %s
 # substitution, no shell parsing of values) and emit the static body via a
-# NON-EXPANDING heredoc (`<<'PROMPT'`). The only locally-validated values
-# spliced via printf are task_id (numeric-checked at line 252), cycle
-# (numeric-checked at line 256), and role (_is_safe_name-checked at line 327).
+# NON-EXPANDING heredoc (`<<'PROMPT'`), so even if the upstream scrub were
+# bypassed the values could not reach a shell expansion site here. The only
+# locally-validated values spliced via printf are task_id (numeric-checked
+# at line 252), cycle (numeric-checked at line 256), and role
+# (_is_safe_name-checked at line 327).
 _rfan_build_reviewer_prompt() {
     local task_id="$1"
     local cycle="$2"
