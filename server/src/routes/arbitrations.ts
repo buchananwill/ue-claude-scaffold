@@ -155,7 +155,7 @@ function validateBody(raw: unknown): ValidationResult<PostArbitrationBody> {
     if (!hasContradiction) {
       return {
         ok: false,
-        message: 'contradictionResolution is required when ruling is \'rule\'',
+        message: "contradictionResolution is required when ruling is 'rule'",
       };
     }
     const cr = validateContradictionResolution(body.contradictionResolution);
