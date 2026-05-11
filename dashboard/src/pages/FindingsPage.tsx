@@ -1,13 +1,12 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate, useSearch } from '@tanstack/react-router';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import {
   Accordion,
   Badge,
   Card,
   Grid,
   Group,
-  Loader,
   Pagination,
   SegmentedControl,
   Stack,
@@ -26,6 +25,9 @@ import {
 import { useProject } from '../contexts/ProjectContext.tsx';
 import { usePollInterval } from '../hooks/usePollInterval.tsx';
 import { RelativeTime } from '../components/RelativeTime.tsx';
+import { QueryPanel } from '../components/QueryPanel.tsx';
+import { FindingHighlightLink, TaskHighlightLink } from '../components/FindingLinks.tsx';
+import { SEVERITY_COLORS } from '../constants/finding-styling.ts';
 import {
   FAILURE_REASONS,
   type FailureReason,
@@ -44,10 +46,6 @@ const PAGE_SIZE = 50;
 const FLAGGED_FAILURE_REASONS: ReadonlySet<FailureReason> = new Set<FailureReason>([
   'role_session_no_op',
 ]);
-
-function severityColor(severity: 'BLOCKING' | 'NOTE'): string {
-  return severity === 'BLOCKING' ? 'red' : 'gray';
-}
 
 export function FindingsPage() {
   const { projectId } = useProject();
@@ -258,69 +256,60 @@ interface FindingsTableProps {
 }
 
 function FindingsTable({ loading, error, projectId, rows, highlightFindingId }: FindingsTableProps) {
-  if (loading) return <Loader size="sm" />;
-  if (error) {
-    return (
-      <Text c="red" size="sm">
-        {error instanceof Error ? error.message : String(error)}
-      </Text>
-    );
-  }
-  if (rows.length === 0) {
-    return <Text c="dimmed" size="sm">No findings in the window.</Text>;
-  }
-
   return (
-    <Table fz="sm" striped highlightOnHover>
-      <Table.Thead>
-        <Table.Tr>
-          <Table.Th>Severity</Table.Th>
-          <Table.Th>Task</Table.Th>
-          <Table.Th>Reviewer</Table.Th>
-          <Table.Th>Title</Table.Th>
-          <Table.Th>File</Table.Th>
-          <Table.Th>Posted</Table.Th>
-        </Table.Tr>
-      </Table.Thead>
-      <Table.Tbody>
-        {rows.map((r) => (
-          <Table.Tr
-            key={r.id}
-            bg={r.id === highlightFindingId ? 'var(--mantine-color-yellow-1)' : undefined}
-          >
-            <Table.Td>
-              <Badge color={severityColor(r.severity)} variant="light" size="xs">
-                {r.severity}
-              </Badge>
-            </Table.Td>
-            <Table.Td>
-              <Link
-                to="/$projectId/tasks/$taskId"
-                params={{ projectId, taskId: String(r.taskId) }}
-                style={{ textDecoration: 'none' }}
-              >
-                #{r.taskId} (cycle {r.cycle})
-              </Link>
-            </Table.Td>
-            <Table.Td>{r.reviewerRole}</Table.Td>
-            <Table.Td>{r.title}</Table.Td>
-            <Table.Td>
-              {r.filePath ? (
-                <Text size="xs" ff="monospace">
-                  {r.filePath}
-                  {r.line !== null ? `:${r.line}` : ''}
-                </Text>
-              ) : (
-                <Text size="xs" c="dimmed">—</Text>
-              )}
-            </Table.Td>
-            <Table.Td>
-              <RelativeTime date={r.postedAt} />
-            </Table.Td>
+    <QueryPanel
+      loading={loading}
+      error={error}
+      isEmpty={rows.length === 0}
+      emptyText="No findings in the window."
+    >
+      <Table fz="sm" striped highlightOnHover>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Severity</Table.Th>
+            <Table.Th>Task</Table.Th>
+            <Table.Th>Reviewer</Table.Th>
+            <Table.Th>Title</Table.Th>
+            <Table.Th>File</Table.Th>
+            <Table.Th>Posted</Table.Th>
           </Table.Tr>
-        ))}
-      </Table.Tbody>
-    </Table>
+        </Table.Thead>
+        <Table.Tbody>
+          {rows.map((r) => (
+            <Table.Tr
+              key={r.id}
+              bg={r.id === highlightFindingId ? 'var(--mantine-color-yellow-1)' : undefined}
+            >
+              <Table.Td>
+                <Badge color={SEVERITY_COLORS[r.severity]} variant="light" size="xs">
+                  {r.severity}
+                </Badge>
+              </Table.Td>
+              <Table.Td>
+                <TaskHighlightLink taskId={r.taskId} projectId={projectId}>
+                  #{r.taskId} (cycle {r.cycle})
+                </TaskHighlightLink>
+              </Table.Td>
+              <Table.Td>{r.reviewerRole}</Table.Td>
+              <Table.Td>{r.title}</Table.Td>
+              <Table.Td>
+                {r.filePath ? (
+                  <Text size="xs" ff="monospace">
+                    {r.filePath}
+                    {r.line !== null ? `:${r.line}` : ''}
+                  </Text>
+                ) : (
+                  <Text size="xs" c="dimmed">—</Text>
+                )}
+              </Table.Td>
+              <Table.Td>
+                <RelativeTime date={r.postedAt} />
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </QueryPanel>
   );
 }
 
@@ -347,65 +336,49 @@ interface PatternListProps {
 }
 
 function PatternList({ loading, error, items, emptyText, projectId, exampleKind }: PatternListProps) {
-  if (loading) return <Loader size="sm" />;
-  if (error) {
-    return (
-      <Text c="red" size="sm">
-        {error instanceof Error ? error.message : String(error)}
-      </Text>
-    );
-  }
-  if (items.length === 0) {
-    return <Text c="dimmed" size="sm">{emptyText}</Text>;
-  }
-
   return (
-    <Accordion variant="separated" multiple>
-      {items.map((item) => (
-        <Accordion.Item key={item.key} value={item.key}>
-          <Accordion.Control>
-            <Group justify="space-between" wrap="nowrap">
-              <Text size="sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {item.label}
-              </Text>
-              <Badge size="sm" variant="light">{item.count}</Badge>
-            </Group>
-          </Accordion.Control>
-          <Accordion.Panel>
-            {item.examples.length > 0 ? (
-              <Stack gap={2}>
-                <Text size="xs" c="dimmed">Examples:</Text>
-                {item.examples.map((id) => (
-                  <Text key={id} size="xs" ff="monospace">
-                    {exampleKind === 'finding' ? (
-                      <Link
-                        to="/$projectId/findings"
-                        params={{ projectId }}
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        search={(prev: any) => ({ ...prev, severity: 'NOTE', highlight: id })}
-                        style={{ textDecoration: 'none', cursor: 'pointer' }}
-                      >
-                        #{id}
-                      </Link>
-                    ) : (
-                      <Link
-                        to="/$projectId/tasks/$taskId"
-                        params={{ projectId, taskId: id }}
-                        style={{ textDecoration: 'none', cursor: 'pointer' }}
-                      >
-                        #{id}
-                      </Link>
-                    )}
-                  </Text>
-                ))}
-              </Stack>
-            ) : (
-              <Text size="xs" c="dimmed">No example IDs.</Text>
-            )}
-          </Accordion.Panel>
-        </Accordion.Item>
-      ))}
-    </Accordion>
+    <QueryPanel loading={loading} error={error} isEmpty={items.length === 0} emptyText={emptyText}>
+      <Accordion variant="separated" multiple>
+        {items.map((item) => (
+          <Accordion.Item key={item.key} value={item.key}>
+            <Accordion.Control>
+              <Group justify="space-between" wrap="nowrap">
+                <Text size="sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {item.label}
+                </Text>
+                <Badge size="sm" variant="light">{item.count}</Badge>
+              </Group>
+            </Accordion.Control>
+            <Accordion.Panel>
+              {item.examples.length > 0 ? (
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed">Examples:</Text>
+                  {item.examples.map((id) => (
+                    <Text key={id} size="xs" ff="monospace">
+                      {exampleKind === 'finding' ? (
+                        <FindingHighlightLink
+                          id={Number(id)}
+                          projectId={projectId}
+                          severity="NOTE"
+                        >
+                          #{id}
+                        </FindingHighlightLink>
+                      ) : (
+                        <TaskHighlightLink taskId={id} projectId={projectId}>
+                          #{id}
+                        </TaskHighlightLink>
+                      )}
+                    </Text>
+                  ))}
+                </Stack>
+              ) : (
+                <Text size="xs" c="dimmed">No example IDs.</Text>
+              )}
+            </Accordion.Panel>
+          </Accordion.Item>
+        ))}
+      </Accordion>
+    </QueryPanel>
   );
 }
 
@@ -417,47 +390,39 @@ interface FailureReasonsPanelProps {
 }
 
 function FailureReasonsPanel({ loading, error, projectId, rows }: FailureReasonsPanelProps) {
-  if (loading) return <Loader size="sm" />;
-  if (error) {
-    return (
-      <Text c="red" size="sm">
-        {error instanceof Error ? error.message : String(error)}
-      </Text>
-    );
-  }
-
+  // The padded row list is always non-empty (we synthesise zero-count rows for
+  // every failure-reason enum value), so the empty branch is unreachable in
+  // practice — we pass `isEmpty={false}` rather than invent fake empty text.
   return (
-    <Stack gap={4}>
-      {rows.map((r) => {
-        const flagged = FLAGGED_FAILURE_REASONS.has(r.failureReason) && r.count > 0;
-        const emphasised = r.count > 0;
-        return (
-          <Group key={r.failureReason} justify="space-between" wrap="nowrap" gap="xs">
-            <Group gap={6} wrap="nowrap">
-              {flagged && <IconAlertTriangle size={14} color="var(--mantine-color-red-6)" />}
-              <Text size="sm" fw={emphasised ? 600 : 400} c={emphasised ? undefined : 'dimmed'}>
-                {r.failureReason}
-              </Text>
-            </Group>
-            <Group gap={6} wrap="nowrap">
-              {r.exampleTaskIds.slice(0, 3).map((id) => (
-                <Text key={id} size="xs" ff="monospace">
-                  <Link
-                    to="/$projectId/tasks/$taskId"
-                    params={{ projectId, taskId: String(id) }}
-                    style={{ textDecoration: 'none' }}
-                  >
-                    #{id}
-                  </Link>
+    <QueryPanel loading={loading} error={error} isEmpty={false} emptyText="">
+      <Stack gap={4}>
+        {rows.map((r) => {
+          const flagged = FLAGGED_FAILURE_REASONS.has(r.failureReason) && r.count > 0;
+          const emphasised = r.count > 0;
+          return (
+            <Group key={r.failureReason} justify="space-between" wrap="nowrap" gap="xs">
+              <Group gap={6} wrap="nowrap">
+                {flagged && <IconAlertTriangle size={14} color="var(--mantine-color-red-6)" />}
+                <Text size="sm" fw={emphasised ? 600 : 400} c={emphasised ? undefined : 'dimmed'}>
+                  {r.failureReason}
                 </Text>
-              ))}
-              <Badge size="sm" variant={emphasised ? 'filled' : 'light'} color={flagged ? 'red' : emphasised ? 'orange' : 'gray'}>
-                {r.count}
-              </Badge>
+              </Group>
+              <Group gap={6} wrap="nowrap">
+                {r.exampleTaskIds.slice(0, 3).map((id) => (
+                  <Text key={id} size="xs" ff="monospace">
+                    <TaskHighlightLink taskId={id} projectId={projectId}>
+                      #{id}
+                    </TaskHighlightLink>
+                  </Text>
+                ))}
+                <Badge size="sm" variant={emphasised ? 'filled' : 'light'} color={flagged ? 'red' : emphasised ? 'orange' : 'gray'}>
+                  {r.count}
+                </Badge>
+              </Group>
             </Group>
-          </Group>
-        );
-      })}
-    </Stack>
+          );
+        })}
+      </Stack>
+    </QueryPanel>
   );
 }
