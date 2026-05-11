@@ -15,7 +15,7 @@ import { MarkdownContent } from './MarkdownContent.tsx';
 import { RelativeTime } from './RelativeTime.tsx';
 import { usePollInterval } from '../hooks/usePollInterval.tsx';
 import { fetchReviewCycle } from '../api/client.ts';
-import { SEVERITY_COLORS, VERDICT_COLORS } from '../constants/finding-styling.ts';
+import { SEVERITY_COLORS, VERDICT_COLORS, type Severity } from '../constants/finding-styling.ts';
 import type {
   ReviewFinding,
   ReviewRun,
@@ -195,7 +195,7 @@ function ReviewRunItem({ run }: { run: ReviewRun }) {
  * schema only models BLOCKING and NOTE today; any future severity additions
  * should extend this mapping rather than fall through to the default.
  */
-function severityOrdinalPrefix(severity: 'BLOCKING' | 'NOTE'): string {
+function severityOrdinalPrefix(severity: Severity): string {
   return severity === 'BLOCKING' ? 'B' : 'N';
 }
 

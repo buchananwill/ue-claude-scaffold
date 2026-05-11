@@ -32,6 +32,7 @@ import {
   FAILURE_REASONS,
   type FailureReason,
   type FailureReasonPattern,
+  type Finding,
 } from '../api/types.ts';
 
 const PAGE_SIZE = 50;
@@ -251,7 +252,7 @@ interface FindingsTableProps {
   loading: boolean;
   error: unknown;
   projectId: string;
-  rows: import('../api/types.ts').Finding[];
+  rows: Finding[];
   highlightFindingId: number | null;
 }
 

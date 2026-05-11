@@ -27,7 +27,7 @@ export function TaskDetailPage() {
   const taskId = Number(params.taskId);
   const { data: task, isLoading, error } = useTask(taskId);
 
-  if (isNaN(taskId)) return <Text c="red">Invalid task ID</Text>;
+  if (Number.isNaN(taskId)) return <Text c="red">Invalid task ID</Text>;
   if (isLoading) return <Loader display="block" mx="auto" my="xl" />;
   if (error) {
     return (
