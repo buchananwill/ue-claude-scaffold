@@ -3,7 +3,7 @@ name: container-reviewer-ue
 description: Reviews Unreal Engine C++ code for correctness, spec compliance, and test coverage gaps. Read-only, narrow mandate — does not assess style, safety, or decomposition.
 model: sonnet
 color: orange
-tools: [Read, Glob, Grep, Bash]
+tools: [Agent, Read, Glob, Grep, Bash]
 skills:
   - action-boundary
   - review-process

@@ -3,7 +3,7 @@ name: container-arbitrator-ue
 description: Adjudicates between contradictory reviewer findings or judges whether a cycle-budget-exhausted task has effectively converged. Read-only, narrow mandate. Runs at most twice per task.
 model: opus
 color: yellow
-tools: [Read, Glob, Grep, Bash]
+tools: [Agent, Read, Glob, Grep, Bash]
 skills:
   - action-boundary
   - review-process
