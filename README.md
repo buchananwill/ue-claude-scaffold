@@ -143,14 +143,21 @@ ue-claude-scaffold/
 
 ### Container Agent Architecture
 
-Each container runs a single Claude Code instance in non-interactive (`-p`) mode with a delegated agent type (default:
-`container-orchestrator`). The orchestrator:
+Each container runs a single Claude Code instance in non-interactive (`-p`) mode dispatched by `pump-loop.sh`. Task
+lifecycle is a server-managed FSM (`pending → claimed → engineering → built → reviewing → revising | arbitrating →
+complete | failed`); the daisy-chain entrypoint asks the coordination server which role to run next, launches a
+top-level `claude -p` session for that role, and reports the outcome back via FSM transition endpoints.
 
-1. Reads the plan from the task prompt
-2. Resolves sub-agents from the project's CLAUDE.md role mapping
-3. Delegates each phase to an **implementer** -> verifies build -> delegates to **reviewer**
-4. Iterates on failures (max 5 build retries, max 5 review cycles per phase)
-5. Commits each phase with a debrief audit document
+Roles per project are wired in `scaffold.config.json` under `projects.<id>.agentRoles`:
+
+- **`engineer`** — writes code for the task, builds until clean, commits.
+- **`reviewers`** — non-empty map of role-slug to agent definition; each reviewer is dispatched in parallel against the
+  engineer's commit. Findings are persisted as structured rows in `review_runs` / `review_findings`.
+- **`arbitrator`** — invoked when reviewers contradict each other or when the 5-cycle budget is exhausted; produces a
+  ruling on `arbitration_runs`.
+
+The legacy in-container orchestrator agent is gone — each role now runs as a top-level session with full Agent tool
+depth instead of as a sub-agent of an orchestrator. Build/test interception and commit-discipline hooks are unchanged.
 
 ### Build/Test Routing
 
@@ -211,7 +218,7 @@ build scripts) lives in `scaffold.config.json`.
 | `SCAFFOLD_DATABASE_URL`    | No       | (PGlite)                 | Postgres connection string for the coordination server. Set in the shell that runs `npm run dev`. Omit to use the in-process PGlite database. The scaffold deliberately ignores any inherited `DATABASE_URL` to avoid hijack from a co-installed Supabase project |
 | `AGENT_NAME`               | No       | `agent-1`                | Agent identifier                           |
 | `WORK_BRANCH`              | No       | (computed)               | Git branch for the agent — normally set automatically by launch.sh |
-| `AGENT_TYPE`               | Yes      | —                        | Agent definition to load (e.g. `container-orchestrator`, `container-orchestrator-ue`, `scaffold-orchestrator`) |
+| `AGENT_TYPE`               | Yes      | —                        | Agent definition to load (e.g. `container-implementer-ue`, `scaffold-orchestrator`). For server-FSM-driven UE task execution the agent type is selected per role by `projects.<id>.agentRoles`; `AGENT_TYPE` then names only the default fallback |
 | `CLAUDE_EFFORT`            | No       | `high`                   | Reasoning effort for the top-level Claude session: `low`, `medium`, `high`, `xhigh`, `max`. Resolution order: launch CLI > scaffold.config.json > .env > built-in default |
 | `MAX_TURNS`                | No       | `200`                    | Max Claude Code turns before stopping      |
 | `WORKER_MODE`              | No       | `false`                  | Run as task-queue worker instead of plan executor |
@@ -249,7 +256,8 @@ When a `projects` block is present it takes precedence over the legacy top-level
 | Field                        | Description                                   |
 |------------------------------|-----------------------------------------------|
 | `projects`                   | Optional map of project ID -> per-project config. When present, takes precedence over the legacy top-level fields |
-| `projects.<id>.agentType`    | Default agent definition for containers launched against this project (e.g. `container-orchestrator-ue`, `scaffold-orchestrator`). Overridden by `--agent-type` on the launch CLI |
+| `projects.<id>.agentType`    | Default agent definition for containers launched against this project (e.g. `scaffold-orchestrator`). For UE projects the server FSM dispatches per-role agents from `projects.<id>.agentRoles`; `agentType` then names only the default container fallback. Overridden by `--agent-type` on the launch CLI |
+| `projects.<id>.agentRoles`   | Required for FSM-driven UE projects. Object with string keys `engineer` and `arbitrator` (bare agent filenames without `.md`) plus a non-empty `reviewers` map keyed by lowercase role slugs `^[a-z][a-z0-9_-]{0,31}$`. See `scaffold.config.example.json` |
 | `project.name`               | Your UE project name                          |
 | `project.path`               | Absolute path to the project                  |
 | `project.uprojectFile`       | The `.uproject` filename                      |
@@ -418,7 +426,7 @@ There are two parallel definition trees:
 
 #### `dynamic-agents/` (skills-composed; active set)
 
-Per-stack orchestrators (`container-orchestrator-ue`, `scaffold-orchestrator`, `scaffold-server-orchestrator`, `scaffold-dashboard-orchestrator`, `content-catalogue-dashboard-orchestrator`), implementers (`container-implementer-ue`, `scaffold-implementer`, `scaffold-server-implementer`, `scaffold-dashboard-implementer`), role-specialised reviewers (decomposition / safety / correctness / react-quality / browser-safety / typescript-type) per stack, style-sweep agents (`container-style-sweep-ue`, `scaffold-style-sweep`, `scaffold-server-style-sweep`), and the design-team roster (`design-leader`, `design-architect`, `design-domain`, `design-data`, `design-ui`, `design-ui-mantine`, `design-elegance`, `design-performance`, `design-safety`, `design-critic`, `cleanup-leader`).
+Scaffold-side orchestrators (`scaffold-orchestrator`, `scaffold-server-orchestrator`, `scaffold-dashboard-orchestrator`, `content-catalogue-dashboard-orchestrator`), implementers (`container-implementer-ue`, `scaffold-implementer`, `scaffold-server-implementer`, `scaffold-dashboard-implementer`), role-specialised reviewers (decomposition / safety / correctness / react-quality / browser-safety / typescript-type) per stack, style-sweep agents (`container-style-sweep-ue`, `scaffold-style-sweep`, `scaffold-server-style-sweep`), and the design-team roster (`design-leader`, `design-architect`, `design-domain`, `design-data`, `design-ui`, `design-ui-mantine`, `design-elegance`, `design-performance`, `design-safety`, `design-critic`, `cleanup-leader`). UE task execution no longer routes through an in-container orchestrator agent; the server FSM dispatches the engineer and reviewer roles named in `projects.<id>.agentRoles` directly.
 
 ### Customising for your project
 

@@ -58,7 +58,7 @@
   "projects": {
     "my-ue-game": {
       "name": "MyUEGame",
-      "agentType": "container-orchestrator-ue",
+      "agentType": "container-implementer-ue",
       "effort": "high",
       "path": "D:\\Projects\\MyUEGame",
       "uprojectFile": "MyUEGame.uproject",
@@ -80,6 +80,15 @@
       "hooks": {
         "buildIntercept": true,
         "cppLint": true
+      },
+      "agentRoles": {
+        "engineer": "container-implementer-ue",
+        "arbitrator": "container-arbitrator-ue",
+        "reviewers": {
+          "safety": "container-safety-reviewer-ue",
+          "correctness": "container-reviewer-ue",
+          "decomp": "container-decomposition-reviewer-ue"
+        }
       }
     },
     "my-ue-game-dashboard": {
