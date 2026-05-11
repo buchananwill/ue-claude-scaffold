@@ -116,7 +116,7 @@ describe('tasks-core queries', () => {
     assert.equal(n, 2);
   });
 
-  it('should delete by id if not claimed/in_progress', async () => {
+  it('should delete by id if not in an FSM-active status', async () => {
     const task = await tasksCore.insert(db, { title: 'Deletable' });
     const ok = await tasksCore.deleteById(db, task.id);
     assert.equal(ok, true);
@@ -130,6 +130,21 @@ describe('tasks-core queries', () => {
     await db.execute(sqlTag`UPDATE tasks SET status = 'claimed' WHERE id = ${task.id}`);
     const ok = await tasksCore.deleteById(db, task.id);
     assert.equal(ok, false);
+  });
+
+  it('should not delete a task in any FSM mid-state', async () => {
+    const { sql: sqlTag } = await import('drizzle-orm');
+    // Spot-check two of the FSM mid-states (engineering, reviewing) to confirm
+    // the inner DB-layer guard refuses every member of FSM_ACTIVE_STATUSES,
+    // not just the legacy 'claimed' value the prior test covered.
+    for (const fsmStatus of ['engineering', 'reviewing'] as const) {
+      const task = await tasksCore.insert(db, { title: `FSM ${fsmStatus}` });
+      await db.execute(sqlTag`UPDATE tasks SET status = ${fsmStatus} WHERE id = ${task.id}`);
+      const ok = await tasksCore.deleteById(db, task.id);
+      assert.equal(ok, false, `deleteById should refuse status=${fsmStatus}`);
+      const stillThere = await tasksCore.getById(db, task.id);
+      assert.equal(stillThere?.status, fsmStatus);
+    }
   });
 
   it('should default sort direction to asc when dir is omitted', async () => {

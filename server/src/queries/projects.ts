@@ -4,6 +4,19 @@ import type { DrizzleDb } from '../drizzle-instance.js';
 import { isValidProjectId } from '../branch-naming.js';
 
 
+/**
+ * Per-project FSM role wiring. Maps role names (engineer, arbitrator, plus a
+ * nested `reviewers` map keyed by reviewer slot) to compiled-agent basenames.
+ * Persisted as jsonb on `projects.agent_roles`; validated at config-load and
+ * task-ingest, not in the schema. Read-only for now — the dashboard and the
+ * container daisy-chain consume this; no API endpoint mutates it yet.
+ */
+export type AgentRoleMap = {
+  engineer?: string;
+  arbitrator?: string;
+  reviewers?: Record<string, string>;
+} & Record<string, unknown>;
+
 export interface ProjectRow {
   id: string;
   name: string;
@@ -11,6 +24,7 @@ export interface ProjectRow {
   seedBranch: string | null;
   buildTimeoutMs: number | null;
   testTimeoutMs: number | null;
+  agentRoles: AgentRoleMap;
   createdAt: Date | null;
 }
 
@@ -51,6 +65,10 @@ export async function create(db: DrizzleDb, opts: CreateProjectOpts): Promise<Pr
       seedBranch: opts.seedBranch ?? null,
       buildTimeoutMs: opts.buildTimeoutMs ?? null,
       testTimeoutMs: opts.testTimeoutMs ?? null,
+      // agentRoles is required by the schema (added in Phase 1 of the
+      // durable-task-FSM rework). Phase 9 will replace this default with the
+      // operator's per-project mapping seeded from scaffold.config.json.
+      agentRoles: {},
     })
     .returning();
   return rows[0] as ProjectRow;

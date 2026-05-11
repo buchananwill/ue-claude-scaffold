@@ -18,7 +18,7 @@ describe('files queries', () => {
     db = tdb.db;
 
     // Create additional project for cross-project file test
-    await db.insert(projects).values({ id: 'proj-x', name: 'Project X' }).onConflictDoNothing();
+    await db.insert(projects).values({ id: 'proj-x', name: 'Project X', agentRoles: {} }).onConflictDoNothing();
 
     // Register agents to get UUIDs
     const a1 = await agentQ.register(db, { name: 'agent-1', worktree: 'w1', projectId: 'default', sessionToken: 'fl-tok-1' });

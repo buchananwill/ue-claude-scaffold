@@ -85,7 +85,13 @@ export const messages = pgTable('messages', {
   index('idx_messages_claimed').on(table.claimedBy),
 ]);
 
-// 6. tasks
+// 6. tasks — born-fresh under the durable-task-FSM schema fork.
+//    Pre-cutover rows live in tasks_pre_fsm_archive (created in Phase 9) and never
+//    transit into this table. New FSM columns: review cycle accounting, build status,
+//    arbitration handshake fields, structured failure metadata, and per-task agent-role
+//    overrides. The legacy 'cycle' status remains in the enum because the dependency-
+//    graph code path needs it for circular-dependency signalling — it is orthogonal to
+//    the new FSM and new-FSM tasks never enter it.
 export const tasks = pgTable('tasks', {
   id: serial('id').primaryKey(),
   projectId: text('project_id').notNull().references(() => projects.id),
@@ -102,10 +108,48 @@ export const tasks = pgTable('tasks', {
   result: jsonb('result'),
   progressLog: text('progress_log'),
   agentTypeOverride: text('agent_type_override'),
+  // FSM: review cycle accounting
+  reviewCycleCount: integer('review_cycle_count').notNull().default(0),
+  reviewCycleBudget: integer('review_cycle_budget').notNull().default(5),
+  reviewerVerdicts: jsonb('reviewer_verdicts').notNull().default(sql`'{}'::jsonb`),
+  latestReviewPath: text('latest_review_path'),
+  // FSM: build state tracked separately from task status
+  buildStatus: text('build_status').notNull().default('pending'),
+  commitSha: text('commit_sha'),
+  // FSM: arbitration handshake — set on entry to 'arbitrating', cleared on exit
+  arbitrationPendingTrigger: text('arbitration_pending_trigger'),
+  // FSM: arbitrator's ruling addendum, surfaced to the engineer's revising-cycle prompt
+  arbitrationAddendumPath: text('arbitration_addendum_path'),
+  // FSM: structured failure metadata, populated only on entry to 'failed'
+  failureReason: text('failure_reason'),
+  failureDetail: text('failure_detail'),
+  // FSM: per-task override of the project default agent-role wiring (see projects.agentRoles)
+  agentRolesOverride: jsonb('agent_roles_override'),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
-  check('tasks_status_check', sql`${table.status} IN ('pending','claimed','in_progress','completed','failed','integrated','cycle')`),
-  check('tasks_agent_type_override_check', sql`${table.agentTypeOverride} IS NULL OR ${table.agentTypeOverride} ~ '^[a-zA-Z0-9_-]{1,64}$'`),
+  check(
+    'tasks_status_check',
+    sql`${table.status} IN ('pending','claimed','engineering','built','reviewing','revising','arbitrating','complete','failed','integrated','cycle')`,
+  ),
+  check(
+    'tasks_agent_type_override_check',
+    sql`${table.agentTypeOverride} IS NULL OR ${table.agentTypeOverride} ~ '^[a-zA-Z0-9_-]{1,64}$'`,
+  ),
+  check(
+    'tasks_build_status_check',
+    sql`${table.buildStatus} IN ('pending','clean','dirty','failed')`,
+  ),
+  check(
+    'tasks_failure_reason_check',
+    sql`${table.failureReason} IS NULL OR ${table.failureReason} IN (
+      'review_cycle_budget_exhausted',
+      'reviewer_contradiction',
+      'engineer_build_failure',
+      'reviewer_infrastructure_failure',
+      'role_session_no_op',
+      'arbitrator_escalated'
+    )`,
+  ),
   index('idx_tasks_status').on(table.status),
   index('idx_tasks_priority').on(table.priority.desc(), table.id.asc()),
 ]);
@@ -191,6 +235,12 @@ export const teams = pgTable('teams', {
 ]);
 
 // 14. projects — portable project configuration (no filesystem paths)
+//
+//     agentRoles: required per-project mapping of FSM roles (engineer / arbitrator /
+//     reviewers) to compiled agent-definition basenames. Seeded at config-load from
+//     scaffold.config.json (see Phase 9 documentation); validated at the application
+//     layer in server/src/config-resolver.ts (config-load) and tasks-ingest (override
+//     validation). No DB-level CHECK on the jsonb shape — that validation lives in Zod.
 export const projects = pgTable('projects', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
@@ -198,6 +248,7 @@ export const projects = pgTable('projects', {
   seedBranch: text('seed_branch'),
   buildTimeoutMs: integer('build_timeout_ms'),
   testTimeoutMs: integer('test_timeout_ms'),
+  agentRoles: jsonb('agent_roles').notNull(),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   check('projects_id_check', sql`${table.id} ~ '^[a-zA-Z0-9_-]{1,64}$'`),
@@ -235,4 +286,78 @@ export const claudeCodeContainerSessions = pgTable('claude_code_container_sessio
   index('idx_ccs_agent').on(table.agentId),
   index('idx_ccs_task').on(table.taskId),
   index('idx_ccs_project_started').on(table.projectId, table.startedAt.desc()),
+]);
+
+// 17. reviewRuns — one row per (task, cycle, reviewerRole) for completed reviewer runs.
+//     Reviewer-session crashes are infrastructure events tracked via
+//     claude_code_container_sessions.exitCode and never produce a row here. Absence of
+//     a row for a (taskId, cycle, reviewerRole) triple means "did not complete," not
+//     "rejected the code."
+export const reviewRuns = pgTable('review_runs', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  cycle: integer('cycle').notNull(),
+  reviewerRole: text('reviewer_role').notNull(),
+  verdict: text('verdict').notNull(),
+  rawMarkdown: text('raw_markdown').notNull(),
+  postedAt: timestamp('posted_at').notNull().defaultNow(),
+}, (table) => [
+  unique('review_runs_task_cycle_role_unique').on(table.taskId, table.cycle, table.reviewerRole),
+  check(
+    'reviewer_runs_verdict_check',
+    sql`${table.verdict} IN ('approve','request_changes','out_of_scope')`,
+  ),
+  index('idx_review_runs_task_cycle').on(table.taskId, table.cycle),
+]);
+
+// 18. arbitrationRuns — at most one ruling per (task, trigger). Records the
+//     arbitrator's verdict on either a cycle-budget exhaustion or a reviewer
+//     contradiction. When ruling = 'rule', contradictionResolution names the upheld
+//     and retired findings; otherwise it is null.
+export const arbitrationRuns = pgTable('arbitration_runs', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  trigger: text('trigger').notNull(),
+  ruling: text('ruling').notNull(),
+  rulingMarkdown: text('ruling_markdown').notNull(),
+  contradictionResolution: jsonb('contradiction_resolution'),
+  postedAt: timestamp('posted_at').notNull().defaultNow(),
+}, (table) => [
+  unique('arbitration_runs_task_trigger_unique').on(table.taskId, table.trigger),
+  check(
+    'arbitration_runs_trigger_check',
+    sql`${table.trigger} IN ('review_cycle_budget_exhausted','reviewer_contradiction')`,
+  ),
+  check(
+    'arbitration_runs_ruling_check',
+    sql`${table.ruling} IN ('approve','rule','escalate')`,
+  ),
+  check(
+    'arbitration_runs_rule_resolution_check',
+    sql`(${table.ruling} = 'rule' AND ${table.contradictionResolution} IS NOT NULL)
+        OR (${table.ruling} <> 'rule' AND ${table.contradictionResolution} IS NULL)`,
+  ),
+  index('idx_arbitration_runs_task').on(table.taskId),
+]);
+
+// 19. reviewFindings — per-finding child rows of review_runs.
+//     Severity is two-tier: BLOCKING means the engineer must address before the cycle
+//     can transition to 'complete'; NOTE is observability-only and never acted on by
+//     the engineer (it lands here so the operator can aggregate signals across tasks).
+//     The legacy WARNING tier is removed.
+export const reviewFindings = pgTable('review_findings', {
+  id: serial('id').primaryKey(),
+  runId: integer('run_id').notNull().references(() => reviewRuns.id, { onDelete: 'cascade' }),
+  severity: text('severity').notNull(),
+  ordinal: integer('ordinal').notNull(),
+  filePath: text('file_path'),
+  line: integer('line'),
+  title: text('title').notNull(),
+  description: text('description').notNull(),
+  evidence: text('evidence'),
+  fix: text('fix'),
+}, (table) => [
+  check('review_findings_severity_check', sql`${table.severity} IN ('BLOCKING','NOTE')`),
+  index('idx_review_findings_run').on(table.runId),
+  index('idx_review_findings_task_severity').on(table.severity),
 ]);

@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { sql } from 'drizzle-orm';
 import { createTestConfig } from '../test-helper.js';
 import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
 import tasksPlugin from './tasks.js';
@@ -128,11 +129,38 @@ describe('tasks routes', () => {
     assert.equal(body1.tasks.length, 2);
     assert.equal(body1.total, 2);
 
-    // Multi-status: pending,completed (only pending exist)
-    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,completed', headers: { 'x-project-id': 'default' } });
+    // Multi-status: pending,complete (only pending exist)
+    const res2 = await ctx.app.inject({ method: 'GET', url: '/tasks?status=pending,complete', headers: { 'x-project-id': 'default' } });
     const body2 = res2.json() as TaskListBody;
     assert.equal(body2.tasks.length, 2);
     assert.equal(body2.total, 2);
+  });
+
+  it('GET /tasks accepts every FSM mid-state status (engineering, built, reviewing, revising, arbitrating)', async () => {
+    // Phase 4 startup probe queries `?status=engineering,built,reviewing,
+    // revising,arbitrating&claimedByAgentId=...` to recover in-flight tasks.
+    // VALID_TASK_STATUSES must list every FSM mid-state or the probe 400s
+    // and the agent silently fails to resume work.
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/tasks?status=engineering,built,reviewing,revising,arbitrating',
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as TaskListBody;
+    assert.equal(body.total, 0); // no tasks in those states; just verifying acceptance
+    assert.deepEqual(body.tasks, []);
+  });
+
+  it('GET /tasks rejects an unknown status with 400', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/tasks?status=bogus_state',
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 400);
+    const body = res.json();
+    assert.ok(body.message.includes('Invalid status value'));
   });
 
   it('GET /tasks with priority filter', async () => {
@@ -281,6 +309,76 @@ describe('tasks routes', () => {
     assert.ok(res.json().message.includes('Too many'));
   });
 
+  // ── claimedByAgentId UUID filter ──────────────────────────────────────
+  // Used by the container's startup probe to recover only tasks claimed by
+  // *this* agent's UUID (identity), not by anyone occupying the same name slot.
+
+  it('GET /tasks?claimedByAgentId=<valid-uuid> returns only tasks claimed by that agent', async () => {
+    // Two tasks, only one is claimed by agent-1.
+    const r1 = await ctx.app.inject({
+      method: 'POST', url: '/tasks',
+      payload: { title: 'Mine to claim' },
+      headers: { 'x-project-id': 'default' },
+    });
+    await ctx.app.inject({
+      method: 'POST', url: '/tasks',
+      payload: { title: 'Left unclaimed' },
+      headers: { 'x-project-id': 'default' },
+    });
+    const claimedId = r1.json().id;
+
+    await ctx.app.inject({
+      method: 'POST', url: `/tasks/${claimedId}/claim`,
+      headers: { 'x-project-id': 'default', 'x-agent-name': 'agent-1' },
+    });
+
+    // Look up agent-1's UUID via the agent record
+    const agentRes = await ctx.app.inject({
+      method: 'GET', url: '/agents/agent-1',
+      headers: { 'x-project-id': 'default' },
+    });
+    const agentId = agentRes.json().id as string;
+    assert.match(agentId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
+    const res = await ctx.app.inject({
+      method: 'GET', url: `/tasks?claimedByAgentId=${agentId}`,
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as TaskListBody;
+    assert.equal(body.total, 1);
+    assert.equal(body.tasks.length, 1);
+    assert.equal(body.tasks[0].id, claimedId);
+    assert.equal(body.tasks[0].claimedBy, agentId);
+  });
+
+  it('GET /tasks?claimedByAgentId=<malformed> returns 400', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET', url: '/tasks?claimedByAgentId=not-a-uuid',
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().message.includes('claimedByAgentId'));
+  });
+
+  it('GET /tasks?claimedByAgentId=<unknown-uuid> returns empty list', async () => {
+    await ctx.app.inject({
+      method: 'POST', url: '/tasks',
+      payload: { title: 'Anything' },
+      headers: { 'x-project-id': 'default' },
+    });
+    // A well-formed UUID that no agent has been issued.
+    const phantomUuid = '00000000-0000-4000-8000-000000000000';
+    const res = await ctx.app.inject({
+      method: 'GET', url: `/tasks?claimedByAgentId=${phantomUuid}`,
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json() as TaskListBody;
+    assert.equal(body.total, 0);
+    assert.equal(body.tasks.length, 0);
+  });
+
   it('GET /tasks filtered total matches filtered count, not global count', async () => {
     await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P0', priority: 0 }, headers: { 'x-project-id': 'default' }});
     await ctx.app.inject({ method: 'POST', url: '/tasks', payload: { title: 'P1', priority: 1 }, headers: { 'x-project-id': 'default' }});
@@ -316,6 +414,53 @@ describe('tasks routes', () => {
   it('GET /tasks/:id returns 404 for missing task', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/tasks/99999', headers: { 'x-project-id': 'default' }});
     assert.equal(res.statusCode, 404);
+  });
+
+  it('GET /tasks/:id round-trips agentRolesOverride from the jsonb column', async () => {
+    // No POST/PATCH path exposes agentRolesOverride yet (it is seeded via
+    // tasks-ingest in production). Insert via raw SQL and verify the route
+    // surfaces the value verbatim — pump-loop.sh's _resolve_roles_for_task
+    // depends on .agentRolesOverride being present on the task JSON.
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Task with role override' },
+      headers: { 'x-project-id': 'default' },
+    });
+    const id = post.json().id;
+
+    const override = { reviewers: { decomp: 'custom-decomp-ue' } };
+    await ctx.db.execute(
+      sql`UPDATE tasks SET agent_roles_override = ${JSON.stringify(override)}::jsonb WHERE id = ${id}`,
+    );
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/tasks/${id}`,
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 200);
+    const task = res.json();
+    assert.deepEqual(task.agentRolesOverride, override);
+  });
+
+  it('GET /tasks/:id returns null agentRolesOverride when the column is null', async () => {
+    const post = await ctx.app.inject({
+      method: 'POST',
+      url: '/tasks',
+      payload: { title: 'Task without role override' },
+      headers: { 'x-project-id': 'default' },
+    });
+    const id = post.json().id;
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/tasks/${id}`,
+      headers: { 'x-project-id': 'default' },
+    });
+    assert.equal(res.statusCode, 200);
+    const task = res.json();
+    assert.equal(task.agentRolesOverride, null);
   });
 
   // ── PATCH /tasks/:id ─────────────────────────────────────────────────
@@ -802,9 +947,25 @@ describe('tasks routes', () => {
       assert.ok(body.message.includes('cannot bulk-delete'));
     });
 
-    it('returns 409 for in_progress status (protected)', async () => {
-      const res = await ctx.app.inject({ method: 'DELETE', url: '/tasks?status=in_progress', headers: { 'x-project-id': 'test' } });
-      assert.equal(res.statusCode, 409);
+    it('returns 409 for every FSM in-flight status (protected mid-states)', async () => {
+      // Cover every member of FSM_ACTIVE_STATUSES, not just one. The bulk-
+      // delete guard must refuse all six in-flight statuses; the loop guards
+      // against a future contributor adding a new mid-state to the schema
+      // CHECK without also adding it to the route guard.
+      const fsmInFlight = ['claimed', 'engineering', 'built', 'reviewing', 'revising', 'arbitrating'] as const;
+      for (const status of fsmInFlight) {
+        const res = await ctx.app.inject({
+          method: 'DELETE',
+          url: `/tasks?status=${status}`,
+          headers: { 'x-project-id': 'test' },
+        });
+        assert.equal(res.statusCode, 409, `DELETE ?status=${status} should return 409`);
+        const body = res.json();
+        assert.ok(
+          body.message.includes('cannot bulk-delete'),
+          `DELETE ?status=${status} body should mention bulk-delete refusal`,
+        );
+      }
     });
 
     it('scopes deletion to the requesting project', async () => {

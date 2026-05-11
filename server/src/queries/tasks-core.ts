@@ -1,7 +1,8 @@
-import { eq, and, or, desc, asc, sql, count as countFn, inArray, isNull, type SQL } from 'drizzle-orm';
+import { eq, and, or, desc, asc, count as countFn, inArray, notInArray, isNull, type SQL } from 'drizzle-orm';
 import { tasks } from '../schema/tables.js';
 import type { DrizzleDb } from '../drizzle-instance.js';
 import { validateAgentTypeOverride } from '../branch-naming.js';
+import { ACTIVE_STATUSES } from './query-helpers.js';
 
 /** Drizzle inferred row type for the tasks table. */
 export type TaskDbRow = typeof tasks.$inferSelect;
@@ -62,14 +63,28 @@ export type SortColumn = keyof typeof SORTABLE_COLUMNS;
 
 export const VALID_SORT_COLUMNS: readonly string[] = Object.keys(SORTABLE_COLUMNS);
 
-/** Known task status values accepted by the API. */
-export const VALID_TASK_STATUSES = ['pending', 'claimed', 'in_progress', 'completed', 'failed', 'integrated', 'cycle'] as const;
+/** Known task status values accepted by the API. Mirrors the schema CHECK
+ *  constraint at server/src/schema/tables.ts (tasks_status_check) exactly:
+ *  pending, claimed, the FSM mid-states (engineering, built, reviewing,
+ *  revising, arbitrating), the FSM terminals (complete, failed, integrated),
+ *  and the legacy 'cycle' sentinel still used by the dependency-graph code. */
+export const VALID_TASK_STATUSES = [
+  'pending', 'claimed', 'engineering', 'built', 'reviewing', 'revising',
+  'arbitrating', 'complete', 'failed', 'integrated', 'cycle',
+] as const;
 
 export interface ListOpts {
   status?: string[];
   agent?: string[];
   priority?: number[];
   agentTypeOverride?: string[];
+  /**
+   * Filter by `tasks.claimed_by_agent_id` (an agent UUID, not a name slot).
+   * Agent UUIDs are stable identity; names are reusable UI labels — the
+   * container's startup probe uses this to recover only tasks claimed by
+   * *this* agent's UUID, not by anyone who happens to share the name slot.
+   */
+  claimedByAgentId?: string;
   projectId?: string;
   limit?: number;
   offset?: number;
@@ -109,6 +124,7 @@ function buildFilterConditions(opts: {
   agent?: string[];
   priority?: number[];
   agentTypeOverride?: string[];
+  claimedByAgentId?: string;
   projectId?: string;
 }): SQL[] {
   const conditions: SQL[] = [];
@@ -125,6 +141,9 @@ function buildFilterConditions(opts: {
   }
   if (opts.agentTypeOverride && opts.agentTypeOverride.length > 0) {
     conditions.push(buildNullableSentinelFilter(tasks.agentTypeOverride, opts.agentTypeOverride, '__default__'));
+  }
+  if (opts.claimedByAgentId) {
+    conditions.push(eq(tasks.claimedByAgentId, opts.claimedByAgentId));
   }
   if (opts.priority && opts.priority.length > 0) {
     if (opts.priority.length === 1) {
@@ -175,6 +194,7 @@ export interface CountOpts {
   agent?: string[];
   priority?: number[];
   agentTypeOverride?: string[];
+  claimedByAgentId?: string;
   projectId?: string;
 }
 
@@ -237,12 +257,16 @@ export async function deleteByStatus(db: DrizzleDb, status: string, projectId: s
 }
 
 export async function deleteById(db: DrizzleDb, id: number): Promise<boolean> {
+  // Refuse to delete tasks that are claimed or in any FSM mid-state. Mirrors
+  // the route-layer guard at routes/tasks.ts; the inner guard exists so
+  // direct callers of this helper (e.g. CLI-style consumers) cannot bypass
+  // the FSM contract. Single source of truth: ACTIVE_STATUSES.
   const rows = await db
     .delete(tasks)
     .where(
       and(
         eq(tasks.id, id),
-        sql`${tasks.status} NOT IN ('claimed', 'in_progress')`,
+        notInArray(tasks.status, [...ACTIVE_STATUSES]),
       ),
     )
     .returning();

@@ -16,6 +16,9 @@ source "${SCRIPT_DIR}/lib/workspace-setup.sh"
 # shellcheck source=lib/finalize.sh
 source "${SCRIPT_DIR}/lib/finalize.sh"
 
+# shellcheck source=lib/reviewer-fanout.sh
+source "${SCRIPT_DIR}/lib/reviewer-fanout.sh"
+
 # shellcheck source=lib/run-claude.sh
 source "${SCRIPT_DIR}/lib/run-claude.sh"
 
@@ -66,6 +69,12 @@ fi
 
 # Multi-task pump loop
 if [ "$WORKER_SINGLE_TASK" = "false" ]; then
+    # Startup probe (Phase 4): resume any tasks already mid-cycle for *this*
+    # agent UUID. Slots in *before* the normal claim loop so OAuth expiries
+    # and host reboots do not strand work. Only AGENT_ID (UUID, identity) is
+    # used for filtering — names are reusable UI labels.
+    _resume_in_flight_tasks
+
     while true; do
         _pump_iteration
         case "$PUMP_STATUS" in

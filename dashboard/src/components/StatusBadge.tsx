@@ -1,6 +1,13 @@
 import { Badge } from '@mantine/core';
+import { STATUS_COLORS } from '../constants/task-statuses.js';
 
-const colorMap: Record<string, string> = {
+/**
+ * Color map for non-task statuses (agents, message types, team statuses).
+ * Task-status colours come from `STATUS_COLORS` in `constants/task-statuses.ts`
+ * — that file is the single source of truth for the FSM status palette, so the
+ * badge component reads it directly rather than maintaining a duplicate.
+ */
+const otherColorMap: Record<string, string> = {
   // agent statuses
   idle: 'gray',
   working: 'yellow',
@@ -9,12 +16,6 @@ const colorMap: Record<string, string> = {
   done: 'green',
   stopping: 'orange',
   error: 'red',
-  // task statuses
-  pending: 'gray',
-  claimed: 'yellow',
-  in_progress: 'blue',
-  completed: 'green',
-  failed: 'red',
   // message types
   info: 'blue',
   build_queued: 'orange',
@@ -38,7 +39,7 @@ interface StatusBadgeProps {
 }
 
 export function StatusBadge({ value, size = 'sm' }: StatusBadgeProps) {
-  const color = colorMap[value] ?? 'gray';
+  const color = STATUS_COLORS[value] ?? otherColorMap[value] ?? 'gray';
   return (
     <Badge color={color} variant="light" size={size}>
       {value}

@@ -59,7 +59,7 @@ describe('sessions routes (drizzle)', () => {
 
     // Pre-seed 'proj-a' so the FK on agents/sessions is satisfied for
     // cross-project assertions.
-    await ctx.db.insert(projects).values({ id: 'proj-a', name: 'Project A' }).onConflictDoNothing();
+    await ctx.db.insert(projects).values({ id: 'proj-a', name: 'Project A', agentRoles: {} }).onConflictDoNothing();
 
     const config = makeConfig();
     await ctx.app.register(agentsPlugin, { config });

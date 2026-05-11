@@ -1,44 +1,48 @@
-import { useParams } from "@tanstack/react-router";
-import { Link } from "@tanstack/react-router";
+import { useParams, Link } from '@tanstack/react-router';
 import {
-  Stack,
-  Group,
-  Card,
-  Title,
-  Text,
-  Code,
-  Loader,
   Badge,
-} from "@mantine/core";
-import { useTask } from "../hooks/useTask.ts";
-import { StatusBadge } from "../components/StatusBadge.tsx";
-import { RelativeTime } from "../components/RelativeTime.tsx";
-import { TaskDuration } from "../components/TaskDuration.tsx";
-import { useProject } from "../contexts/ProjectContext.tsx";
-import { useAgentNameMap } from "../hooks/useAgentNameMap.ts";
-import { formatAgentRef } from "../utils/agentRef.ts";
+  Card,
+  Code,
+  Group,
+  Loader,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
+import { useTask } from '../hooks/useTask.ts';
+import { StatusBadge } from '../components/StatusBadge.tsx';
+import { RelativeTime } from '../components/RelativeTime.tsx';
+import { TaskDuration } from '../components/TaskDuration.tsx';
+import { TaskFsmStrip } from '../components/TaskFsmStrip.tsx';
+import { TaskReviewsSection } from '../components/TaskReviewsSection.tsx';
+import { TaskArbitrationSection } from '../components/TaskArbitrationSection.tsx';
+import { useProject } from '../contexts/ProjectContext.tsx';
+import { useAgentNameMap } from '../hooks/useAgentNameMap.ts';
+import { formatAgentRef } from '../utils/agentRef.ts';
 
 export function TaskDetailPage() {
-  const params = useParams({ from: "/$projectId/tasks/$taskId" });
+  const params = useParams({ from: '/$projectId/tasks/$taskId' });
   const { projectId } = useProject();
   const agentNames = useAgentNameMap();
   const taskId = Number(params.taskId);
   const { data: task, isLoading, error } = useTask(taskId);
 
-  if (isNaN(taskId)) return <Text c="red">Invalid task ID</Text>;
+  if (Number.isNaN(taskId)) return <Text c="red">Invalid task ID</Text>;
   if (isLoading) return <Loader display="block" mx="auto" my="xl" />;
-  if (error)
+  if (error) {
     return (
       <Text c="red" ta="center" py="xl">
         {error instanceof Error ? error.message : String(error)}
       </Text>
     );
-  if (!task)
+  }
+  if (!task) {
     return (
       <Text c="dimmed" ta="center" py="xl">
         Task not found
       </Text>
     );
+  }
 
   return (
     <Stack gap="md">
@@ -47,8 +51,9 @@ export function TaskDetailPage() {
         <Link
           to="/$projectId"
           params={{ projectId }}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           search={(prev: any) => prev}
-          style={{ textDecoration: "none" }}
+          style={{ textDecoration: 'none' }}
         >
           &larr; Back to overview
         </Link>
@@ -84,7 +89,7 @@ export function TaskDetailPage() {
               Acceptance Criteria
             </Text>
             {task.acceptanceCriteria ? (
-              <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                 {task.acceptanceCriteria}
               </Text>
             ) : (
@@ -151,7 +156,7 @@ export function TaskDetailPage() {
                       <Link
                         to="/$projectId/tasks/$taskId"
                         params={{ projectId, taskId: String(depId) }}
-                        style={{ textDecoration: "none" }}
+                        style={{ textDecoration: 'none' }}
                       >
                         #{depId}
                       </Link>
@@ -206,7 +211,7 @@ export function TaskDetailPage() {
               Created: <RelativeTime date={task.createdAt} />
             </Text>
             <Text size="xs" c="dimmed">
-              Claimed:{" "}
+              Claimed:{' '}
               {task.claimedAt ? (
                 <RelativeTime date={task.claimedAt} />
               ) : (
@@ -216,7 +221,7 @@ export function TaskDetailPage() {
               )}
             </Text>
             <Text size="xs" c="dimmed">
-              Completed:{" "}
+              Completed:{' '}
               {task.completedAt ? (
                 <RelativeTime date={task.completedAt} />
               ) : (
@@ -227,7 +232,7 @@ export function TaskDetailPage() {
             </Text>
           </Group>
           <Text size="xs" c="dimmed">
-            Duration:{" "}
+            Duration:{' '}
             <TaskDuration
               claimedAt={task.claimedAt}
               completedAt={task.completedAt}
@@ -259,6 +264,25 @@ export function TaskDetailPage() {
           </div>
         </Stack>
       </Card>
+
+      <TaskFsmStrip
+        status={task.status}
+        cycleCount={task.reviewCycleCount}
+        cycleBudget={task.reviewCycleBudget}
+        verdicts={task.reviewerVerdicts}
+        failureReason={task.failureReason}
+        failureDetail={task.failureDetail}
+        arbitrationPendingTrigger={task.arbitrationPendingTrigger}
+      />
+
+      <TaskArbitrationSection taskId={task.id} projectId={projectId} />
+
+      <TaskReviewsSection
+        taskId={task.id}
+        projectId={projectId}
+        currentCycle={task.reviewCycleCount}
+        verdicts={task.reviewerVerdicts}
+      />
     </Stack>
   );
 }

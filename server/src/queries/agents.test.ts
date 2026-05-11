@@ -14,7 +14,7 @@ describe('agents queries', () => {
     db = tdb.db;
 
     // Create additional project for cross-project tests
-    await db.insert(projects).values({ id: 'proj-x', name: 'Project X' }).onConflictDoNothing();
+    await db.insert(projects).values({ id: 'proj-x', name: 'Project X', agentRoles: {} }).onConflictDoNothing();
   });
 
   after(async () => {
