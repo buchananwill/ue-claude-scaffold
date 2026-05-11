@@ -475,7 +475,23 @@ function CycleBlock({ taskId, projectId, cycle, isCurrent, pinnedReviewer }: Cyc
     staleTime: 2000,
   });
 
-  const accordionValue = pinnedReviewer ?? undefined;
+  // Controlled Accordion state: tracks which reviewer panels are open. We use
+  // `multiple` mode so the operator can keep several reviewers expanded at
+  // once. Initialise from `pinnedReviewer` (the chip-strip selection in the
+  // parent). When the chip-strip selection changes we merge the new pin into
+  // the open set during render via the "store previous prop" pattern — that
+  // avoids a setState-in-useEffect cascade. Changing the prop must NOT close
+  // panels the operator already opened, so we union rather than replace.
+  const [openItems, setOpenItems] = useState<string[]>(
+    pinnedReviewer ? [pinnedReviewer] : [],
+  );
+  const [lastPinnedReviewer, setLastPinnedReviewer] = useState<string | null>(pinnedReviewer);
+  if (pinnedReviewer !== lastPinnedReviewer) {
+    setLastPinnedReviewer(pinnedReviewer);
+    if (pinnedReviewer && !openItems.includes(pinnedReviewer)) {
+      setOpenItems([...openItems, pinnedReviewer]);
+    }
+  }
 
   return (
     <Card withBorder p="sm" bg={isCurrent ? 'var(--mantine-color-gray-0)' : undefined}>
@@ -493,7 +509,12 @@ function CycleBlock({ taskId, projectId, cycle, isCurrent, pinnedReviewer }: Cyc
       ) : !data || data.runs.length === 0 ? (
         <Text size="sm" c="dimmed" fs="italic">No reviewer runs posted for this cycle.</Text>
       ) : (
-        <Accordion variant="separated" multiple defaultValue={accordionValue ? [accordionValue] : []}>
+        <Accordion
+          variant="separated"
+          multiple
+          value={openItems}
+          onChange={setOpenItems}
+        >
           {data.runs.map((run) => (
             <ReviewRunItem key={run.reviewerRole} run={run} />
           ))}
@@ -629,14 +650,14 @@ function ArbitrationSection({ taskId, projectId }: ArbitrationSectionProps) {
       <Title order={5} mb="xs">Arbitration</Title>
       <Stack gap="sm">
         {runs.map((run) => (
-          <ArbitrationRunBlock key={run.id} run={run} />
+          <ArbitrationRunBlock key={run.id} run={run} projectId={projectId} />
         ))}
       </Stack>
     </Card>
   );
 }
 
-function ArbitrationRunBlock({ run }: { run: ArbitrationRun }) {
+function ArbitrationRunBlock({ run, projectId }: { run: ArbitrationRun; projectId: string }) {
   return (
     <Card withBorder p="sm" bg="var(--mantine-color-gray-0)">
       <Group gap="sm" mb="xs">
@@ -655,10 +676,18 @@ function ArbitrationRunBlock({ run }: { run: ArbitrationRun }) {
         <Alert color="orange" mt="sm" title="Contradiction resolution">
           <Stack gap={4}>
             <Text size="sm">
-              Upheld finding: <Code>#{run.contradictionResolution.upheldFindingId}</Code>
+              Upheld finding:{' '}
+              <FindingIdLink
+                findingId={run.contradictionResolution.upheldFindingId}
+                projectId={projectId}
+              />
             </Text>
             <Text size="sm">
-              Retired finding: <Code>#{run.contradictionResolution.retiredFindingId}</Code>
+              Retired finding:{' '}
+              <FindingIdLink
+                findingId={run.contradictionResolution.retiredFindingId}
+                projectId={projectId}
+              />
             </Text>
             <div>
               <Text size="xs" fw={600} c="dimmed">Rationale</Text>
@@ -670,5 +699,25 @@ function ArbitrationRunBlock({ run }: { run: ArbitrationRun }) {
         </Alert>
       )}
     </Card>
+  );
+}
+
+/**
+ * Click-through wrapper for a finding ID. Routes to the project Findings page
+ * with `highlight=<id>` so the matching row flashes / scrolls into view if it
+ * is in the current page; otherwise the operator lands on the queryable
+ * findings table and can locate the row via filters.
+ */
+function FindingIdLink({ findingId, projectId }: { findingId: number; projectId: string }) {
+  return (
+    <Link
+      to="/$projectId/findings"
+      params={{ projectId }}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      search={(prev: any) => ({ ...prev, highlight: String(findingId) })}
+      style={{ textDecoration: 'none' }}
+    >
+      <Code style={{ cursor: 'pointer' }}>#{findingId}</Code>
+    </Link>
   );
 }

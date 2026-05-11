@@ -60,6 +60,11 @@ export function FindingsPage() {
   const since = search.since ?? '';
   const page = search.page ?? 1;
   const offset = (page - 1) * PAGE_SIZE;
+  // Optional finding-ID highlight (set by click-through Links from arbitration
+  // rulings and NOTE-pattern example IDs). When the matching row is on the
+  // current page, the table emphasises it; otherwise the operator lands on the
+  // unfiltered findings list and can browse to it.
+  const highlightFindingId = search.highlight ? Number(search.highlight) : null;
 
   const findings = useQuery({
     queryKey: ['findings', projectId, severity, reviewer, since, offset],
@@ -177,6 +182,7 @@ export function FindingsPage() {
               error={findings.error}
               projectId={projectId}
               rows={findings.data?.findings ?? []}
+              highlightFindingId={highlightFindingId}
             />
             {totalPages > 1 && (
               <Group justify="center" mt="sm">
@@ -198,6 +204,8 @@ export function FindingsPage() {
               <PatternList
                 loading={notePatterns.isLoading}
                 error={notePatterns.error}
+                projectId={projectId}
+                exampleKind="finding"
                 items={notePatterns.data?.patterns.map((p) => ({
                   key: p.title,
                   label: p.title,
@@ -213,6 +221,8 @@ export function FindingsPage() {
               <PatternList
                 loading={arbitrationPatterns.isLoading}
                 error={arbitrationPatterns.error}
+                projectId={projectId}
+                exampleKind="task"
                 items={arbitrationPatterns.data?.patterns.map((p) => ({
                   key: `${p.trigger}::${p.ruling}`,
                   label: `${p.trigger} → ${p.ruling}`,
@@ -244,9 +254,10 @@ interface FindingsTableProps {
   error: unknown;
   projectId: string;
   rows: import('../api/types.ts').Finding[];
+  highlightFindingId: number | null;
 }
 
-function FindingsTable({ loading, error, projectId, rows }: FindingsTableProps) {
+function FindingsTable({ loading, error, projectId, rows, highlightFindingId }: FindingsTableProps) {
   if (loading) return <Loader size="sm" />;
   if (error) {
     return (
@@ -273,7 +284,10 @@ function FindingsTable({ loading, error, projectId, rows }: FindingsTableProps) 
       </Table.Thead>
       <Table.Tbody>
         {rows.map((r) => (
-          <Table.Tr key={r.id}>
+          <Table.Tr
+            key={r.id}
+            bg={r.id === highlightFindingId ? 'var(--mantine-color-yellow-1)' : undefined}
+          >
             <Table.Td>
               <Badge color={severityColor(r.severity)} variant="light" size="xs">
                 {r.severity}
@@ -322,9 +336,17 @@ interface PatternListProps {
   error: unknown;
   items: PatternListItem[];
   emptyText: string;
+  projectId: string;
+  /**
+   * Determines where each example ID navigates:
+   * - `finding`: link to `/findings?highlight=<id>` so the row gets emphasised
+   *   in the findings table (NOTE-pattern example finding IDs).
+   * - `task`: link to `/tasks/<id>` (arbitration-pattern example task IDs).
+   */
+  exampleKind: 'finding' | 'task';
 }
 
-function PatternList({ loading, error, items, emptyText }: PatternListProps) {
+function PatternList({ loading, error, items, emptyText, projectId, exampleKind }: PatternListProps) {
   if (loading) return <Loader size="sm" />;
   if (error) {
     return (
@@ -354,7 +376,27 @@ function PatternList({ loading, error, items, emptyText }: PatternListProps) {
               <Stack gap={2}>
                 <Text size="xs" c="dimmed">Examples:</Text>
                 {item.examples.map((id) => (
-                  <Text key={id} size="xs" ff="monospace">{id}</Text>
+                  <Text key={id} size="xs" ff="monospace">
+                    {exampleKind === 'finding' ? (
+                      <Link
+                        to="/$projectId/findings"
+                        params={{ projectId }}
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        search={(prev: any) => ({ ...prev, highlight: id })}
+                        style={{ textDecoration: 'none', cursor: 'pointer' }}
+                      >
+                        #{id}
+                      </Link>
+                    ) : (
+                      <Link
+                        to="/$projectId/tasks/$taskId"
+                        params={{ projectId, taskId: id }}
+                        style={{ textDecoration: 'none', cursor: 'pointer' }}
+                      >
+                        #{id}
+                      </Link>
+                    )}
+                  </Text>
                 ))}
               </Stack>
             ) : (

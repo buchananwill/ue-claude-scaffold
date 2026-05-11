@@ -84,7 +84,10 @@ const overviewRoute = createRoute({
       priority,
       sort: rawSort && VALID_SORT_COLUMNS.has(rawSort) ? rawSort : undefined,
       dir: rawDir && VALID_DIR_VALUES.has(rawDir) ? rawDir : undefined,
-      page: Number(search.page) > 0 ? Math.floor(Number(search.page)) : undefined,
+      page: (() => {
+        const n = Number(search.page);
+        return Number.isInteger(n) && n > 0 && n <= 100_000 ? n : undefined;
+      })(),
     };
   },
 });
@@ -191,11 +194,23 @@ const findingsRoute = createRoute({
     const rawSeverity = boundedString(search.severity, 10);
     const rawReviewer = boundedString(search.reviewer, 40);
     const rawSince = boundedString(search.since, 40);
+    // Validate highlight as a finding ID: positive integer with a sensible
+    // upper bound. Used by click-through links from arbitration rulings and
+    // NOTE-pattern example IDs to flag a specific row in the findings table.
+    let highlight: string | undefined;
+    if (typeof search.highlight === 'string' && search.highlight) {
+      const n = Number(search.highlight);
+      highlight = Number.isInteger(n) && n > 0 && n <= 1_000_000_000 ? search.highlight : undefined;
+    }
     return {
       severity: rawSeverity && VALID_FINDING_SEVERITIES.has(rawSeverity) ? (rawSeverity as 'BLOCKING' | 'NOTE') : undefined,
       reviewer: rawReviewer && VALID_REVIEWER_SLUG.test(rawReviewer) ? rawReviewer : undefined,
       since: rawSince && VALID_SINCE.test(rawSince) ? rawSince : undefined,
-      page: Number(search.page) > 0 ? Math.floor(Number(search.page)) : undefined,
+      page: (() => {
+        const n = Number(search.page);
+        return Number.isInteger(n) && n > 0 && n <= 100_000 ? n : undefined;
+      })(),
+      highlight,
     };
   },
 });
