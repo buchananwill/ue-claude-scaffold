@@ -338,6 +338,7 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
         reviewerRole: reviewRuns.reviewerRole,
         verdict: reviewRuns.verdict,
         rawMarkdown: reviewRuns.rawMarkdown,
+        postedAt: reviewRuns.postedAt,
       })
       .from(reviewRuns)
       .where(and(eq(reviewRuns.taskId, taskId), eq(reviewRuns.cycle, cycle)))
@@ -379,6 +380,7 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
         reviewerRole: r.reviewerRole,
         verdict: r.verdict,
         rawMarkdown: r.rawMarkdown,
+        postedAt: r.postedAt instanceof Date ? r.postedAt.toISOString() : r.postedAt,
         findings: (byRun.get(r.id) ?? []).map((f) => ({
           id: f.id,
           severity: f.severity,

@@ -26,8 +26,20 @@ export interface TaskRow {
   // FSM read-side fields surfaced for role-session prompt builders. Writes go
   // through POST /tasks/:id/transition; these are read-only on the API.
   reviewCycleCount: number;
+  reviewCycleBudget: number;
+  /**
+   * Per-reviewer verdict map keyed by reviewer-role slug. jsonb in the
+   * schema; the dashboard renders these as cycle verdict chips. `{}` is the
+   * cleared state set on entry to `reviewing`.
+   */
+  reviewerVerdicts: unknown;
   latestReviewPath: string | null;
+  arbitrationPendingTrigger: string | null;
   arbitrationAddendumPath: string | null;
+  failureReason: string | null;
+  failureDetail: string | null;
+  buildStatus: string;
+  commitSha: string | null;
   createdAt: string | Date | null;
 }
 
@@ -52,8 +64,15 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     agentTypeOverride: row.agentTypeOverride,
     agentRolesOverride: row.agentRolesOverride ?? null,
     reviewCycleCount: row.reviewCycleCount ?? 0,
+    reviewCycleBudget: row.reviewCycleBudget ?? 5,
+    reviewerVerdicts: row.reviewerVerdicts ?? {},
     latestReviewPath: row.latestReviewPath ?? null,
+    arbitrationPendingTrigger: row.arbitrationPendingTrigger ?? null,
     arbitrationAddendumPath: row.arbitrationAddendumPath ?? null,
+    failureReason: row.failureReason ?? null,
+    failureDetail: row.failureDetail ?? null,
+    buildStatus: row.buildStatus ?? 'pending',
+    commitSha: row.commitSha ?? null,
     createdAt: row.createdAt,
   };
 }
@@ -96,8 +115,15 @@ export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[],
     agentTypeOverride: row.agentTypeOverride,
     agentRolesOverride: row.agentRolesOverride ?? null,
     reviewCycleCount: row.reviewCycleCount,
+    reviewCycleBudget: row.reviewCycleBudget,
+    reviewerVerdicts: row.reviewerVerdicts ?? {},
     latestReviewPath: row.latestReviewPath,
+    arbitrationPendingTrigger: row.arbitrationPendingTrigger,
     arbitrationAddendumPath: row.arbitrationAddendumPath,
+    failureReason: row.failureReason,
+    failureDetail: row.failureDetail,
+    buildStatus: row.buildStatus,
+    commitSha: row.commitSha,
     createdAt: row.createdAt,
     projectId: row.projectId,
   };

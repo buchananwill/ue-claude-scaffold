@@ -22,7 +22,7 @@
  * to retry.
  */
 import type { FastifyPluginAsync } from 'fastify';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, asc } from 'drizzle-orm';
 import { getDb } from '../drizzle-instance.js';
 import { arbitrationRuns, tasks } from '../schema/tables.js';
 import { requireProjectIdHeader } from './_project-id-guard.js';
@@ -350,6 +350,69 @@ const arbitrationsPlugin: FastifyPluginAsync = async (fastify) => {
       }
       throw err;
     }
+  });
+
+  // GET /tasks/:id/arbitrations — list arbitration rulings for a task.
+  //
+  // Returns every arbitrationRuns row for the given task ordered by postedAt
+  // ascending. A task can have at most one ruling per trigger (enforced by
+  // `arbitration_runs_task_trigger_unique`), but cycle-budget-exhausted and
+  // reviewer-contradiction can both fire on the same task across its
+  // lifetime, so the response is shaped as a list. The dashboard renders the
+  // list in posting order so the operator can see how the FSM was unstuck
+  // each time.
+  fastify.get<{
+    Params: { id: string };
+  }>('/tasks/:id/arbitrations', async (request, reply) => {
+    if (!requireProjectIdHeader(request, reply)) return;
+
+    const taskId = Number(request.params.id);
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      return reply.badRequest('invalid task id');
+    }
+
+    const db = getDb();
+
+    // Confirm the task exists in this project before exposing arbitration
+    // rulings. Mirrors the reviews GET handler — "no such task" and
+    // "task in another project" collapse to a single 404 to avoid leaking
+    // cross-project existence.
+    const taskRow = await db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), eq(tasks.projectId, request.projectId)))
+      .limit(1);
+    if (taskRow.length === 0) {
+      return reply.notFound('task not found');
+    }
+
+    const rows = await db
+      .select({
+        id: arbitrationRuns.id,
+        taskId: arbitrationRuns.taskId,
+        trigger: arbitrationRuns.trigger,
+        ruling: arbitrationRuns.ruling,
+        rulingMarkdown: arbitrationRuns.rulingMarkdown,
+        contradictionResolution: arbitrationRuns.contradictionResolution,
+        postedAt: arbitrationRuns.postedAt,
+      })
+      .from(arbitrationRuns)
+      .where(eq(arbitrationRuns.taskId, taskId))
+      .orderBy(asc(arbitrationRuns.postedAt), asc(arbitrationRuns.id));
+
+    return {
+      runs: rows.map((r) => ({
+        id: r.id,
+        taskId: r.taskId,
+        trigger: r.trigger,
+        ruling: r.ruling,
+        rulingMarkdown: r.rulingMarkdown,
+        contradictionResolution: r.contradictionResolution as
+          | { upheldFindingId: number; retiredFindingId: number; rationale: string }
+          | null,
+        postedAt: r.postedAt instanceof Date ? r.postedAt.toISOString() : r.postedAt,
+      })),
+    };
   });
 };
 

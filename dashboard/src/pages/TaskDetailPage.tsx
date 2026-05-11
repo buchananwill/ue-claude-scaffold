@@ -42,6 +42,16 @@ function severityColor(severity: 'BLOCKING' | 'NOTE'): string {
   return severity === 'BLOCKING' ? 'red' : 'gray';
 }
 
+/**
+ * Single-letter ordinal prefix that reflects a finding's severity tier so the
+ * accordion row label reads e.g. "B0" for BLOCKING, "N1" for NOTE. The
+ * schema only models BLOCKING and NOTE today; any future severity additions
+ * should extend this mapping rather than fall through to the default.
+ */
+function severityOrdinalPrefix(severity: 'BLOCKING' | 'NOTE'): string {
+  return severity === 'BLOCKING' ? 'B' : 'N';
+}
+
 export function TaskDetailPage() {
   const params = useParams({ from: '/$projectId/tasks/$taskId' });
   const { projectId } = useProject();
@@ -567,7 +577,7 @@ function FindingsTable({ findings }: { findings: ReviewFinding[] }) {
               <Badge color={severityColor(f.severity)} variant="light" size="xs">
                 {f.severity}
               </Badge>
-              <Text size="xs" c="dimmed">B{f.ordinal}</Text>
+              <Text size="xs" c="dimmed">{severityOrdinalPrefix(f.severity)}{f.ordinal}</Text>
               {f.filePath && (
                 <Text size="xs" ff="monospace">
                   {f.filePath}{f.line !== null ? `:${f.line}` : ''}

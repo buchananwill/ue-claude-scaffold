@@ -483,4 +483,113 @@ describe('arbitrations routes', () => {
 
     assert.equal(res.statusCode, 404);
   });
+
+  // ── 7. GET /tasks/:id/arbitrations ──────────────────────────────────
+
+  function getArbitrations(
+    taskId: number,
+    headers: Record<string, string> = { 'x-project-id': 'default' },
+  ) {
+    return ctx.app.inject({
+      method: 'GET',
+      url: `/tasks/${taskId}/arbitrations`,
+      headers,
+    });
+  }
+
+  it('GET returns empty runs array when task has no arbitrations', async () => {
+    const id = await createTask();
+    const res = await getArbitrations(id);
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(res.json(), { runs: [] });
+  });
+
+  it('GET returns posted arbitrations with all expected fields, ordered by postedAt ASC', async () => {
+    const id = await createTask();
+
+    // First arbitration: cycle-budget exhausted, escalate.
+    await forceArbitrating(id, 'review_cycle_budget_exhausted');
+    const first = await postArbitration(id, {
+      trigger: 'review_cycle_budget_exhausted',
+      ruling: 'escalate',
+      rulingMarkdown: 'cycle budget exhausted ruling',
+    });
+    assert.equal(first.statusCode, 200, first.body);
+
+    // Second arbitration: reviewer_contradiction, rule (different trigger so
+    // the unique constraint allows both rows for the same task).
+    await forceArbitrating(id, 'reviewer_contradiction');
+    const second = await postArbitration(id, {
+      trigger: 'reviewer_contradiction',
+      ruling: 'rule',
+      rulingMarkdown: 'contradiction ruling',
+      contradictionResolution: {
+        upheldFindingId: 11,
+        retiredFindingId: 22,
+        rationale: 'safety wins',
+      },
+    });
+    assert.equal(second.statusCode, 200, second.body);
+
+    const res = await getArbitrations(id);
+    assert.equal(res.statusCode, 200, res.body);
+    const json = res.json() as {
+      runs: Array<{
+        id: number;
+        taskId: number;
+        trigger: string;
+        ruling: string;
+        rulingMarkdown: string;
+        contradictionResolution: unknown;
+        postedAt: string;
+      }>;
+    };
+    assert.equal(json.runs.length, 2);
+
+    // postedAt ASC — first insert should appear first
+    assert.equal(json.runs[0].trigger, 'review_cycle_budget_exhausted');
+    assert.equal(json.runs[0].ruling, 'escalate');
+    assert.equal(json.runs[0].contradictionResolution, null);
+    assert.equal(typeof json.runs[0].postedAt, 'string');
+    assert.equal(json.runs[0].taskId, id);
+
+    assert.equal(json.runs[1].trigger, 'reviewer_contradiction');
+    assert.equal(json.runs[1].ruling, 'rule');
+    assert.deepEqual(json.runs[1].contradictionResolution, {
+      upheldFindingId: 11,
+      retiredFindingId: 22,
+      rationale: 'safety wins',
+    });
+    assert.equal(typeof json.runs[1].postedAt, 'string');
+  });
+
+  it('GET returns 404 for unknown task id', async () => {
+    const res = await getArbitrations(999_999);
+    assert.equal(res.statusCode, 404);
+  });
+
+  it('GET rejects invalid (zero) task id with 400', async () => {
+    const res = await getArbitrations(0);
+    assert.equal(res.statusCode, 400);
+  });
+
+  it('GET requires X-Project-Id header (400 when missing)', async () => {
+    const id = await createTask();
+    const res = await getArbitrations(id, {});
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body, /X-Project-Id/);
+  });
+
+  it('GET returns 404 for task in a different project', async () => {
+    const id = await createTask();
+    await forceArbitrating(id, 'reviewer_contradiction');
+    await postArbitration(id, {
+      trigger: 'reviewer_contradiction',
+      ruling: 'approve',
+      rulingMarkdown: 'x',
+    });
+
+    const res = await getArbitrations(id, { 'x-project-id': 'some-other-project' });
+    assert.equal(res.statusCode, 404);
+  });
 });
