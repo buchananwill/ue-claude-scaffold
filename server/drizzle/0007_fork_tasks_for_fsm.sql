@@ -240,8 +240,13 @@ CREATE TABLE "review_findings" (
 CREATE INDEX "idx_review_findings_run"           ON "review_findings" ("run_id");
 --> statement-breakpoint
 CREATE INDEX "idx_review_findings_task_severity" ON "review_findings" ("severity");
---> statement-breakpoint
 
--- ── Project agent-role wiring column ──────────────────────────────────────
-
-ALTER TABLE "projects" ADD COLUMN "agent_roles" jsonb NOT NULL DEFAULT '{}'::jsonb;
+-- ── Note on agent-role wiring ─────────────────────────────────────────────
+--
+-- The FSM design plan originally proposed adding a `projects.agent_roles`
+-- jsonb column to persist the engineer / arbitrator / reviewers map. That
+-- column has been intentionally omitted: agent definitions are operator-local
+-- markdown on disk where the server runs (dynamic-agents/ + compiled-agents/),
+-- so the role-→-agent mapping is operator-local config rather than portable
+-- project state. The authoritative source is scaffold.config.json, colocated
+-- in the repo with the markdown that names the agent definitions.

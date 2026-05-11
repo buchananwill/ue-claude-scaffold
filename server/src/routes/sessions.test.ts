@@ -1,11 +1,19 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
-import assert from 'node:assert/strict';
-import { sql, eq } from 'drizzle-orm';
-import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
-import { createTestConfig } from '../test-helper.js';
-import { claudeCodeContainerSessions, tasks, projects, agents } from '../schema/tables.js';
-import agentsPlugin from './agents.js';
-import sessionsPlugin from './sessions.js';
+import { describe, it, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import { sql, eq } from "drizzle-orm";
+import {
+  createDrizzleTestApp,
+  type DrizzleTestContext,
+} from "../drizzle-test-helper.js";
+import { createTestConfig } from "../test-helper.js";
+import {
+  claudeCodeContainerSessions,
+  tasks,
+  projects,
+  agents,
+} from "../schema/tables.js";
+import agentsPlugin from "./agents.js";
+import sessionsPlugin from "./sessions.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -13,16 +21,16 @@ const UUID_RE =
 /** Build a test config that knows about both 'default' and 'proj-a'. */
 function makeConfig() {
   const cfg = createTestConfig();
-  cfg.resolvedProjects['proj-a'] = {
-    name: 'Project A',
-    path: '/tmp/proj-a',
-    uprojectFile: '/tmp/proj-a/A.uproject',
-    bareRepoPath: '/tmp/proj-a-repo.git',
+  cfg.resolvedProjects["proj-a"] = {
+    name: "Project A",
+    path: "/tmp/proj-a",
+    uprojectFile: "/tmp/proj-a/A.uproject",
+    bareRepoPath: "/tmp/proj-a-repo.git",
   };
   return cfg;
 }
 
-describe('sessions routes (drizzle)', () => {
+describe("sessions routes (drizzle)", () => {
   let ctx: DrizzleTestContext;
   let agent1Id: string;
   let agent2Id: string;
@@ -52,14 +60,25 @@ describe('sessions routes (drizzle)', () => {
         CONSTRAINT "ccs_status_check" CHECK ("status" IN ('running','complete','aborted','stopped'))
       );
     `);
-    await ctx.db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_ccs_project" ON "claude_code_container_sessions" ("project_id");`);
-    await ctx.db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_ccs_agent" ON "claude_code_container_sessions" ("agent_id");`);
-    await ctx.db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_ccs_task" ON "claude_code_container_sessions" ("task_id");`);
-    await ctx.db.execute(sql`CREATE INDEX IF NOT EXISTS "idx_ccs_project_started" ON "claude_code_container_sessions" ("project_id", "started_at" DESC);`);
+    await ctx.db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "idx_ccs_project" ON "claude_code_container_sessions" ("project_id");`,
+    );
+    await ctx.db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "idx_ccs_agent" ON "claude_code_container_sessions" ("agent_id");`,
+    );
+    await ctx.db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "idx_ccs_task" ON "claude_code_container_sessions" ("task_id");`,
+    );
+    await ctx.db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "idx_ccs_project_started" ON "claude_code_container_sessions" ("project_id", "started_at" DESC);`,
+    );
 
     // Pre-seed 'proj-a' so the FK on agents/sessions is satisfied for
     // cross-project assertions.
-    await ctx.db.insert(projects).values({ id: 'proj-a', name: 'Project A', agentRoles: {} }).onConflictDoNothing();
+    await ctx.db
+      .insert(projects)
+      .values({ id: "proj-a", name: "Project A" })
+      .onConflictDoNothing();
 
     const config = makeConfig();
     await ctx.app.register(agentsPlugin, { config });
@@ -67,25 +86,25 @@ describe('sessions routes (drizzle)', () => {
 
     // Register two agents in 'default' so we have valid UUIDs to point at.
     const reg1 = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      headers: { 'x-project-id': 'default' },
-      payload: { name: 'agent-1', worktree: '/tmp/wt1' },
+      method: "POST",
+      url: "/agents/register",
+      headers: { "x-project-id": "default" },
+      payload: { name: "agent-1", worktree: "/tmp/wt1" },
     });
     agent1Id = reg1.json().id;
 
     const reg2 = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      headers: { 'x-project-id': 'default' },
-      payload: { name: 'agent-2', worktree: '/tmp/wt2' },
+      method: "POST",
+      url: "/agents/register",
+      headers: { "x-project-id": "default" },
+      payload: { name: "agent-2", worktree: "/tmp/wt2" },
     });
     agent2Id = reg2.json().id;
 
     // Create a task so taskId references a real row.
     const taskRows = await ctx.db
       .insert(tasks)
-      .values({ projectId: 'default', title: 'test task' })
+      .values({ projectId: "default", title: "test task" })
       .returning();
     taskId = taskRows[0].id;
   });
@@ -95,109 +114,112 @@ describe('sessions routes (drizzle)', () => {
     await ctx.cleanup();
   });
 
-  it('POST /sessions inserts a running row and returns 201 + { id } (UUID)', async () => {
+  it("POST /sessions inserts a running row and returns 201 + { id } (UUID)", async () => {
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
       payload: { agentId: agent1Id, taskId },
     });
     assert.equal(res.statusCode, 201);
     const body = res.json();
-    assert.ok(typeof body.id === 'string');
+    assert.ok(typeof body.id === "string");
     assert.match(body.id, UUID_RE);
 
     // Confirm row was actually inserted with the right shape
     const list = await ctx.app.inject({
-      method: 'GET',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "GET",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
     });
     const rows = list.json();
     assert.equal(rows.length, 1);
     assert.equal(rows[0].id, body.id);
     assert.equal(rows[0].agentId, agent1Id);
     assert.equal(rows[0].taskId, taskId);
-    assert.equal(rows[0].status, 'running');
+    assert.equal(rows[0].status, "running");
     assert.ok(rows[0].startedAt != null);
     assert.equal(rows[0].endedAt, null);
   });
 
-  it('POST /sessions allows null taskId', async () => {
+  it("POST /sessions allows null taskId", async () => {
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
       payload: { agentId: agent1Id },
     });
     assert.equal(res.statusCode, 201);
 
     const list = await ctx.app.inject({
-      method: 'GET',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "GET",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
     });
     const rows = list.json();
     assert.equal(rows.length, 1);
     assert.equal(rows[0].taskId, null);
   });
 
-  it('POST /sessions rejects an agentId that does not belong to the requesting project', async () => {
+  it("POST /sessions rejects an agentId that does not belong to the requesting project", async () => {
     // Insert agent into project 'proj-a'
     const regOther = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      headers: { 'x-project-id': 'proj-a' },
-      payload: { name: 'agent-other', worktree: '/tmp/other' },
+      method: "POST",
+      url: "/agents/register",
+      headers: { "x-project-id": "proj-a" },
+      payload: { name: "agent-other", worktree: "/tmp/other" },
     });
     const otherAgentId = regOther.json().id;
     assert.match(otherAgentId, UUID_RE);
 
     // Try to use it from 'default'
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
       payload: { agentId: otherAgentId },
     });
-    assert.ok(res.statusCode === 400 || res.statusCode === 404, `expected 400 or 404 got ${res.statusCode}`);
+    assert.ok(
+      res.statusCode === 400 || res.statusCode === 404,
+      `expected 400 or 404 got ${res.statusCode}`,
+    );
   });
 
-  it('POST /sessions rejects a soft-deleted agent', async () => {
+  it("POST /sessions rejects a soft-deleted agent", async () => {
     // Soft-delete agent-1 directly via DB (route doesn't allow setting 'deleted').
     await ctx.db
       .update(agents)
-      .set({ status: 'deleted' })
+      .set({ status: "deleted" })
       .where(eq(agents.id, agent1Id));
 
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
       payload: { agentId: agent1Id },
     });
     assert.ok(
       res.statusCode === 400 || res.statusCode === 404,
       `expected 400/404 got ${res.statusCode}`,
     );
-    assert.equal(res.json().error, 'invalid_agentId');
+    assert.equal(res.json().error, "invalid_agentId");
   });
 
-  it('POST /sessions returns 404 when X-Project-Id is unknown', async () => {
+  it("POST /sessions returns 404 when X-Project-Id is unknown", async () => {
     const res = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'no-such-project' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "no-such-project" },
       payload: { agentId: agent1Id },
     });
     assert.equal(res.statusCode, 404);
   });
 
-  it('PATCH /sessions/:id updates token counts, status, exitCode, endedAt, rawOutput; returns 200 with updated row', async () => {
+  it("PATCH /sessions/:id updates token counts, status, exitCode, endedAt, rawOutput; returns 200 with updated row", async () => {
     const create = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
       payload: { agentId: agent1Id, taskId },
     });
     const sessionId = create.json().id;
@@ -206,52 +228,55 @@ describe('sessions routes (drizzle)', () => {
     // Use "now" to be safely after startedAt and within future tolerance.
     const endedAt = new Date().toISOString();
     const patchRes = await ctx.app.inject({
-      method: 'PATCH',
+      method: "PATCH",
       url: `/sessions/${sessionId}`,
-      headers: { 'x-project-id': 'default' },
+      headers: { "x-project-id": "default" },
       payload: {
-        status: 'complete',
+        status: "complete",
         exitCode: 0,
         endedAt,
         inputTokens: 10,
         outputTokens: 20,
         cacheReadTokens: 30,
         cacheCreationTokens: 40,
-        rawOutput: { type: 'result', usage: { input_tokens: 10 } },
+        rawOutput: { type: "result", usage: { input_tokens: 10 } },
       },
     });
     assert.equal(patchRes.statusCode, 200);
     const row = patchRes.json();
     assert.equal(row.id, sessionId);
-    assert.equal(row.status, 'complete');
+    assert.equal(row.status, "complete");
     assert.equal(row.exitCode, 0);
     assert.equal(row.inputTokens, 10);
     assert.equal(row.outputTokens, 20);
     assert.equal(row.cacheReadTokens, 30);
     assert.equal(row.cacheCreationTokens, 40);
-    assert.deepEqual(row.rawOutput, { type: 'result', usage: { input_tokens: 10 } });
+    assert.deepEqual(row.rawOutput, {
+      type: "result",
+      usage: { input_tokens: 10 },
+    });
     assert.ok(row.endedAt != null);
   });
 
-  it('PATCH /sessions/:id stamps endedAt server-side when terminal status is set without endedAt', async () => {
+  it("PATCH /sessions/:id stamps endedAt server-side when terminal status is set without endedAt", async () => {
     const create = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
       payload: { agentId: agent1Id },
     });
     const sessionId = create.json().id;
 
     const before = Date.now();
     const patchRes = await ctx.app.inject({
-      method: 'PATCH',
+      method: "PATCH",
       url: `/sessions/${sessionId}`,
-      headers: { 'x-project-id': 'default' },
-      payload: { status: 'aborted', exitCode: 1 },
+      headers: { "x-project-id": "default" },
+      payload: { status: "aborted", exitCode: 1 },
     });
     assert.equal(patchRes.statusCode, 200);
     const row = patchRes.json();
-    assert.equal(row.status, 'aborted');
+    assert.equal(row.status, "aborted");
     assert.ok(row.endedAt != null);
     const stamped = new Date(row.endedAt).getTime();
     assert.ok(
@@ -260,7 +285,7 @@ describe('sessions routes (drizzle)', () => {
     );
   });
 
-  it('PATCH /sessions/:id re-stamps endedAt on terminal-to-terminal transition without endedAt', async () => {
+  it("PATCH /sessions/:id re-stamps endedAt on terminal-to-terminal transition without endedAt", async () => {
     // Create the session via direct DB insert with a startedAt well in the
     // past so we can plant a non-current endedAt that is still after
     // startedAt — this lets us prove the server re-stamps to a current value.
@@ -269,10 +294,10 @@ describe('sessions routes (drizzle)', () => {
     const plantedEndedAt = new Date(Date.now() - 3 * 60 * 1000); // 3 minutes ago
     await ctx.db.insert(claudeCodeContainerSessions).values({
       id: sessionId,
-      projectId: 'default',
+      projectId: "default",
       agentId: agent1Id,
       taskId: null,
-      status: 'complete',
+      status: "complete",
       startedAt,
       endedAt: plantedEndedAt,
       exitCode: 0,
@@ -283,14 +308,14 @@ describe('sessions routes (drizzle)', () => {
     // unconditional on whether the row already had an endedAt.
     const before = Date.now();
     const flipRes = await ctx.app.inject({
-      method: 'PATCH',
+      method: "PATCH",
       url: `/sessions/${sessionId}`,
-      headers: { 'x-project-id': 'default' },
-      payload: { status: 'aborted' },
+      headers: { "x-project-id": "default" },
+      payload: { status: "aborted" },
     });
     assert.equal(flipRes.statusCode, 200);
     const row = flipRes.json();
-    assert.equal(row.status, 'aborted');
+    assert.equal(row.status, "aborted");
     assert.ok(row.endedAt != null);
     const restamped = new Date(row.endedAt).getTime();
     const plantedMs = plantedEndedAt.getTime();
@@ -306,121 +331,121 @@ describe('sessions routes (drizzle)', () => {
     );
   });
 
-  it('PATCH /sessions/:id rejects rawOutput payloads that exceed the 64 KiB cap', async () => {
+  it("PATCH /sessions/:id rejects rawOutput payloads that exceed the 64 KiB cap", async () => {
     const create = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
       payload: { agentId: agent1Id },
     });
     const sessionId = create.json().id;
 
     // Build a > 64 KiB payload by stuffing a large string.
-    const huge = 'x'.repeat(70 * 1024);
+    const huge = "x".repeat(70 * 1024);
     const patchRes = await ctx.app.inject({
-      method: 'PATCH',
+      method: "PATCH",
       url: `/sessions/${sessionId}`,
-      headers: { 'x-project-id': 'default' },
+      headers: { "x-project-id": "default" },
       payload: { rawOutput: { blob: huge } },
     });
     assert.equal(patchRes.statusCode, 400);
-    assert.equal(patchRes.json().error, 'rawOutput_too_large');
+    assert.equal(patchRes.json().error, "rawOutput_too_large");
   });
 
-  it('PATCH /sessions/:id rejects an endedAt more than 5s in the future', async () => {
+  it("PATCH /sessions/:id rejects an endedAt more than 5s in the future", async () => {
     const create = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
       payload: { agentId: agent1Id },
     });
     const sessionId = create.json().id;
 
     const farFuture = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     const patchRes = await ctx.app.inject({
-      method: 'PATCH',
+      method: "PATCH",
       url: `/sessions/${sessionId}`,
-      headers: { 'x-project-id': 'default' },
-      payload: { status: 'complete', endedAt: farFuture },
+      headers: { "x-project-id": "default" },
+      payload: { status: "complete", endedAt: farFuture },
     });
     assert.equal(patchRes.statusCode, 400);
-    assert.equal(patchRes.json().error, 'invalid_endedAt');
+    assert.equal(patchRes.json().error, "invalid_endedAt");
   });
 
-  it('PATCH /sessions/:id rejects an endedAt earlier than startedAt', async () => {
+  it("PATCH /sessions/:id rejects an endedAt earlier than startedAt", async () => {
     const create = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
       payload: { agentId: agent1Id },
     });
     const sessionId = create.json().id;
 
     // Pick a clearly-prior timestamp (year 2000).
-    const longBefore = '2000-01-01T00:00:00.000Z';
+    const longBefore = "2000-01-01T00:00:00.000Z";
     const patchRes = await ctx.app.inject({
-      method: 'PATCH',
+      method: "PATCH",
       url: `/sessions/${sessionId}`,
-      headers: { 'x-project-id': 'default' },
-      payload: { status: 'complete', endedAt: longBefore },
+      headers: { "x-project-id": "default" },
+      payload: { status: "complete", endedAt: longBefore },
     });
     assert.equal(patchRes.statusCode, 400);
-    assert.equal(patchRes.json().error, 'invalid_endedAt');
+    assert.equal(patchRes.json().error, "invalid_endedAt");
   });
 
-  it('PATCH /sessions/:id returns 404 when the session does not exist or belongs to a different project', async () => {
+  it("PATCH /sessions/:id returns 404 when the session does not exist or belongs to a different project", async () => {
     // Non-existent UUID
-    const fakeId = '00000000-0000-0000-0000-000000000000';
+    const fakeId = "00000000-0000-0000-0000-000000000000";
     const res404 = await ctx.app.inject({
-      method: 'PATCH',
+      method: "PATCH",
       url: `/sessions/${fakeId}`,
-      headers: { 'x-project-id': 'default' },
-      payload: { status: 'complete' },
+      headers: { "x-project-id": "default" },
+      payload: { status: "complete" },
     });
     assert.equal(res404.statusCode, 404);
 
     // Session that exists but belongs to another project
     const create = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
       payload: { agentId: agent1Id },
     });
     const sessionId = create.json().id;
 
     const wrongProj = await ctx.app.inject({
-      method: 'PATCH',
+      method: "PATCH",
       url: `/sessions/${sessionId}`,
-      headers: { 'x-project-id': 'proj-a' },
-      payload: { status: 'complete' },
+      headers: { "x-project-id": "proj-a" },
+      payload: { status: "complete" },
     });
     assert.equal(wrongProj.statusCode, 404);
   });
 
-  it('PATCH /sessions/:id rejects regression from terminal status back to running', async () => {
+  it("PATCH /sessions/:id rejects regression from terminal status back to running", async () => {
     const create = await ctx.app.inject({
-      method: 'POST',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "POST",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
       payload: { agentId: agent1Id },
     });
     const sessionId = create.json().id;
 
     // Move to complete
     const completeRes = await ctx.app.inject({
-      method: 'PATCH',
+      method: "PATCH",
       url: `/sessions/${sessionId}`,
-      headers: { 'x-project-id': 'default' },
-      payload: { status: 'complete', exitCode: 0 },
+      headers: { "x-project-id": "default" },
+      payload: { status: "complete", exitCode: 0 },
     });
     assert.equal(completeRes.statusCode, 200);
 
     // Now try to go back to running
     const regression = await ctx.app.inject({
-      method: 'PATCH',
+      method: "PATCH",
       url: `/sessions/${sessionId}`,
-      headers: { 'x-project-id': 'default' },
-      payload: { status: 'running' },
+      headers: { "x-project-id": "default" },
+      payload: { status: "running" },
     });
     assert.ok(
       regression.statusCode === 409 || regression.statusCode === 400,
@@ -428,7 +453,7 @@ describe('sessions routes (drizzle)', () => {
     );
   });
 
-  it('GET /sessions returns rows ordered by startedAt DESC, filters by agentId/taskId/status/X-Project-Id, respects limits', async () => {
+  it("GET /sessions returns rows ordered by startedAt DESC, filters by agentId/taskId/status/X-Project-Id, respects limits", async () => {
     // Insert sessions with distinct startedAt values via direct insert so we
     // control ordering precisely (the route inserts use new Date() at request time).
     const idA = crypto.randomUUID();
@@ -438,54 +463,54 @@ describe('sessions routes (drizzle)', () => {
 
     // Need an agent that exists in proj-a for the cross-project row.
     const regOther = await ctx.app.inject({
-      method: 'POST',
-      url: '/agents/register',
-      headers: { 'x-project-id': 'proj-a' },
-      payload: { name: 'agent-pa', worktree: '/tmp/pa' },
+      method: "POST",
+      url: "/agents/register",
+      headers: { "x-project-id": "proj-a" },
+      payload: { name: "agent-pa", worktree: "/tmp/pa" },
     });
     const projAAgentId = regOther.json().id;
 
     await ctx.db.insert(claudeCodeContainerSessions).values([
       {
         id: idA,
-        projectId: 'default',
+        projectId: "default",
         agentId: agent1Id,
         taskId,
-        status: 'running',
-        startedAt: new Date('2026-01-01T00:00:00Z'),
+        status: "running",
+        startedAt: new Date("2026-01-01T00:00:00Z"),
       },
       {
         id: idB,
-        projectId: 'default',
+        projectId: "default",
         agentId: agent2Id,
         taskId: null,
-        status: 'complete',
-        startedAt: new Date('2026-01-02T00:00:00Z'),
+        status: "complete",
+        startedAt: new Date("2026-01-02T00:00:00Z"),
       },
       {
         id: idC,
-        projectId: 'default',
+        projectId: "default",
         agentId: agent1Id,
         taskId: null,
-        status: 'aborted',
-        startedAt: new Date('2026-01-03T00:00:00Z'),
+        status: "aborted",
+        startedAt: new Date("2026-01-03T00:00:00Z"),
       },
       // Different project — must not show up under default
       {
         id: idOther,
-        projectId: 'proj-a',
+        projectId: "proj-a",
         agentId: projAAgentId,
         taskId: null,
-        status: 'running',
-        startedAt: new Date('2026-01-04T00:00:00Z'),
+        status: "running",
+        startedAt: new Date("2026-01-04T00:00:00Z"),
       },
     ]);
 
     // 1. project scoping: default sees 3 rows, not the proj-a row
     const allDefault = await ctx.app.inject({
-      method: 'GET',
-      url: '/sessions',
-      headers: { 'x-project-id': 'default' },
+      method: "GET",
+      url: "/sessions",
+      headers: { "x-project-id": "default" },
     });
     assert.equal(allDefault.statusCode, 200);
     const defaultRows = allDefault.json();
@@ -498,19 +523,22 @@ describe('sessions routes (drizzle)', () => {
 
     // 2. filter by agentId
     const byAgent = await ctx.app.inject({
-      method: 'GET',
+      method: "GET",
       url: `/sessions?agentId=${agent1Id}`,
-      headers: { 'x-project-id': 'default' },
+      headers: { "x-project-id": "default" },
     });
     const byAgentRows = byAgent.json();
     assert.equal(byAgentRows.length, 2);
-    assert.deepEqual(byAgentRows.map((r: { id: string }) => r.id), [idC, idA]);
+    assert.deepEqual(
+      byAgentRows.map((r: { id: string }) => r.id),
+      [idC, idA],
+    );
 
     // 3. filter by taskId
     const byTask = await ctx.app.inject({
-      method: 'GET',
+      method: "GET",
       url: `/sessions?taskId=${taskId}`,
-      headers: { 'x-project-id': 'default' },
+      headers: { "x-project-id": "default" },
     });
     const byTaskRows = byTask.json();
     assert.equal(byTaskRows.length, 1);
@@ -518,9 +546,9 @@ describe('sessions routes (drizzle)', () => {
 
     // 4. filter by status
     const byStatus = await ctx.app.inject({
-      method: 'GET',
-      url: '/sessions?status=complete',
-      headers: { 'x-project-id': 'default' },
+      method: "GET",
+      url: "/sessions?status=complete",
+      headers: { "x-project-id": "default" },
     });
     const byStatusRows = byStatus.json();
     assert.equal(byStatusRows.length, 1);
@@ -528,26 +556,26 @@ describe('sessions routes (drizzle)', () => {
 
     // 5. limit clamping: explicit limit applied
     const limited = await ctx.app.inject({
-      method: 'GET',
-      url: '/sessions?limit=2',
-      headers: { 'x-project-id': 'default' },
+      method: "GET",
+      url: "/sessions?limit=2",
+      headers: { "x-project-id": "default" },
     });
     assert.equal(limited.json().length, 2);
 
     // 6. limit max enforced (request 9999, get at most 500 — but only 3 exist, so 3)
     const huge = await ctx.app.inject({
-      method: 'GET',
-      url: '/sessions?limit=9999',
-      headers: { 'x-project-id': 'default' },
+      method: "GET",
+      url: "/sessions?limit=9999",
+      headers: { "x-project-id": "default" },
     });
     assert.equal(huge.statusCode, 200);
     assert.equal(huge.json().length, 3);
 
     // 7. cross-project — proj-a sees only its row
     const projA = await ctx.app.inject({
-      method: 'GET',
-      url: '/sessions',
-      headers: { 'x-project-id': 'proj-a' },
+      method: "GET",
+      url: "/sessions",
+      headers: { "x-project-id": "proj-a" },
     });
     const projARows = projA.json();
     assert.equal(projARows.length, 1);

@@ -34,7 +34,7 @@ async function registerAgent(
 async function ensureProject(ctx: DrizzleTestContext, id: string) {
   await ctx.db
     .insert(projects)
-    .values({ id, name: `Project ${id}`, agentRoles: {} })
+    .values({ id, name: `Project ${id}` })
     .onConflictDoNothing();
 }
 

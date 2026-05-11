@@ -24,7 +24,6 @@ CREATE TABLE "projects" (
   "seed_branch" text,
   "build_timeout_ms" integer,
   "test_timeout_ms" integer,
-  "agent_roles" jsonb NOT NULL DEFAULT '{}'::jsonb,
   "created_at" timestamp DEFAULT now(),
   CONSTRAINT "projects_id_check" CHECK ("id" ~ '^[a-zA-Z0-9_-]{1,64}$')
 );

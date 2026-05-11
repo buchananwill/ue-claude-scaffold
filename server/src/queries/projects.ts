@@ -1,21 +1,16 @@
-import { eq, sql } from 'drizzle-orm';
-import { projects, agents, buildHistory, messages, tasks, files, rooms, teams } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
-import { isValidProjectId } from '../branch-naming.js';
-
-
-/**
- * Per-project FSM role wiring. Maps role names (engineer, arbitrator, plus a
- * nested `reviewers` map keyed by reviewer slot) to compiled-agent basenames.
- * Persisted as jsonb on `projects.agent_roles`; validated at config-load and
- * task-ingest, not in the schema. Read-only for now — the dashboard and the
- * container daisy-chain consume this; no API endpoint mutates it yet.
- */
-export type AgentRoleMap = {
-  engineer?: string;
-  arbitrator?: string;
-  reviewers?: Record<string, string>;
-} & Record<string, unknown>;
+import { eq, sql } from "drizzle-orm";
+import {
+  projects,
+  agents,
+  buildHistory,
+  messages,
+  tasks,
+  files,
+  rooms,
+  teams,
+} from "../schema/tables.js";
+import type { DrizzleDb } from "../drizzle-instance.js";
+import { isValidProjectId } from "../branch-naming.js";
 
 export interface ProjectRow {
   id: string;
@@ -24,7 +19,6 @@ export interface ProjectRow {
   seedBranch: string | null;
   buildTimeoutMs: number | null;
   testTimeoutMs: number | null;
-  agentRoles: AgentRoleMap;
   createdAt: Date | null;
 }
 
@@ -45,17 +39,22 @@ export interface UpdateProjectOpts {
   testTimeoutMs?: number | null;
 }
 
-
 export async function getAll(db: DrizzleDb): Promise<ProjectRow[]> {
   return db.select().from(projects) as Promise<ProjectRow[]>;
 }
 
-export async function getById(db: DrizzleDb, id: string): Promise<ProjectRow | null> {
+export async function getById(
+  db: DrizzleDb,
+  id: string,
+): Promise<ProjectRow | null> {
   const rows = await db.select().from(projects).where(eq(projects.id, id));
   return (rows[0] as ProjectRow) ?? null;
 }
 
-export async function create(db: DrizzleDb, opts: CreateProjectOpts): Promise<ProjectRow> {
+export async function create(
+  db: DrizzleDb,
+  opts: CreateProjectOpts,
+): Promise<ProjectRow> {
   const rows = await db
     .insert(projects)
     .values({
@@ -65,10 +64,6 @@ export async function create(db: DrizzleDb, opts: CreateProjectOpts): Promise<Pr
       seedBranch: opts.seedBranch ?? null,
       buildTimeoutMs: opts.buildTimeoutMs ?? null,
       testTimeoutMs: opts.testTimeoutMs ?? null,
-      // agentRoles is required by the schema (added in Phase 1 of the
-      // durable-task-FSM rework). Phase 9 will replace this default with the
-      // operator's per-project mapping seeded from scaffold.config.json.
-      agentRoles: {},
     })
     .returning();
   return rows[0] as ProjectRow;
@@ -81,12 +76,17 @@ export async function create(db: DrizzleDb, opts: CreateProjectOpts): Promise<Pr
  * When `opts` contains no fields to update, falls back to `getById` —
  * which also returns `null` for a non-existent ID.
  */
-export async function update(db: DrizzleDb, id: string, opts: UpdateProjectOpts): Promise<ProjectRow | null> {
+export async function update(
+  db: DrizzleDb,
+  id: string,
+  opts: UpdateProjectOpts,
+): Promise<ProjectRow | null> {
   const set: Partial<typeof projects.$inferInsert> = {};
   if (opts.name !== undefined) set.name = opts.name;
   if (opts.engineVersion !== undefined) set.engineVersion = opts.engineVersion;
   if (opts.seedBranch !== undefined) set.seedBranch = opts.seedBranch;
-  if (opts.buildTimeoutMs !== undefined) set.buildTimeoutMs = opts.buildTimeoutMs;
+  if (opts.buildTimeoutMs !== undefined)
+    set.buildTimeoutMs = opts.buildTimeoutMs;
   if (opts.testTimeoutMs !== undefined) set.testTimeoutMs = opts.testTimeoutMs;
 
   if (Object.keys(set).length === 0) {
@@ -109,7 +109,10 @@ export async function remove(db: DrizzleDb, id: string): Promise<boolean> {
 /**
  * Seed projects from config JSON. INSERT-only: skip if already exists.
  */
-export async function seedFromConfig(db: DrizzleDb, projectEntries: Array<{ id: string; name?: string }>): Promise<{ inserted: string[]; skipped: string[]; invalid: string[] }> {
+export async function seedFromConfig(
+  db: DrizzleDb,
+  projectEntries: Array<{ id: string; name?: string }>,
+): Promise<{ inserted: string[]; skipped: string[]; invalid: string[] }> {
   const inserted: string[] = [];
   const skipped: string[] = [];
   const invalid: string[] = [];
@@ -135,7 +138,10 @@ export async function seedFromConfig(db: DrizzleDb, projectEntries: Array<{ id: 
  * Check if any data references the given project ID across tables.
  * Used to prevent deletion of projects that still have associated data.
  */
-export async function hasReferencingData(db: DrizzleDb, projectId: string): Promise<boolean> {
+export async function hasReferencingData(
+  db: DrizzleDb,
+  projectId: string,
+): Promise<boolean> {
   const tablesToCheck = [
     { table: agents, col: agents.projectId },
     { table: buildHistory, col: buildHistory.projectId },
@@ -147,7 +153,11 @@ export async function hasReferencingData(db: DrizzleDb, projectId: string): Prom
   ];
 
   for (const { table, col } of tablesToCheck) {
-    const rows = await db.select({ one: sql`1` }).from(table).where(eq(col, projectId)).limit(1);
+    const rows = await db
+      .select({ one: sql`1` })
+      .from(table)
+      .where(eq(col, projectId))
+      .limit(1);
     if (rows.length > 0) {
       return true;
     }

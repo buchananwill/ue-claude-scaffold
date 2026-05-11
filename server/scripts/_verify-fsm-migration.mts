@@ -15,7 +15,7 @@ const expectedArchiveCounts: Record<string, number> = {
   tasks_pre_fsm_archive: 392,
   task_files_pre_fsm_archive: 1163,
   task_dependencies_pre_fsm_archive: 294,
-  claude_code_container_sessions_pre_fsm_archive: 3,
+  claude_code_container_sessions_pre_fsm_archive: 0,
 };
 for (const [t, expected] of Object.entries(expectedArchiveCounts)) {
   const r = await pglite.query<{ c: number }>(`SELECT count(*)::int AS c FROM "${t}"`);
@@ -132,34 +132,29 @@ try {
   check("ruling=rule with non-NULL contradiction_resolution accepted", false, (e as Error).message);
 }
 
-console.log("\n=== projects.agent_roles column ===");
-const colCheck = await pglite.query<{ exists: boolean }>(
+console.log("\n=== projects.agent_roles intentionally absent ===");
+const absentCheck = await pglite.query<{ exists: boolean }>(
   `SELECT EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_schema='public' AND table_name='projects' AND column_name='agent_roles') AS exists`,
 );
-check("projects.agent_roles exists", colCheck.rows[0].exists);
+check("projects.agent_roles does NOT exist (operator-local config, lives in scaffold.config.json)", !absentCheck.rows[0].exists);
 
-const defaultCheck = await pglite.query<{ d: string | null }>(
-  `SELECT column_default::text AS d
-   FROM information_schema.columns
-   WHERE table_schema='public' AND table_name='projects' AND column_name='agent_roles'`,
+console.log("\n=== Archive FK target survives (structural test) ===");
+const archiveFkInfo = await pglite.query<{ confrelid_name: string }>(
+  `SELECT cf.relname AS confrelid_name
+   FROM pg_constraint c
+   JOIN pg_class cl ON cl.oid = c.conrelid
+   JOIN pg_class cf ON cf.oid = c.confrelid
+   JOIN pg_namespace n ON n.oid = cl.relnamespace
+   WHERE n.nspname = 'public'
+     AND cl.relname = 'claude_code_container_sessions_pre_fsm_archive'
+     AND c.contype = 'f'
+     AND c.conname LIKE '%task_id%'`,
 );
 check(
-  "agent_roles default is empty-jsonb",
-  (defaultCheck.rows[0]?.d ?? "").includes("{}"),
-  `default: ${defaultCheck.rows[0]?.d}`,
-);
-
-console.log("\n=== Archive FK target survives — sessions still link to archived tasks ===");
-const archiveJoin = await pglite.query<{ c: number }>(
-  `SELECT count(*)::int AS c
-   FROM claude_code_container_sessions_pre_fsm_archive s
-   JOIN tasks_pre_fsm_archive t ON t.id = s.task_id`,
-);
-check(
-  "3 archived sessions still join to archived tasks",
-  archiveJoin.rows[0].c === 3,
-  `count ${archiveJoin.rows[0].c}`,
+  "archived ccs.task_id FK targets archived tasks table",
+  archiveFkInfo.rows[0]?.confrelid_name === "tasks_pre_fsm_archive",
+  `targets ${archiveFkInfo.rows[0]?.confrelid_name}`,
 );
 
 console.log("\n=== New ccs FK points at new tasks ===");
