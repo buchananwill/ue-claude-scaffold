@@ -303,6 +303,18 @@ _run_reviewer_fanout() {
         review_cycle_count=0
     fi
 
+    # Phase 7 cycle 2 (decomp W2): allowlist-scrub server-derived strings
+    # before they enter the per-reviewer prompt. Mirrors the arbitrator
+    # dispatch — both dispatchers pull the same triple (task_title,
+    # source_path, files_csv) from the same GET /tasks/:id shape, so they
+    # must both scrub to keep the safety posture consistent. The allowlist
+    # regex is `^[-A-Za-z0-9_./ ]+$`; values that fail collapse to empty in
+    # the prompt body (reviewers can still read task context from the plan
+    # and `git diff`).
+    task_title=$(_scrub_prompt_path_field "$task_title" "task_title") || true
+    source_path=$(_scrub_prompt_path_field "$source_path" "source_path") || true
+    files_csv=$(_scrub_prompt_path_csv "$files_csv" "files_csv[entry]")
+
     # The /reviews endpoints are keyed on the review cycle (server-side
     # reviewCycleCount), not the daisy-chain loop counter. Both happen to be 0
     # for the first cycle, but they diverge once a `revising → engineering →

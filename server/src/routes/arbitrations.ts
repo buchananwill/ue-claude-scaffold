@@ -26,17 +26,14 @@ import { eq, and } from 'drizzle-orm';
 import { getDb } from '../drizzle-instance.js';
 import { arbitrationRuns, tasks } from '../schema/tables.js';
 import { requireProjectIdHeader } from './_project-id-guard.js';
-import type { ScaffoldConfig } from '../config.js';
+import { isUniqueConstraintConflict } from './_route-helpers.js';
 
-// Phase 7 cycle 1 (safety W2): accept `{ config }` at plugin registration so
-// the arbitrations route exposes the same shape as other state-transition
-// plugins that may need configuration (tasks, branchOps, syncPlugin). The
-// route handler does not currently consume config fields, but the typed
-// option surface matches the established pattern at the registration site in
-// `server/src/index.ts`.
-interface ArbitrationsOpts {
-  config: ScaffoldConfig;
-}
+// Phase 7 cycle 2 (decomp N3): peer review-ingestion routes (reviews,
+// findings, failures) all register without an options object. The plugin's
+// route handler does not consume any config field, and keeping a typed-but-
+// unused options surface was identified as drift — drop the wrapper to match
+// the majority pattern. Registration site in `server/src/index.ts` updated
+// accordingly.
 
 const ARBITRATION_TRIGGERS = [
   'review_cycle_budget_exhausted',
@@ -194,32 +191,6 @@ function validateBody(raw: unknown): ValidationResult<PostArbitrationBody> {
 }
 
 /**
- * Detect whether an insert error corresponds to the unique violation on
- * `arbitration_runs_task_trigger_unique`. Both PG and PGlite surface unique
- * violations with SQLSTATE 23505; the constraint name may live in
- * `.constraint`, `.constraint_name`, or the error message text. Mirrors the
- * pattern in `reviews.ts:isUniqueRunConflict`.
- */
-function isUniqueArbitrationConflict(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as Record<string, unknown> & { cause?: unknown };
-  const code = e.code;
-  const message = typeof e.message === 'string' ? e.message : '';
-  const constraint =
-    (typeof e.constraint === 'string' && e.constraint)
-    || (typeof e.constraint_name === 'string' && e.constraint_name)
-    || '';
-  const matchesConstraint =
-    constraint === 'arbitration_runs_task_trigger_unique'
-    || message.includes('arbitration_runs_task_trigger_unique');
-  if (matchesConstraint) return true;
-  if (e.cause) {
-    return isUniqueArbitrationConflict(e.cause);
-  }
-  return code === '23505' && message.includes('arbitration_runs_task_trigger_unique');
-}
-
-/**
  * Build the column-write set the route applies to `tasks` alongside the FSM
  * status transition out of `arbitrating`. Mapping per ruling:
  *
@@ -281,7 +252,7 @@ function buildStatusUpdate(
   }
 }
 
-const arbitrationsPlugin: FastifyPluginAsync<ArbitrationsOpts> = async (fastify) => {
+const arbitrationsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.post<{
     Params: { id: string };
     Body: unknown;
@@ -367,7 +338,7 @@ const arbitrationsPlugin: FastifyPluginAsync<ArbitrationsOpts> = async (fastify)
 
       return result;
     } catch (err) {
-      if (isUniqueArbitrationConflict(err)) {
+      if (isUniqueConstraintConflict(err, 'arbitration_runs_task_trigger_unique')) {
         return reply.conflict(
           `arbitration run already exists for task ${taskId}, trigger '${body.trigger}'`,
         );

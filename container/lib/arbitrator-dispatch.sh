@@ -228,7 +228,7 @@ _run_arbitrator_dispatch() {
     esac
 
     # Phase 7 cycle 1 (safety W1): allowlist-scrub server-derived strings
-    # before they enter the arbitrator prompt. Reuses _scrub_engineer_path_field
+    # before they enter the arbitrator prompt. Reuses the shared scrub helpers
     # from run-claude.sh (which sources this file), keeping the allowlist
     # consistent with the engineer-prompt scrub posture. The allowlist regex is
     # `^[-A-Za-z0-9_./ ]+$` — alnum, hyphen, underscore, dot, slash, space —
@@ -238,34 +238,9 @@ _run_arbitrator_dispatch() {
     # task_title may legitimately contain characters outside this set (colons,
     # parens, etc.). On reject the title degrades to empty in the prompt; the
     # arbitrator can still read task context from the plan and reviews.
-    task_title=$(_scrub_engineer_path_field "$task_title" "task_title") || true
-    source_path=$(_scrub_engineer_path_field "$source_path" "source_path") || true
-
-    # files_csv is "path1, path2, path3" — comma is not in the path allowlist,
-    # so scrub each file individually and rebuild the csv. Files that fail the
-    # allowlist drop out of the list silently (the helper warns on stderr).
-    if [ -n "$files_csv" ]; then
-        local _files_clean=""
-        local _f
-        local _IFS_OLD="$IFS"
-        IFS=','
-        for _f in $files_csv; do
-            # Strip leading/trailing whitespace.
-            _f="${_f#"${_f%%[![:space:]]*}"}"
-            _f="${_f%"${_f##*[![:space:]]}"}"
-            local _scrubbed
-            _scrubbed=$(_scrub_engineer_path_field "$_f" "files_csv[entry]") || _scrubbed=""
-            if [ -n "$_scrubbed" ]; then
-                if [ -z "$_files_clean" ]; then
-                    _files_clean="$_scrubbed"
-                else
-                    _files_clean="${_files_clean}, ${_scrubbed}"
-                fi
-            fi
-        done
-        IFS="$_IFS_OLD"
-        files_csv="$_files_clean"
-    fi
+    task_title=$(_scrub_prompt_path_field "$task_title" "task_title") || true
+    source_path=$(_scrub_prompt_path_field "$source_path" "source_path") || true
+    files_csv=$(_scrub_prompt_path_csv "$files_csv" "files_csv[entry]")
 
     echo "arbitrator-dispatch: task=${task_id} status=${status} trigger=${trigger}"
 

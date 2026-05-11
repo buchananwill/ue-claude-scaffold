@@ -16,7 +16,7 @@ import { eq, and, asc, inArray } from 'drizzle-orm';
 import { getDb } from '../drizzle-instance.js';
 import { reviewRuns, reviewFindings, tasks } from '../schema/tables.js';
 import { requireProjectIdHeader } from './_project-id-guard.js';
-import { reviewerRoleError } from './_route-helpers.js';
+import { isUniqueConstraintConflict, reviewerRoleError } from './_route-helpers.js';
 
 const VERDICTS = ['approve', 'request_changes', 'out_of_scope'] as const;
 type Verdict = typeof VERDICTS[number];
@@ -212,40 +212,6 @@ function validatePostReviewBody(raw: unknown): ValidationResult<PostReviewBody> 
   };
 }
 
-/**
- * Detect whether an error from a Drizzle insert corresponds to a unique
- * violation on `review_runs_task_cycle_role_unique`. Both PG (node-postgres)
- * and PGlite surface unique violations with SQLSTATE 23505; the constraint
- * name appears either in `.constraint_name`, `.constraint`, or in the message
- * text.
- *
- * The fallback path (when neither `.constraint` nor `.constraint_name` is
- * populated) requires the message to mention the specific constraint name
- * `review_runs_task_cycle_role_unique`. A blanket 23505/"unique" match would
- * misreport conflicts on any future unique index added to `review_runs` as a
- * duplicate `(taskId, cycle, reviewerRole)` 409.
- */
-function isUniqueRunConflict(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as Record<string, unknown> & { cause?: unknown };
-  const code = e.code;
-  const message = typeof e.message === 'string' ? e.message : '';
-  const constraint =
-    (typeof e.constraint === 'string' && e.constraint)
-    || (typeof e.constraint_name === 'string' && e.constraint_name)
-    || '';
-  const matchesConstraint =
-    constraint === 'review_runs_task_cycle_role_unique'
-    || message.includes('review_runs_task_cycle_role_unique');
-  if (matchesConstraint) return true;
-  // PGlite sometimes wraps the underlying error
-  if (e.cause) {
-    return isUniqueRunConflict(e.cause);
-  }
-  return code === '23505'
-    && message.includes('review_runs_task_cycle_role_unique');
-}
-
 const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
   // POST /tasks/:id/reviews — atomic run + findings insert
   fastify.post<{
@@ -322,7 +288,7 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
 
       return result;
     } catch (err) {
-      if (isUniqueRunConflict(err)) {
+      if (isUniqueConstraintConflict(err, 'review_runs_task_cycle_role_unique')) {
         return reply.conflict(
           `review run already exists for task ${taskId}, cycle ${body.cycle}, reviewerRole '${body.reviewerRole}'`,
         );

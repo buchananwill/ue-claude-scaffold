@@ -66,17 +66,62 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
 # alnum/underscore/dot/slash/space. No backslash, so embedded backslashes are
 # rejected; no shell metacharacters (`$`, backtick, `;`, `&`, `|`, `<`, `>`,
 # quotes) so they cannot land in the prompt.
-_scrub_engineer_path_field() {
+#
+# Phase 7 cycle 2 (decomp N1/W2): renamed from `_scrub_engineer_path_field` —
+# the helper is now called from the engineer dispatch, the arbitrator
+# dispatch, and the reviewer fanout. The warning string drops the caller
+# reference (`_build_engineer_prompt`) and relies on the per-call `${label}`
+# to identify the field being scrubbed.
+_scrub_prompt_path_field() {
     local value="$1"
     local label="$2"
     local suffix="${3:-treating as empty.}"
     local _path_allow='^[-A-Za-z0-9_./ ]+$'
     if [ -n "$value" ] && ! [[ "$value" =~ $_path_allow ]]; then
-        echo "WARNING: _build_engineer_prompt rejecting non-allowlisted ${label}; ${suffix}" >&2
+        echo "WARNING: rejecting non-allowlisted ${label}; ${suffix}" >&2
         echo ""
         return 1
     fi
     echo "$value"
+    return 0
+}
+
+# Scrub a "path1, path2, path3" CSV by allowlist-checking each entry via
+# _scrub_prompt_path_field and rebuilding the list. Entries that fail the
+# allowlist drop out silently (the helper warns to stderr). Used by the
+# arbitrator dispatch and reviewer fanout to filter the task `files` list
+# before it enters the prompt body.
+#
+# Echoes the rebuilt CSV on stdout. Comma is not in the path allowlist so it
+# would not otherwise survive a per-field scrub; this helper splits, scrubs
+# each entry, and rejoins.
+_scrub_prompt_path_csv() {
+    local csv="$1"
+    local label="${2:-files_csv[entry]}"
+    if [ -z "$csv" ]; then
+        echo ""
+        return 0
+    fi
+    local _files_clean=""
+    local _f
+    local _IFS_OLD="$IFS"
+    IFS=','
+    for _f in $csv; do
+        # Strip leading/trailing whitespace.
+        _f="${_f#"${_f%%[![:space:]]*}"}"
+        _f="${_f%"${_f##*[![:space:]]}"}"
+        local _scrubbed
+        _scrubbed=$(_scrub_prompt_path_field "$_f" "$label") || _scrubbed=""
+        if [ -n "$_scrubbed" ]; then
+            if [ -z "$_files_clean" ]; then
+                _files_clean="$_scrubbed"
+            else
+                _files_clean="${_files_clean}, ${_scrubbed}"
+            fi
+        fi
+    done
+    IFS="$_IFS_OLD"
+    echo "$_files_clean"
     return 0
 }
 
@@ -141,9 +186,9 @@ _fetch_engineer_fsm_fields() {
         # `set -e` if left unguarded. We only consult the return code for
         # addendum_path (to set addendum_rejected). The empty echo on reject
         # is identical in all three cases.
-        source_path=$(_scrub_engineer_path_field "$source_path" "source_path") || true
-        latest_review_path=$(_scrub_engineer_path_field "$latest_review_path" "latest_review_path") || true
-        if ! addendum_path=$(_scrub_engineer_path_field "$addendum_path" "addendum_path" \
+        source_path=$(_scrub_prompt_path_field "$source_path" "source_path") || true
+        latest_review_path=$(_scrub_prompt_path_field "$latest_review_path" "latest_review_path") || true
+        if ! addendum_path=$(_scrub_prompt_path_field "$addendum_path" "addendum_path" \
                 "routing to post-arbitration branch with sentinel placeholder."); then
             addendum_rejected=1
         fi

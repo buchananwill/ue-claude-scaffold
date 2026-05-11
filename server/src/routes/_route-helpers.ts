@@ -117,3 +117,42 @@ export function reviewerRoleError(
   }
   return null;
 }
+
+// ── unique-constraint conflict detection ───────────────────────────────────
+
+/**
+ * Detect whether a Drizzle insert error corresponds to a unique violation on
+ * the named constraint. Both PG (node-postgres) and PGlite surface unique
+ * violations with SQLSTATE 23505; the constraint name may appear on
+ * `.constraint`, `.constraint_name`, or in the error message text. PGlite
+ * sometimes wraps the underlying error, so we recurse through `.cause`.
+ *
+ * The fallback path (when neither `.constraint` nor `.constraint_name` is
+ * populated) requires the message to mention the specific constraint name. A
+ * blanket 23505/"unique" match would misreport conflicts on any future unique
+ * index added to the same table as the watched conflict.
+ *
+ * Used by `reviews.ts` (review_runs_task_cycle_role_unique) and
+ * `arbitrations.ts` (arbitration_runs_task_trigger_unique).
+ */
+export function isUniqueConstraintConflict(
+  err: unknown,
+  constraintName: string,
+): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as Record<string, unknown> & { cause?: unknown };
+  const code = e.code;
+  const message = typeof e.message === 'string' ? e.message : '';
+  const constraint =
+    (typeof e.constraint === 'string' && e.constraint)
+    || (typeof e.constraint_name === 'string' && e.constraint_name)
+    || '';
+  const matchesConstraint =
+    constraint === constraintName
+    || message.includes(constraintName);
+  if (matchesConstraint) return true;
+  if (e.cause) {
+    return isUniqueConstraintConflict(e.cause, constraintName);
+  }
+  return code === '23505' && message.includes(constraintName);
+}
