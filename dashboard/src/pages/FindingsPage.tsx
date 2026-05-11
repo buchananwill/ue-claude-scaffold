@@ -382,7 +382,7 @@ function PatternList({ loading, error, items, emptyText, projectId, exampleKind 
                         to="/$projectId/findings"
                         params={{ projectId }}
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        search={(prev: any) => ({ ...prev, highlight: id })}
+                        search={(prev: any) => ({ ...prev, severity: 'NOTE', highlight: id })}
                         style={{ textDecoration: 'none', cursor: 'pointer' }}
                       >
                         #{id}
