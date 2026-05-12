@@ -6,6 +6,7 @@ import * as taskDepsQ from "../queries/task-deps.js";
 import type { ScaffoldConfig } from "../config.js";
 import { mergeIntoAgentBranches } from "../git-utils.js";
 import { AGENT_NAME_RE } from "../branch-naming.js";
+import { resolveAgent } from "./route-helpers.js";
 import { resolveProject } from "../resolve-project.js";
 import { validateSourcePath } from "../tasks-validation.js";
 import { formatTask, toTaskRow, type TaskRow } from "./tasks-types.js";
@@ -585,10 +586,19 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       dir: dirVal,
     });
     const total = await tasksCore.count(db, filterOpts);
-    const agent = (request.headers["x-agent-name"] as string) ?? "unknown";
+    // Resolve the requesting agent to a UUID so per-task block reasons
+    // (wrong-branch deps in particular) reflect this caller's identity.
+    // Anonymous / unknown callers (e.g. dashboard list views) pass null;
+    // formatTaskWithFiles skips the wrong-branch reason in that case.
+    const agentName = request.headers["x-agent-name"] as string | undefined;
+    const agentRow =
+      agentName && AGENT_NAME_RE.test(agentName)
+        ? await resolveAgent(db, projectId, agentName)
+        : null;
+    const agentId = agentRow?.id ?? null;
 
     const formattedTasks = await Promise.all(
-      rows.map((r) => formatTaskWithFiles(toTaskRow(r), agent, config)),
+      rows.map((r) => formatTaskWithFiles(toTaskRow(r), agentId, config)),
     );
     return { tasks: formattedTasks, total };
   });
@@ -602,8 +612,13 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     if (!row) {
       return reply.notFound("task not found");
     }
-    const agent = (request.headers["x-agent-name"] as string) ?? "unknown";
-    return formatTaskWithFiles(toTaskRow(row), agent, config);
+    const agentName = request.headers["x-agent-name"] as string | undefined;
+    const agentRow =
+      agentName && AGENT_NAME_RE.test(agentName)
+        ? await resolveAgent(db, request.projectId, agentName)
+        : null;
+    const agentId = agentRow?.id ?? null;
+    return formatTaskWithFiles(toTaskRow(row), agentId, config);
   });
 
   // PATCH /tasks/:id — edit a pending task

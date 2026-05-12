@@ -1,65 +1,68 @@
-import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
-import { getDb } from '../drizzle-instance.js';
-import * as tasksCore from '../queries/tasks-core.js';
-import * as tasksLifecycleQ from '../queries/tasks-lifecycle.js';
-import { existsInBareRepo, isCommittedInRepo } from '../git-utils.js';
-import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
-import { resolveProject } from '../resolve-project.js';
-import type { TasksOpts } from './tasks-files.js';
-import { resolveAgent } from './route-helpers.js';
+import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
+import { getDb } from "../drizzle-instance.js";
+import * as tasksCore from "../queries/tasks-core.js";
+import * as tasksLifecycleQ from "../queries/tasks-lifecycle.js";
+import { existsInBareRepo, isCommittedInRepo } from "../git-utils.js";
+import { seedBranchFor, AGENT_NAME_RE } from "../branch-naming.js";
+import { resolveProject } from "../resolve-project.js";
+import type { TasksOpts } from "./tasks-files.js";
+import { resolveAgent } from "./route-helpers.js";
 
 // ── FSM definitions ───────────────────────────────────────────────────────
 
 type FsmStatus =
-  | 'pending'
-  | 'claimed'
-  | 'engineering'
-  | 'built'
-  | 'reviewing'
-  | 'revising'
-  | 'arbitrating'
-  | 'complete'
-  | 'failed'
-  | 'integrated'
-  | 'cycle';
+  | "pending"
+  | "claimed"
+  | "engineering"
+  | "built"
+  | "reviewing"
+  | "revising"
+  | "arbitrating"
+  | "completed"
+  | "failed"
+  | "integrated"
+  | "cycle";
 
 type RequestedTarget =
-  | 'engineering'
-  | 'built'
-  | 'reviewing'
-  | 'revising'
-  | 'arbitrating'
-  | 'complete'
-  | 'failed';
+  | "engineering"
+  | "built"
+  | "reviewing"
+  | "revising"
+  | "arbitrating"
+  | "completed"
+  | "failed";
 
 const REQUESTED_TARGETS: readonly RequestedTarget[] = [
-  'engineering',
-  'built',
-  'reviewing',
-  'revising',
-  'arbitrating',
-  'complete',
-  'failed',
+  "engineering",
+  "built",
+  "reviewing",
+  "revising",
+  "arbitrating",
+  "completed",
+  "failed",
 ] as const;
 
-const VERDICTS = ['approve', 'request_changes', 'out_of_scope'] as const;
-type Verdict = typeof VERDICTS[number];
+const VERDICTS = ["approve", "request_changes", "out_of_scope"] as const;
+type Verdict = (typeof VERDICTS)[number];
 
-const ARBITRATION_TRIGGERS = ['review_cycle_budget_exhausted', 'reviewer_contradiction'] as const;
-type ArbitrationTrigger = typeof ARBITRATION_TRIGGERS[number];
+const ARBITRATION_TRIGGERS = [
+  "review_cycle_budget_exhausted",
+  "reviewer_contradiction",
+] as const;
+type ArbitrationTrigger = (typeof ARBITRATION_TRIGGERS)[number];
 
 const FAILURE_REASONS = [
-  'review_cycle_budget_exhausted',
-  'reviewer_contradiction',
-  'engineer_build_failure',
-  'reviewer_infrastructure_failure',
-  'role_session_no_op',
-  'arbitrator_escalated',
+  "review_cycle_budget_exhausted",
+  "reviewer_contradiction",
+  "engineer_build_failure",
+  "reviewer_infrastructure_failure",
+  "role_session_no_op",
+  "arbitrator_escalated",
 ] as const;
-type FailureReason = typeof FAILURE_REASONS[number];
+type FailureReason = (typeof FAILURE_REASONS)[number];
 
-const BUILD_STATUSES = ['clean', 'dirty', 'failed'] as const;
-type BuildStatus = typeof BUILD_STATUSES[number];
+const BUILD_STATUSES = ["clean", "dirty", "failed"] as const;
+type BuildStatus = (typeof BUILD_STATUSES)[number];
 
 // Identifier conventions match agent/project naming (see branch-naming.ts).
 const REVIEWER_ROLE_RE = /^[A-Za-z0-9_-]+$/;
@@ -107,12 +110,12 @@ interface TransitionBody {
  */
 const FSM: Record<string, ReadonlySet<RequestedTarget>> = {
   pending: new Set([]),
-  claimed: new Set(['engineering', 'failed'] as const),
-  engineering: new Set(['built', 'arbitrating', 'failed'] as const),
-  built: new Set(['reviewing', 'failed'] as const),
-  reviewing: new Set(['reviewing', 'complete', 'revising', 'failed'] as const),
-  revising: new Set(['engineering', 'failed'] as const),
-  arbitrating: new Set(['complete', 'revising', 'failed'] as const),
+  claimed: new Set(["engineering", "failed"] as const),
+  engineering: new Set(["built", "arbitrating", "failed"] as const),
+  built: new Set(["reviewing", "failed"] as const),
+  reviewing: new Set(["reviewing", "completed", "revising", "failed"] as const),
+  revising: new Set(["engineering", "failed"] as const),
+  arbitrating: new Set(["completed", "revising", "failed"] as const),
   complete: new Set([]),
   failed: new Set([]),
   integrated: new Set([]),
@@ -122,26 +125,33 @@ const FSM: Record<string, ReadonlySet<RequestedTarget>> = {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function isVerdict(v: unknown): v is Verdict {
-  return typeof v === 'string' && (VERDICTS as readonly string[]).includes(v);
+  return typeof v === "string" && (VERDICTS as readonly string[]).includes(v);
 }
 
 function isFailureReason(v: unknown): v is FailureReason {
-  return typeof v === 'string' && (FAILURE_REASONS as readonly string[]).includes(v);
+  return (
+    typeof v === "string" && (FAILURE_REASONS as readonly string[]).includes(v)
+  );
 }
 
 function isBuildStatus(v: unknown): v is BuildStatus {
-  return typeof v === 'string' && (BUILD_STATUSES as readonly string[]).includes(v);
+  return (
+    typeof v === "string" && (BUILD_STATUSES as readonly string[]).includes(v)
+  );
 }
 
 function isArbitrationTrigger(v: unknown): v is ArbitrationTrigger {
-  return typeof v === 'string' && (ARBITRATION_TRIGGERS as readonly string[]).includes(v);
+  return (
+    typeof v === "string" &&
+    (ARBITRATION_TRIGGERS as readonly string[]).includes(v)
+  );
 }
 
 function readVerdicts(raw: unknown): Record<string, string> {
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-      if (typeof v === 'string') out[k] = v;
+      if (typeof v === "string") out[k] = v;
     }
     return out;
   }
@@ -156,34 +166,43 @@ function readVerdicts(raw: unknown): Record<string, string> {
 function allReviewersClear(verdicts: Record<string, string>): boolean {
   const values = Object.values(verdicts);
   if (values.length === 0) return false;
-  return values.every((v) => v === 'approve' || v === 'out_of_scope');
+  return values.every((v) => v === "approve" || v === "out_of_scope");
 }
 
 function anyRequestChanges(verdicts: Record<string, string>): boolean {
-  return Object.values(verdicts).some((v) => v === 'request_changes');
+  return Object.values(verdicts).some((v) => v === "request_changes");
 }
 
-const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
+const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (
+  fastify,
+  opts,
+) => {
   const config = opts.config;
 
   // POST /tasks/:id/reset — reset a complete/failed/cycle task back to pending
   fastify.post<{
     Params: { id: string };
-  }>('/tasks/:id/reset', async (request, reply) => {
+  }>("/tasks/:id/reset", async (request, reply) => {
     const id = Number(request.params.id);
     const db = getDb();
 
     const row = await tasksCore.getById(db, id);
     if (!row) {
-      return reply.notFound('task not found');
+      return reply.notFound("task not found");
     }
-    if (row.status !== 'complete' && row.status !== 'failed' && row.status !== 'cycle') {
-      return reply.conflict('task can only be reset when complete, failed, or cycle');
+    if (
+      row.status !== "completed" &&
+      row.status !== "failed" &&
+      row.status !== "cycle"
+    ) {
+      return reply.conflict(
+        "task can only be reset when complete, failed, or cycle",
+      );
     }
 
     const sp = row.sourcePath;
-    if (sp && row.status !== 'cycle') {
-      const taskProjectId = row.projectId ?? 'default';
+    if (sp && row.status !== "cycle") {
+      const taskProjectId = row.projectId ?? "default";
       let project;
       try {
         project = await resolveProject(config, db, taskProjectId);
@@ -197,14 +216,14 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
           const seedBranch = seedBranchFor(taskProjectId, project);
           if (!existsInBareRepo(bareRepo, seedBranch, sp)) {
             return reply.unprocessableEntity(
-              `sourcePath '${sp}' not found on branch '${seedBranch}' in bare repo`
+              `sourcePath '${sp}' not found on branch '${seedBranch}' in bare repo`,
             );
           }
         } else {
           const worktree = project.path;
           if (!isCommittedInRepo(worktree, sp)) {
             return reply.unprocessableEntity(
-              `sourcePath '${sp}' is no longer committed in the staging worktree`
+              `sourcePath '${sp}' is no longer committed in the staging worktree`,
             );
           }
         }
@@ -213,7 +232,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
 
     const ok = await tasksLifecycleQ.reset(db, request.projectId, id);
     if (!ok) {
-      return reply.conflict('task is no longer in a resettable state');
+      return reply.conflict("task is no longer in a resettable state");
     }
     return { ok: true };
   });
@@ -221,21 +240,21 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
   // POST /tasks/:id/integrate — mark a single complete task as integrated
   fastify.post<{
     Params: { id: string };
-  }>('/tasks/:id/integrate', async (request, reply) => {
+  }>("/tasks/:id/integrate", async (request, reply) => {
     const id = Number(request.params.id);
     const db = getDb();
 
     const row = await tasksCore.getById(db, id);
     if (!row) {
-      return reply.notFound('task not found');
+      return reply.notFound("task not found");
     }
-    if (row.status !== 'complete') {
-      return reply.badRequest('task must be in complete status to integrate');
+    if (row.status !== "completed") {
+      return reply.badRequest("task must be in complete status to integrate");
     }
 
     const ok = await tasksLifecycleQ.integrate(db, request.projectId, id);
     if (!ok) {
-      return reply.conflict('task status changed concurrently');
+      return reply.conflict("task status changed concurrently");
     }
     return { ok: true };
   });
@@ -243,26 +262,32 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
   // POST /tasks/integrate-batch — mark all complete tasks by a specific agent as integrated
   fastify.post<{
     Body: { agent: string };
-  }>('/tasks/integrate-batch', async (request, reply) => {
+  }>("/tasks/integrate-batch", async (request, reply) => {
     const { agent } = request.body ?? {};
-    if (!agent || typeof agent !== 'string') {
-      return reply.badRequest('agent must be a string');
+    if (!agent || typeof agent !== "string") {
+      return reply.badRequest("agent must be a string");
     }
     if (!AGENT_NAME_RE.test(agent)) {
-      return reply.badRequest('Invalid agent name format');
+      return reply.badRequest("Invalid agent name format");
     }
 
     const db = getDb();
     const agentRow = await resolveAgent(db, request.projectId, agent);
     if (!agentRow) {
-      return reply.notFound(`Agent '${agent}' not found in project '${request.projectId}'`);
+      return reply.notFound(
+        `Agent '${agent}' not found in project '${request.projectId}'`,
+      );
     }
-    const result = await tasksLifecycleQ.integrateBatch(db, request.projectId, agentRow.id);
+    const result = await tasksLifecycleQ.integrateBatch(
+      db,
+      request.projectId,
+      agentRow.id,
+    );
     return { ok: true, count: result.count, ids: result.ids };
   });
 
   // POST /tasks/integrate-all — mark all complete tasks as integrated
-  fastify.post('/tasks/integrate-all', async (request) => {
+  fastify.post("/tasks/integrate-all", async (request) => {
     const db = getDb();
     const result = await tasksLifecycleQ.integrateAll(db, request.projectId);
     return { ok: true, count: result.count, ids: result.ids };
@@ -272,7 +297,7 @@ const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts
   fastify.post<{
     Params: { id: string };
     Body: TransitionBody;
-  }>('/tasks/:id/transition', async (request, reply) => {
+  }>("/tasks/:id/transition", async (request, reply) => {
     return handleTransition(request, reply);
   });
 };
@@ -288,20 +313,25 @@ async function handleTransition(
   reply: FastifyReply,
 ) {
   // X-Project-Id is mandatory on this endpoint.
-  const rawHeader = request.headers['x-project-id'];
-  if (rawHeader === undefined || rawHeader === '') {
-    return reply.badRequest('X-Project-Id header is required');
+  const rawHeader = request.headers["x-project-id"];
+  if (rawHeader === undefined || rawHeader === "") {
+    return reply.badRequest("X-Project-Id header is required");
   }
 
   const id = Number(request.params.id);
   if (!Number.isInteger(id) || id <= 0) {
-    return reply.badRequest('invalid task id');
+    return reply.badRequest("invalid task id");
   }
 
   const body = request.body ?? ({} as TransitionBody);
   const to = body.to;
-  if (typeof to !== 'string' || !(REQUESTED_TARGETS as readonly string[]).includes(to)) {
-    return reply.badRequest(`'to' must be one of: ${REQUESTED_TARGETS.join(', ')}`);
+  if (
+    typeof to !== "string" ||
+    !(REQUESTED_TARGETS as readonly string[]).includes(to)
+  ) {
+    return reply.badRequest(
+      `'to' must be one of: ${REQUESTED_TARGETS.join(", ")}`,
+    );
   }
   const target = to as RequestedTarget;
   const payload: TransitionPayload = body.payload ?? {};
@@ -309,10 +339,10 @@ async function handleTransition(
   const db = getDb();
   const row = await tasksCore.getById(db, id);
   if (!row) {
-    return reply.notFound('task not found');
+    return reply.notFound("task not found");
   }
   if (row.projectId !== request.projectId) {
-    return reply.notFound('task not found');
+    return reply.notFound("task not found");
   }
 
   const current = row.status as FsmStatus;
@@ -331,16 +361,16 @@ async function handleTransition(
   //   * arbitration uniqueness guard (409)
   const update: tasksLifecycleQ.TransitionUpdate = { status: target };
 
-  if (target === 'failed') {
+  if (target === "failed") {
     if (!isFailureReason(payload.failureReason)) {
       return reply.badRequest(
-        `payload.failureReason is required and must be one of: ${FAILURE_REASONS.join(', ')}`,
+        `payload.failureReason is required and must be one of: ${FAILURE_REASONS.join(", ")}`,
       );
     }
     update.failureReason = payload.failureReason;
     if (payload.failureDetail !== undefined) {
-      if (typeof payload.failureDetail !== 'string') {
-        return reply.badRequest('payload.failureDetail must be a string');
+      if (typeof payload.failureDetail !== "string") {
+        return reply.badRequest("payload.failureDetail must be a string");
       }
       if (payload.failureDetail.length > FAILURE_DETAIL_MAX) {
         return reply.badRequest(
@@ -349,20 +379,25 @@ async function handleTransition(
       }
       update.failureDetail = payload.failureDetail;
     }
-    if (current === 'arbitrating') {
+    if (current === "arbitrating") {
       update.arbitrationPendingTrigger = null;
     }
     update.completedAt = new Date();
-  } else if (target === 'engineering') {
+  } else if (target === "engineering") {
     // claimed → engineering or revising → engineering. No required payload.
-  } else if (target === 'built') {
+  } else if (target === "built") {
     if (!isBuildStatus(payload.buildStatus)) {
       return reply.badRequest(
-        `payload.buildStatus is required and must be one of: ${BUILD_STATUSES.join(', ')}`,
+        `payload.buildStatus is required and must be one of: ${BUILD_STATUSES.join(", ")}`,
       );
     }
-    if (typeof payload.commitSha !== 'string' || payload.commitSha.length === 0) {
-      return reply.badRequest('payload.commitSha is required (non-empty string)');
+    if (
+      typeof payload.commitSha !== "string" ||
+      payload.commitSha.length === 0
+    ) {
+      return reply.badRequest(
+        "payload.commitSha is required (non-empty string)",
+      );
     }
     if (payload.commitSha.length > COMMIT_SHA_MAX) {
       return reply.badRequest(
@@ -371,17 +406,19 @@ async function handleTransition(
     }
     update.buildStatus = payload.buildStatus;
     update.commitSha = payload.commitSha;
-  } else if (target === 'reviewing') {
+  } else if (target === "reviewing") {
     // Two distinct flows merge into the same target:
     //   built → reviewing       : reset verdicts to {} (cycle entry)
     //   reviewing → reviewing   : single-key verdict merge
-    if (current === 'built') {
+    if (current === "built") {
       update.reviewerVerdicts = {};
-    } else if (current === 'reviewing') {
+    } else if (current === "reviewing") {
       const role = payload.reviewerRole;
       const verdict = payload.verdict;
-      if (typeof role !== 'string' || role.length === 0) {
-        return reply.badRequest('payload.reviewerRole is required on reviewing→reviewing');
+      if (typeof role !== "string" || role.length === 0) {
+        return reply.badRequest(
+          "payload.reviewerRole is required on reviewing→reviewing",
+        );
       }
       if (role.length > REVIEWER_ROLE_MAX) {
         return reply.badRequest(
@@ -390,19 +427,19 @@ async function handleTransition(
       }
       if (!REVIEWER_ROLE_RE.test(role)) {
         return reply.badRequest(
-          'payload.reviewerRole must match /^[A-Za-z0-9_-]+$/',
+          "payload.reviewerRole must match /^[A-Za-z0-9_-]+$/",
         );
       }
       if (!isVerdict(verdict)) {
         return reply.badRequest(
-          `payload.verdict is required and must be one of: ${VERDICTS.join(', ')}`,
+          `payload.verdict is required and must be one of: ${VERDICTS.join(", ")}`,
         );
       }
       const existing = readVerdicts(row.reviewerVerdicts);
       existing[role] = verdict;
       update.reviewerVerdicts = existing;
     }
-  } else if (target === 'revising') {
+  } else if (target === "revising") {
     // Two legal sources per the FSM:
     //   reviewing → revising   : engineer reads accumulated verdicts and
     //                            decides to revise. Requires latestReviewPath
@@ -419,11 +456,16 @@ async function handleTransition(
     //                            the arbitrator's ruling is the workspace
     //                            pointer of record. If supplied, validate and
     //                            write it; otherwise leave it untouched.
-    if (current === 'reviewing') {
+    if (current === "reviewing") {
       // Validate latestReviewPath up front: it is required on this edge,
       // even though we may end up not writing it (cycle-budget reroute path).
-      if (typeof payload.latestReviewPath !== 'string' || payload.latestReviewPath.length === 0) {
-        return reply.badRequest('payload.latestReviewPath is required on reviewing→revising');
+      if (
+        typeof payload.latestReviewPath !== "string" ||
+        payload.latestReviewPath.length === 0
+      ) {
+        return reply.badRequest(
+          "payload.latestReviewPath is required on reviewing→revising",
+        );
       }
       if (payload.latestReviewPath.length > LATEST_REVIEW_PATH_MAX) {
         return reply.badRequest(
@@ -446,14 +488,14 @@ async function handleTransition(
       const nextCount = (row.reviewCycleCount ?? 0) + 1;
       if (nextCount > (row.reviewCycleBudget ?? 5)) {
         // Reroute: would-be revising becomes arbitrating with cycle-budget trigger.
-        const trigger: ArbitrationTrigger = 'review_cycle_budget_exhausted';
+        const trigger: ArbitrationTrigger = "review_cycle_budget_exhausted";
         const exists = await tasksLifecycleQ.arbitrationExists(db, id, trigger);
         if (exists) {
           return reply.conflict(
             `arbitration already exists for task ${id} with trigger '${trigger}'`,
           );
         }
-        update.status = 'arbitrating';
+        update.status = "arbitrating";
         update.arbitrationPendingTrigger = trigger;
         update.reviewCycleCount = nextCount;
         // Do not write latestReviewPath — we are not entering revising.
@@ -461,12 +503,15 @@ async function handleTransition(
         update.latestReviewPath = payload.latestReviewPath;
         update.reviewCycleCount = nextCount;
       }
-    } else if (current === 'arbitrating') {
+    } else if (current === "arbitrating") {
       // arbitrator ruled 'rule'; latestReviewPath optional.
       if (payload.latestReviewPath !== undefined) {
-        if (typeof payload.latestReviewPath !== 'string' || payload.latestReviewPath.length === 0) {
+        if (
+          typeof payload.latestReviewPath !== "string" ||
+          payload.latestReviewPath.length === 0
+        ) {
           return reply.badRequest(
-            'payload.latestReviewPath, if supplied, must be a non-empty string',
+            "payload.latestReviewPath, if supplied, must be a non-empty string",
           );
         }
         if (payload.latestReviewPath.length > LATEST_REVIEW_PATH_MAX) {
@@ -478,7 +523,7 @@ async function handleTransition(
       }
       update.arbitrationPendingTrigger = null;
     }
-  } else if (target === 'arbitrating') {
+  } else if (target === "arbitrating") {
     // Only legal client-driven source: engineering (reviewer_contradiction).
     // The reviewing → arbitrating edge exists only as a server-side reroute
     // inside the `target === 'revising'` branch above (cycle-budget exhausted),
@@ -486,34 +531,38 @@ async function handleTransition(
     // would bypass the central cycle-budget check.
     if (!isArbitrationTrigger(payload.trigger)) {
       return reply.badRequest(
-        `payload.trigger is required and must be one of: ${ARBITRATION_TRIGGERS.join(', ')}`,
+        `payload.trigger is required and must be one of: ${ARBITRATION_TRIGGERS.join(", ")}`,
       );
     }
     if (
-      current === 'engineering'
-      && payload.trigger !== 'reviewer_contradiction'
+      current === "engineering" &&
+      payload.trigger !== "reviewer_contradiction"
     ) {
       return reply.badRequest(
         "engineering→arbitrating requires payload.trigger='reviewer_contradiction'",
       );
     }
-    const exists = await tasksLifecycleQ.arbitrationExists(db, id, payload.trigger);
+    const exists = await tasksLifecycleQ.arbitrationExists(
+      db,
+      id,
+      payload.trigger,
+    );
     if (exists) {
       return reply.conflict(
         `arbitration already exists for task ${id} with trigger '${payload.trigger}'`,
       );
     }
     update.arbitrationPendingTrigger = payload.trigger;
-  } else if (target === 'complete') {
+  } else if (target === "completed") {
     // Legal sources: reviewing (verdict gate) and arbitrating (ruling=approve).
-    if (current === 'reviewing') {
+    if (current === "reviewing") {
       const verdicts = readVerdicts(row.reviewerVerdicts);
       if (!allReviewersClear(verdicts)) {
         return reply.conflict(
-          'cannot transition reviewing→complete: not all declared reviewers have approved or declared out_of_scope',
+          "cannot transition reviewing→complete: not all declared reviewers have approved or declared out_of_scope",
         );
       }
-    } else if (current === 'arbitrating') {
+    } else if (current === "arbitrating") {
       update.arbitrationPendingTrigger = null;
     }
     update.completedAt = new Date();

@@ -108,19 +108,28 @@ export async function depsForTask(taskId: number): Promise<number[]> {
   return taskDepsQ.getDepsForTask(db, taskId);
 }
 
+/**
+ * Return the dep task IDs that block claiming `taskId` from the perspective
+ * of `agentId`. If `agentId` is null (anonymous reader, e.g. the dashboard
+ * listing tasks without an agent context), only the "incomplete dep" set is
+ * returned — the wrong-branch check is meaningless without a requester
+ * identity to compare against.
+ */
 export async function blockersForTask(
   taskId: number,
-  agent: string,
+  agentId: string | null,
 ): Promise<number[]> {
   const db = getDb();
   const incomplete = await taskDepsQ.getIncompleteBlockers(db, taskId);
-  const wrongBranch = await taskDepsQ.getWrongBranchBlockers(db, taskId, agent);
+  const wrongBranch = agentId
+    ? await taskDepsQ.getWrongBranchBlockers(db, taskId, agentId)
+    : [];
   return [...incomplete.map((r) => r.id), ...wrongBranch.map((r) => r.id)];
 }
 
 export async function blockReasonsForTask(
   row: TaskRow,
-  agent: string,
+  agentId: string | null,
   config: ScaffoldConfig,
 ): Promise<string[]> {
   if (row.status !== "pending") return [];
@@ -169,12 +178,20 @@ export async function blockReasonsForTask(
     );
   }
 
-  // Unmet dependencies — completed on a different agent's branch
-  const wrongBranch = await taskDepsQ.getWrongBranchBlockers(db, row.id, agent);
-  if (wrongBranch.length > 0) {
-    reasons.push(
-      `blocked by work on another branch: #${wrongBranch.map((r) => r.id).join(", #")}`,
+  // Unmet dependencies — completed on a different agent's branch. Only
+  // meaningful when we have a requester identity; anonymous readers skip
+  // this reason entirely.
+  if (agentId) {
+    const wrongBranch = await taskDepsQ.getWrongBranchBlockers(
+      db,
+      row.id,
+      agentId,
     );
+    if (wrongBranch.length > 0) {
+      reasons.push(
+        `blocked by work on another branch: #${wrongBranch.map((r) => r.id).join(", #")}`,
+      );
+    }
   }
 
   return reasons;
@@ -182,14 +199,14 @@ export async function blockReasonsForTask(
 
 export async function formatTaskWithFiles(
   row: TaskRow,
-  agent: string,
+  agentId: string | null,
   config: ScaffoldConfig,
 ) {
   const [files, deps, blockers, reasons] = await Promise.all([
     filesForTask(row.id),
     depsForTask(row.id),
-    blockersForTask(row.id, agent),
-    blockReasonsForTask(row, agent, config),
+    blockersForTask(row.id, agentId),
+    blockReasonsForTask(row, agentId, config),
   ]);
   return formatTask(row, files, deps, blockers, reasons);
 }

@@ -40,12 +40,23 @@ EXCL
 
 _snapshot_agents() {
     # ── Snapshot staged agents into container-local directory ────────────────
+    # /staged-agents is the host launcher's compile output — a warm cache only.
+    # Eager validation of AGENT_TYPE happens elsewhere:
+    #   * FSM mode  → _prefetch_role_agents fetches every role agent from the
+    #                 server, populating both .md and .meta.json sidecars.
+    #   * non-FSM   → AGENT_TYPE is the sole agent; _ensure_agent_type below
+    #                 fetches it if the staged copy is missing.
     mkdir -p "$AGENTS_DIR"
     if [ -d /staged-agents ] && ls /staged-agents/*.md &>/dev/null; then
         cp /staged-agents/* "$AGENTS_DIR/"
         echo "── Agent definitions snapshotted ──"
         ls -1 "$AGENTS_DIR"/*.md 2>/dev/null | while read -r f; do echo "  $(basename "$f")"; done
-        # Verify the requested agent type is present; fetch from server if not.
+    else
+        echo "Note: no pre-staged agent definitions in /staged-agents (will fetch from server)."
+    fi
+
+    if ! _is_fsm_mode; then
+        # Non-FSM mode: AGENT_TYPE is the sole agent for this container.
         if [ ! -f "$AGENTS_DIR/${AGENT_TYPE}.md" ]; then
             echo "Agent type '${AGENT_TYPE}' not in snapshot — fetching from server..."
             if ! _ensure_agent_type "$AGENT_TYPE"; then
@@ -54,19 +65,129 @@ _snapshot_agents() {
             fi
         fi
         echo "Verified: ${AGENT_TYPE}.md is present."
-    else
-        echo "WARNING: No agent definitions found at /staged-agents." >&2
-        echo "The container will run without an agent definition." >&2
     fi
     echo ""
 }
 
+# Container-side FSM role-agent set. Populated by _prefetch_role_agents and
+# consumed by _setup_hooks. Space-separated list of agent names. Empty when
+# the container is not in FSM mode or the project has no agentRoles configured.
+FSM_ROLE_AGENTS=""
+
+_prefetch_role_agents() {
+    # In FSM mode, the daisy-chain dispatches engineer + arbitrator + every
+    # reviewer per task. Fetch each role's compiled markdown and meta sidecar
+    # up front so:
+    #   1. _setup_hooks can compute the union access-scope across the role set
+    #      to derive container-level hook flags correctly.
+    #   2. _run_claude's per-role invocations hit cache instead of a per-cycle
+    #      server round-trip.
+    if ! _is_fsm_mode; then
+        return 0
+    fi
+
+    echo "── Prefetching FSM role agents ──"
+
+    local config_resp
+    config_resp=$(_curl_server -sf "${SERVER_URL}/config/${PROJECT_ID}" --max-time 15 2>/dev/null) || config_resp=""
+    if [ -z "$config_resp" ]; then
+        echo "WARNING: Could not fetch /config/${PROJECT_ID}; FSM container will rely on per-task role lookup." >&2
+        return 0
+    fi
+
+    local roles_json
+    roles_json=$(printf '%s' "$config_resp" | jq -c '.agentRoles // {}' 2>/dev/null) || roles_json="{}"
+    if [ "$roles_json" = "{}" ] || [ -z "$roles_json" ]; then
+        echo "WARNING: project '${PROJECT_ID}' has no agentRoles in scaffold.config.json — container hook profile defaults to read-only." >&2
+        return 0
+    fi
+
+    local role_list
+    role_list=$(printf '%s' "$roles_json" | jq -r '
+        [.engineer // empty, .arbitrator // empty]
+        + ((.reviewers // {}) | to_entries | map(.value))
+        | map(select(. != null and . != ""))
+        | unique
+        | join(" ")
+    ' 2>/dev/null) || role_list=""
+
+    if [ -z "$role_list" ]; then
+        echo "WARNING: agentRoles for project '${PROJECT_ID}' is empty after extraction." >&2
+        return 0
+    fi
+
+    FSM_ROLE_AGENTS="$role_list"
+    echo "Role agents to prefetch: ${FSM_ROLE_AGENTS}"
+
+    local role
+    for role in $FSM_ROLE_AGENTS; do
+        if ! _ensure_agent_type "$role"; then
+            echo "ERROR: Failed to fetch FSM role agent '${role}' from server." >&2
+            exit 1
+        fi
+    done
+    echo ""
+}
+
+# Rank an access-scope string; higher number = broader access.
+# read-only(0) < write-access(1) < ubt-build-hook-interceptor(2).
+# Unknown values return 1 (write-access) — same defensive default the inline
+# case below applies before this refactor.
+_access_scope_rank() {
+    case "$1" in
+        read-only)                  echo 0 ;;
+        write-access)               echo 1 ;;
+        ubt-build-hook-interceptor) echo 2 ;;
+        *)                          echo 1 ;;
+    esac
+}
+
+_access_scope_for_rank() {
+    case "$1" in
+        0) echo "read-only" ;;
+        1) echo "write-access" ;;
+        2) echo "ubt-build-hook-interceptor" ;;
+        *) echo "write-access" ;;
+    esac
+}
+
+# Echo the union access-scope across every agent in FSM_ROLE_AGENTS by reading
+# each cached .meta.json sidecar and taking the highest rank. Falls back to
+# "read-only" when FSM_ROLE_AGENTS is empty (no roles configured).
+_union_access_scope_for_fsm_roles() {
+    local highest_rank=0
+    local role meta scope rank
+    for role in $FSM_ROLE_AGENTS; do
+        meta="${AGENTS_DIR}/${role}.meta.json"
+        if [ ! -f "$meta" ]; then
+            echo "WARNING: missing meta sidecar for role agent '${role}'; treating as read-only" >&2
+            continue
+        fi
+        scope=$(jq -r '.["access-scope"] // "read-only"' "$meta")
+        rank=$(_access_scope_rank "$scope")
+        if [ "$rank" -gt "$highest_rank" ]; then
+            highest_rank="$rank"
+        fi
+    done
+    _access_scope_for_rank "$highest_rank"
+}
+
 _setup_hooks() {
-    # ── Read access scope from compiler sidecar metadata ────────────────────
+    # ── Resolve the access-scope that drives container hook flags ────────────
+    # FSM mode: the container will dispatch every role in agentRoles, so the
+    # hook profile must satisfy the broadest role. Compute the union scope
+    # across every prefetched role agent's meta sidecar.
+    # Non-FSM mode: AGENT_TYPE is the sole agent; read its meta sidecar.
     local ACCESS_SCOPE="read-only"
-    local META_FILE="${AGENTS_DIR}/${AGENT_TYPE}.meta.json"
-    if [ -f "$META_FILE" ]; then
-        ACCESS_SCOPE=$(jq -r '.["access-scope"] // "read-only"' "$META_FILE")
+    if _is_fsm_mode; then
+        ACCESS_SCOPE=$(_union_access_scope_for_fsm_roles)
+        echo "FSM role set: ${FSM_ROLE_AGENTS:-<none>}"
+        echo "Union access-scope: ${ACCESS_SCOPE}"
+    else
+        local META_FILE="${AGENTS_DIR}/${AGENT_TYPE}.meta.json"
+        if [ -f "$META_FILE" ]; then
+            ACCESS_SCOPE=$(jq -r '.["access-scope"] // "read-only"' "$META_FILE")
+        fi
     fi
 
     # ── Derive hook flags from access scope ─────────────────────────────────

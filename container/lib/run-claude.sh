@@ -494,26 +494,46 @@ _run_claude() {
     local full_prompt="$1"
     local mode="$2"
 
-    # Daisy-chain role selection: when invoked from _run_role_session,
-    # DAISY_CHAIN_ROLE and DAISY_CHAIN_ROLES_FILE are set. We look up the
-    # agent-definition basename for the requested role from the resolved roles
-    # JSON (project default from scaffold.config.json, shallow-merged with the
-    # per-task agent_roles_override on the row). Falls back to the container's
-    # AGENT_TYPE env var only as a last-resort degraded mode — operators who
-    # have not configured agentRoles for their project at all.
+    # Agent selection.
+    #   * Engineer (DAISY_CHAIN_ROLE=engineer): look up the agent name in the
+    #     resolved agentRoles JSON and invoke claude --agent <name>. A missing
+    #     mapping is a hard error.
+    #   * Reviewer-fanout / arbitrator (virtual roles): no single agent — the
+    #     per-role dispatchers below spawn their own scoped claude subprocesses
+    #     and resolve their agents directly from DAISY_CHAIN_ROLES_FILE. The
+    #     lookup at this layer is skipped; effective_agent_type stays empty and
+    #     the dispatch branches return early before the --agent invocation.
+    #   * Non-FSM (direct prompt / chat / team): AGENT_TYPE is the sole agent
+    #     and is required by env.sh.
     local effective_agent_type=""
-    if [ -n "${DAISY_CHAIN_ROLE:-}" ] && [ -n "${DAISY_CHAIN_ROLES_FILE:-}" ] && [ -f "$DAISY_CHAIN_ROLES_FILE" ]; then
-        local role_agent
-        role_agent=$(jq -r --arg r "$DAISY_CHAIN_ROLE" '.[$r] // empty' "$DAISY_CHAIN_ROLES_FILE" 2>/dev/null) || role_agent=""
-        if [ -n "$role_agent" ] && _is_safe_name "$role_agent"; then
+    case "${DAISY_CHAIN_ROLE:-}" in
+        reviewer-fanout|arbitrator)
+            # Virtual roles — handled by their dedicated dispatchers below.
+            ;;
+        "")
+            # Non-FSM mode
+            effective_agent_type="$AGENT_TYPE"
+            ;;
+        *)
+            # Real agentRoles key (engineer today; any future direct-dispatch role).
+            if [ -z "${DAISY_CHAIN_ROLES_FILE:-}" ] || [ ! -f "${DAISY_CHAIN_ROLES_FILE}" ]; then
+                echo "ERROR: DAISY_CHAIN_ROLE='${DAISY_CHAIN_ROLE}' set but DAISY_CHAIN_ROLES_FILE missing or unreadable." >&2
+                return 1
+            fi
+            local role_agent
+            role_agent=$(jq -r --arg r "$DAISY_CHAIN_ROLE" '.[$r] // empty' "$DAISY_CHAIN_ROLES_FILE" 2>/dev/null) || role_agent=""
+            if [ -z "$role_agent" ]; then
+                echo "ERROR: agentRoles has no entry for role '${DAISY_CHAIN_ROLE}'. Configure projects.<id>.agentRoles in scaffold.config.json." >&2
+                return 1
+            fi
+            if ! _is_safe_name "$role_agent"; then
+                echo "ERROR: agentRoles['${DAISY_CHAIN_ROLE}']='${role_agent}' contains invalid characters." >&2
+                return 1
+            fi
             effective_agent_type="$role_agent"
             echo "Daisy-chain: role '${DAISY_CHAIN_ROLE}' → agent '${effective_agent_type}'"
-        fi
-    fi
-
-    if [ -z "$effective_agent_type" ]; then
-        effective_agent_type="$AGENT_TYPE"
-    fi
+            ;;
+    esac
 
     # Defence-in-depth: validate effective_agent_type against allowlist
     if [ -n "$effective_agent_type" ] && ! _is_safe_name "$effective_agent_type"; then

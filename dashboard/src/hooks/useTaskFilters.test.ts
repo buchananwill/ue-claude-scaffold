@@ -300,7 +300,7 @@ describe("filterTasks", () => {
   it("filters by status", () => {
     const tasks = [
       makeTask({ status: "pending" }),
-      makeTask({ status: "complete" }),
+      makeTask({ status: "completed" }),
       makeTask({ status: "failed" }),
       makeTask({ status: "pending" }),
     ];
@@ -317,7 +317,7 @@ describe("filterTasks", () => {
   it("filters by multiple statuses", () => {
     const tasks = [
       makeTask({ status: "pending" }),
-      makeTask({ status: "complete" }),
+      makeTask({ status: "completed" }),
       makeTask({ status: "failed" }),
       makeTask({ status: "engineering" }),
     ];
@@ -338,7 +338,7 @@ describe("filterTasks", () => {
       makeTask({ claimedBy: "alice", priority: 1, status: "pending" }),
       makeTask({ claimedBy: "alice", priority: 2, status: "pending" }),
       makeTask({ claimedBy: "bob", priority: 1, status: "pending" }),
-      makeTask({ claimedBy: "alice", priority: 1, status: "complete" }),
+      makeTask({ claimedBy: "alice", priority: 1, status: "completed" }),
       makeTask({ claimedBy: null, priority: 1, status: "pending" }),
     ];
     const result = filterTasks(
@@ -471,12 +471,12 @@ describe("sortTasks", () => {
   it("sorts by status as string", () => {
     const tasks = [
       makeTask({ status: "pending" }),
-      makeTask({ status: "complete" }),
+      makeTask({ status: "completed" }),
       makeTask({ status: "failed" }),
     ];
     const result = sortTasks(tasks, "status", "asc");
     expect(result.map((t) => t.status)).toEqual([
-      "complete",
+      "completed",
       "failed",
       "pending",
     ]);
@@ -523,7 +523,7 @@ describe("filterTasks + sortTasks composition", () => {
   it("status filter then sort by priority descending", () => {
     const tasks = [
       makeTask({ status: "pending", priority: 5 }),
-      makeTask({ status: "complete", priority: 1 }),
+      makeTask({ status: "completed", priority: 1 }),
       makeTask({ status: "pending", priority: 2 }),
       makeTask({ status: "failed", priority: 8 }),
     ];
@@ -757,13 +757,13 @@ describe("search param deserialization", () => {
 
     it("parses comma-separated statuses", () => {
       expect(parseStatusFilter("pending,complete,failed")).toEqual(
-        new Set(["pending", "complete", "failed"]),
+        new Set(["pending", "completed", "failed"]),
       );
     });
 
     it("filters out empty entries from trailing commas", () => {
       expect(parseStatusFilter("pending,,complete,")).toEqual(
-        new Set(["pending", "complete"]),
+        new Set(["pending", "completed"]),
       );
     });
   });
@@ -857,7 +857,7 @@ describe("search param deserialization", () => {
 
 describe("search param serialization", () => {
   it("serializes non-empty string set to comma-separated string", () => {
-    expect(serializeStringSet(new Set(["pending", "complete"]))).toBe(
+    expect(serializeStringSet(new Set(["pending", "completed"]))).toBe(
       "pending,complete",
     );
   });

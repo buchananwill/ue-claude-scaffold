@@ -21,6 +21,7 @@ source "$SCRIPT_DIR/scripts/lib/print-resolved-config.sh"
 
 # ── Parse CLI ────────────────────────────────────────────────────────────────
 _parse_launch_args "$@"
+_enforce_no_agent_type_in_fsm
 
 # ── Load .env ────────────────────────────────────────────────────────────────
 if [[ ! -f "$SCRIPT_DIR/.env" ]]; then

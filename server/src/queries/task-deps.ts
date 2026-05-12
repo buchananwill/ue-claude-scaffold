@@ -1,8 +1,12 @@
-import { eq, and, sql } from 'drizzle-orm';
-import { taskDependencies, tasks } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
+import { eq, and, sql } from "drizzle-orm";
+import { taskDependencies, tasks } from "../schema/tables.js";
+import type { DrizzleDb } from "../drizzle-instance.js";
 
-export async function insertDep(db: DrizzleDb, taskId: number, dependsOn: number) {
+export async function insertDep(
+  db: DrizzleDb,
+  taskId: number,
+  dependsOn: number,
+) {
   await db
     .insert(taskDependencies)
     .values({ taskId, dependsOn })
@@ -34,7 +38,23 @@ export async function getIncompleteBlockers(db: DrizzleDb, taskId: number) {
     );
 }
 
-export async function getWrongBranchBlockers(db: DrizzleDb, taskId: number, agent: string) {
+/**
+ * Find dependency tasks that are completed but on another agent's branch —
+ * i.e. they have status='completed' but their `claimed_by_agent_id` does not
+ * match the requesting agent's UUID. These would-be-satisfied deps fail the
+ * branch-locality requirement: the work commits live on a different agent's
+ * worktree, so the requester cannot see them.
+ *
+ * The match is on `claimed_by_agent_id` (UUID identity), not on the legacy
+ * `result.agent` JSON column which is no longer populated under the FSM.
+ *
+ * @param agentId - UUID of the requesting agent.
+ */
+export async function getWrongBranchBlockers(
+  db: DrizzleDb,
+  taskId: number,
+  agentId: string,
+) {
   return db
     .select({
       id: tasks.id,
@@ -46,14 +66,12 @@ export async function getWrongBranchBlockers(db: DrizzleDb, taskId: number, agen
     .where(
       and(
         eq(taskDependencies.taskId, taskId),
-        eq(tasks.status, 'completed'),
-        sql`(${tasks.result}->>'agent' IS NULL OR ${tasks.result}->>'agent' != ${agent})`,
+        eq(tasks.status, "completed"),
+        sql`(${tasks.claimedByAgentId} IS NULL OR ${tasks.claimedByAgentId} != ${agentId})`,
       ),
     );
 }
 
 export async function deleteDepsForTask(db: DrizzleDb, taskId: number) {
-  await db
-    .delete(taskDependencies)
-    .where(eq(taskDependencies.taskId, taskId));
+  await db.delete(taskDependencies).where(eq(taskDependencies.taskId, taskId));
 }

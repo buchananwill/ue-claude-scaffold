@@ -129,3 +129,25 @@ _parse_launch_args() {
     esac
   done
 }
+
+# _cli_is_fsm_mode
+#   Returns 0 (true) when the parsed flags resolve to an FSM-dispatch container
+#   (pump-loop or single-task daisy-chain), i.e. neither --prompt nor --team is
+#   set. FSM mode forbids AGENT_TYPE: per-role agents come from agentRoles in
+#   scaffold.config.json, so supplying a single AGENT_TYPE is incoherent.
+_cli_is_fsm_mode() {
+  [[ -z "${_CLI_PROMPT:-}" && -z "${_CLI_TEAM:-}" ]]
+}
+
+# _enforce_no_agent_type_in_fsm
+#   Errors out if --agent-type was supplied for an FSM-mode launch. Must be
+#   called after _parse_launch_args. Does not consult .env or scaffold.config.json
+#   — those sources are filtered separately in resolve-config.sh.
+_enforce_no_agent_type_in_fsm() {
+  if _cli_is_fsm_mode && [[ -n "${_CLI_AGENT_TYPE:-}" ]]; then
+    echo "Error: --agent-type is not allowed in FSM mode (pump/worker). The container resolves" >&2
+    echo "       per-role agents from scaffold.config.json projects.<id>.agentRoles." >&2
+    echo "       Pass --prompt or --team to run a single-agent container, or drop --agent-type." >&2
+    exit 1
+  fi
+}

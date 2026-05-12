@@ -10,9 +10,38 @@ _is_safe_name() {
 
 WORK_BRANCH="${WORK_BRANCH:-main}"
 AGENT_TYPE="${AGENT_TYPE:-}"
-if [ -z "$AGENT_TYPE" ]; then
-    echo "ERROR: AGENT_TYPE is not set. Every container must run a named agent." >&2
-    exit 1
+
+# Mode classification. FSM-dispatch containers (pump-loop or single-task
+# daisy-chain) run multiple role sessions per task — engineer + reviewers +
+# arbitrator — each with its own access-scope, all resolved from the project's
+# agentRoles map at runtime. A single AGENT_TYPE has no coherent meaning here,
+# so it must NOT be set. Non-FSM containers (DIRECT_PROMPT or chat-only TEAM)
+# run a single agent for the lifetime of the container, so AGENT_TYPE is the
+# sole identity and is required.
+#
+# Chat mode is signalled by CHAT_ROOM being set AND WORKER_MODE != "true";
+# when WORKER_MODE is true the container is a worker that happens to also be
+# a chat-room member, which still goes through FSM dispatch.
+_is_fsm_mode() {
+    [ -z "${DIRECT_PROMPT:-}" ] || return 1
+    if [ -n "${CHAT_ROOM:-}" ] && [ "${WORKER_MODE:-false}" != "true" ]; then
+        return 1
+    fi
+    return 0
+}
+
+if _is_fsm_mode; then
+    if [ -n "$AGENT_TYPE" ]; then
+        echo "ERROR: AGENT_TYPE='${AGENT_TYPE}' must not be set in FSM mode." >&2
+        echo "  Per-role agents are resolved from agentRoles in scaffold.config.json." >&2
+        echo "  Remove projects.<id>.agentType from scaffold.config.json and unset AGENT_TYPE in .env." >&2
+        exit 1
+    fi
+else
+    if [ -z "$AGENT_TYPE" ]; then
+        echo "ERROR: AGENT_TYPE is required for --prompt / --team / chat mode containers." >&2
+        exit 1
+    fi
 fi
 AGENT_NAME="${AGENT_NAME:-agent-1}"
 if ! _is_safe_name "$AGENT_NAME"; then

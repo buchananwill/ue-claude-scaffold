@@ -1,13 +1,16 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
-import assert from 'node:assert/strict';
-import { sql } from 'drizzle-orm';
-import { createTestConfig, registerAgent } from '../test-helper.js';
-import { createDrizzleTestApp, type DrizzleTestContext } from '../drizzle-test-helper.js';
-import tasksPlugin from './tasks.js';
-import agentsPlugin from './agents.js';
-import arbitrationsPlugin from './arbitrations.js';
+import { describe, it, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import { sql } from "drizzle-orm";
+import { createTestConfig, registerAgent } from "../test-helper.js";
+import {
+  createDrizzleTestApp,
+  type DrizzleTestContext,
+} from "../drizzle-test-helper.js";
+import tasksPlugin from "./tasks.js";
+import agentsPlugin from "./agents.js";
+import arbitrationsPlugin from "./arbitrations.js";
 
-describe('arbitrations routes', () => {
+describe("arbitrations routes", () => {
   let ctx: DrizzleTestContext;
 
   beforeEach(async () => {
@@ -16,7 +19,7 @@ describe('arbitrations routes', () => {
     await ctx.app.register(agentsPlugin, { config });
     await ctx.app.register(tasksPlugin, { config });
     await ctx.app.register(arbitrationsPlugin);
-    await registerAgent(ctx.app, 'agent-1');
+    await registerAgent(ctx.app, "agent-1");
   });
 
   afterEach(async () => {
@@ -27,10 +30,10 @@ describe('arbitrations routes', () => {
   // ── Test helpers ────────────────────────────────────────────────────
 
   /** Create a task and return its id. */
-  async function createTask(title = 'arb-task'): Promise<number> {
+  async function createTask(title = "arb-task"): Promise<number> {
     const post = await ctx.app.inject({
-      method: 'POST',
-      url: '/tasks',
+      method: "POST",
+      url: "/tasks",
       payload: { title },
     });
     return post.json().id as number;
@@ -43,7 +46,7 @@ describe('arbitrations routes', () => {
    */
   async function forceArbitrating(
     id: number,
-    trigger: 'review_cycle_budget_exhausted' | 'reviewer_contradiction',
+    trigger: "review_cycle_budget_exhausted" | "reviewer_contradiction",
   ): Promise<void> {
     await ctx.db.execute(sql`
       UPDATE tasks
@@ -56,10 +59,10 @@ describe('arbitrations routes', () => {
   function postArbitration(
     taskId: number,
     body: Record<string, unknown>,
-    headers: Record<string, string> = { 'x-project-id': 'default' },
+    headers: Record<string, string> = { "x-project-id": "default" },
   ) {
     return ctx.app.inject({
-      method: 'POST',
+      method: "POST",
       url: `/tasks/${taskId}/arbitrations`,
       payload: body,
       headers,
@@ -111,55 +114,56 @@ describe('arbitrations routes', () => {
 
   // ── 1. Happy paths ───────────────────────────────────────────────────
 
-  it('approve ruling transitions task to complete and clears pending trigger', async () => {
+  it("approve ruling transitions task to complete and clears pending trigger", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'review_cycle_budget_exhausted');
+    await forceArbitrating(id, "review_cycle_budget_exhausted");
 
     const res = await postArbitration(id, {
-      trigger: 'review_cycle_budget_exhausted',
-      ruling: 'approve',
-      rulingMarkdown: 'Reviewers nitpicked stylistic noise; substance is correct. Approving.',
+      trigger: "review_cycle_budget_exhausted",
+      ruling: "approve",
+      rulingMarkdown:
+        "Reviewers nitpicked stylistic noise; substance is correct. Approving.",
     });
 
     assert.equal(res.statusCode, 200, res.body);
     const json = res.json();
-    assert.equal(typeof json.runId, 'number');
-    assert.equal(json.newStatus, 'complete');
+    assert.equal(typeof json.runId, "number");
+    assert.equal(json.newStatus, "completed");
 
     const row = await getTaskRow(id);
-    assert.equal(row.status, 'complete');
+    assert.equal(row.status, "completed");
     assert.equal(row.arbitration_pending_trigger, null);
     assert.notEqual(row.completed_at, null);
 
     const runs = await getArbRuns(id);
     assert.equal(runs.length, 1);
-    assert.equal(runs[0].trigger, 'review_cycle_budget_exhausted');
-    assert.equal(runs[0].ruling, 'approve');
+    assert.equal(runs[0].trigger, "review_cycle_budget_exhausted");
+    assert.equal(runs[0].ruling, "approve");
     assert.equal(runs[0].contradiction_resolution, null);
   });
 
-  it('rule ruling on reviewer_contradiction transitions to revising and sets addendum path', async () => {
+  it("rule ruling on reviewer_contradiction transitions to revising and sets addendum path", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
 
     const res = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'rule',
-      rulingMarkdown: 'Safety mandate wins; decomp finding retired this cycle.',
+      trigger: "reviewer_contradiction",
+      ruling: "rule",
+      rulingMarkdown: "Safety mandate wins; decomp finding retired this cycle.",
       contradictionResolution: {
         upheldFindingId: 11,
         retiredFindingId: 22,
-        rationale: 'Safety boundary is a hard rule; decomposition is advisory.',
+        rationale: "Safety boundary is a hard rule; decomposition is advisory.",
       },
     });
 
     assert.equal(res.statusCode, 200, res.body);
     const json = res.json();
-    assert.equal(typeof json.runId, 'number');
-    assert.equal(json.newStatus, 'revising');
+    assert.equal(typeof json.runId, "number");
+    assert.equal(json.newStatus, "revising");
 
     const row = await getTaskRow(id);
-    assert.equal(row.status, 'revising');
+    assert.equal(row.status, "revising");
     assert.equal(row.arbitration_pending_trigger, null);
     assert.equal(
       row.arbitration_addendum_path,
@@ -168,68 +172,69 @@ describe('arbitrations routes', () => {
 
     const runs = await getArbRuns(id);
     assert.equal(runs.length, 1);
-    assert.equal(runs[0].ruling, 'rule');
+    assert.equal(runs[0].ruling, "rule");
     assert.deepEqual(runs[0].contradiction_resolution, {
       upheldFindingId: 11,
       retiredFindingId: 22,
-      rationale: 'Safety boundary is a hard rule; decomposition is advisory.',
+      rationale: "Safety boundary is a hard rule; decomposition is advisory.",
     });
   });
 
-  it('escalate ruling transitions to failed with arbitrator_escalated reason', async () => {
+  it("escalate ruling transitions to failed with arbitrator_escalated reason", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'review_cycle_budget_exhausted');
+    await forceArbitrating(id, "review_cycle_budget_exhausted");
 
-    const longMarkdown = 'a'.repeat(750);
+    const longMarkdown = "a".repeat(750);
     const res = await postArbitration(id, {
-      trigger: 'review_cycle_budget_exhausted',
-      ruling: 'escalate',
+      trigger: "review_cycle_budget_exhausted",
+      ruling: "escalate",
       rulingMarkdown: longMarkdown,
     });
 
     assert.equal(res.statusCode, 200, res.body);
-    assert.equal(res.json().newStatus, 'failed');
+    assert.equal(res.json().newStatus, "failed");
 
     const row = await getTaskRow(id);
-    assert.equal(row.status, 'failed');
+    assert.equal(row.status, "failed");
     assert.equal(row.arbitration_pending_trigger, null);
-    assert.equal(row.failure_reason, 'arbitrator_escalated');
+    assert.equal(row.failure_reason, "arbitrator_escalated");
     // Truncated to first 500 chars per plan step 1.
-    assert.equal(row.failure_detail, 'a'.repeat(500));
+    assert.equal(row.failure_detail, "a".repeat(500));
     assert.notEqual(row.completed_at, null);
   });
 
-  it('escalate ruling on reviewer_contradiction is also valid', async () => {
+  it("escalate ruling on reviewer_contradiction is also valid", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
 
     const res = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'escalate',
-      rulingMarkdown: 'Both reviewers raise valid concerns; need operator review.',
+      trigger: "reviewer_contradiction",
+      ruling: "escalate",
+      rulingMarkdown:
+        "Both reviewers raise valid concerns; need operator review.",
     });
 
     assert.equal(res.statusCode, 200, res.body);
-    assert.equal(res.json().newStatus, 'failed');
+    assert.equal(res.json().newStatus, "failed");
 
     const row = await getTaskRow(id);
-    assert.equal(row.failure_reason, 'arbitrator_escalated');
+    assert.equal(row.failure_reason, "arbitrator_escalated");
   });
 
   // ── 2. Cross-field validation (trigger × ruling × contradictionResolution) ──
 
-  it('rejects rule on cycle-exhausted trigger with 400', async () => {
+  it("rejects rule on cycle-exhausted trigger with 400", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'review_cycle_budget_exhausted');
+    await forceArbitrating(id, "review_cycle_budget_exhausted");
 
     const res = await postArbitration(id, {
-      trigger: 'review_cycle_budget_exhausted',
-      ruling: 'rule',
-      rulingMarkdown: 'should not be allowed',
+      trigger: "review_cycle_budget_exhausted",
+      ruling: "rule",
+      rulingMarkdown: "should not be allowed",
       contradictionResolution: {
         upheldFindingId: 1,
         retiredFindingId: 2,
-        rationale: 'x',
+        rationale: "x",
       },
     });
 
@@ -240,35 +245,35 @@ describe('arbitrations routes', () => {
     const runs = await getArbRuns(id);
     assert.equal(runs.length, 0);
     const row = await getTaskRow(id);
-    assert.equal(row.status, 'arbitrating');
+    assert.equal(row.status, "arbitrating");
   });
 
-  it('rejects rule without contradictionResolution with 400', async () => {
+  it("rejects rule without contradictionResolution with 400", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
 
     const res = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'rule',
-      rulingMarkdown: 'forgot the resolution',
+      trigger: "reviewer_contradiction",
+      ruling: "rule",
+      rulingMarkdown: "forgot the resolution",
     });
 
     assert.equal(res.statusCode, 400);
     assert.match(res.body, /contradictionResolution is required/);
   });
 
-  it('rejects non-rule ruling that carries contradictionResolution with 400', async () => {
+  it("rejects non-rule ruling that carries contradictionResolution with 400", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
 
     const res = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'approve',
-      rulingMarkdown: 'ok',
+      trigger: "reviewer_contradiction",
+      ruling: "approve",
+      rulingMarkdown: "ok",
       contradictionResolution: {
         upheldFindingId: 1,
         retiredFindingId: 2,
-        rationale: 'x',
+        rationale: "x",
       },
     });
 
@@ -276,18 +281,18 @@ describe('arbitrations routes', () => {
     assert.match(res.body, /must be absent/);
   });
 
-  it('rejects contradictionResolution with equal upheld and retired ids', async () => {
+  it("rejects contradictionResolution with equal upheld and retired ids", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
 
     const res = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'rule',
-      rulingMarkdown: 'bad resolution',
+      trigger: "reviewer_contradiction",
+      ruling: "rule",
+      rulingMarkdown: "bad resolution",
       contradictionResolution: {
         upheldFindingId: 7,
         retiredFindingId: 7,
-        rationale: 'same id',
+        rationale: "same id",
       },
     });
 
@@ -295,36 +300,36 @@ describe('arbitrations routes', () => {
     assert.match(res.body, /must differ/);
   });
 
-  it('rejects contradictionResolution with non-positive upheld id', async () => {
+  it("rejects contradictionResolution with non-positive upheld id", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
 
     const res = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'rule',
-      rulingMarkdown: 'bad',
+      trigger: "reviewer_contradiction",
+      ruling: "rule",
+      rulingMarkdown: "bad",
       contradictionResolution: {
         upheldFindingId: 0,
         retiredFindingId: 2,
-        rationale: 'x',
+        rationale: "x",
       },
     });
 
     assert.equal(res.statusCode, 400);
   });
 
-  it('rejects contradictionResolution with empty rationale', async () => {
+  it("rejects contradictionResolution with empty rationale", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
 
     const res = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'rule',
-      rulingMarkdown: 'bad',
+      trigger: "reviewer_contradiction",
+      ruling: "rule",
+      rulingMarkdown: "bad",
       contradictionResolution: {
         upheldFindingId: 1,
         retiredFindingId: 2,
-        rationale: '',
+        rationale: "",
       },
     });
 
@@ -333,94 +338,94 @@ describe('arbitrations routes', () => {
 
   // ── 3. Body-shape validation ─────────────────────────────────────────
 
-  it('rejects missing trigger', async () => {
+  it("rejects missing trigger", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
     const res = await postArbitration(id, {
-      ruling: 'approve',
-      rulingMarkdown: 'x',
+      ruling: "approve",
+      rulingMarkdown: "x",
     });
     assert.equal(res.statusCode, 400);
   });
 
-  it('rejects bad trigger value', async () => {
+  it("rejects bad trigger value", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
     const res = await postArbitration(id, {
-      trigger: 'made_up',
-      ruling: 'approve',
-      rulingMarkdown: 'x',
+      trigger: "made_up",
+      ruling: "approve",
+      rulingMarkdown: "x",
     });
     assert.equal(res.statusCode, 400);
   });
 
-  it('rejects bad ruling value', async () => {
+  it("rejects bad ruling value", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
     const res = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'maybe',
-      rulingMarkdown: 'x',
+      trigger: "reviewer_contradiction",
+      ruling: "maybe",
+      rulingMarkdown: "x",
     });
     assert.equal(res.statusCode, 400);
   });
 
-  it('rejects empty rulingMarkdown', async () => {
+  it("rejects empty rulingMarkdown", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
     const res = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'approve',
-      rulingMarkdown: '',
+      trigger: "reviewer_contradiction",
+      ruling: "approve",
+      rulingMarkdown: "",
     });
     assert.equal(res.statusCode, 400);
   });
 
   // ── 4. Uniqueness on (taskId, trigger) ───────────────────────────────
 
-  it('second arbitration for same (taskId, trigger) returns 409', async () => {
+  it("second arbitration for same (taskId, trigger) returns 409", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
 
     const first = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'rule',
-      rulingMarkdown: 'first ruling',
+      trigger: "reviewer_contradiction",
+      ruling: "rule",
+      rulingMarkdown: "first ruling",
       contradictionResolution: {
         upheldFindingId: 1,
         retiredFindingId: 2,
-        rationale: 'first',
+        rationale: "first",
       },
     });
     assert.equal(first.statusCode, 200, first.body);
 
     // The task is now `revising`. Force it back to `arbitrating` to retry the
     // POST — the uniqueness check on (taskId, trigger) must still fire.
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
 
     const second = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'approve',
-      rulingMarkdown: 'second ruling',
+      trigger: "reviewer_contradiction",
+      ruling: "approve",
+      rulingMarkdown: "second ruling",
     });
     assert.equal(second.statusCode, 409, second.body);
 
     // Exactly one arbitrationRuns row remains.
     const runs = await getArbRuns(id);
     assert.equal(runs.length, 1);
-    assert.equal(runs[0].ruling, 'rule');
+    assert.equal(runs[0].ruling, "rule");
   });
 
   // ── 5. Atomicity: failed transition rolls back the insert ────────────
 
-  it('rejects with 409 when task is not in arbitrating', async () => {
+  it("rejects with 409 when task is not in arbitrating", async () => {
     const id = await createTask();
     // Leave task in 'pending' — POST should 409 the pre-flight, no row inserted.
 
     const res = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'approve',
-      rulingMarkdown: 'x',
+      trigger: "reviewer_contradiction",
+      ruling: "approve",
+      rulingMarkdown: "x",
     });
 
     assert.equal(res.statusCode, 409, res.body);
@@ -428,36 +433,36 @@ describe('arbitrations routes', () => {
     assert.equal(runs.length, 0);
   });
 
-  it('returns 404 for unknown task id', async () => {
+  it("returns 404 for unknown task id", async () => {
     const res = await postArbitration(999_999, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'approve',
-      rulingMarkdown: 'x',
+      trigger: "reviewer_contradiction",
+      ruling: "approve",
+      rulingMarkdown: "x",
     });
     assert.equal(res.statusCode, 404);
   });
 
-  it('rejects invalid (zero) task id with 400', async () => {
+  it("rejects invalid (zero) task id with 400", async () => {
     const res = await postArbitration(0, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'approve',
-      rulingMarkdown: 'x',
+      trigger: "reviewer_contradiction",
+      ruling: "approve",
+      rulingMarkdown: "x",
     });
     assert.equal(res.statusCode, 400);
   });
 
   // ── 6. X-Project-Id header guard ─────────────────────────────────────
 
-  it('requires X-Project-Id header (400 when missing)', async () => {
+  it("requires X-Project-Id header (400 when missing)", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
 
     const res = await postArbitration(
       id,
       {
-        trigger: 'reviewer_contradiction',
-        ruling: 'approve',
-        rulingMarkdown: 'x',
+        trigger: "reviewer_contradiction",
+        ruling: "approve",
+        rulingMarkdown: "x",
       },
       // No x-project-id header.
       {},
@@ -467,18 +472,18 @@ describe('arbitrations routes', () => {
     assert.match(res.body, /X-Project-Id/);
   });
 
-  it('returns 404 for task in a different project', async () => {
+  it("returns 404 for task in a different project", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
 
     const res = await postArbitration(
       id,
       {
-        trigger: 'reviewer_contradiction',
-        ruling: 'approve',
-        rulingMarkdown: 'x',
+        trigger: "reviewer_contradiction",
+        ruling: "approve",
+        rulingMarkdown: "x",
       },
-      { 'x-project-id': 'some-other-project' },
+      { "x-project-id": "some-other-project" },
     );
 
     assert.equal(res.statusCode, 404);
@@ -488,45 +493,45 @@ describe('arbitrations routes', () => {
 
   function getArbitrations(
     taskId: number,
-    headers: Record<string, string> = { 'x-project-id': 'default' },
+    headers: Record<string, string> = { "x-project-id": "default" },
   ) {
     return ctx.app.inject({
-      method: 'GET',
+      method: "GET",
       url: `/tasks/${taskId}/arbitrations`,
       headers,
     });
   }
 
-  it('GET returns empty runs array when task has no arbitrations', async () => {
+  it("GET returns empty runs array when task has no arbitrations", async () => {
     const id = await createTask();
     const res = await getArbitrations(id);
     assert.equal(res.statusCode, 200, res.body);
     assert.deepEqual(res.json(), { runs: [] });
   });
 
-  it('GET returns posted arbitrations with all expected fields, ordered by postedAt ASC', async () => {
+  it("GET returns posted arbitrations with all expected fields, ordered by postedAt ASC", async () => {
     const id = await createTask();
 
     // First arbitration: cycle-budget exhausted, escalate.
-    await forceArbitrating(id, 'review_cycle_budget_exhausted');
+    await forceArbitrating(id, "review_cycle_budget_exhausted");
     const first = await postArbitration(id, {
-      trigger: 'review_cycle_budget_exhausted',
-      ruling: 'escalate',
-      rulingMarkdown: 'cycle budget exhausted ruling',
+      trigger: "review_cycle_budget_exhausted",
+      ruling: "escalate",
+      rulingMarkdown: "cycle budget exhausted ruling",
     });
     assert.equal(first.statusCode, 200, first.body);
 
     // Second arbitration: reviewer_contradiction, rule (different trigger so
     // the unique constraint allows both rows for the same task).
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
     const second = await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'rule',
-      rulingMarkdown: 'contradiction ruling',
+      trigger: "reviewer_contradiction",
+      ruling: "rule",
+      rulingMarkdown: "contradiction ruling",
       contradictionResolution: {
         upheldFindingId: 11,
         retiredFindingId: 22,
-        rationale: 'safety wins',
+        rationale: "safety wins",
       },
     });
     assert.equal(second.statusCode, 200, second.body);
@@ -547,49 +552,51 @@ describe('arbitrations routes', () => {
     assert.equal(json.runs.length, 2);
 
     // postedAt ASC — first insert should appear first
-    assert.equal(json.runs[0].trigger, 'review_cycle_budget_exhausted');
-    assert.equal(json.runs[0].ruling, 'escalate');
+    assert.equal(json.runs[0].trigger, "review_cycle_budget_exhausted");
+    assert.equal(json.runs[0].ruling, "escalate");
     assert.equal(json.runs[0].contradictionResolution, null);
-    assert.equal(typeof json.runs[0].postedAt, 'string');
+    assert.equal(typeof json.runs[0].postedAt, "string");
     assert.equal(json.runs[0].taskId, id);
 
-    assert.equal(json.runs[1].trigger, 'reviewer_contradiction');
-    assert.equal(json.runs[1].ruling, 'rule');
+    assert.equal(json.runs[1].trigger, "reviewer_contradiction");
+    assert.equal(json.runs[1].ruling, "rule");
     assert.deepEqual(json.runs[1].contradictionResolution, {
       upheldFindingId: 11,
       retiredFindingId: 22,
-      rationale: 'safety wins',
+      rationale: "safety wins",
     });
-    assert.equal(typeof json.runs[1].postedAt, 'string');
+    assert.equal(typeof json.runs[1].postedAt, "string");
   });
 
-  it('GET returns 404 for unknown task id', async () => {
+  it("GET returns 404 for unknown task id", async () => {
     const res = await getArbitrations(999_999);
     assert.equal(res.statusCode, 404);
   });
 
-  it('GET rejects invalid (zero) task id with 400', async () => {
+  it("GET rejects invalid (zero) task id with 400", async () => {
     const res = await getArbitrations(0);
     assert.equal(res.statusCode, 400);
   });
 
-  it('GET requires X-Project-Id header (400 when missing)', async () => {
+  it("GET requires X-Project-Id header (400 when missing)", async () => {
     const id = await createTask();
     const res = await getArbitrations(id, {});
     assert.equal(res.statusCode, 400);
     assert.match(res.body, /X-Project-Id/);
   });
 
-  it('GET returns 404 for task in a different project', async () => {
+  it("GET returns 404 for task in a different project", async () => {
     const id = await createTask();
-    await forceArbitrating(id, 'reviewer_contradiction');
+    await forceArbitrating(id, "reviewer_contradiction");
     await postArbitration(id, {
-      trigger: 'reviewer_contradiction',
-      ruling: 'approve',
-      rulingMarkdown: 'x',
+      trigger: "reviewer_contradiction",
+      ruling: "approve",
+      rulingMarkdown: "x",
     });
 
-    const res = await getArbitrations(id, { 'x-project-id': 'some-other-project' });
+    const res = await getArbitrations(id, {
+      "x-project-id": "some-other-project",
+    });
     assert.equal(res.statusCode, 404);
   });
 });

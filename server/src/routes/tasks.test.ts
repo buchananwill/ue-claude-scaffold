@@ -1170,7 +1170,7 @@ describe("tasks routes", () => {
       const id1 = r1.json().id;
       const id2 = r2.json().id;
       await ctx.db.execute(
-        sql`UPDATE tasks SET status = 'complete' WHERE id IN (${id1}, ${id2})`,
+        sql`UPDATE tasks SET status = 'completed' WHERE id IN (${id1}, ${id2})`,
       );
 
       const res = await ctx.app.inject({
@@ -1275,7 +1275,7 @@ describe("tasks routes", () => {
         payload: { title: "Beta completed" },
       });
 
-      await ctx.db.execute(sql`UPDATE tasks SET status = 'complete'`);
+      await ctx.db.execute(sql`UPDATE tasks SET status = 'completed'`);
 
       // Delete completed tasks scoped to "alpha" only
       const res = await ctx.app.inject({

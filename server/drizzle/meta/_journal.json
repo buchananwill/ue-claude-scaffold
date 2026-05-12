@@ -64,6 +64,13 @@
       "when": 1778889600002,
       "tag": "0008_drop_tasks_agent_type_override",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778889600003,
+      "tag": "0009_rename_complete_to_completed",
+      "breakpoints": true
     }
   ]
 }

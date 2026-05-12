@@ -125,10 +125,7 @@ CREATE TABLE "tasks" (
   "progress_log" text,
   -- FSM columns added in Phase 1 of the durable-task-FSM rework. The DDL here
   -- is hand-authored to mirror server/src/schema/tables.ts so PGlite-backed
-  -- tests can exercise the new endpoints. Until Phase 9's coordinated cutover,
-  -- the status CHECK lists *both* the legacy values ('in_progress','completed')
-  -- and the new FSM values so that tests written against either schema run
-  -- side-by-side. After Phase 9 the legacy values are dropped from this CHECK.
+  -- tests can exercise the new endpoints.
   "review_cycle_count" integer NOT NULL DEFAULT 0,
   "review_cycle_budget" integer NOT NULL DEFAULT 5,
   "reviewer_verdicts" jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -142,8 +139,8 @@ CREATE TABLE "tasks" (
   "agent_roles_override" jsonb,
   "created_at" timestamp DEFAULT now(),
   CONSTRAINT "tasks_status_check" CHECK ("status" IN (
-    'pending','claimed','in_progress','engineering','built','reviewing','revising',
-    'arbitrating','completed','complete','failed','integrated','cycle'
+    'pending','claimed','engineering','built','reviewing','revising',
+    'arbitrating','completed','failed','integrated','cycle'
   )),
   CONSTRAINT "tasks_build_status_check" CHECK ("build_status" IN ('pending','clean','dirty','failed')),
   CONSTRAINT "tasks_failure_reason_check" CHECK ("failure_reason" IS NULL OR "failure_reason" IN (

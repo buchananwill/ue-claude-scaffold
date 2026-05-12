@@ -9,7 +9,11 @@ services:
     environment:
       - AGENT_NAME=${AGENT_NAME:-agent-1}
       - WORK_BRANCH=${WORK_BRANCH:-main}
-      - AGENT_TYPE=${AGENT_TYPE:?Set AGENT_TYPE in .env}
+      # AGENT_TYPE is required for non-FSM modes (--prompt, --team) and
+      # forbidden for FSM modes (pump-loop, single-task daisy-chain). The
+      # container's env.sh enforces this; here we just pass through whatever
+      # the host launcher exported.
+      - AGENT_TYPE=${AGENT_TYPE:-}
       - CLAUDE_EFFORT=${CLAUDE_EFFORT:-high}
       - MAX_TURNS=${MAX_TURNS:-200}
       - SERVER_URL=http://host.docker.internal:${SERVER_PORT:-9100}

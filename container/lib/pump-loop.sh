@@ -30,7 +30,7 @@ _role_for_status() {
         claimed|revising|engineering)  echo "engineer" ;;
         built|reviewing)               echo "reviewer-fanout" ;;
         arbitrating)                   echo "arbitrator" ;;
-        complete|failed|integrated)    echo "" ;;
+        completed|failed|integrated)   echo "" ;;
         *)                             echo "" ;;
     esac
 }

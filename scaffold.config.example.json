@@ -41,7 +41,6 @@
   },
 
   "container": {
-    "agentType": "container-orchestrator",
     "maxTurns": 200,
     "effort": "high"
   },
@@ -58,7 +57,6 @@
   "projects": {
     "my-ue-game": {
       "name": "MyUEGame",
-      "agentType": "container-implementer-ue",
       "effort": "high",
       "path": "D:\\Projects\\MyUEGame",
       "uprojectFile": "MyUEGame.uproject",

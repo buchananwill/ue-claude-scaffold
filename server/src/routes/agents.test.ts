@@ -869,27 +869,44 @@ describe("DELETE /agents task release (drizzle)", () => {
     assert.equal(after.claimedByAgentId, null);
   });
 
-  it("DELETE /agents/:name releases FSM mid-state tasks (engineering) to pending", async () => {
-    // Under the FSM, the legacy 'in_progress' status is gone; agent deletion
-    // must release tasks held in any FSM mid-state. 'engineering' represents
-    // the post-claim work state where a deletion would otherwise strand.
-    const agentId = await registerAgent("agent-1");
-    const taskId = await createTask("engineering-task", "engineering", agentId);
+  it("DELETE /agents/:name preserves FSM mid-state tasks attached to the deleted agent", async () => {
+    // Under the durable-task FSM, mid-state work lives on the claiming
+    // agent's git branch. A soft-delete of the agent slot must not orphan
+    // that branch by reverting the task to pending — the slot's UUID
+    // survives the soft-delete and is restored on the next `register()`
+    // upsert, so re-launching the slot resumes mid-state work via
+    // `_resume_in_flight_tasks`. Permanent abandonment is an operator
+    // action, not an implicit side effect of agent deletion.
+    for (const fsmStatus of [
+      "engineering",
+      "built",
+      "reviewing",
+      "revising",
+      "arbitrating",
+    ] as const) {
+      const agentName = `agent-${fsmStatus}`;
+      const agentId = await registerAgent(agentName);
+      const taskId = await createTask(`${fsmStatus}-task`, fsmStatus, agentId);
 
-    const before = await getTask(taskId);
-    assert.equal(before.status, "engineering");
-    assert.equal(before.claimedByAgentId, agentId);
+      const del = await ctx.app.inject({
+        method: "DELETE",
+        url: `/agents/${agentName}`,
+        headers: { "x-project-id": "default" },
+      });
+      assert.equal(del.statusCode, 200);
+      assert.equal(del.json().deleted, true);
 
-    const del = await ctx.app.inject({
-      method: "DELETE",
-      url: "/agents/agent-1",
-      headers: { "x-project-id": "default" },
-    });
-    assert.equal(del.statusCode, 200);
-    assert.equal(del.json().deleted, true);
-
-    const after = await getTask(taskId);
-    assert.equal(after.status, "pending");
-    assert.equal(after.claimedByAgentId, null);
+      const after = await getTask(taskId);
+      assert.equal(
+        after.status,
+        fsmStatus,
+        `status preserved for ${fsmStatus}`,
+      );
+      assert.equal(
+        after.claimedByAgentId,
+        agentId,
+        `claimedByAgentId preserved for ${fsmStatus}`,
+      );
+    }
   });
 });

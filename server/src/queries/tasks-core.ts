@@ -79,7 +79,7 @@ export const VALID_TASK_STATUSES = [
   "reviewing",
   "revising",
   "arbitrating",
-  "complete",
+  "completed",
   "failed",
   "integrated",
   "cycle",

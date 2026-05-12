@@ -46,6 +46,10 @@ _resolve_project_config() {
   PROJECT_AGENT_TYPE=""
   PROJECT_EFFORT=""
   PROJECT_SEED_BRANCH=""
+  # Space-separated flat list of every role agent name for this project
+  # (engineer + arbitrator + every reviewer value). Empty if agentRoles is not
+  # configured. Used by compile-agents.sh in FSM mode.
+  PROJECT_ROLE_AGENTS=""
 
   if jq -e --arg id "$project_id" '.projects[$id]' "$_cfg" >/dev/null 2>&1; then
     # Multi-project mode
@@ -67,6 +71,14 @@ _resolve_project_config() {
     PROJECT_AGENT_TYPE=$(jq -r --arg id "$project_id" '.projects[$id].agentType // empty' "$_cfg")
     PROJECT_EFFORT=$(jq -r --arg id "$project_id" '.projects[$id].effort // empty' "$_cfg")
     PROJECT_SEED_BRANCH=$(jq -r --arg id "$project_id" '.projects[$id].seedBranch // empty' "$_cfg")
+    PROJECT_ROLE_AGENTS=$(jq -r --arg id "$project_id" '
+      (.projects[$id].agentRoles // {}) as $r
+      | [$r.engineer // empty, $r.arbitrator // empty]
+        + (($r.reviewers // {}) | to_entries | map(.value))
+      | map(select(. != null and . != ""))
+      | unique
+      | join(" ")
+    ' "$_cfg")
   elif [[ "$project_id" == "default" ]]; then
     # Legacy mode
     UE_ENGINE_PATH="$(jq -r '.engine.path // empty' "$_cfg")"
@@ -110,16 +122,40 @@ _resolve_project_config() {
 #   Resolves AGENT_NAME, AGENT_TYPE, MAX_TURNS, worker mode, branch names,
 #   and LOG_VERBOSITY from CLI overrides and environment defaults.
 #   Requires _CLI_* variables to be set (from parse-launch-args.sh).
+#
+#   AGENT_TYPE semantics:
+#     - FSM mode (no --prompt, no --team): AGENT_TYPE MUST be empty. Per-role
+#       agents are resolved from scaffold.config.json projects.<id>.agentRoles
+#       at runtime via the container's daisy-chain. A stray PROJECT_AGENT_TYPE
+#       or AGENT_TYPE env value is dropped with a warning.
+#     - non-FSM mode (--prompt or --team): AGENT_TYPE is required and resolves
+#       in the cascade CLI > scaffold.config.json > .env.
 _resolve_agent_vars() {
   AGENT_NAME="${_CLI_AGENT_NAME:-${AGENT_NAME:-agent-1}}"
+
+  local _is_fsm="false"
+  if [[ -z "${_CLI_PROMPT:-}" && -z "${_CLI_TEAM:-}" ]]; then
+    _is_fsm="true"
+  fi
+
   if [[ "$_CLI_NO_AGENT" == "true" ]]; then
     AGENT_TYPE=""
-  elif [[ -n "$_CLI_TEAM" ]]; then
-    AGENT_TYPE="${_CLI_AGENT_TYPE:-${PROJECT_AGENT_TYPE:-${AGENT_TYPE:-}}}"
+  elif [[ "$_is_fsm" == "true" ]]; then
+    # FSM mode: AGENT_TYPE is incoherent — there is no single agent that runs
+    # for a whole task. _enforce_no_agent_type_in_fsm has already rejected a
+    # CLI override; here we also drop the scaffold.config.json and .env
+    # fallbacks so they cannot leak into the container.
+    if [[ -n "${PROJECT_AGENT_TYPE:-}" ]]; then
+      echo "Warning: scaffold.config.json projects.${PROJECT_ID}.agentType='${PROJECT_AGENT_TYPE}' is ignored in FSM mode. Remove it from the project config." >&2
+    fi
+    if [[ -n "${AGENT_TYPE:-}" ]]; then
+      echo "Warning: AGENT_TYPE='${AGENT_TYPE}' from .env is ignored in FSM mode. Unset it or move to a --prompt/--team launch." >&2
+    fi
+    AGENT_TYPE=""
   else
     AGENT_TYPE="${_CLI_AGENT_TYPE:-${PROJECT_AGENT_TYPE:-${AGENT_TYPE:-}}}"
     if [[ -z "$AGENT_TYPE" ]]; then
-      echo "Error: AGENT_TYPE is not set. Set it in .env, scaffold.config.json, or pass --agent-type." >&2
+      echo "Error: AGENT_TYPE is not set. For --prompt/--team launches, set it in .env, scaffold.config.json, or pass --agent-type." >&2
       exit 1
     fi
   fi

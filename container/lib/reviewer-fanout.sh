@@ -507,8 +507,8 @@ _run_reviewer_fanout() {
             '{to: "revising", payload: {latestReviewPath: $p}}')
         echo "reviewer-fanout: any request_changes → revising"
     else
-        final_body=$(jq -nc '{to: "complete"}')
-        echo "reviewer-fanout: all approve/out_of_scope → complete"
+        final_body=$(jq -nc '{to: "completed"}')
+        echo "reviewer-fanout: all approve/out_of_scope → completed"
     fi
 
     if ! _rfan_post_transition "$task_id" "$final_body"; then

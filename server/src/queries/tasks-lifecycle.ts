@@ -1,23 +1,39 @@
-import { eq, and, sql, inArray, type SQL } from 'drizzle-orm';
-import { tasks, arbitrationRuns } from '../schema/tables.js';
-import type { DrizzleDb, DbOrTx } from '../drizzle-instance.js';
-import type { TaskDbRow } from './tasks-core.js';
-import { ACTIVE_STATUSES } from './query-helpers.js';
+import { eq, and, sql, inArray, type SQL } from "drizzle-orm";
+import { tasks, arbitrationRuns } from "../schema/tables.js";
+import type { DrizzleDb, DbOrTx } from "../drizzle-instance.js";
+import type { TaskDbRow } from "./tasks-core.js";
+import { ACTIVE_STATUSES } from "./query-helpers.js";
 
-export async function claim(db: DrizzleDb, projectId: string, id: number, agentId: string): Promise<boolean> {
+export async function claim(
+  db: DrizzleDb,
+  projectId: string,
+  id: number,
+  agentId: string,
+): Promise<boolean> {
   const rows = await db
     .update(tasks)
     .set({
-      status: 'claimed',
+      status: "claimed",
       claimedByAgentId: agentId,
       claimedAt: sql`now()`,
     })
-    .where(and(eq(tasks.id, id), eq(tasks.projectId, projectId), eq(tasks.status, 'pending')))
+    .where(
+      and(
+        eq(tasks.id, id),
+        eq(tasks.projectId, projectId),
+        eq(tasks.status, "pending"),
+      ),
+    )
     .returning();
   return rows.length > 0;
 }
 
-export async function updateProgress(db: DrizzleDb, projectId: string, id: number, progress: string): Promise<boolean> {
+export async function updateProgress(
+  db: DrizzleDb,
+  projectId: string,
+  id: number,
+  progress: string,
+): Promise<boolean> {
   // Append a timestamped line to progress_log without touching status.
   // Pre-FSM this helper transitioned 'claimed' -> 'in_progress' as a side
   // effect; under the FSM, role sessions own their own status transitions and
@@ -28,19 +44,6 @@ export async function updateProgress(db: DrizzleDb, projectId: string, id: numbe
     .update(tasks)
     .set({
       progressLog: sql`COALESCE(${tasks.progressLog}, '') || now()::text || ': ' || ${progress} || chr(10)`,
-    })
-    .where(and(eq(tasks.id, id), eq(tasks.projectId, projectId), inArray(tasks.status, [...ACTIVE_STATUSES])))
-    .returning();
-  return rows.length > 0;
-}
-
-export async function release(db: DrizzleDb, projectId: string, id: number): Promise<boolean> {
-  const rows = await db
-    .update(tasks)
-    .set({
-      status: 'pending',
-      claimedByAgentId: null,
-      claimedAt: null,
     })
     .where(
       and(
@@ -53,14 +56,60 @@ export async function release(db: DrizzleDb, projectId: string, id: number): Pro
   return rows.length > 0;
 }
 
-/** Statuses from which an operator-initiated reset back to 'pending' is allowed. */
-const RESETTABLE_STATUSES = ['complete', 'failed', 'cycle'] as const;
-
-export async function reset(db: DrizzleDb, projectId: string, id: number): Promise<boolean> {
+/**
+ * Release a task: revert a `claimed` task to `pending` and clear its claim
+ * metadata so another agent can pick it up.
+ *
+ * FSM mid-state tasks (`engineering`, `built`, `reviewing`, `revising`,
+ * `arbitrating`) are deliberately untouched. Under the durable-task FSM, the
+ * work record lives on the claiming agent's git branch — only that same
+ * `claimedByAgentId` UUID can resume mid-state work (via the startup probe in
+ * `pump-loop.sh:_resume_in_flight_tasks`). A fire-and-forget release on
+ * container shutdown or abnormal exit therefore intentionally leaves the
+ * claim attached so the next restart of the same agent slot picks the task
+ * back up at its current FSM state. Permanent abandonment of mid-state work
+ * is an explicit operator action, not an automatic consequence of process
+ * exit.
+ *
+ * Returns true iff a row was actually reverted (`claimed` → `pending`).
+ * Returns false for FSM mid-state, terminal, or unknown tasks — the caller
+ * treats false as "nothing to do" rather than an error.
+ */
+export async function release(
+  db: DrizzleDb,
+  projectId: string,
+  id: number,
+): Promise<boolean> {
   const rows = await db
     .update(tasks)
     .set({
-      status: 'pending',
+      status: "pending",
+      claimedByAgentId: null,
+      claimedAt: null,
+    })
+    .where(
+      and(
+        eq(tasks.id, id),
+        eq(tasks.projectId, projectId),
+        eq(tasks.status, "claimed"),
+      ),
+    )
+    .returning();
+  return rows.length > 0;
+}
+
+/** Statuses from which an operator-initiated reset back to 'pending' is allowed. */
+const RESETTABLE_STATUSES = ["completed", "failed", "cycle"] as const;
+
+export async function reset(
+  db: DrizzleDb,
+  projectId: string,
+  id: number,
+): Promise<boolean> {
+  const rows = await db
+    .update(tasks)
+    .set({
+      status: "pending",
       claimedByAgentId: null,
       claimedAt: null,
       completedAt: null,
@@ -78,11 +127,21 @@ export async function reset(db: DrizzleDb, projectId: string, id: number): Promi
   return rows.length > 0;
 }
 
-export async function integrate(db: DrizzleDb, projectId: string, id: number): Promise<boolean> {
+export async function integrate(
+  db: DrizzleDb,
+  projectId: string,
+  id: number,
+): Promise<boolean> {
   const rows = await db
     .update(tasks)
-    .set({ status: 'integrated' })
-    .where(and(eq(tasks.id, id), eq(tasks.projectId, projectId), eq(tasks.status, 'complete')))
+    .set({ status: "integrated" })
+    .where(
+      and(
+        eq(tasks.id, id),
+        eq(tasks.projectId, projectId),
+        eq(tasks.status, "completed"),
+      ),
+    )
     .returning();
   return rows.length > 0;
 }
@@ -95,22 +154,16 @@ async function integrateWhere(
   return db.transaction(async (tx) => {
     const where = and(
       eq(tasks.projectId, projectId),
-      eq(tasks.status, 'complete'),
+      eq(tasks.status, "completed"),
       ...extraConditions,
     );
 
-    const matching = await tx
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(where);
+    const matching = await tx.select({ id: tasks.id }).from(tasks).where(where);
 
     const ids = matching.map((r) => r.id);
     if (ids.length === 0) return { count: 0, ids: [] };
 
-    await tx
-      .update(tasks)
-      .set({ status: 'integrated' })
-      .where(where);
+    await tx.update(tasks).set({ status: "integrated" }).where(where);
 
     return { count: ids.length, ids };
   });
@@ -131,11 +184,26 @@ export async function integrateAll(
   return integrateWhere(db, projectId, []);
 }
 
-export async function releaseByAgent(db: DbOrTx, projectId: string, agentId: string): Promise<void> {
+/**
+ * Bulk-release every `claimed` task held by `agentId`. Mirrors the
+ * `release()` contract: FSM mid-state tasks (`engineering`, `built`,
+ * `reviewing`, `revising`, `arbitrating`) are intentionally left attached
+ * to the agent because the work record lives on that agent's git branch.
+ * The agent slot's UUID survives soft-delete and is restored on the next
+ * `register()` upsert, so an operator who later re-launches the same slot
+ * resumes the mid-state work via `_resume_in_flight_tasks`. Permanent
+ * abandonment is an explicit operator action, not implicit in the
+ * agent-delete flow.
+ */
+export async function releaseByAgent(
+  db: DbOrTx,
+  projectId: string,
+  agentId: string,
+): Promise<void> {
   await db
     .update(tasks)
     .set({
-      status: 'pending',
+      status: "pending",
       claimedByAgentId: null,
       claimedAt: null,
     })
@@ -143,45 +211,54 @@ export async function releaseByAgent(db: DbOrTx, projectId: string, agentId: str
       and(
         eq(tasks.projectId, projectId),
         eq(tasks.claimedByAgentId, agentId),
-        inArray(tasks.status, [...ACTIVE_STATUSES]),
+        eq(tasks.status, "claimed"),
       ),
     );
 }
 
-export async function releaseAllActive(db: DbOrTx, projectId: string): Promise<void> {
+/**
+ * Bulk-release every `claimed` task for the project. Same FSM-mid-state
+ * preservation rule as `release()` / `releaseByAgent()` — see those docs.
+ */
+export async function releaseAllActive(
+  db: DbOrTx,
+  projectId: string,
+): Promise<void> {
   await db
     .update(tasks)
     .set({
-      status: 'pending',
+      status: "pending",
       claimedByAgentId: null,
       claimedAt: null,
     })
-    .where(
-      and(
-        eq(tasks.projectId, projectId),
-        inArray(tasks.status, [...ACTIVE_STATUSES]),
-      ),
-    );
+    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, "claimed")));
 }
 
-export async function getCompletedByAgent(db: DrizzleDb, projectId: string, agentId: string): Promise<TaskDbRow[]> {
+export async function getCompletedByAgent(
+  db: DrizzleDb,
+  projectId: string,
+  agentId: string,
+): Promise<TaskDbRow[]> {
   return db
     .select()
     .from(tasks)
     .where(
       and(
         eq(tasks.projectId, projectId),
-        eq(tasks.status, 'complete'),
+        eq(tasks.status, "completed"),
         eq(tasks.claimedByAgentId, agentId),
       ),
     );
 }
 
-export async function getAllCompleted(db: DrizzleDb, projectId: string): Promise<TaskDbRow[]> {
+export async function getAllCompleted(
+  db: DrizzleDb,
+  projectId: string,
+): Promise<TaskDbRow[]> {
   return db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, 'complete')));
+    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, "completed")));
 }
 
 // ── FSM transition support ────────────────────────────────────────────
@@ -222,14 +299,19 @@ export async function applyTransition(
   const set: Record<string, unknown> = { status: update.status };
   if (update.buildStatus !== undefined) set.buildStatus = update.buildStatus;
   if (update.commitSha !== undefined) set.commitSha = update.commitSha;
-  if (update.latestReviewPath !== undefined) set.latestReviewPath = update.latestReviewPath;
-  if (update.reviewerVerdicts !== undefined) set.reviewerVerdicts = update.reviewerVerdicts;
+  if (update.latestReviewPath !== undefined)
+    set.latestReviewPath = update.latestReviewPath;
+  if (update.reviewerVerdicts !== undefined)
+    set.reviewerVerdicts = update.reviewerVerdicts;
   if (update.arbitrationPendingTrigger !== undefined) {
     set.arbitrationPendingTrigger = update.arbitrationPendingTrigger;
   }
-  if (update.failureReason !== undefined) set.failureReason = update.failureReason;
-  if (update.failureDetail !== undefined) set.failureDetail = update.failureDetail;
-  if (update.reviewCycleCount !== undefined) set.reviewCycleCount = update.reviewCycleCount;
+  if (update.failureReason !== undefined)
+    set.failureReason = update.failureReason;
+  if (update.failureDetail !== undefined)
+    set.failureDetail = update.failureDetail;
+  if (update.reviewCycleCount !== undefined)
+    set.reviewCycleCount = update.reviewCycleCount;
   if (update.completedAt !== undefined) set.completedAt = update.completedAt;
 
   const rows = await db
@@ -260,7 +342,12 @@ export async function arbitrationExists(
   const rows = await db
     .select({ id: arbitrationRuns.id })
     .from(arbitrationRuns)
-    .where(and(eq(arbitrationRuns.taskId, taskId), eq(arbitrationRuns.trigger, trigger)))
+    .where(
+      and(
+        eq(arbitrationRuns.taskId, taskId),
+        eq(arbitrationRuns.trigger, trigger),
+      ),
+    )
     .limit(1);
   return rows.length > 0;
 }

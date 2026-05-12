@@ -163,7 +163,7 @@ export const tasks = pgTable(
   (table) => [
     check(
       "tasks_status_check",
-      sql`${table.status} IN ('pending','claimed','engineering','built','reviewing','revising','arbitrating','complete','failed','integrated','cycle')`,
+      sql`${table.status} IN ('pending','claimed','engineering','built','reviewing','revising','arbitrating','completed','failed','integrated','cycle')`,
     ),
     check(
       "tasks_build_status_check",
@@ -475,7 +475,7 @@ export const arbitrationRuns = pgTable(
 
 // 19. reviewFindings — per-finding child rows of review_runs.
 //     Severity is two-tier: BLOCKING means the engineer must address before the cycle
-//     can transition to 'complete'; NOTE is observability-only and never acted on by
+//     can transition to 'completed'; NOTE is observability-only and never acted on by
 //     the engineer (it lands here so the operator can aggregate signals across tasks).
 //     The legacy WARNING tier is removed.
 export const reviewFindings = pgTable(

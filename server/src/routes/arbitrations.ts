@@ -21,12 +21,12 @@
  * same `(taskId, trigger)` returns 409 — the operator must reset the task
  * to retry.
  */
-import type { FastifyPluginAsync } from 'fastify';
-import { eq, and, asc } from 'drizzle-orm';
-import { getDb } from '../drizzle-instance.js';
-import { arbitrationRuns, tasks } from '../schema/tables.js';
-import { requireProjectIdHeader } from './_project-id-guard.js';
-import { isUniqueConstraintConflict } from './_route-helpers.js';
+import type { FastifyPluginAsync } from "fastify";
+import { eq, and, asc } from "drizzle-orm";
+import { getDb } from "../drizzle-instance.js";
+import { arbitrationRuns, tasks } from "../schema/tables.js";
+import { requireProjectIdHeader } from "./_project-id-guard.js";
+import { isUniqueConstraintConflict } from "./_route-helpers.js";
 
 // Phase 7 cycle 2 (decomp N3): peer review-ingestion routes (reviews,
 // findings, failures) all register without an options object. The plugin's
@@ -36,13 +36,13 @@ import { isUniqueConstraintConflict } from './_route-helpers.js';
 // accordingly.
 
 const ARBITRATION_TRIGGERS = [
-  'review_cycle_budget_exhausted',
-  'reviewer_contradiction',
+  "review_cycle_budget_exhausted",
+  "reviewer_contradiction",
 ] as const;
-type ArbitrationTrigger = typeof ARBITRATION_TRIGGERS[number];
+type ArbitrationTrigger = (typeof ARBITRATION_TRIGGERS)[number];
 
-const RULINGS = ['approve', 'rule', 'escalate'] as const;
-type Ruling = typeof RULINGS[number];
+const RULINGS = ["approve", "rule", "escalate"] as const;
+type Ruling = (typeof RULINGS)[number];
 
 const RULING_MARKDOWN_MAX = 512_000;
 const RATIONALE_MAX = 32_768;
@@ -66,34 +66,55 @@ type ValidationResult<T> =
   | { ok: false; message: string };
 
 function isTrigger(v: unknown): v is ArbitrationTrigger {
-  return typeof v === 'string' && (ARBITRATION_TRIGGERS as readonly string[]).includes(v);
+  return (
+    typeof v === "string" &&
+    (ARBITRATION_TRIGGERS as readonly string[]).includes(v)
+  );
 }
 
 function isRuling(v: unknown): v is Ruling {
-  return typeof v === 'string' && (RULINGS as readonly string[]).includes(v);
+  return typeof v === "string" && (RULINGS as readonly string[]).includes(v);
 }
 
 function validateContradictionResolution(
   raw: unknown,
 ): ValidationResult<ContradictionResolutionInput> {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { ok: false, message: 'contradictionResolution must be an object' };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, message: "contradictionResolution must be an object" };
   }
   const o = raw as Record<string, unknown>;
-  if (!Number.isInteger(o.upheldFindingId) || (o.upheldFindingId as number) <= 0) {
-    return { ok: false, message: 'contradictionResolution.upheldFindingId must be a positive integer' };
+  if (
+    !Number.isInteger(o.upheldFindingId) ||
+    (o.upheldFindingId as number) <= 0
+  ) {
+    return {
+      ok: false,
+      message:
+        "contradictionResolution.upheldFindingId must be a positive integer",
+    };
   }
-  if (!Number.isInteger(o.retiredFindingId) || (o.retiredFindingId as number) <= 0) {
-    return { ok: false, message: 'contradictionResolution.retiredFindingId must be a positive integer' };
+  if (
+    !Number.isInteger(o.retiredFindingId) ||
+    (o.retiredFindingId as number) <= 0
+  ) {
+    return {
+      ok: false,
+      message:
+        "contradictionResolution.retiredFindingId must be a positive integer",
+    };
   }
   if (o.upheldFindingId === o.retiredFindingId) {
     return {
       ok: false,
-      message: 'contradictionResolution.upheldFindingId and retiredFindingId must differ',
+      message:
+        "contradictionResolution.upheldFindingId and retiredFindingId must differ",
     };
   }
-  if (typeof o.rationale !== 'string' || o.rationale.length === 0) {
-    return { ok: false, message: 'contradictionResolution.rationale must be a non-empty string' };
+  if (typeof o.rationale !== "string" || o.rationale.length === 0) {
+    return {
+      ok: false,
+      message: "contradictionResolution.rationale must be a non-empty string",
+    };
   }
   if (o.rationale.length > RATIONALE_MAX) {
     return {
@@ -117,17 +138,20 @@ function validateBody(raw: unknown): ValidationResult<PostArbitrationBody> {
   if (!isTrigger(body.trigger)) {
     return {
       ok: false,
-      message: `trigger must be one of: ${ARBITRATION_TRIGGERS.join(', ')}`,
+      message: `trigger must be one of: ${ARBITRATION_TRIGGERS.join(", ")}`,
     };
   }
   if (!isRuling(body.ruling)) {
     return {
       ok: false,
-      message: `ruling must be one of: ${RULINGS.join(', ')}`,
+      message: `ruling must be one of: ${RULINGS.join(", ")}`,
     };
   }
-  if (typeof body.rulingMarkdown !== 'string' || body.rulingMarkdown.length === 0) {
-    return { ok: false, message: 'rulingMarkdown must be a non-empty string' };
+  if (
+    typeof body.rulingMarkdown !== "string" ||
+    body.rulingMarkdown.length === 0
+  ) {
+    return { ok: false, message: "rulingMarkdown must be a non-empty string" };
   }
   if (body.rulingMarkdown.length > RULING_MARKDOWN_MAX) {
     return {
@@ -141,17 +165,19 @@ function validateBody(raw: unknown): ValidationResult<PostArbitrationBody> {
   //   - contradictionResolution MUST be present when ruling = 'rule'.
   //   - contradictionResolution MUST be absent otherwise (mirrors the
   //     `arbitration_runs_rule_resolution_check` DB CHECK).
-  if (body.ruling === 'rule' && body.trigger !== 'reviewer_contradiction') {
+  if (body.ruling === "rule" && body.trigger !== "reviewer_contradiction") {
     return {
       ok: false,
-      message: "ruling 'rule' is only valid for trigger 'reviewer_contradiction'",
+      message:
+        "ruling 'rule' is only valid for trigger 'reviewer_contradiction'",
     };
   }
 
   const hasContradiction =
-    body.contradictionResolution !== undefined && body.contradictionResolution !== null;
+    body.contradictionResolution !== undefined &&
+    body.contradictionResolution !== null;
 
-  if (body.ruling === 'rule') {
+  if (body.ruling === "rule") {
     if (!hasContradiction) {
       return {
         ok: false,
@@ -175,7 +201,8 @@ function validateBody(raw: unknown): ValidationResult<PostArbitrationBody> {
   if (hasContradiction) {
     return {
       ok: false,
-      message: "contradictionResolution must be absent when ruling is not 'rule'",
+      message:
+        "contradictionResolution must be absent when ruling is not 'rule'",
     };
   }
 
@@ -194,7 +221,7 @@ function validateBody(raw: unknown): ValidationResult<PostArbitrationBody> {
  * Build the column-write set the route applies to `tasks` alongside the FSM
  * status transition out of `arbitrating`. Mapping per ruling:
  *
- *   approve  → status='complete'   (clears arbitrationPendingTrigger,
+ *   approve  → status='completed'   (clears arbitrationPendingTrigger,
  *                                   sets completedAt)
  *   rule     → status='revising'   (clears trigger, writes
  *                                   arbitrationAddendumPath pointing at the
@@ -216,7 +243,7 @@ function validateBody(raw: unknown): ValidationResult<PostArbitrationBody> {
  * the route returns 409.
  */
 type ArbitrationStatusUpdate = {
-  status: 'complete' | 'revising' | 'failed';
+  status: "completed" | "revising" | "failed";
   arbitrationPendingTrigger: null;
   arbitrationAddendumPath?: string;
   completedAt?: Date;
@@ -229,23 +256,23 @@ function buildStatusUpdate(
   body: PostArbitrationBody,
 ): ArbitrationStatusUpdate {
   switch (body.ruling) {
-    case 'approve':
+    case "approve":
       return {
-        status: 'complete',
+        status: "completed",
         arbitrationPendingTrigger: null,
         completedAt: new Date(),
       };
-    case 'rule':
+    case "rule":
       return {
-        status: 'revising',
+        status: "revising",
         arbitrationPendingTrigger: null,
         arbitrationAddendumPath: `.scratch/arbitrations/${taskId}/contradiction-ruling.md`,
       };
-    case 'escalate':
+    case "escalate":
       return {
-        status: 'failed',
+        status: "failed",
         arbitrationPendingTrigger: null,
-        failureReason: 'arbitrator_escalated',
+        failureReason: "arbitrator_escalated",
         failureDetail: body.rulingMarkdown.slice(0, FAILURE_DETAIL_TRUNCATE),
         completedAt: new Date(),
       };
@@ -256,12 +283,12 @@ const arbitrationsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.post<{
     Params: { id: string };
     Body: unknown;
-  }>('/tasks/:id/arbitrations', async (request, reply) => {
+  }>("/tasks/:id/arbitrations", async (request, reply) => {
     if (!requireProjectIdHeader(request, reply)) return;
 
     const taskId = Number(request.params.id);
     if (!Number.isInteger(taskId) || taskId <= 0) {
-      return reply.badRequest('invalid task id');
+      return reply.badRequest("invalid task id");
     }
 
     const v = validateBody(request.body);
@@ -279,13 +306,13 @@ const arbitrationsPlugin: FastifyPluginAsync = async (fastify) => {
       .where(and(eq(tasks.id, taskId), eq(tasks.projectId, request.projectId)))
       .limit(1);
     if (taskRow.length === 0) {
-      return reply.notFound('task not found');
+      return reply.notFound("task not found");
     }
 
     // The task must currently be in `arbitrating`. We re-check inside the
     // transaction below via applyTransition's expected-status gate; this is
     // a pre-flight that surfaces a clearer 409 before any DB work.
-    if (taskRow[0].status !== 'arbitrating') {
+    if (taskRow[0].status !== "arbitrating") {
       return reply.conflict(
         `task ${taskId} is not in 'arbitrating' (current: '${taskRow[0].status}')`,
       );
@@ -323,14 +350,14 @@ const arbitrationsPlugin: FastifyPluginAsync = async (fastify) => {
             and(
               eq(tasks.id, taskId),
               eq(tasks.projectId, request.projectId),
-              eq(tasks.status, 'arbitrating'),
+              eq(tasks.status, "arbitrating"),
             ),
           )
           .returning();
 
         if (updatedTask.length === 0) {
           // Drizzle rolls back the transaction when we throw.
-          throw new Error('TASK_STATE_CHANGED');
+          throw new Error("TASK_STATE_CHANGED");
         }
 
         return { runId, newStatus: updatedTask[0].status };
@@ -338,12 +365,14 @@ const arbitrationsPlugin: FastifyPluginAsync = async (fastify) => {
 
       return result;
     } catch (err) {
-      if (isUniqueConstraintConflict(err, 'arbitration_runs_task_trigger_unique')) {
+      if (
+        isUniqueConstraintConflict(err, "arbitration_runs_task_trigger_unique")
+      ) {
         return reply.conflict(
           `arbitration run already exists for task ${taskId}, trigger '${body.trigger}'`,
         );
       }
-      if (err instanceof Error && err.message === 'TASK_STATE_CHANGED') {
+      if (err instanceof Error && err.message === "TASK_STATE_CHANGED") {
         return reply.conflict(
           `task ${taskId} status changed concurrently; expected 'arbitrating'`,
         );
@@ -363,12 +392,12 @@ const arbitrationsPlugin: FastifyPluginAsync = async (fastify) => {
   // each time.
   fastify.get<{
     Params: { id: string };
-  }>('/tasks/:id/arbitrations', async (request, reply) => {
+  }>("/tasks/:id/arbitrations", async (request, reply) => {
     if (!requireProjectIdHeader(request, reply)) return;
 
     const taskId = Number(request.params.id);
     if (!Number.isInteger(taskId) || taskId <= 0) {
-      return reply.badRequest('invalid task id');
+      return reply.badRequest("invalid task id");
     }
 
     const db = getDb();
@@ -383,7 +412,7 @@ const arbitrationsPlugin: FastifyPluginAsync = async (fastify) => {
       .where(and(eq(tasks.id, taskId), eq(tasks.projectId, request.projectId)))
       .limit(1);
     if (taskRow.length === 0) {
-      return reply.notFound('task not found');
+      return reply.notFound("task not found");
     }
 
     const rows = await db
@@ -407,10 +436,13 @@ const arbitrationsPlugin: FastifyPluginAsync = async (fastify) => {
         trigger: r.trigger,
         ruling: r.ruling,
         rulingMarkdown: r.rulingMarkdown,
-        contradictionResolution: r.contradictionResolution as
-          | { upheldFindingId: number; retiredFindingId: number; rationale: string }
-          | null,
-        postedAt: r.postedAt instanceof Date ? r.postedAt.toISOString() : r.postedAt,
+        contradictionResolution: r.contradictionResolution as {
+          upheldFindingId: number;
+          retiredFindingId: number;
+          rationale: string;
+        } | null,
+        postedAt:
+          r.postedAt instanceof Date ? r.postedAt.toISOString() : r.postedAt,
       })),
     };
   });

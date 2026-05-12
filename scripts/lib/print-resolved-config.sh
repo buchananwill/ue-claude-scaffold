@@ -23,10 +23,13 @@ _print_resolved_config() {
   echo "  AGENT_BRANCH:     ${AGENT_BRANCH:-}"
   echo "  ROOT_BRANCH:      ${ROOT_BRANCH:-}"
   echo "  WORK_BRANCH:      ${WORK_BRANCH:-}"
-  echo "  AGENT_TYPE:       ${AGENT_TYPE:-}"
+  echo "  AGENT_TYPE:       ${AGENT_TYPE:-<unset — FSM mode>}"
   echo "  CLAUDE_EFFORT:    ${CLAUDE_EFFORT:-}"
   echo "  PROJECT_ID:       ${PROJECT_ID:-}"
-  if [[ -d "${SCRIPT_DIR:-}/dynamic-agents" && -f "${SCRIPT_DIR:-}/dynamic-agents/${AGENT_TYPE:-}.md" ]]; then
+  if [[ -z "${AGENT_TYPE:-}" && -n "${PROJECT_ROLE_AGENTS:-}" ]]; then
+    echo "  FSM_ROLE_AGENTS:  ${PROJECT_ROLE_AGENTS}"
+    echo "  AGENT_COMPILED:   yes (role-agent set, see above)"
+  elif [[ -d "${SCRIPT_DIR:-}/dynamic-agents" && -f "${SCRIPT_DIR:-}/dynamic-agents/${AGENT_TYPE:-}.md" ]]; then
     echo "  AGENT_COMPILED:   yes (dynamic-agents/${AGENT_TYPE}.md)"
     local -a _sub_agents=()
     shopt -s nullglob
