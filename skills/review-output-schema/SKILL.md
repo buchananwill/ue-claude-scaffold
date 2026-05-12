@@ -17,7 +17,7 @@ Standard output format for all code reviewers. Domain-specific sections can be a
 
 ## BLOCKING
 
-### [B1] <Title> — `<file>:<line>` (confidence: <75-100>)
+### [B1] <Title> — `<file>:<line>` (confidence: <40-100>)
 **Category**: <domain-specific category>
 **Description**: <what's wrong>
 **Evidence**: <the specific code path or rule reference>
@@ -25,7 +25,7 @@ Standard output format for all code reviewers. Domain-specific sections can be a
 
 ## NOTE
 
-### [N1] <Title> — `<file>:<line>` (confidence: <50-89>)
+### [N1] <Title> — `<file>:<line>` (confidence: <0-39>)
 **Category**: <category>
 **Description**: <what's worth aggregating across tasks, or what you're not confident enough to block on>
 **Evidence**: <code path or rule reference>
@@ -41,7 +41,7 @@ Standard output format for all code reviewers. Domain-specific sections can be a
 
 - Every finding must include `file:line` and a rule or evidence reference.
 - Use sequential IDs: B1, B2, ... for BLOCKING; N1, N2, ... for NOTE. Do not use W-prefixed IDs.
-- BLOCK any finding you're at least 75% confident about and that requires action this cycle. NOTE any finding below 75% confidence OR any finding that does not require action but is worth aggregating across tasks. Do not report findings below 50% confidence.
+- BLOCK any finding you're at least 40% confident about and that requires action this cycle. NOTE any finding below 40% confidence OR any finding that does not require action but is worth aggregating across tasks. Do not report findings below 50% confidence.
 - Verdict is REQUEST CHANGES if any BLOCKING exists; APPROVE otherwise. NOTEs do not affect the verdict.
 - NOTE is a first-class tier alongside BLOCKING; every reviewer may emit NOTEs and they never affect the verdict.
 - NOTE entries are observability-only and never block a cycle. BLOCKING entries always block. Do not pad either tier with borderline calls; if you cannot substantiate the finding with specific code evidence, omit it.

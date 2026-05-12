@@ -16,7 +16,10 @@
 #      tmpfile is atomic-renamed to `<role>.md`.
 #   5. Retries up to 2 times any role whose claude crashed or that did not
 #      produce a /reviews row server-side. After 2 retries with no row, the
-#      task transitions to `failed` with reason `reviewer_infrastructure_failure`.
+#      wrapper returns non-zero without transitioning the task — the task stays
+#      in `reviewing` and the next container's startup-resume probe re-enters
+#      this dispatcher. Infrastructure problems should not terminalize tasks
+#      whose engineering work is already committed.
 #   6. After all reviewer rows are present, posts the per-role verdict merge
 #      (`reviewing → reviewing` self-loop with payload {reviewerRole, verdict})
 #      so reviewerVerdicts is populated.
@@ -188,6 +191,7 @@ _rfan_spawn_reviewer() {
     local stderr_log="${scratch_dir}/${role}.stderr"
     set +e
     claude \
+        --dangerously-skip-permissions \
         --allowed-tools "Read,Grep,Glob,Bash(git diff:*,git log:*,wc:*,ls:*,curl:*)" \
         -p "$prompt" \
         --append-system-prompt "$agent_body" \
@@ -235,23 +239,6 @@ _rfan_write_consolidated() {
         fi
         printf '\n\n' >> "$out"
     done <<< "$sorted"
-}
-
-# Fail the task with reviewer_infrastructure_failure for a single role that
-# never produced a /reviews row after retries. Used as a terminal escape; the
-# fanout returns non-zero after this so the daisy-chain halts.
-_rfan_fail_infrastructure() {
-    local task_id="$1"
-    local role="$2"
-    local cycle="$3"
-    local detail
-    detail="${role} reviewer did not produce a verdict after 2 retries (cycle ${cycle})"
-    local body
-    body=$(jq -n \
-        --arg reason "reviewer_infrastructure_failure" \
-        --arg detail "$detail" \
-        '{to: "failed", payload: {failureReason: $reason, failureDetail: $detail}}')
-    _rfan_post_transition "$task_id" "$body"
 }
 
 # Read a reviewer's verdict from the server-side runs row set. Echoes the
@@ -403,11 +390,14 @@ _run_reviewer_fanout() {
         fi
 
         # Retry-budget guard before spawning. If any role has exhausted its
-        # retries (>2) and is still in the spawn set, fail the task.
+        # retries (>2) and is still in the spawn set, surrender the task without
+        # transitioning. It stays in `reviewing` for the next container to
+        # resume — terminalizing on an infrastructure problem (auth, network,
+        # spawn flag, etc.) would render a clean-built task unrecoverable.
         for role in "${spawn_set[@]}"; do
             if [ "${retries[$role]}" -gt 2 ]; then
                 echo "ERROR: reviewer-fanout: role '${role}' exhausted 2 retries with no /reviews row." >&2
-                _rfan_fail_infrastructure "$task_id" "$role" "$review_cycle"
+                echo "ERROR: reviewer-fanout: surrendering task ${task_id} in 'reviewing' for next container to resume." >&2
                 return 1
             fi
         done

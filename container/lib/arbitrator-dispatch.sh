@@ -331,6 +331,7 @@ _run_arbitrator_dispatch() {
     echo "arbitrator-dispatch: launching claude (agent=${agent_basename}, model=opus)"
     set +e
     claude \
+        --dangerously-skip-permissions \
         --allowed-tools "Read,Grep,Glob,Bash(git diff:*,git log:*,git show:*,wc:*,ls:*),Bash(${curl_pattern})" \
         -p "$prompt" \
         --append-system-prompt "$agent_body" \
