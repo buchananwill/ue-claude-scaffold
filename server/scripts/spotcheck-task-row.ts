@@ -13,14 +13,13 @@ if (!url) throw new Error("SCAFFOLD_DATABASE_URL not set");
 const pglite = new PGlite(dir);
 const pool = new pg.Pool({ connectionString: url, max: 1 });
 try {
-  // Pick a row with non-null acceptance_criteria, jsonb object result, and an
-  // agent_type_override — exercises the most schema features in one row.
+  // Pick a row with non-null acceptance_criteria and a jsonb object result —
+  // exercises the most schema features in one row.
   const candidate = await pglite.query(
     `SELECT id FROM tasks
      WHERE acceptance_criteria IS NOT NULL
        AND result IS NOT NULL
        AND jsonb_typeof(result) = 'object'
-       AND agent_type_override IS NOT NULL
      ORDER BY id
      LIMIT 1`,
   );

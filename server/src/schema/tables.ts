@@ -139,7 +139,6 @@ export const tasks = pgTable(
     completedAt: timestamp("completed_at"),
     result: jsonb("result"),
     progressLog: text("progress_log"),
-    agentTypeOverride: text("agent_type_override"),
     // FSM: review cycle accounting
     reviewCycleCount: integer("review_cycle_count").notNull().default(0),
     reviewCycleBudget: integer("review_cycle_budget").notNull().default(5),
@@ -165,10 +164,6 @@ export const tasks = pgTable(
     check(
       "tasks_status_check",
       sql`${table.status} IN ('pending','claimed','engineering','built','reviewing','revising','arbitrating','complete','failed','integrated','cycle')`,
-    ),
-    check(
-      "tasks_agent_type_override_check",
-      sql`${table.agentTypeOverride} IS NULL OR ${table.agentTypeOverride} ~ '^[a-zA-Z0-9_-]{1,64}$'`,
     ),
     check(
       "tasks_build_status_check",

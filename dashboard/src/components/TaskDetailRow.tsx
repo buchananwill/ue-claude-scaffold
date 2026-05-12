@@ -1,8 +1,16 @@
-import { Collapse, Text, Code, Stack, Group, Badge, Table } from '@mantine/core';
-import { Link } from '@tanstack/react-router';
-import type { Task } from '../api/types.ts';
-import { RelativeTime } from './RelativeTime.tsx';
-import { useProject } from '../contexts/ProjectContext.tsx';
+import {
+  Collapse,
+  Text,
+  Code,
+  Stack,
+  Group,
+  Badge,
+  Table,
+} from "@mantine/core";
+import { Link } from "@tanstack/react-router";
+import type { Task } from "../api/types.ts";
+import { RelativeTime } from "./RelativeTime.tsx";
+import { useProject } from "../contexts/ProjectContext.tsx";
 
 interface TaskDetailRowProps {
   task: Task;
@@ -18,37 +26,43 @@ export function TaskDetailRow({ task, expanded }: TaskDetailRowProps) {
           <Stack gap="xs" p="sm">
             {task.description && (
               <div>
-                <Text size="xs" fw={600} c="dimmed">Description</Text>
+                <Text size="xs" fw={600} c="dimmed">
+                  Description
+                </Text>
                 <Text size="sm">{task.description}</Text>
               </div>
             )}
             {task.acceptanceCriteria && (
               <div>
-                <Text size="xs" fw={600} c="dimmed">Acceptance Criteria</Text>
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{task.acceptanceCriteria}</Text>
+                <Text size="xs" fw={600} c="dimmed">
+                  Acceptance Criteria
+                </Text>
+                <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                  {task.acceptanceCriteria}
+                </Text>
               </div>
             )}
             {task.progressLog && (
               <div>
-                <Text size="xs" fw={600} c="dimmed">Progress Log</Text>
+                <Text size="xs" fw={600} c="dimmed">
+                  Progress Log
+                </Text>
                 <Code block>{task.progressLog}</Code>
               </div>
             )}
             {task.result != null && (
               <div>
-                <Text size="xs" fw={600} c="dimmed">Result</Text>
+                <Text size="xs" fw={600} c="dimmed">
+                  Result
+                </Text>
                 <Code block>{JSON.stringify(task.result, null, 2)}</Code>
-              </div>
-            )}
-            {task.agentTypeOverride && (
-              <div>
-                <Text size="xs" fw={600} c="dimmed">Agent Type Override</Text>
-                <Badge size="sm" variant="light" color="violet">{task.agentTypeOverride}</Badge>
               </div>
             )}
             {task.blockedBy && task.blockedBy.length > 0 && (
               <div>
-                <Text size="xs" fw={600} c="dimmed">Blocked by</Text>
+                <Text size="xs" fw={600} c="dimmed">
+                  Blocked by
+                </Text>
                 <Group gap={4}>
                   {task.blockedBy.map((depId) => (
                     <Link
@@ -56,9 +70,11 @@ export function TaskDetailRow({ task, expanded }: TaskDetailRowProps) {
                       to="/$projectId/tasks/$taskId"
                       params={{ projectId, taskId: String(depId) }}
                       onClick={(e) => e.stopPropagation()}
-                      style={{ textDecoration: 'none' }}
+                      style={{ textDecoration: "none" }}
                     >
-                      <Badge size="sm" color="orange" variant="light">#{depId}</Badge>
+                      <Badge size="sm" color="orange" variant="light">
+                        #{depId}
+                      </Badge>
                     </Link>
                   ))}
                 </Group>
@@ -66,20 +82,28 @@ export function TaskDetailRow({ task, expanded }: TaskDetailRowProps) {
             )}
             {task.blockReasons?.length > 0 && (
               <div>
-                <Text size="xs" fw={600} c="dimmed">Block Reasons</Text>
+                <Text size="xs" fw={600} c="dimmed">
+                  Block Reasons
+                </Text>
                 <Stack gap={2}>
                   {task.blockReasons.map((r, i) => (
-                    <Text key={i} size="xs" c="red">{r}</Text>
+                    <Text key={i} size="xs" c="red">
+                      {r}
+                    </Text>
                   ))}
                 </Stack>
               </div>
             )}
             <Group gap="xs">
               {task.claimedAt && (
-                <Text size="xs" c="dimmed">Claimed: <RelativeTime date={task.claimedAt} /></Text>
+                <Text size="xs" c="dimmed">
+                  Claimed: <RelativeTime date={task.claimedAt} />
+                </Text>
               )}
               {task.completedAt && (
-                <Text size="xs" c="dimmed">Completed: <RelativeTime date={task.completedAt} /></Text>
+                <Text size="xs" c="dimmed">
+                  Completed: <RelativeTime date={task.completedAt} />
+                </Text>
               )}
             </Group>
           </Stack>

@@ -103,6 +103,12 @@ _wait_while_paused() {
 # replaces the entire reviewers map; partial-reviewer overrides require
 # restating the whole reviewers object.
 #
+# Project-level roles are fetched from GET /config/${PROJECT_ID}, which the
+# coordination server resolves from `scaffold.config.json` on the host — the
+# single source of truth for operator-local role wiring. /config returns
+# agentRoles: null when no roles are configured for the project (degraded
+# mode), which jq's `// {}` collapses to an empty map.
+#
 # Side effect: writes the resolved roles JSON to $1 (a tmpfile path).
 # The caller is responsible for removing it.
 _resolve_roles_for_task() {
@@ -110,7 +116,7 @@ _resolve_roles_for_task() {
     local task_json="$2"
 
     local proj_resp
-    proj_resp=$(_curl_server -sf "${SERVER_URL}/projects/${PROJECT_ID}" --max-time 10 2>/dev/null) || proj_resp=""
+    proj_resp=$(_curl_server -sf "${SERVER_URL}/config/${PROJECT_ID}" --max-time 10 2>/dev/null) || proj_resp=""
     local proj_roles="{}"
     if [ -n "$proj_resp" ]; then
         proj_roles=$(echo "$proj_resp" | jq -c '.agentRoles // {}' 2>/dev/null) || proj_roles="{}"
@@ -305,14 +311,6 @@ _resume_in_flight_tasks() {
         CURRENT_TASK_AC=$(echo "$row" | jq -r '.acceptanceCriteria // "None specified"')
         CURRENT_TASK_SOURCE=$(echo "$row" | jq -r '.sourcePath // ""')
         CURRENT_TASK_FILES=$(echo "$row" | jq -r '(.files // []) | join(", ")')
-        CURRENT_TASK_AGENT_TYPE=$(echo "$row" | jq -r '.agentTypeOverride // ""')
-        if [ -n "$CURRENT_TASK_AGENT_TYPE" ] && ! _is_safe_name "$CURRENT_TASK_AGENT_TYPE"; then
-            echo "Startup probe: agentTypeOverride contains invalid characters; clearing." >&2
-            CURRENT_TASK_AGENT_TYPE=""
-        fi
-        if [ -n "${CURRENT_TASK_AGENT_TYPE:-}" ]; then
-            _ensure_agent_type "$CURRENT_TASK_AGENT_TYPE" || true
-        fi
 
         ABNORMAL_SHUTDOWN=""
         ABNORMAL_REASON=""
@@ -383,12 +381,6 @@ _poll_and_claim_task() {
             CURRENT_TASK_AC=$(echo "$body" | jq -r '.task.acceptanceCriteria // "None specified"')
             CURRENT_TASK_SOURCE=$(echo "$body" | jq -r '.task.sourcePath // ""')
             CURRENT_TASK_FILES=$(echo "$body" | jq -r '(.task.files // []) | join(", ")')
-            CURRENT_TASK_AGENT_TYPE=$(echo "$body" | jq -r '.task.agentTypeOverride // ""')
-            # Allowlist: reject agent type overrides with unsafe characters
-            if [ -n "$CURRENT_TASK_AGENT_TYPE" ] && ! _is_safe_name "$CURRENT_TASK_AGENT_TYPE"; then
-                echo "ERROR: agentTypeOverride contains invalid characters: $CURRENT_TASK_AGENT_TYPE" >&2
-                CURRENT_TASK_AGENT_TYPE=""
-            fi
             echo "Claimed task #${CURRENT_TASK_ID}: ${CURRENT_TASK_TITLE}"
             echo ""
             echo "── Claimed task record ──"
@@ -444,23 +436,6 @@ _pump_iteration() {
             PUMP_STATUS="stop"
         fi
         return
-    fi
-
-    # If the task has an agent type override, fetch and cache the definition.
-    # Fetch failure transitions the task to 'failed' with role_session_no_op
-    # via the daisy-chain's no-op handler (the wrapper can no longer post
-    # /fail directly). For now we still emit a status post and skip the loop
-    # so the task does not re-claim in a tight loop.
-    if [ -n "${CURRENT_TASK_AGENT_TYPE:-}" ]; then
-        echo "Task has agent type override: ${CURRENT_TASK_AGENT_TYPE}"
-        if ! _ensure_agent_type "$CURRENT_TASK_AGENT_TYPE"; then
-            local fail_id="$CURRENT_TASK_ID"
-            echo "ERROR: Could not fetch agent definition '${CURRENT_TASK_AGENT_TYPE}'. Failing task #${fail_id}." >&2
-            _post_role_session_no_op "$fail_id" \
-                "agent-type-fetch-failed:${CURRENT_TASK_AGENT_TYPE}"
-            _reset_task_vars
-            return
-        fi
     fi
 
     local task_id_before="$CURRENT_TASK_ID"

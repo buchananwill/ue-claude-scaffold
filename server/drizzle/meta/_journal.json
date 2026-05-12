@@ -57,6 +57,13 @@
       "when": 1778889600001,
       "tag": "0007_fork_tasks_for_fsm",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1778889600002,
+      "tag": "0008_drop_tasks_agent_type_override",
+      "breakpoints": true
     }
   ]
 }

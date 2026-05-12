@@ -1,13 +1,13 @@
-import type { ScaffoldConfig } from '../config.js';
-import { existsInBareRepo } from '../git-utils.js';
-import { seedBranchFor } from '../branch-naming.js';
-import { getDb } from '../drizzle-instance.js';
-import * as tasksCore from '../queries/tasks-core.js';
-import * as taskFilesQ from '../queries/task-files.js';
-import * as taskDepsQ from '../queries/task-deps.js';
-import * as compositionQ from '../queries/composition.js';
-import { formatTask, type TaskRow } from './tasks-types.js';
-import { resolveProject } from '../resolve-project.js';
+import type { ScaffoldConfig } from "../config.js";
+import { existsInBareRepo } from "../git-utils.js";
+import { seedBranchFor } from "../branch-naming.js";
+import { getDb } from "../drizzle-instance.js";
+import * as tasksCore from "../queries/tasks-core.js";
+import * as taskFilesQ from "../queries/task-files.js";
+import * as taskDepsQ from "../queries/task-deps.js";
+import * as compositionQ from "../queries/composition.js";
+import { formatTask, type TaskRow } from "./tasks-types.js";
+import { resolveProject } from "../resolve-project.js";
 
 export interface ConflictInfo {
   file: string;
@@ -28,7 +28,6 @@ export interface TaskBody {
   targetAgents?: string[] | string;
   dependsOn?: number[];
   dependsOnIndex?: number[];
-  agentTypeOverride?: string;
 }
 
 export const taskBodyKeys: { [K in keyof Required<TaskBody>]: true } = {
@@ -41,10 +40,9 @@ export const taskBodyKeys: { [K in keyof Required<TaskBody>]: true } = {
   targetAgents: true,
   dependsOn: true,
   dependsOnIndex: true,
-  agentTypeOverride: true,
 };
 
-export type PatchBody = Omit<TaskBody, 'targetAgents' | 'dependsOnIndex'>;
+export type PatchBody = Omit<TaskBody, "targetAgents" | "dependsOnIndex">;
 export const patchBodyKeys: { [K in keyof Required<PatchBody>]: true } = {
   title: true,
   description: true,
@@ -53,26 +51,28 @@ export const patchBodyKeys: { [K in keyof Required<PatchBody>]: true } = {
   priority: true,
   files: true,
   dependsOn: true,
-  agentTypeOverride: true,
 };
 
 // ── Utility functions (no DB access) ──────────────────────────────
 
 /** True if a string field has a meaningful value (not null, undefined, or empty string). */
 export function hasValue(v: string | null | undefined): boolean {
-  return v !== null && v !== undefined && v !== '';
+  return v !== null && v !== undefined && v !== "";
 }
 
 /** Returns unknown field names from a request body, inferred from a type's keys. */
-export function unknownFields<T>(body: unknown, known: { [K in keyof T]: true }): string[] {
-  if (typeof body !== 'object' || body === null) return [];
-  return Object.keys(body).filter(k => !(k in known));
+export function unknownFields<T>(
+  body: unknown,
+  known: { [K in keyof T]: true },
+): string[] {
+  if (typeof body !== "object" || body === null) return [];
+  return Object.keys(body).filter((k) => !(k in known));
 }
 
 /** Validate file paths: must be relative, no .., no empty strings. */
 export function validateFilePaths(files: string[]): string | null {
   for (const f of files) {
-    if (!f || f.startsWith('/') || f.includes('..') || f.trim() === '') {
+    if (!f || f.startsWith("/") || f.includes("..") || f.trim() === "") {
       return `Invalid file path: '${f}'. Paths must be relative, non-empty, with no '..' components.`;
     }
   }
@@ -81,12 +81,19 @@ export function validateFilePaths(files: string[]): string | null {
 
 // ── Composition functions (async, use Drizzle query modules) ──────
 
-export async function linkFilesToTask(taskId: number, files: string[], projectId: string = 'default'): Promise<void> {
+export async function linkFilesToTask(
+  taskId: number,
+  files: string[],
+  projectId: string = "default",
+): Promise<void> {
   const db = getDb();
   await compositionQ.linkFilesToTask(db, taskId, files, projectId);
 }
 
-export async function linkDepsToTask(taskId: number, depIds: number[]): Promise<void> {
+export async function linkDepsToTask(
+  taskId: number,
+  depIds: number[],
+): Promise<void> {
   const db = getDb();
   await compositionQ.linkDepsToTask(db, taskId, depIds);
 }
@@ -101,15 +108,22 @@ export async function depsForTask(taskId: number): Promise<number[]> {
   return taskDepsQ.getDepsForTask(db, taskId);
 }
 
-export async function blockersForTask(taskId: number, agent: string): Promise<number[]> {
+export async function blockersForTask(
+  taskId: number,
+  agent: string,
+): Promise<number[]> {
   const db = getDb();
   const incomplete = await taskDepsQ.getIncompleteBlockers(db, taskId);
   const wrongBranch = await taskDepsQ.getWrongBranchBlockers(db, taskId, agent);
-  return [...incomplete.map(r => r.id), ...wrongBranch.map(r => r.id)];
+  return [...incomplete.map((r) => r.id), ...wrongBranch.map((r) => r.id)];
 }
 
-export async function blockReasonsForTask(row: TaskRow, agent: string, config: ScaffoldConfig): Promise<string[]> {
-  if (row.status !== 'pending') return [];
+export async function blockReasonsForTask(
+  row: TaskRow,
+  agent: string,
+  config: ScaffoldConfig,
+): Promise<string[]> {
+  if (row.status !== "pending") return [];
   const db = getDb();
   const reasons: string[] = [];
 
@@ -134,7 +148,7 @@ export async function blockReasonsForTask(row: TaskRow, agent: string, config: S
 
   // File-lock conflicts
   const conflicts = await taskFilesQ.getFileConflicts(db, row.id);
-  const nonNullConflicts = conflicts.filter(c => c.claimant !== null);
+  const nonNullConflicts = conflicts.filter((c) => c.claimant !== null);
   if (nonNullConflicts.length > 0) {
     const byClaimant = new Map<string, string[]>();
     for (const c of nonNullConflicts) {
@@ -143,26 +157,34 @@ export async function blockReasonsForTask(row: TaskRow, agent: string, config: S
       byClaimant.set(c.claimant!, list);
     }
     for (const [claimant, paths] of byClaimant) {
-      reasons.push(`files locked by agent '${claimant}': ${paths.join(', ')}`);
+      reasons.push(`files locked by agent '${claimant}': ${paths.join(", ")}`);
     }
   }
 
   // Unmet dependencies — incomplete (not completed/integrated)
   const incomplete = await taskDepsQ.getIncompleteBlockers(db, row.id);
   if (incomplete.length > 0) {
-    reasons.push(`blocked by incomplete task(s): #${incomplete.map(r => r.id).join(', #')}`);
+    reasons.push(
+      `blocked by incomplete task(s): #${incomplete.map((r) => r.id).join(", #")}`,
+    );
   }
 
   // Unmet dependencies — completed on a different agent's branch
   const wrongBranch = await taskDepsQ.getWrongBranchBlockers(db, row.id, agent);
   if (wrongBranch.length > 0) {
-    reasons.push(`blocked by work on another branch: #${wrongBranch.map(r => r.id).join(', #')}`);
+    reasons.push(
+      `blocked by work on another branch: #${wrongBranch.map((r) => r.id).join(", #")}`,
+    );
   }
 
   return reasons;
 }
 
-export async function formatTaskWithFiles(row: TaskRow, agent: string, config: ScaffoldConfig) {
+export async function formatTaskWithFiles(
+  row: TaskRow,
+  agent: string,
+  config: ScaffoldConfig,
+) {
   const [files, deps, blockers, reasons] = await Promise.all([
     filesForTask(row.id),
     depsForTask(row.id),
@@ -172,7 +194,10 @@ export async function formatTaskWithFiles(row: TaskRow, agent: string, config: S
   return formatTask(row, files, deps, blockers, reasons);
 }
 
-export async function checkAndClaimFiles(taskId: number, agentId: string): Promise<ConflictInfo[] | null> {
+export async function checkAndClaimFiles(
+  taskId: number,
+  agentId: string,
+): Promise<ConflictInfo[] | null> {
   const db = getDb();
   const deps = await taskFilesQ.getFilesForTask(db, taskId);
   if (deps.length === 0) return null;
@@ -180,11 +205,11 @@ export async function checkAndClaimFiles(taskId: number, agentId: string): Promi
   const conflictRows = await taskFilesQ.getFileConflicts(db, taskId, agentId);
 
   if (conflictRows.length > 0) {
-    return conflictRows.map(r => ({ file: r.path, claimant: r.claimant! }));
+    return conflictRows.map((r) => ({ file: r.path, claimant: r.claimant! }));
   }
 
   const taskRow = await tasksCore.getById(db, taskId);
-  const projectId = taskRow?.projectId ?? 'default';
+  const projectId = taskRow?.projectId ?? "default";
   for (const dep of deps) {
     await taskFilesQ.claimFilesForAgent(db, agentId, projectId, dep);
   }

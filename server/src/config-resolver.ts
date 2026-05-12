@@ -3,7 +3,11 @@
  * into a flat, shell-script-friendly shape with sensible defaults.
  */
 
-import { getProject, type ScaffoldConfig } from "./config.js";
+import {
+  getProject,
+  type AgentRoleMap,
+  type ScaffoldConfig,
+} from "./config.js";
 import { seedBranchFor } from "./branch-naming.js";
 
 export interface ResolvedProjectConfig {
@@ -23,6 +27,7 @@ export interface ResolvedProjectConfig {
   stagingWorktreeRoot: string | null;
   logsPath: string | null;
   agentType: string | null;
+  agentRoles: AgentRoleMap | null;
   hooks: {
     buildIntercept: string | null;
     cppLint: string | null;
@@ -65,6 +70,7 @@ export function resolveProjectConfig(
     stagingWorktreeRoot: merged.stagingWorktreeRoot ?? null,
     logsPath: null, // No logsPath in current config schema; placeholder for future
     agentType: null, // No agentType in current config schema; placeholder for future
+    agentRoles: merged.agentRoles ?? null,
     hooks: {
       buildIntercept: null, // No hooks in current config schema; placeholder for future
       cppLint: null,

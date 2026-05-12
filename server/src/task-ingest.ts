@@ -4,19 +4,18 @@
  * Replaces the shell-based parse_frontmatter / ingest loop from
  * scripts/ingest-tasks.sh with a TypeScript implementation using gray-matter.
  */
-import matter from 'gray-matter';
-import { readdir, readFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
-import { eq, and } from 'drizzle-orm';
-import { tasks } from './schema/tables.js';
-import * as tasksCore from './queries/tasks-core.js';
-import { linkFilesToTask } from './queries/composition.js';
-import { runReplan } from './routes/tasks-replan.js';
-import { isValidAgentName } from './branch-naming.js';
-import type { DrizzleDb } from './drizzle-instance.js';
+import matter from "gray-matter";
+import { readdir, readFile } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { eq, and } from "drizzle-orm";
+import { tasks } from "./schema/tables.js";
+import * as tasksCore from "./queries/tasks-core.js";
+import { linkFilesToTask } from "./queries/composition.js";
+import { runReplan } from "./routes/tasks-replan.js";
+import type { DrizzleDb } from "./drizzle-instance.js";
 
 export interface IngestFileResult {
-  action: 'created' | 'skipped';
+  action: "created" | "skipped";
   taskId: number;
 }
 
@@ -25,7 +24,12 @@ export interface IngestDirResult {
   skipped: number;
   errors: number;
   replanned: number;
-  tasks: Array<{ file: string; action: 'created' | 'skipped' | 'error'; taskId?: number; error?: string }>;
+  tasks: Array<{
+    file: string;
+    action: "created" | "skipped" | "error";
+    taskId?: number;
+    error?: string;
+  }>;
 }
 
 /**
@@ -54,7 +58,7 @@ export async function ingestTaskFile(
     .where(and(eq(tasks.sourcePath, filePath), eq(tasks.projectId, projectId)));
 
   if (existing.length > 0) {
-    return { action: 'skipped', taskId: existing[0].id };
+    return { action: "skipped", taskId: existing[0].id };
   }
 
   // Parse frontmatter — wrap in try/catch because gray-matter throws
@@ -72,9 +76,10 @@ export async function ingestTaskFile(
   }
 
   // Title: frontmatter or fall back to filename
-  const title = typeof data.title === 'string' && data.title.length > 0
-    ? data.title
-    : basename(filePath, '.md').replace(/[-_]/g, ' ');
+  const title =
+    typeof data.title === "string" && data.title.length > 0
+      ? data.title
+      : basename(filePath, ".md").replace(/[-_]/g, " ");
 
   // Priority: must be integer, default 0
   const priority = (() => {
@@ -88,21 +93,16 @@ export async function ingestTaskFile(
   })();
 
   // Acceptance criteria
-  const acceptanceCriteria = typeof data.acceptance_criteria === 'string'
-    ? data.acceptance_criteria
-    : undefined;
-
-  // Agent type override (accept both snake_case and camelCase frontmatter keys)
-  const rawAgentTypeOverride = data.agent_type_override ?? data.agentTypeOverride;
-  const agentTypeOverride = (typeof rawAgentTypeOverride === 'string' && isValidAgentName(rawAgentTypeOverride))
-    ? rawAgentTypeOverride
-    : undefined;
+  const acceptanceCriteria =
+    typeof data.acceptance_criteria === "string"
+      ? data.acceptance_criteria
+      : undefined;
 
   // Files list
   const filesList: string[] = [];
   if (Array.isArray(data.files)) {
     for (const f of data.files) {
-      if (typeof f === 'string' && f.length > 0) {
+      if (typeof f === "string" && f.length > 0) {
         filesList.push(f);
       }
     }
@@ -116,7 +116,6 @@ export async function ingestTaskFile(
     acceptanceCriteria,
     priority,
     projectId,
-    agentTypeOverride,
   });
 
   // Link files if any
@@ -124,7 +123,7 @@ export async function ingestTaskFile(
     await linkFilesToTask(db, row.id, filesList, projectId);
   }
 
-  return { action: 'created', taskId: row.id };
+  return { action: "created", taskId: row.id };
 }
 
 /**
@@ -139,13 +138,15 @@ export async function ingestTaskDir(
 ): Promise<IngestDirResult> {
   const MAX_INGEST_FILES = 500;
   const entries = await readdir(dirPath);
-  const mdFiles = entries.filter((e) => e.endsWith('.md')).sort();
+  const mdFiles = entries.filter((e) => e.endsWith(".md")).sort();
 
   if (mdFiles.length > MAX_INGEST_FILES) {
-    throw new Error(`Too many files: ${mdFiles.length} exceeds limit of ${MAX_INGEST_FILES}`);
+    throw new Error(
+      `Too many files: ${mdFiles.length} exceeds limit of ${MAX_INGEST_FILES}`,
+    );
   }
 
-  const results: IngestDirResult['tasks'] = [];
+  const results: IngestDirResult["tasks"] = [];
   let ingested = 0;
   let skipped = 0;
   let errors = 0;
@@ -154,20 +155,20 @@ export async function ingestTaskDir(
   for (const file of mdFiles) {
     try {
       const fullPath = join(dirPath, file);
-      const content = await readFile(fullPath, 'utf-8');
+      const content = await readFile(fullPath, "utf-8");
       const result = await ingestTaskFile(db, fullPath, content, projectId);
 
       results.push({ file, action: result.action, taskId: result.taskId });
 
-      if (result.action === 'created') {
+      if (result.action === "created") {
         ingested++;
       } else {
         skipped++;
       }
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      const message = code ? `File error: ${code}` : 'Failed to process file';
-      results.push({ file, action: 'error', error: message });
+      const message = code ? `File error: ${code}` : "Failed to process file";
+      results.push({ file, action: "error", error: message });
       errors++;
     }
   }

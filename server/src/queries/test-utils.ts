@@ -123,7 +123,6 @@ CREATE TABLE "tasks" (
   "completed_at" timestamp,
   "result" jsonb,
   "progress_log" text,
-  "agent_type_override" text,
   -- FSM columns added in Phase 1 of the durable-task-FSM rework. The DDL here
   -- is hand-authored to mirror server/src/schema/tables.ts so PGlite-backed
   -- tests can exercise the new endpoints. Until Phase 9's coordinated cutover,
@@ -146,7 +145,6 @@ CREATE TABLE "tasks" (
     'pending','claimed','in_progress','engineering','built','reviewing','revising',
     'arbitrating','completed','complete','failed','integrated','cycle'
   )),
-  CONSTRAINT "tasks_agent_type_override_check" CHECK ("agent_type_override" IS NULL OR "agent_type_override" ~ '^[a-zA-Z0-9_-]{1,64}$'),
   CONSTRAINT "tasks_build_status_check" CHECK ("build_status" IN ('pending','clean','dirty','failed')),
   CONSTRAINT "tasks_failure_reason_check" CHECK ("failure_reason" IS NULL OR "failure_reason" IN (
     'review_cycle_budget_exhausted',

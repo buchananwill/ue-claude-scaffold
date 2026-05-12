@@ -38,19 +38,23 @@ export interface AgentRoles {
 }
 
 /** Per-reviewer verdict tracked on tasks.reviewer_verdicts jsonb. */
-export type ReviewerVerdict = 'pending' | 'approve' | 'request_changes' | 'out_of_scope';
+export type ReviewerVerdict =
+  | "pending"
+  | "approve"
+  | "request_changes"
+  | "out_of_scope";
 
 /** Map keyed by reviewer-role slug (e.g. 'safety', 'correctness'). */
 export type ReviewerVerdictMap = Partial<Record<string, ReviewerVerdict>>;
 
 /** Tuple of all valid `tasks.failure_reason` values for the failed status. */
 export const FAILURE_REASONS = [
-  'review_cycle_budget_exhausted',
-  'reviewer_contradiction',
-  'engineer_build_failure',
-  'reviewer_infrastructure_failure',
-  'role_session_no_op',
-  'arbitrator_escalated',
+  "review_cycle_budget_exhausted",
+  "reviewer_contradiction",
+  "engineer_build_failure",
+  "reviewer_infrastructure_failure",
+  "role_session_no_op",
+  "arbitrator_escalated",
 ] as const;
 
 export type FailureReason = (typeof FAILURE_REASONS)[number];
@@ -72,7 +76,6 @@ export interface Task {
   completedAt: string | null;
   result: unknown;
   progressLog: string | null;
-  agentTypeOverride: string | null;
   createdAt: string;
   // New FSM columns (Plan: Durable Task FSM and Parallel Role Sessions).
   reviewCycleCount: number;
@@ -204,7 +207,7 @@ export interface TeamDetail {
 export interface ReviewFinding {
   id: number;
   runId?: number;
-  severity: 'BLOCKING' | 'NOTE';
+  severity: "BLOCKING" | "NOTE";
   ordinal: number;
   filePath: string | null;
   line: number | null;
@@ -239,8 +242,8 @@ export interface ReviewCycleResponse {
 export interface ArbitrationRun {
   id: number;
   taskId: number;
-  trigger: 'review_cycle_budget_exhausted' | 'reviewer_contradiction';
-  ruling: 'approve' | 'rule' | 'escalate';
+  trigger: "review_cycle_budget_exhausted" | "reviewer_contradiction";
+  ruling: "approve" | "rule" | "escalate";
   rulingMarkdown: string;
   contradictionResolution: {
     upheldFindingId: number;
@@ -260,7 +263,7 @@ export interface Finding {
   taskId: number;
   cycle: number;
   reviewerRole: string;
-  severity: 'BLOCKING' | 'NOTE';
+  severity: "BLOCKING" | "NOTE";
   filePath: string | null;
   line: number | null;
   title: string;

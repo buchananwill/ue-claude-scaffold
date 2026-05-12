@@ -1,8 +1,18 @@
-import { eq, and, or, desc, asc, count as countFn, inArray, notInArray, isNull, type SQL } from 'drizzle-orm';
-import { tasks } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
-import { validateAgentTypeOverride } from '../branch-naming.js';
-import { ACTIVE_STATUSES } from './query-helpers.js';
+import {
+  eq,
+  and,
+  or,
+  desc,
+  asc,
+  count as countFn,
+  inArray,
+  notInArray,
+  isNull,
+  type SQL,
+} from "drizzle-orm";
+import { tasks } from "../schema/tables.js";
+import type { DrizzleDb } from "../drizzle-instance.js";
+import { ACTIVE_STATUSES } from "./query-helpers.js";
 
 /** Drizzle inferred row type for the tasks table. */
 export type TaskDbRow = typeof tasks.$inferSelect;
@@ -17,28 +27,20 @@ export interface InsertOpts {
   acceptanceCriteria?: string;
   priority?: number;
   projectId?: string;
-  agentTypeOverride?: string;
 }
 
 export async function insert(db: DrizzleDb, opts: InsertOpts) {
-  // Self-defending: validate agentTypeOverride before touching the DB
-  if (opts.agentTypeOverride !== undefined) {
-    const check = validateAgentTypeOverride(opts.agentTypeOverride, 'create');
-    if (!check.valid) throw new Error(check.error);
-  }
-
   const priority = opts.priority ?? 0;
   const rows = await db
     .insert(tasks)
     .values({
       title: opts.title,
-      description: opts.description ?? '',
+      description: opts.description ?? "",
       sourcePath: opts.sourcePath ?? null,
       acceptanceCriteria: opts.acceptanceCriteria ?? null,
       priority,
       basePriority: priority,
-      projectId: opts.projectId ?? 'default',
-      agentTypeOverride: opts.agentTypeOverride ?? null,
+      projectId: opts.projectId ?? "default",
     })
     .returning();
   return rows[0];
@@ -61,7 +63,8 @@ const SORTABLE_COLUMNS = {
 
 export type SortColumn = keyof typeof SORTABLE_COLUMNS;
 
-export const VALID_SORT_COLUMNS: readonly string[] = Object.keys(SORTABLE_COLUMNS);
+export const VALID_SORT_COLUMNS: readonly string[] =
+  Object.keys(SORTABLE_COLUMNS);
 
 /** Known task status values accepted by the API. Mirrors the schema CHECK
  *  constraint at server/src/schema/tables.ts (tasks_status_check) exactly:
@@ -69,15 +72,23 @@ export const VALID_SORT_COLUMNS: readonly string[] = Object.keys(SORTABLE_COLUMN
  *  revising, arbitrating), the FSM terminals (complete, failed, integrated),
  *  and the legacy 'cycle' sentinel still used by the dependency-graph code. */
 export const VALID_TASK_STATUSES = [
-  'pending', 'claimed', 'engineering', 'built', 'reviewing', 'revising',
-  'arbitrating', 'complete', 'failed', 'integrated', 'cycle',
+  "pending",
+  "claimed",
+  "engineering",
+  "built",
+  "reviewing",
+  "revising",
+  "arbitrating",
+  "complete",
+  "failed",
+  "integrated",
+  "cycle",
 ] as const;
 
 export interface ListOpts {
   status?: string[];
   agent?: string[];
   priority?: number[];
-  agentTypeOverride?: string[];
   /**
    * Filter by `tasks.claimed_by_agent_id` (an agent UUID, not a name slot).
    * Agent UUIDs are stable identity; names are reusable UI labels — the
@@ -89,26 +100,29 @@ export interface ListOpts {
   limit?: number;
   offset?: number;
   sort?: SortColumn;
-  dir?: 'asc' | 'desc';
+  dir?: "asc" | "desc";
 }
 
 /**
  * Build a filter condition for a nullable column where one special sentinel
- * value (e.g. '__unassigned__', '__default__') maps to IS NULL, and the
- * remaining values match via eq/inArray. Handles three combinations:
+ * value (e.g. '__unassigned__') maps to IS NULL, and the remaining values
+ * match via eq/inArray. Handles three combinations:
  * sentinel+named -> OR(IS NULL, IN(...)), sentinel-only -> IS NULL,
  * named-only -> eq/inArray.
  */
 function buildNullableSentinelFilter(
-  column: typeof tasks.claimedByAgentId | typeof tasks.agentTypeOverride,
+  column: typeof tasks.claimedByAgentId,
   values: string[],
   sentinel: string,
 ): SQL {
   const hasSentinel = values.includes(sentinel);
-  const named = values.filter(v => v !== sentinel);
+  const named = values.filter((v) => v !== sentinel);
   if (hasSentinel && named.length > 0) {
     const clause = or(isNull(column), inArray(column, named));
-    if (!clause) throw new Error('Invariant violation: or() returned undefined with two defined operands');
+    if (!clause)
+      throw new Error(
+        "Invariant violation: or() returned undefined with two defined operands",
+      );
     return clause;
   } else if (hasSentinel) {
     return isNull(column);
@@ -123,7 +137,6 @@ function buildFilterConditions(opts: {
   status?: string[];
   agent?: string[];
   priority?: number[];
-  agentTypeOverride?: string[];
   claimedByAgentId?: string;
   projectId?: string;
 }): SQL[] {
@@ -137,10 +150,13 @@ function buildFilterConditions(opts: {
     }
   }
   if (opts.agent && opts.agent.length > 0) {
-    conditions.push(buildNullableSentinelFilter(tasks.claimedByAgentId, opts.agent, '__unassigned__'));
-  }
-  if (opts.agentTypeOverride && opts.agentTypeOverride.length > 0) {
-    conditions.push(buildNullableSentinelFilter(tasks.agentTypeOverride, opts.agentTypeOverride, '__default__'));
+    conditions.push(
+      buildNullableSentinelFilter(
+        tasks.claimedByAgentId,
+        opts.agent,
+        "__unassigned__",
+      ),
+    );
   }
   if (opts.claimedByAgentId) {
     conditions.push(eq(tasks.claimedByAgentId, opts.claimedByAgentId));
@@ -169,9 +185,9 @@ export async function list(db: DrizzleDb, opts: ListOpts = {}) {
   const orderClauses: SQL[] = [];
   if (opts.sort && opts.sort in SORTABLE_COLUMNS) {
     const col = SORTABLE_COLUMNS[opts.sort];
-    orderClauses.push(opts.dir === 'desc' ? desc(col) : asc(col));
+    orderClauses.push(opts.dir === "desc" ? desc(col) : asc(col));
     // Tiebreaker: id ASC (unless already sorting by id)
-    if (opts.sort !== 'id') {
+    if (opts.sort !== "id") {
       orderClauses.push(asc(tasks.id));
     }
   } else {
@@ -193,12 +209,14 @@ export interface CountOpts {
   status?: string[];
   agent?: string[];
   priority?: number[];
-  agentTypeOverride?: string[];
   claimedByAgentId?: string;
   projectId?: string;
 }
 
-export async function count(db: DrizzleDb, opts: CountOpts = {}): Promise<number> {
+export async function count(
+  db: DrizzleDb,
+  opts: CountOpts = {},
+): Promise<number> {
   const conditions = buildFilterConditions(opts);
 
   const rows = await db
@@ -216,39 +234,38 @@ export type PatchFields = Partial<{
   acceptanceCriteria: string;
   priority: number;
   status: string;
-  agentTypeOverride: string | null;
 }>;
 
-export async function patch(db: DrizzleDb, id: number, fields: PatchFields): Promise<boolean> {
-  // Self-defending: validate agentTypeOverride before touching the DB
-  if (fields.agentTypeOverride !== undefined) {
-    const overrideCheck = validateAgentTypeOverride(fields.agentTypeOverride, 'patch');
-    if (!overrideCheck.valid) {
-      throw new Error(overrideCheck.error);
-    }
-  }
-
+export async function patch(
+  db: DrizzleDb,
+  id: number,
+  fields: PatchFields,
+): Promise<boolean> {
   const set: Record<string, unknown> = {};
   if (fields.title !== undefined) set.title = fields.title;
   if (fields.description !== undefined) set.description = fields.description;
   if (fields.sourcePath !== undefined) set.sourcePath = fields.sourcePath;
-  if (fields.acceptanceCriteria !== undefined) set.acceptanceCriteria = fields.acceptanceCriteria;
+  if (fields.acceptanceCriteria !== undefined)
+    set.acceptanceCriteria = fields.acceptanceCriteria;
   if (fields.priority !== undefined) set.priority = fields.priority;
   if (fields.status !== undefined) set.status = fields.status;
-  if (fields.agentTypeOverride !== undefined) set.agentTypeOverride = fields.agentTypeOverride;
 
   if (Object.keys(set).length === 0) return false;
 
   const rows = await db
     .update(tasks)
     .set(set)
-    .where(and(eq(tasks.id, id), eq(tasks.status, 'pending')))
+    .where(and(eq(tasks.id, id), eq(tasks.status, "pending")))
     .returning();
 
   return rows.length > 0;
 }
 
-export async function deleteByStatus(db: DrizzleDb, status: string, projectId: string): Promise<number> {
+export async function deleteByStatus(
+  db: DrizzleDb,
+  status: string,
+  projectId: string,
+): Promise<number> {
   const rows = await db
     .delete(tasks)
     .where(and(eq(tasks.status, status), eq(tasks.projectId, projectId)))
@@ -264,10 +281,7 @@ export async function deleteById(db: DrizzleDb, id: number): Promise<boolean> {
   const rows = await db
     .delete(tasks)
     .where(
-      and(
-        eq(tasks.id, id),
-        notInArray(tasks.status, [...ACTIVE_STATUSES]),
-      ),
+      and(eq(tasks.id, id), notInArray(tasks.status, [...ACTIVE_STATUSES])),
     )
     .returning();
   return rows.length > 0;

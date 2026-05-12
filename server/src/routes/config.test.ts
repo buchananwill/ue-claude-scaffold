@@ -61,6 +61,49 @@ describe("GET /config routes", () => {
     });
   });
 
+  it("GET /config/:projectId returns null agentRoles when not configured", async () => {
+    const config = createTestConfig();
+    await ctx.app.register(configPlugin, { config });
+
+    const res = await ctx.app.inject({ method: "GET", url: "/config/default" });
+    assert.equal(res.statusCode, 200);
+    const body: ResolvedProjectConfig = res.json();
+    assert.equal(body.agentRoles, null);
+  });
+
+  it("GET /config/:projectId returns agentRoles map when configured", async () => {
+    const config = createTestConfig({
+      resolvedProjects: {
+        gamma: {
+          name: "Gamma",
+          path: "/g",
+          bareRepoPath: "/g.git",
+          agentRoles: {
+            engineer: "container-implementer-ue",
+            arbitrator: "container-arbitrator-ue",
+            reviewers: {
+              safety: "container-safety-reviewer-ue",
+              correctness: "container-reviewer-ue",
+            },
+          },
+        },
+      },
+    });
+    await ctx.app.register(configPlugin, { config });
+
+    const res = await ctx.app.inject({ method: "GET", url: "/config/gamma" });
+    assert.equal(res.statusCode, 200);
+    const body: ResolvedProjectConfig = res.json();
+    assert.deepEqual(body.agentRoles, {
+      engineer: "container-implementer-ue",
+      arbitrator: "container-arbitrator-ue",
+      reviewers: {
+        safety: "container-safety-reviewer-ue",
+        correctness: "container-reviewer-ue",
+      },
+    });
+  });
+
   it("GET /config/:projectId returns 404 for unknown project", async () => {
     const config = createTestConfig();
     await ctx.app.register(configPlugin, { config });

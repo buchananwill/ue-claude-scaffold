@@ -38,15 +38,6 @@ try {
     `OK: all ${TABLES.length} application tables + drizzle.__drizzle_migrations present`,
   );
 
-  const checkConstraint = await pool.query(
-    `SELECT conname FROM pg_constraint WHERE conname = 'tasks_agent_type_override_check'`,
-  );
-  if (checkConstraint.rows.length !== 1) {
-    console.error("MISSING CHECK constraint: tasks_agent_type_override_check");
-    process.exit(1);
-  }
-  console.log("OK: tasks_agent_type_override_check constraint present");
-
   for (const t of TABLES) {
     const r = await pool.query(`SELECT count(*)::int AS c FROM "${t.name}"`);
     const c = (r.rows[0] as { c: number }).c;

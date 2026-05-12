@@ -345,7 +345,6 @@ export function TasksPanel({
                   </Popover>
                 </Group>
               </Table.Th>
-              <Table.Th>Agent Type</Table.Th>
               <Table.Th>
                 <SortHeader
                   label="Created"
@@ -429,17 +428,6 @@ export function TasksPanel({
                     ) : (
                       <Text size="xs" c="dimmed">
                         {"\u2014"}
-                      </Text>
-                    )}
-                  </Table.Td>
-                  <Table.Td>
-                    {t.agentTypeOverride ? (
-                      <Badge size="xs" variant="light" color="violet">
-                        {t.agentTypeOverride}
-                      </Badge>
-                    ) : (
-                      <Text size="xs" c="dimmed">
-                        default
                       </Text>
                     )}
                   </Table.Td>

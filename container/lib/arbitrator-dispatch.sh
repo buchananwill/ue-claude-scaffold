@@ -245,16 +245,20 @@ _run_arbitrator_dispatch() {
     echo "arbitrator-dispatch: task=${task_id} status=${status} trigger=${trigger}"
 
     # Resolve the arbitrator agent basename from the daisy-chain roles file.
-    # Falls back to the conventional default if the roles file is absent or
-    # missing the key — this keeps a fresh container working even before the
-    # operator has configured per-project roles.
+    # The roles file is the shallow merge of the project's agentRoles (from
+    # scaffold.config.json) and the task's per-row agent_roles_override. When
+    # the project has not configured any arbitrator at all, we fall back to
+    # the global `fallback-arbitrator` definition — a domain-agnostic agent
+    # that rules from the FSM contract and git history alone. The server
+    # serves this definition the same way as any other; the container's
+    # _ensure_agent_type call below fetches and caches it on first miss.
     local agent_basename=""
     if [ -n "${DAISY_CHAIN_ROLES_FILE:-}" ] && [ -f "$DAISY_CHAIN_ROLES_FILE" ]; then
         agent_basename=$(jq -r '.arbitrator // empty' "$DAISY_CHAIN_ROLES_FILE" 2>/dev/null) \
             || agent_basename=""
     fi
     if [ -z "$agent_basename" ]; then
-        agent_basename="container-arbitrator-ue"
+        agent_basename="fallback-arbitrator"
     fi
     if ! _is_safe_name "$agent_basename"; then
         echo "ERROR: arbitrator-dispatch: arbitrator agent basename '${agent_basename}' contains invalid characters" >&2

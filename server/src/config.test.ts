@@ -1,17 +1,19 @@
-import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
-import { writeFileSync, mkdtempSync, unlinkSync, rmdirSync } from 'node:fs';
-import path from 'node:path';
-import { tmpdir } from 'node:os';
-import { loadConfig, getProject } from './config.js';
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { writeFileSync, mkdtempSync, unlinkSync, rmdirSync } from "node:fs";
+import path from "node:path";
+import { tmpdir } from "node:os";
+import { loadConfig, getProject } from "./config.js";
 
 /**
  * loadConfig() searches for scaffold.config.json in cwd and parent.
  * We write a temp config file and run loadConfig() from that directory.
  */
-function loadConfigFromJson(json: Record<string, unknown>): ReturnType<typeof loadConfig> {
-  const dir = mkdtempSync(path.join(tmpdir(), 'config-test-'));
-  const configPath = path.join(dir, 'scaffold.config.json');
+function loadConfigFromJson(
+  json: Record<string, unknown>,
+): ReturnType<typeof loadConfig> {
+  const dir = mkdtempSync(path.join(tmpdir(), "config-test-"));
+  const configPath = path.join(dir, "scaffold.config.json");
   writeFileSync(configPath, JSON.stringify(json));
 
   const originalCwd = process.cwd();
@@ -20,27 +22,35 @@ function loadConfigFromJson(json: Record<string, unknown>): ReturnType<typeof lo
     return loadConfig();
   } finally {
     process.chdir(originalCwd);
-    try { unlinkSync(configPath); } catch {}
-    try { rmdirSync(dir); } catch {}
+    try {
+      unlinkSync(configPath);
+    } catch {}
+    try {
+      rmdirSync(dir);
+    } catch {}
   }
 }
 
 /** A minimal valid config object for tests to spread/override. */
 const validRaw = {
-  project: { name: 'Test', path: '/tmp/proj', uprojectFile: '/tmp/proj/T.uproject' },
-  engine: { path: '/tmp/engine', version: '5.4' },
-  build: { scriptPath: '/tmp/b.sh', testScriptPath: '/tmp/t.sh' },
-  server: { port: 9100, bareRepoPath: '/tmp/repo.git' },
+  project: {
+    name: "Test",
+    path: "/tmp/proj",
+    uprojectFile: "/tmp/proj/T.uproject",
+  },
+  engine: { path: "/tmp/engine", version: "5.4" },
+  build: { scriptPath: "/tmp/b.sh", testScriptPath: "/tmp/t.sh" },
+  server: { port: 9100, bareRepoPath: "/tmp/repo.git" },
 };
 
-describe('loadConfig() validation', () => {
-  it('loads a valid config successfully', () => {
+describe("loadConfig() validation", () => {
+  it("loads a valid config successfully", () => {
     const config = loadConfigFromJson(validRaw);
-    assert.equal(config.server.bareRepoPath, '/tmp/repo.git');
-    assert.equal(config.project.name, 'Test');
+    assert.equal(config.server.bareRepoPath, "/tmp/repo.git");
+    assert.equal(config.project.name, "Test");
   });
 
-  it('requires bareRepoPath — missing bareRepoPath throws', () => {
+  it("requires bareRepoPath — missing bareRepoPath throws", () => {
     const raw = {
       ...validRaw,
       server: { port: 9100 },
@@ -54,10 +64,10 @@ describe('loadConfig() validation', () => {
     );
   });
 
-  it('does not fall back from bareRepoRoot — bareRepoRoot without bareRepoPath still throws', () => {
+  it("does not fall back from bareRepoRoot — bareRepoRoot without bareRepoPath still throws", () => {
     const raw = {
       ...validRaw,
-      server: { port: 9100, bareRepoRoot: '/tmp/roots' },
+      server: { port: 9100, bareRepoRoot: "/tmp/roots" },
     };
     assert.throws(
       () => loadConfigFromJson(raw),
@@ -68,26 +78,26 @@ describe('loadConfig() validation', () => {
     );
   });
 
-  it('staging worktree validation passes when project.path is set (no stagingWorktreeRoot needed)', () => {
+  it("staging worktree validation passes when project.path is set (no stagingWorktreeRoot needed)", () => {
     // validRaw has project.path set and no stagingWorktreeRoot — should succeed
     const config = loadConfigFromJson(validRaw);
     assert.equal(config.server.stagingWorktreeRoot, undefined);
-    assert.equal(config.project.path, '/tmp/proj');
+    assert.equal(config.project.path, "/tmp/proj");
   });
 
-  it('staging worktree validation passes when stagingWorktreeRoot is set', () => {
+  it("staging worktree validation passes when stagingWorktreeRoot is set", () => {
     const raw = {
       ...validRaw,
-      server: { ...validRaw.server, stagingWorktreeRoot: '/tmp/staging' },
+      server: { ...validRaw.server, stagingWorktreeRoot: "/tmp/staging" },
     };
     const config = loadConfigFromJson(raw);
-    assert.equal(config.server.stagingWorktreeRoot, '/tmp/staging');
+    assert.equal(config.server.stagingWorktreeRoot, "/tmp/staging");
   });
 
-  it('staging worktree validation fails when neither stagingWorktreeRoot nor project.path is set', () => {
+  it("staging worktree validation fails when neither stagingWorktreeRoot nor project.path is set", () => {
     const raw = {
       ...validRaw,
-      project: { name: 'Test', path: '', uprojectFile: '' },
+      project: { name: "Test", path: "", uprojectFile: "" },
     };
     assert.throws(
       () => loadConfigFromJson(raw),
@@ -98,10 +108,10 @@ describe('loadConfig() validation', () => {
     );
   });
 
-  it('throws for malformed JSON in scaffold.config.json', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'config-test-'));
-    const configPath = path.join(dir, 'scaffold.config.json');
-    writeFileSync(configPath, '{ not valid json!!!');
+  it("throws for malformed JSON in scaffold.config.json", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "config-test-"));
+    const configPath = path.join(dir, "scaffold.config.json");
+    writeFileSync(configPath, "{ not valid json!!!");
 
     const originalCwd = process.cwd();
     try {
@@ -115,19 +125,26 @@ describe('loadConfig() validation', () => {
       );
     } finally {
       process.chdir(originalCwd);
-      try { unlinkSync(configPath); } catch {}
-      try { rmdirSync(dir); } catch {}
+      try {
+        unlinkSync(configPath);
+      } catch {}
+      try {
+        rmdirSync(dir);
+      } catch {}
     }
   });
 
-  it('stagingWorktreePath in raw input is not surfaced on the returned config', () => {
+  it("stagingWorktreePath in raw input is not surfaced on the returned config", () => {
     const raw = {
       ...validRaw,
-      server: { ...validRaw.server, stagingWorktreePath: '/tmp/old-style' },
+      server: { ...validRaw.server, stagingWorktreePath: "/tmp/old-style" },
     };
     const config = loadConfigFromJson(raw);
     // The returned type should not have stagingWorktreePath
-    assert.equal((config.server as Record<string, unknown>)['stagingWorktreePath'], undefined);
+    assert.equal(
+      (config.server as Record<string, unknown>)["stagingWorktreePath"],
+      undefined,
+    );
   });
 });
 
@@ -136,63 +153,69 @@ const multiProjectRaw = {
   server: { port: 9100 },
   projects: {
     alpha: {
-      name: 'Alpha',
-      path: '/tmp/alpha',
-      bareRepoPath: '/tmp/alpha.git',
-      engine: { path: '/tmp/engine', version: '5.4' },
+      name: "Alpha",
+      path: "/tmp/alpha",
+      bareRepoPath: "/tmp/alpha.git",
+      engine: { path: "/tmp/engine", version: "5.4" },
     },
     beta: {
-      name: 'Beta',
-      path: '/tmp/beta',
-      bareRepoPath: '/tmp/beta.git',
+      name: "Beta",
+      path: "/tmp/beta",
+      bareRepoPath: "/tmp/beta.git",
     },
   },
 };
 
-describe('multi-project config', () => {
-  it('resolves two projects with correct fields', () => {
+describe("multi-project config", () => {
+  it("resolves two projects with correct fields", () => {
     const config = loadConfigFromJson(multiProjectRaw);
-    assert.ok(config.resolvedProjects['alpha']);
-    assert.ok(config.resolvedProjects['beta']);
-    assert.equal(config.resolvedProjects['alpha'].name, 'Alpha');
-    assert.equal(config.resolvedProjects['alpha'].path, '/tmp/alpha');
-    assert.equal(config.resolvedProjects['alpha'].bareRepoPath, '/tmp/alpha.git');
-    assert.deepEqual(config.resolvedProjects['alpha'].engine, { path: '/tmp/engine', version: '5.4' });
-    assert.equal(config.resolvedProjects['beta'].name, 'Beta');
-    assert.equal(config.resolvedProjects['beta'].path, '/tmp/beta');
-    assert.equal(config.resolvedProjects['beta'].bareRepoPath, '/tmp/beta.git');
+    assert.ok(config.resolvedProjects["alpha"]);
+    assert.ok(config.resolvedProjects["beta"]);
+    assert.equal(config.resolvedProjects["alpha"].name, "Alpha");
+    assert.equal(config.resolvedProjects["alpha"].path, "/tmp/alpha");
+    assert.equal(
+      config.resolvedProjects["alpha"].bareRepoPath,
+      "/tmp/alpha.git",
+    );
+    assert.deepEqual(config.resolvedProjects["alpha"].engine, {
+      path: "/tmp/engine",
+      version: "5.4",
+    });
+    assert.equal(config.resolvedProjects["beta"].name, "Beta");
+    assert.equal(config.resolvedProjects["beta"].path, "/tmp/beta");
+    assert.equal(config.resolvedProjects["beta"].bareRepoPath, "/tmp/beta.git");
   });
 
   it('legacy config synthesises resolvedProjects["default"] with all expected fields', () => {
     const raw = {
       ...validRaw,
-      server: { ...validRaw.server, stagingWorktreeRoot: '/tmp/staging' },
-      tasks: { seedBranch: 'plans' },
+      server: { ...validRaw.server, stagingWorktreeRoot: "/tmp/staging" },
+      tasks: { seedBranch: "plans" },
     };
     const config = loadConfigFromJson(raw);
-    const def = config.resolvedProjects['default'];
+    const def = config.resolvedProjects["default"];
     assert.ok(def);
-    assert.equal(def.name, 'Test');
-    assert.equal(def.path, '/tmp/proj');
-    assert.equal(def.bareRepoPath, '/tmp/repo.git');
-    assert.deepEqual(def.engine, { path: '/tmp/engine', version: '5.4' });
+    assert.equal(def.name, "Test");
+    assert.equal(def.path, "/tmp/proj");
+    assert.equal(def.bareRepoPath, "/tmp/repo.git");
+    assert.deepEqual(def.engine, { path: "/tmp/engine", version: "5.4" });
     assert.ok(def.build);
-    assert.equal(def.build?.scriptPath, '/tmp/b.sh');
-    assert.equal(def.seedBranch, 'plans');
-    assert.equal(def.stagingWorktreeRoot, '/tmp/staging');
+    assert.equal(def.build?.scriptPath, "/tmp/b.sh");
+    assert.equal(def.seedBranch, "plans");
+    assert.equal(def.stagingWorktreeRoot, "/tmp/staging");
   });
 
-  it('getProject returns the correct project by id', () => {
+  it("getProject returns the correct project by id", () => {
     const config = loadConfigFromJson(multiProjectRaw);
-    const alpha = getProject(config, 'alpha');
-    assert.equal(alpha.name, 'Alpha');
-    assert.equal(alpha.bareRepoPath, '/tmp/alpha.git');
+    const alpha = getProject(config, "alpha");
+    assert.equal(alpha.name, "Alpha");
+    assert.equal(alpha.bareRepoPath, "/tmp/alpha.git");
   });
 
-  it('getProject throws for unknown id', () => {
+  it("getProject throws for unknown id", () => {
     const config = loadConfigFromJson(multiProjectRaw);
     assert.throws(
-      () => getProject(config, 'unknown-id'),
+      () => getProject(config, "unknown-id"),
       (err: Error) => {
         assert.match(err.message, /Unknown project: "unknown-id"/);
         return true;
@@ -200,12 +223,16 @@ describe('multi-project config', () => {
     );
   });
 
-  it('throws when a multi-project entry is missing bareRepoPath', () => {
+  it("throws when a multi-project entry is missing bareRepoPath", () => {
     const raw = {
       server: { port: 9100 },
       projects: {
-        good: { name: 'Good', path: '/tmp/good', bareRepoPath: '/tmp/good.git' },
-        bad: { name: 'Bad', path: '/tmp/bad' },
+        good: {
+          name: "Good",
+          path: "/tmp/good",
+          bareRepoPath: "/tmp/good.git",
+        },
+        bad: { name: "Bad", path: "/tmp/bad" },
       },
     };
     assert.throws(
@@ -217,12 +244,16 @@ describe('multi-project config', () => {
     );
   });
 
-  it('throws when a multi-project entry is missing path', () => {
+  it("throws when a multi-project entry is missing path", () => {
     const raw = {
       server: { port: 9100 },
       projects: {
-        good: { name: 'Good', path: '/tmp/good', bareRepoPath: '/tmp/good.git' },
-        bad: { name: 'Bad', bareRepoPath: '/tmp/bad.git' },
+        good: {
+          name: "Good",
+          path: "/tmp/good",
+          bareRepoPath: "/tmp/good.git",
+        },
+        bad: { name: "Bad", bareRepoPath: "/tmp/bad.git" },
       },
     };
     assert.throws(
@@ -234,16 +265,20 @@ describe('multi-project config', () => {
     );
   });
 
-  it('throws when a multi-project entry has testScriptPath but no scriptPath', () => {
+  it("throws when a multi-project entry has testScriptPath but no scriptPath", () => {
     const raw = {
       server: { port: 9100 },
       projects: {
-        good: { name: 'Good', path: '/tmp/good', bareRepoPath: '/tmp/good.git' },
+        good: {
+          name: "Good",
+          path: "/tmp/good",
+          bareRepoPath: "/tmp/good.git",
+        },
         bad: {
-          name: 'Bad',
-          path: '/tmp/bad',
-          bareRepoPath: '/tmp/bad.git',
-          build: { testScriptPath: '/scripts/test.py' },
+          name: "Bad",
+          path: "/tmp/bad",
+          bareRepoPath: "/tmp/bad.git",
+          build: { testScriptPath: "/scripts/test.py" },
         },
       },
     };
@@ -256,12 +291,20 @@ describe('multi-project config', () => {
     );
   });
 
-  it('throws when a project ID contains invalid characters', () => {
+  it("throws when a project ID contains invalid characters", () => {
     const raw = {
       server: { port: 9100 },
       projects: {
-        'valid-id': { name: 'Good', path: '/tmp/good', bareRepoPath: '/tmp/good.git' },
-        'bad id!': { name: 'Bad', path: '/tmp/bad', bareRepoPath: '/tmp/bad.git' },
+        "valid-id": {
+          name: "Good",
+          path: "/tmp/good",
+          bareRepoPath: "/tmp/good.git",
+        },
+        "bad id!": {
+          name: "Bad",
+          path: "/tmp/bad",
+          bareRepoPath: "/tmp/bad.git",
+        },
       },
     };
     assert.throws(
@@ -273,20 +316,188 @@ describe('multi-project config', () => {
     );
   });
 
-  it('ignores legacy fields when explicit projects block is present', () => {
+  it("parses a valid agentRoles block on a project", () => {
+    const raw = {
+      server: { port: 9100 },
+      projects: {
+        alpha: {
+          name: "Alpha",
+          path: "/tmp/alpha",
+          bareRepoPath: "/tmp/alpha.git",
+          agentRoles: {
+            engineer: "container-implementer-ue",
+            arbitrator: "container-arbitrator-ue",
+            reviewers: {
+              safety: "container-safety-reviewer-ue",
+              correctness: "container-reviewer-ue",
+            },
+          },
+        },
+      },
+    };
+    const config = loadConfigFromJson(raw);
+    const alpha = config.resolvedProjects["alpha"];
+    assert.deepEqual(alpha.agentRoles, {
+      engineer: "container-implementer-ue",
+      arbitrator: "container-arbitrator-ue",
+      reviewers: {
+        safety: "container-safety-reviewer-ue",
+        correctness: "container-reviewer-ue",
+      },
+    });
+  });
+
+  it("leaves agentRoles undefined when not configured", () => {
+    const config = loadConfigFromJson(multiProjectRaw);
+    assert.equal(config.resolvedProjects["alpha"].agentRoles, undefined);
+    assert.equal(config.resolvedProjects["beta"].agentRoles, undefined);
+  });
+
+  it("throws when agentRoles is missing engineer", () => {
+    const raw = {
+      server: { port: 9100 },
+      projects: {
+        alpha: {
+          name: "Alpha",
+          path: "/tmp/alpha",
+          bareRepoPath: "/tmp/alpha.git",
+          agentRoles: {
+            arbitrator: "container-arbitrator-ue",
+            reviewers: { safety: "container-safety-reviewer-ue" },
+          },
+        },
+      },
+    };
+    assert.throws(
+      () => loadConfigFromJson(raw),
+      (err: Error) => {
+        assert.match(err.message, /agentRoles for project 'alpha'/);
+        assert.match(err.message, /'engineer'/);
+        return true;
+      },
+    );
+  });
+
+  it("throws when agentRoles.reviewers is empty", () => {
+    const raw = {
+      server: { port: 9100 },
+      projects: {
+        alpha: {
+          name: "Alpha",
+          path: "/tmp/alpha",
+          bareRepoPath: "/tmp/alpha.git",
+          agentRoles: {
+            engineer: "container-implementer-ue",
+            arbitrator: "container-arbitrator-ue",
+            reviewers: {},
+          },
+        },
+      },
+    };
+    assert.throws(
+      () => loadConfigFromJson(raw),
+      (err: Error) => {
+        assert.match(err.message, /agentRoles for project 'alpha'/);
+        assert.match(err.message, /reviewers map must have at least one entry/);
+        return true;
+      },
+    );
+  });
+
+  it("throws when a reviewer key has uppercase letters", () => {
+    const raw = {
+      server: { port: 9100 },
+      projects: {
+        alpha: {
+          name: "Alpha",
+          path: "/tmp/alpha",
+          bareRepoPath: "/tmp/alpha.git",
+          agentRoles: {
+            engineer: "container-implementer-ue",
+            arbitrator: "container-arbitrator-ue",
+            reviewers: { Safety: "container-safety-reviewer-ue" },
+          },
+        },
+      },
+    };
+    assert.throws(
+      () => loadConfigFromJson(raw),
+      (err: Error) => {
+        assert.match(err.message, /agentRoles for project 'alpha'/);
+        assert.match(err.message, /reviewer key 'Safety'/);
+        return true;
+      },
+    );
+  });
+
+  it("throws when a reviewer value contains disallowed characters", () => {
+    const raw = {
+      server: { port: 9100 },
+      projects: {
+        alpha: {
+          name: "Alpha",
+          path: "/tmp/alpha",
+          bareRepoPath: "/tmp/alpha.git",
+          agentRoles: {
+            engineer: "container-implementer-ue",
+            arbitrator: "container-arbitrator-ue",
+            reviewers: { safety: "has spaces" },
+          },
+        },
+      },
+    };
+    assert.throws(
+      () => loadConfigFromJson(raw),
+      (err: Error) => {
+        assert.match(err.message, /agentRoles for project 'alpha'/);
+        assert.match(err.message, /reviewer value 'has spaces'/);
+        return true;
+      },
+    );
+  });
+
+  it("throws when agentRoles has an unknown top-level key", () => {
+    const raw = {
+      server: { port: 9100 },
+      projects: {
+        alpha: {
+          name: "Alpha",
+          path: "/tmp/alpha",
+          bareRepoPath: "/tmp/alpha.git",
+          agentRoles: {
+            engineer: "container-implementer-ue",
+            arbitrator: "container-arbitrator-ue",
+            reviewers: { safety: "container-safety-reviewer-ue" },
+            reviwers: { typo: "oops" },
+          },
+        },
+      },
+    };
+    assert.throws(
+      () => loadConfigFromJson(raw),
+      (err: Error) => {
+        assert.match(err.message, /agentRoles for project 'alpha'/);
+        assert.match(err.message, /unknown top-level key 'reviwers'/);
+        assert.match(err.message, /did you mean 'reviewers'/);
+        return true;
+      },
+    );
+  });
+
+  it("ignores legacy fields when explicit projects block is present", () => {
     const raw = {
       ...validRaw,
       projects: {
         alpha: {
-          name: 'Alpha',
-          path: '/tmp/alpha',
-          bareRepoPath: '/tmp/alpha.git',
+          name: "Alpha",
+          path: "/tmp/alpha",
+          bareRepoPath: "/tmp/alpha.git",
         },
       },
     };
     const config = loadConfigFromJson(raw);
     const ids = Object.keys(config.resolvedProjects);
-    assert.deepEqual(ids, ['alpha']);
-    assert.equal(config.resolvedProjects['default'], undefined);
+    assert.deepEqual(ids, ["alpha"]);
+    assert.equal(config.resolvedProjects["default"], undefined);
   });
 });

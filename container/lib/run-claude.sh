@@ -490,12 +490,13 @@ _run_claude() {
     local full_prompt="$1"
     local mode="$2"
 
-    # Daisy-chain role selection (Phase 4): when invoked from _run_role_session,
+    # Daisy-chain role selection: when invoked from _run_role_session,
     # DAISY_CHAIN_ROLE and DAISY_CHAIN_ROLES_FILE are set. We look up the
     # agent-definition basename for the requested role from the resolved roles
-    # JSON. Falls back to the container default if the role is unmapped — the
-    # daisy-chain itself enforces that unmapped reviewer/arbitrator slots are
-    # stubbed out, so this fallback only fires for engineer in early phases.
+    # JSON (project default from scaffold.config.json, shallow-merged with the
+    # per-task agent_roles_override on the row). Falls back to the container's
+    # AGENT_TYPE env var only as a last-resort degraded mode — operators who
+    # have not configured agentRoles for their project at all.
     local effective_agent_type=""
     if [ -n "${DAISY_CHAIN_ROLE:-}" ] && [ -n "${DAISY_CHAIN_ROLES_FILE:-}" ] && [ -f "$DAISY_CHAIN_ROLES_FILE" ]; then
         local role_agent
@@ -506,9 +507,8 @@ _run_claude() {
         fi
     fi
 
-    # Per-task agent type override beats default; daisy-chain role wins above both
     if [ -z "$effective_agent_type" ]; then
-        effective_agent_type="${CURRENT_TASK_AGENT_TYPE:-$AGENT_TYPE}"
+        effective_agent_type="$AGENT_TYPE"
     fi
 
     # Defence-in-depth: validate effective_agent_type against allowlist
@@ -606,6 +606,18 @@ _run_claude() {
 
     echo "Starting Claude Code (agent: ${effective_agent_type:-default}, mode: ${mode})..."
     echo ""
+
+    # Every FSM-state launch fetches the agent definition from the server before
+    # invoking claude. Mirrors the reviewer-fanout and arbitrator-dispatch
+    # pattern: the server is the single source of truth for compiled agent
+    # markdown; the container's local cache is a transient mirror. If the lead
+    # agent is already cached, _ensure_agent_type is a fast no-op. If the
+    # server is unreachable AND the lead is not cached, claude will fail to
+    # find the --agent definition and exit non-zero, which routes to
+    # role_session_no_op via the daisy-chain's unchanged-status detector.
+    if [ -n "$effective_agent_type" ]; then
+        _ensure_agent_type "$effective_agent_type" >/dev/null 2>&1 || true
+    fi
 
     _post_status "working"
 

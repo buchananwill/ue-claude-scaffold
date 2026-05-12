@@ -1,4 +1,4 @@
-import type { TaskDbRow } from '../queries/tasks-core.js';
+import type { TaskDbRow } from "../queries/tasks-core.js";
 
 export interface TaskRow {
   id: number;
@@ -15,7 +15,6 @@ export interface TaskRow {
   result: unknown;
   basePriority: number;
   progressLog: string | null;
-  agentTypeOverride: string | null;
   /**
    * Per-task FSM agent-role wiring override. jsonb in the schema; the route
    * layer ships it to the container so pump-loop.sh's _resolve_roles_for_task
@@ -49,7 +48,7 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     id: row.id,
     projectId: row.projectId,
     title: row.title,
-    description: row.description ?? '',
+    description: row.description ?? "",
     sourcePath: row.sourcePath,
     acceptanceCriteria: row.acceptanceCriteria,
     status: row.status,
@@ -61,7 +60,6 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     result: row.result ?? null, // jsonb column — Drizzle returns unknown; parseResult handles coercion
     basePriority: row.basePriority,
     progressLog: row.progressLog,
-    agentTypeOverride: row.agentTypeOverride,
     agentRolesOverride: row.agentRolesOverride ?? null,
     reviewCycleCount: row.reviewCycleCount ?? 0,
     reviewCycleBudget: row.reviewCycleBudget ?? 5,
@@ -71,7 +69,7 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     arbitrationAddendumPath: row.arbitrationAddendumPath ?? null,
     failureReason: row.failureReason ?? null,
     failureDetail: row.failureDetail ?? null,
-    buildStatus: row.buildStatus ?? 'pending',
+    buildStatus: row.buildStatus ?? "pending",
     commitSha: row.commitSha ?? null,
     createdAt: row.createdAt,
   };
@@ -79,18 +77,28 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
 
 function parseResult(raw: unknown): unknown {
   if (raw === null || raw === undefined) return null;
-  if (typeof raw === 'object') return raw; // Drizzle returns jsonb as objects
-  if (typeof raw === 'string') {
-    try { return JSON.parse(raw); } catch { return null; }
+  if (typeof raw === "object") return raw; // Drizzle returns jsonb as objects
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }
   return null;
 }
 
-export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[], blockedBy?: number[], blockReasons?: string[]) {
+export function formatTask(
+  row: TaskRow,
+  files?: string[],
+  dependsOn?: number[],
+  blockedBy?: number[],
+  blockReasons?: string[],
+) {
   const result = parseResult(row.result);
   const completedBy = (() => {
-    if (!result || typeof result !== 'object') return null;
-    return (result as Record<string, unknown>).agent as string ?? null;
+    if (!result || typeof result !== "object") return null;
+    return ((result as Record<string, unknown>).agent as string) ?? null;
   })();
 
   return {
@@ -112,7 +120,6 @@ export function formatTask(row: TaskRow, files?: string[], dependsOn?: number[],
     result,
     completedBy,
     progressLog: row.progressLog,
-    agentTypeOverride: row.agentTypeOverride,
     agentRolesOverride: row.agentRolesOverride ?? null,
     reviewCycleCount: row.reviewCycleCount,
     reviewCycleBudget: row.reviewCycleBudget,
