@@ -29,6 +29,9 @@ services:
       - BRIEF_PATH=${BRIEF_PATH:-}
       - AGENT_MODE=${AGENT_MODE:-single}
       - DIRECT_PROMPT=${DIRECT_PROMPT:-}
+      # Curated plugin allowlist; the entrypoint stages just these subdirs of
+      # /host-plugins into /home/claude/.claude/plugins. Empty = no plugins.
+      - CLAUDE_PLUGINS_ALLOW=${CLAUDE_PLUGINS_ALLOW:-}
     volumes:
       # Required: bare repo for git operations
       - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git
@@ -36,6 +39,10 @@ services:
       - ${LOGS_PATH:-./logs}:/logs
       # Claude authentication (OAuth credentials file)
       - ${CLAUDE_CREDENTIALS_PATH:?Set CLAUDE_CREDENTIALS_PATH in .env}:/home/claude/.claude/.credentials.json:ro
+      # Host plugins directory (Skills, sub-agents, MCP servers installed via
+      # `claude plugin install`). Mounted read-only; the entrypoint filters via
+      # CLAUDE_PLUGINS_ALLOW so the container only stages an explicit subset.
+      - ${CLAUDE_PLUGINS_PATH:?Set CLAUDE_PLUGINS_PATH in .env}:/host-plugins:ro
       # Agent definitions (compiled by launch.sh)
       - ${AGENTS_PATH:-../agents}:/staged-agents:ro
     extra_hosts:

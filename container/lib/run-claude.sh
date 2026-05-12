@@ -262,8 +262,12 @@ File ownership for this task: ${CURRENT_TASK_FILES:-none specified}."
 
     transitions="## Transition contract
 
-You are responsible for posting your own FSM transitions. The wrapper does not
-post /complete or /fail on your behalf.
+The container daisy-chain has already moved this task into the \`engineering\`
+state before launching you — you do not (and must not) post a
+claimed→engineering or revising→engineering transition yourself.
+
+You are responsible for posting the EXIT transition out of \`engineering\`.
+The wrapper does not post \`built\`, \`failed\`, or \`arbitrating\` on your behalf.
 
 On a clean build + commit + debrief:
   POST \${SERVER_URL}/tasks/${task_id}/transition

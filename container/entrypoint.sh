@@ -31,6 +31,9 @@ source "${SCRIPT_DIR}/lib/agent-fetch.sh"
 # shellcheck source=lib/pump-loop.sh
 source "${SCRIPT_DIR}/lib/pump-loop.sh"
 
+# shellcheck source=lib/stage-plugins.sh
+source "${SCRIPT_DIR}/lib/stage-plugins.sh"
+
 # ── Workspace setup ────────────────────────────────────────────────────────
 _setup_workspace
 _snapshot_agents
@@ -45,6 +48,7 @@ trap _shutdown EXIT
 
 # ── Post-registration setup ────────────────────────────────────────────────
 _setup_mcp_config
+_stage_claude_plugins
 _print_diagnostics
 _apply_readonly_lockdown
 

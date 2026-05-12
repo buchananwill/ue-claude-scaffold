@@ -56,6 +56,25 @@ _post_role_session_no_op() {
         --max-time 10 >/dev/null 2>&1 || true
 }
 
+# Post the wrapper-owned entry transition for the engineer role:
+# `claimed → engineering` or `revising → engineering`. Mirrors the
+# reviewer-fanout's `built → reviewing` entry transition in
+# reviewer-fanout.sh, keeping the same contract: state-entry transitions are
+# wrapper-owned; state-exit transitions are role-session-owned. The engineer's
+# eventual `→ built` POST requires current to be `engineering`, so this entry
+# transition must happen before launching the engineer session. Errors are
+# intentionally non-fatal — the daisy-chain's role_session_no_op detector will
+# catch a missing transition next iteration.
+_post_engineer_entry_transition() {
+    local task_id="$1"
+    local body
+    body=$(jq -nc '{to: "engineering"}')
+    _curl_server -s -X POST "${SERVER_URL}/tasks/${task_id}/transition" \
+        -H "Content-Type: application/json" \
+        -d "$body" \
+        --max-time 10 >/dev/null 2>&1 || true
+}
+
 # Fetch the agent's current status from the coordination server. Echoes the
 # parsed status string on stdout, or "unknown" on any error. Both the claim-
 # loop stop-detection probe and the post-iteration pause/stop probe go through
@@ -213,6 +232,20 @@ _run_daisy_chain() {
         # stubbed here.
 
         echo "Daisy-chain cycle ${cycle}: status='${status}' → role='${role}'"
+
+        # Wrapper-owned entry transition for the engineer role. The server's
+        # FSM allows `claimed → engineering` and `revising → engineering` only;
+        # the engineer's eventual `→ built` POST would 400 if current is still
+        # `claimed` or `revising`. Mirrors reviewer-fanout's built→reviewing
+        # entry transition. After the POST we re-read the task so last_status
+        # reflects the post-entry state — otherwise role_session_no_op would
+        # be masked by the wrapper's own status change.
+        if [ "$role" = "engineer" ] && { [ "$status" = "claimed" ] || [ "$status" = "revising" ]; }; then
+            echo "Daisy-chain: posting wrapper entry transition '${status}' → 'engineering' for task ${task_id}"
+            _post_engineer_entry_transition "$task_id"
+            task_json=$(_curl_server -sf "${SERVER_URL}/tasks/${task_id}" --max-time 10 2>/dev/null) || task_json=""
+            status=$(echo "$task_json" | jq -r '.status // empty')
+        fi
         last_status="$status"
 
         local sess_exit
