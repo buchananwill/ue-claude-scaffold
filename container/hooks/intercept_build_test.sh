@@ -84,19 +84,38 @@ git push origin "HEAD:${WORK_BRANCH}" --force
 
 if echo "$COMMAND" | grep -qE "${TEST_SCRIPT_NAME}"; then
     OPERATION="test"
-    # Extract test filters from the command
-    FILTERS=$(echo "$COMMAND" | sed -E "s/.*${TEST_SCRIPT_NAME}\s*//" | tr ' ' '\n' | grep -v '^--' | tr '\n' ' ' | xargs)
 
-    if [ -z "$FILTERS" ]; then
-        FILTERS="${DEFAULT_TEST_FILTERS:-}"
+    # Split args after the test script name into flags (leading '-') and positional filters.
+    FLAGS=()
+    FILTERS=()
+    TAIL=$(echo "$COMMAND" | sed -E "s/.*${TEST_SCRIPT_NAME}[[:space:]]*//")
+    # shellcheck disable=SC2206
+    TOKENS=( $TAIL )
+    for tok in "${TOKENS[@]+"${TOKENS[@]}"}"; do
+        if [[ "$tok" == -* ]]; then
+            FLAGS+=("$tok")
+        else
+            FILTERS+=("$tok")
+        fi
+    done
+
+    if [ ${#FILTERS[@]} -eq 0 ] && [ -n "${DEFAULT_TEST_FILTERS:-}" ]; then
+        # shellcheck disable=SC2206
+        FILTERS=( ${DEFAULT_TEST_FILTERS} )
     fi
 
-    # Build JSON payload
-    if [ -z "$FILTERS" ]; then
-        REQUEST_BODY='{"filters": []}'
+    if [ ${#FLAGS[@]} -eq 0 ]; then
+        FLAGS_JSON='[]'
     else
-        REQUEST_BODY=$(echo "$FILTERS" | tr ' ' '\n' | jq -R . | jq -s '{ filters: . }')
+        FLAGS_JSON=$(printf '%s\n' "${FLAGS[@]}" | jq -R . | jq -s .)
     fi
+    if [ ${#FILTERS[@]} -eq 0 ]; then
+        FILTERS_JSON='[]'
+    else
+        FILTERS_JSON=$(printf '%s\n' "${FILTERS[@]}" | jq -R . | jq -s .)
+    fi
+    REQUEST_BODY=$(jq -n --argjson flags "$FLAGS_JSON" --argjson filters "$FILTERS_JSON" \
+        '{flags: $flags, filters: $filters}')
 else
     OPERATION="build"
     CLEAN_FLAG="false"

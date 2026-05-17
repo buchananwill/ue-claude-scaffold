@@ -118,6 +118,15 @@ function resolveScript(
   return { command: scriptPath, scriptArgs: extraArgs };
 }
 
+export function buildTestScriptArgs(
+  flags: string[] | undefined,
+  filters: string[] | undefined,
+  defaultFilters: string[],
+): string[] {
+  const resolvedFilters = filters?.length ? filters : defaultFilters;
+  return [...(flags ?? []), ...resolvedFilters];
+}
+
 const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   const config = opts.config;
 
@@ -222,14 +231,28 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
 
     const addModResult = await runCommand(
       "git",
-      ["diff", "--name-only", "--no-renames", "--diff-filter=AMCR", baseRef, "FETCH_HEAD"],
+      [
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "--diff-filter=AMCR",
+        baseRef,
+        "FETCH_HEAD",
+      ],
       worktreePath,
       15000,
     );
 
     const delResult = await runCommand(
       "git",
-      ["diff", "--name-only", "--no-renames", "--diff-filter=D", baseRef, "FETCH_HEAD"],
+      [
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "--diff-filter=D",
+        baseRef,
+        "FETCH_HEAD",
+      ],
       worktreePath,
       15000,
     );
@@ -421,7 +444,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   });
 
   fastify.post<{
-    Body: { filters?: string[] };
+    Body: { filters?: string[]; flags?: string[] };
   }>("/test", async (request) => {
     const agentName = request.headers["x-agent-name"] as string | undefined;
     const agentId = request.headers["x-agent-id"] as string | undefined;
@@ -433,13 +456,16 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     if (!prep.ok) return prep.result;
     const { project, projectId, cwd } = prep;
 
-    const filters = request.body.filters?.length
-      ? request.body.filters
-      : config.build.defaultTestFilters;
-
     const scriptPath =
       project.build?.testScriptPath ?? config.build.testScriptPath;
-    const { command, scriptArgs } = resolveScript(scriptPath, filters);
+    const { command, scriptArgs } = resolveScript(
+      scriptPath,
+      buildTestScriptArgs(
+        request.body.flags,
+        request.body.filters,
+        config.build.defaultTestFilters,
+      ),
+    );
 
     const testTimeoutMs =
       project.build?.testTimeoutMs ?? config.build.testTimeoutMs;

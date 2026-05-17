@@ -38,9 +38,11 @@ Existing surface to build on, **not** replace:
 
 Out of scope:
 
-- Migrating historical engineer debriefs that currently live as markdown files on agent branches (referenced by
-  `tasks.latestReviewPath`). The new `task_debriefs` table is forward-only; the file-pointer column stays for legacy
-  reads.
+- Cleaning up `tasks.latestReviewPath` and `tasks.arbitrationAddendumPath`. Both are session-scoped working state
+  living in the durable row — example value `/workspace/.scratch/reviews/6/cycle-0/consolidated.md` dies with the
+  container that wrote it. Neither is a substantive durable artifact today, and arbitration hasn't fired in production
+  yet so the addendum column is empty. Their cleanup is a separate concern from this plan; for that reason they are
+  also intentionally absent from the operator override surface in Phase 5 and Phase 8.
 - Per-role permission control on the override endpoint. The dashboard already runs unauthenticated against a localhost
   server (see [`CLAUDE.md`](../CLAUDE.md) — "designed to be accessed only by local Docker containers and the operator's
   dashboard"). Any operator with dashboard access can override.
@@ -76,6 +78,7 @@ export const taskDebriefs = pgTable(
         role: text("role").notNull(),
         emittedOnTransition: text("emitted_on_transition").notNull(),
         markdown: text("markdown").notNull(),
+        idempotencyKey: text("idempotency_key"),
         postedAt: timestamp("posted_at", {withTimezone: true})
             .notNull()
             .defaultNow(),
@@ -90,6 +93,9 @@ export const taskDebriefs = pgTable(
             sql`${table.emittedOnTransition} IN ('built','arbitrating','failed','revising','completed')`,
         ),
         index("idx_task_debriefs_task_cycle").on(table.taskId, table.cycle),
+        uniqueIndex("uniq_task_debriefs_task_idempotency")
+            .on(table.taskId, table.idempotencyKey)
+            .where(sql`${table.idempotencyKey} IS NOT NULL`),
     ],
 );
 
@@ -145,20 +151,32 @@ The `task_state_changes_override_reason_check` is the load-bearing audit invaria
 a reason is a corruption — the operator must explain *why* they bypassed the FSM. Organic transitions (
 `is_override = false`) can have a NULL reason.
 
-The `role` enum on `task_debriefs` includes `arbitrator` for symmetry — the arbitrator emits an addendum that today
-lives at `tasks.arbitrationAddendumPath`. Phase 6 only wires the engineer path; the arbitrator path is reserved for
-future work but the CHECK admits it.
+The `role` enum on `task_debriefs` includes `arbitrator` for symmetry; Phase 6 only wires the engineer path. The
+arbitrator's structured ruling already lands as `arbitrationRuns.rulingMarkdown`, so an arbitrator debrief row is
+reserved for future process-level reflection rather than wired here.
+
+The `idempotency_key` column plus the partial unique index `uniq_task_debriefs_task_idempotency` is the migration
+hinge for [the future engineer-direct-post flow](#future-direction--engineer-posts-debriefs-directly). When a client
+supplies an `Idempotency-Key` header, the server upserts on `(task_id, idempotency_key)` — duplicate posts (from both
+the container wrapper and the engineer agent during a mixed-mode rollout) collapse to one row. When the header is
+absent, the column is NULL and the partial index ignores the row, so legacy / future unkeyed inserts still work as a
+plain insert. The column is nullable because the safety net (Phase 2 endpoint also accepting an unkeyed call) and
+forward-compatibility (a future caller that doesn't yet know the key shape) both want the relaxed write path.
 
 **Work:**
 
 - Add the two table definitions in [`server/src/schema/tables.ts`](../server/src/schema/tables.ts) following the
   existing import/style of `reviewRuns`, `arbitrationRuns`, and `reviewFindings`.
 - Generate the migration with `npx drizzle-kit generate` (writes `server/drizzle/0010_<random_name>.sql`). Inspect the
-  generated SQL: the CHECK names must match what's declared above. Hand-rename the migration file if drizzle-kit picks a
-  poor slug — `0010_task_debriefs_and_state_changes.sql` is the target.
+  generated SQL: the CHECK names must match what's declared above; the `uniq_task_debriefs_task_idempotency` partial
+  unique index must include the `WHERE idempotency_key IS NOT NULL` predicate (drizzle-kit's partial-index emission has
+  been imperfect in older versions — if the predicate is missing, hand-edit the generated SQL). Hand-rename the
+  migration file if drizzle-kit picks a poor slug — `0010_task_debriefs_and_state_changes.sql` is the target.
 - Add a `tables.test.ts` (or extend an existing schema smoke test) that asserts: each CHECK rejects an out-of-enum value
   with the expected constraint name; the `task_state_changes_override_reason_check` rejects
-  `(is_override=true, reason=null)` and accepts `(is_override=true, reason='unstuck arbitration')`.
+  `(is_override=true, reason=null)` and accepts `(is_override=true, reason='unstuck arbitration')`; the partial unique
+  index `uniq_task_debriefs_task_idempotency` rejects a second insert with the same `(task_id, idempotency_key)` and
+  admits two inserts with `idempotency_key=NULL` for the same task.
 
 **Verification:**
 
@@ -186,9 +204,15 @@ export interface TaskDebriefRow {
     role: "engineer" | "arbitrator";
     emittedOnTransition: string;
     markdown: string;
+    idempotencyKey: string | null;
     postedAt: Date;
 }
 
+/**
+ * Insert a debrief. When `idempotencyKey` is supplied and a row already exists
+ * for `(taskId, idempotencyKey)`, returns the existing row with `deduped: true`
+ * and performs no write. When `idempotencyKey` is absent, always inserts.
+ */
 export async function insertDebrief(
     db: DrizzleDb | DbOrTx,
     args: {
@@ -197,8 +221,9 @@ export async function insertDebrief(
         role: "engineer" | "arbitrator";
         emittedOnTransition: string;
         markdown: string;
+        idempotencyKey?: string;
     },
-): Promise<TaskDebriefRow>;
+): Promise<{row: TaskDebriefRow; deduped: boolean}>;
 
 export async function listForTask(
     db: DrizzleDb,
@@ -214,7 +239,11 @@ New file [`server/src/routes/task-debriefs.ts`](../server/src/routes/task-debrie
 - `POST /tasks/:id/debriefs` — body
   `{ cycle: number, role: 'engineer' | 'arbitrator', emittedOnTransition: string, markdown: string }`. Validates: task
   exists; `projectId` matches header; cycle is a non-negative integer; `role` is in the enum; `emittedOnTransition` is
-  in the enum from the CHECK; markdown is a non-empty string ≤ 1 MiB. Returns the inserted row.
+  in the enum from the CHECK; markdown is a non-empty string ≤ 1 MiB. The endpoint also reads the optional
+  `Idempotency-Key` HTTP header (when present, value ≤ 256 chars, matches `/^[A-Za-z0-9._-]+$/`) and passes it through
+  to `insertDebrief`. Response shape: `{ row: TaskDebriefRow, deduped: boolean }`. A deduped hit returns 200 with
+  `deduped: true` and the existing row — never 409, because the caller's intent (a debrief for this attempt exists)
+  has already been satisfied.
 - `GET /tasks/:id/debriefs` — returns `{ debriefs: TaskDebriefRow[] }`. 404 if task not found in the request's project.
 
 The route is registered alongside the other task plugins inside [
@@ -231,9 +260,11 @@ are unbounded today — flag this as a follow-up, but do not introduce a cap on 
 - Register the plugin in the same place that registers `reviews.ts` and `arbitrations.ts` (grep for
   `import reviews from`).
 - Write [`server/src/routes/task-debriefs.test.ts`](../server/src/routes/task-debriefs.test.ts) covering: insert success
-  returns 200 + row; missing/oversized markdown returns 400; unknown task or wrong project returns 404; out-of-enum role
-  returns 400; list returns rows ordered by `(cycle, postedAt)`; CHECK constraint violation on `emittedOnTransition`
-  returns 400 (app-side) — never 500.
+  returns 200 + row + `deduped: false`; missing/oversized markdown returns 400; unknown task or wrong project returns
+  404; out-of-enum role returns 400; list returns rows ordered by `(cycle, postedAt)`; CHECK constraint violation on
+  `emittedOnTransition` returns 400 (app-side) — never 500; **idempotency** — two POSTs with the same
+  `Idempotency-Key` return the same row id, the second with `deduped: true`; two POSTs without the header insert two
+  separate rows for the same task; an `Idempotency-Key` value that violates the regex/length cap returns 400.
 
 **Verification:**
 
@@ -417,8 +448,6 @@ interface OverridePatchBody {
     failureReason?: FailureReason | null;
     failureDetail?: string | null;
     arbitrationPendingTrigger?: ArbitrationTrigger | null;
-    arbitrationAddendumPath?: string | null;
-    latestReviewPath?: string | null;
     reviewCycleCount?: number;          // ≥ 0
     reviewCycleBudget?: number;         // ≥ 1
     reviewerVerdicts?: Record<string, Verdict>; // each value in VERDICTS; keys must match REVIEWER_ROLE_RE
@@ -483,12 +512,21 @@ to a 422 with the constraint name in the message. This is the safety net for any
 
 <!-- PHASE-BOUNDARY -->
 
-## Phase 6: Container engineer-session emits debriefs on transition
+## Phase 6: Container engineer-session emits debriefs on transition (transitional bridge)
 
 **Outcome:** When the engineer role session completes and POSTs `engineering → built`, `engineering → arbitrating`, or
-`engineering → failed` to `/tasks/:id/transition`, it also POSTs the engineer's final summary as a debrief to
-`/tasks/:id/debriefs` so the dashboard can render the engineer's narrative alongside the structured FSM data. A debrief
-POST that fails (server unreachable, 4xx, etc.) does not block the transition — debriefs are best-effort.
+`engineering → failed` to `/tasks/:id/transition`, the dispatch wrapper also POSTs the engineer's final summary as a
+debrief to `/tasks/:id/debriefs` so the dashboard can render the engineer's narrative alongside the structured FSM
+data. A debrief POST that fails (server unreachable, 4xx, etc.) does not block the transition — debriefs are
+best-effort.
+
+This phase is a transitional bridge, not the steady state. The intended end state — described in
+[the future-direction section at the end of this plan](#future-direction--engineer-posts-debriefs-directly) — is that
+the engineer agent itself POSTs its debrief, with no wrapper involvement. The wrapper exists now because no current
+engineer agent definition instructs the engineer to call the endpoint; once that changes, this wrapper code is
+deleted. The `Idempotency-Key` header (see Phase 2) protects the cutover: during any window where both the wrapper
+and the engineer post, the second post collapses into the first via the partial unique index on
+`(task_id, idempotency_key)`.
 
 **Types / APIs:**
 
@@ -507,6 +545,11 @@ Phase 5 of the FSM plan):
 - Before POSTing the transition, POST the debrief:
     - Use the existing `inject-agent-header.sh`-augmented `curl` helper.
     - Endpoint: `POST $SERVER_URL/tasks/$TASK_ID/debriefs`.
+    - Header: `Idempotency-Key: <task_id>-<cycle>-<session_uuid>`, where `session_uuid` is the
+      `claudeCodeContainerSessions.id` UUID created when the dispatch wrapper inserted the role-session row before
+      spawning `claude -p`. The wrapper already owns this id; export it as `ROLE_SESSION_UUID` (or read it back from
+      whatever variable holds it today) and concatenate. Engineers in the future-direction flow will use the same
+      derivation, so the dedup matches across both posters.
     - Body (built with `jq` to a temp file per [
       `feedback_shell_json_encoding`](../C:/Users/thele/.claude/projects/D--coding-ue-claude-scaffold/memory/feedback_shell_json_encoding.md)):
       ```json
@@ -544,7 +587,8 @@ If instead the engineer POSTs `engineering → arbitrating`, no review cycle bum
   invocation.
 - Add a `_capture_engineer_summary` shell function that reads the transcript and emits the markdown to stdout (or a
   placeholder).
-- Add a `_post_engineer_debrief` shell function that builds the JSON body via `jq` into a temp file and POSTs it,
+- Add a `_post_engineer_debrief` shell function that builds the JSON body via `jq` into a temp file, derives the
+  `Idempotency-Key` from `${TASK_ID}-${CYCLE}-${ROLE_SESSION_UUID}`, and POSTs with `curl -H "Idempotency-Key: ..."`,
   swallowing errors.
 - Call `_post_engineer_debrief` immediately before the existing `/transition` POST.
 - The placement should be inside the existing exit-success branch only — if the engineer hit a non-recoverable error
@@ -727,9 +771,9 @@ props `{ task: Task }`. Layout:
     - **Arbitration pending trigger** — `<Select>` with the 2 values plus "(clear)".
     - **Claimed by agent** — `<Select>` populated from `useAgentNameMap()`, plus "(clear)".
     - **Review cycle count / budget** — paired `<NumberInput>` with `min={0}` (count) and `min={1}` (budget).
-    - **Reviewer verdicts** — read-only display of the current map (don't expose editing in the UI for v1; the rare case
-      where this needs reset is covered by `latestReviewPath` clear + status flip).
-    - **Latest review path / arbitration addendum path** — `<TextInput>` each, with their own "(clear)" checkboxes.
+    - **Reviewer verdicts** — read-only display of the current map (don't expose editing in the UI for v1; if a stuck
+      cycle needs the verdict slate wiped, the operator flips `status` to `built` — the container's next reviewing
+      entry re-enters with an empty verdict map per the existing built→reviewing reset in `handleTransition`).
 - Submit button: `<Button color="orange" disabled={...}>Apply override</Button>`. On click, opens a Mantine `Popover`
   with a "This bypasses the FSM. Continue?" message and confirm/cancel buttons (mirrors the [
   `AgentsPanel`](../dashboard/src/components/AgentsPanel.tsx) delete-confirm pattern).
@@ -772,3 +816,29 @@ eyeline once they've read the FSM state and decided the task needs intervention,
 - Manual smoke: stall a task in `failed` with `failureReason: 'engineer_build_failure'`; override with
   `status: 'engineering'`, clear `failureReason` and `failureDetail`, reason `'host build env fixed'`; confirm
   transition and audit row.
+
+---
+
+## Future direction — engineer posts debriefs directly
+
+Phase 6 is the transitional bridge: the dispatch wrapper extracts the engineer's final summary from the transcript
+and posts it. The intended end state is that the engineer agent itself calls `POST /tasks/:id/debriefs` as part of
+its session, removing the wrapper step entirely — the engineer's narrative never touches the container filesystem or
+the agent's git branch.
+
+The endpoint shape is already designed for this. `{cycle, role, emittedOnTransition, markdown}` are all values the
+engineer knows at session end: `role` from its own identity, `cycle` from the task row it's working on,
+`emittedOnTransition` from the transition it's about to POST, `markdown` from its own final summary. The
+`inject-agent-header.sh` hook sets `X-Agent-Name` / `X-Project-Id` on every outbound `curl` regardless of which
+process inside the container makes the call, so authentication and project scoping are unchanged.
+
+The `Idempotency-Key` header is the migration tool. Both the wrapper and the engineer derive the same key shape —
+`<task_id>-<cycle>-<role_session_uuid>` — so during a mixed-mode rollout where one project's engineer agent
+definition has been updated but another hasn't, duplicate posts collapse to a single row via the partial unique
+index on `(task_id, idempotency_key)` instead of accumulating.
+
+Retirement trigger: when [`dynamic-agents/container-implementer.md`](../dynamic-agents/container-implementer.md) (or
+the equivalent compiled engineer definition that the `engineer` role resolves to) instructs the engineer to POST its
+own debrief before transitioning, the wrapper's `_post_engineer_debrief` call in
+[`container/lib/engineer-dispatch.sh`](../container/lib/engineer-dispatch.sh) is deleted in a follow-up. No DB
+migration. No endpoint change. The wrapper code is the only thing that goes away.
