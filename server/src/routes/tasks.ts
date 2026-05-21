@@ -3,11 +3,8 @@ import { getDb } from "../drizzle-instance.js";
 import * as tasksCore from "../queries/tasks-core.js";
 import * as taskFilesQ from "../queries/task-files.js";
 import * as taskDepsQ from "../queries/task-deps.js";
-import type { ScaffoldConfig } from "../config.js";
-import { mergeIntoAgentBranches } from "../git-utils.js";
 import { AGENT_NAME_RE } from "../branch-naming.js";
 import { resolveAgent } from "./route-helpers.js";
-import { resolveProject } from "../resolve-project.js";
 import { validateSourcePath } from "../tasks-validation.js";
 import { formatTask, toTaskRow, type TaskRow } from "./tasks-types.js";
 import {
@@ -250,7 +247,6 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       acceptanceCriteria,
       priority,
       files,
-      targetAgents,
       dependsOn,
       dependsOnIndex,
     } = request.body;
@@ -264,13 +260,6 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
         "Mixed task protocol: a task must use EITHER sourcePath (plan mode) OR description/acceptanceCriteria (inline mode), not both. " +
           "Plan-mode tasks read their full specification from the sourcePath file. " +
           "Inline tasks carry their specification in description + acceptanceCriteria fields.",
-      );
-    }
-
-    // Validate targetAgents shape
-    if (targetAgents && targetAgents !== "*" && !Array.isArray(targetAgents)) {
-      return reply.badRequest(
-        'targetAgents must be an array of agent names or "*"',
       );
     }
 
@@ -322,49 +311,6 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
       }
     }
 
-    // Merge seed branch into agent branches if requested
-    let mergedAgents: string[] = [];
-    let failedMerges: Array<{ agent: string; reason: string }> = [];
-
-    if (targetAgents) {
-      // Validate agent names before resolving
-      const agentList =
-        targetAgents === "*" ? targetAgents : (targetAgents as string[]);
-      if (Array.isArray(agentList)) {
-        for (const agentName of agentList) {
-          if (typeof agentName !== "string" || !AGENT_NAME_RE.test(agentName)) {
-            return reply.badRequest(
-              `Invalid agent name in targetAgents: "${String(agentName).slice(0, 64)}"`,
-            );
-          }
-        }
-      }
-
-      let mergeProject;
-      try {
-        mergeProject = await resolveProject(config, db, projectId);
-      } catch {
-        return reply.badRequest(`Unknown project: "${projectId}"`);
-      }
-      const bareRepo = mergeProject.bareRepoPath;
-      if (!bareRepo) {
-        fastify.log.warn(
-          "targetAgents requested but bareRepoPath is not configured",
-        );
-      } else {
-        const mergeResult = await mergeIntoAgentBranches({
-          bareRepo,
-          projectId,
-          project: mergeProject,
-          targetAgents: agentList,
-          db,
-          log: fastify.log,
-        });
-        mergedAgents = mergeResult.mergedAgents;
-        failedMerges = mergeResult.failedMerges;
-      }
-    }
-
     const inserted = await tasksCore.insert(db, {
       title,
       description: description ?? "",
@@ -384,8 +330,6 @@ const tasksPlugin: FastifyPluginAsync<TasksOpts> = async (fastify, opts) => {
     return {
       id,
       ok: true,
-      ...(mergedAgents.length ? { mergedAgents } : {}),
-      ...(failedMerges.length ? { failedMerges } : {}),
     };
   });
 

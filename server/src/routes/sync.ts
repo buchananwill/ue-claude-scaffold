@@ -1,9 +1,9 @@
-import type { FastifyPluginAsync } from 'fastify';
-import type { ScaffoldConfig } from '../config.js';
-import { syncExteriorToBareRepo, mergeIntoAgentBranches } from '../git-utils.js';
-import { getDb } from '../drizzle-instance.js';
-import { seedBranchFor, AGENT_NAME_RE } from '../branch-naming.js';
-import { resolveProject } from '../resolve-project.js';
+import type { FastifyPluginAsync } from "fastify";
+import type { ScaffoldConfig } from "../config.js";
+import { syncExteriorToBareRepo } from "../git-utils.js";
+import { getDb } from "../drizzle-instance.js";
+import { seedBranchFor } from "../branch-naming.js";
+import { resolveProject } from "../resolve-project.js";
 
 interface SyncOpts {
   config: ScaffoldConfig;
@@ -12,13 +12,10 @@ interface SyncOpts {
 const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
   const { config } = opts;
 
-  // POST /sync/plans — merge committed state from exterior repo into bare repo's seed branch.
-  // The exterior repo (config.project.path) is the source of truth for plans.
-  // This endpoint fetches its HEAD into a temp branch, merges into docker/{projectId}/current-root (via seedBranchFor),
-  // and optionally propagates to agent branches.
-  fastify.post<{
-    Body: { targetAgents?: string[] | string };
-  }>('/sync/plans', async (request, reply) => {
+  // POST /sync/plans — force-set docker/<project>/current-root to the exterior
+  // repo's HEAD. Only the seed branch is mutated; agent branches are reset
+  // exclusively via `launch.sh --fresh`.
+  fastify.post("/sync/plans", async (request, reply) => {
     const projectId = request.projectId;
     let project;
     try {
@@ -29,17 +26,22 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
 
     const bareRepo = project.bareRepoPath;
     if (!bareRepo) {
-      return reply.unprocessableEntity('bareRepoPath is not configured');
+      return reply.unprocessableEntity("bareRepoPath is not configured");
     }
 
     const exteriorRepo = project.path;
     if (!exteriorRepo) {
-      return reply.unprocessableEntity('project.path is not configured');
+      return reply.unprocessableEntity("project.path is not configured");
     }
 
     const seedBranch = seedBranchFor(projectId, project);
 
-    const syncResult = syncExteriorToBareRepo(exteriorRepo, bareRepo, seedBranch, fastify.log);
+    const syncResult = syncExteriorToBareRepo(
+      exteriorRepo,
+      bareRepo,
+      seedBranch,
+      fastify.log,
+    );
 
     if (!syncResult.ok) {
       return reply.code(409).send({
@@ -48,41 +50,12 @@ const syncPlugin: FastifyPluginAsync<SyncOpts> = async (fastify, opts) => {
       });
     }
 
-    const { exteriorHead, commitSha } = syncResult;
-
-    // Optionally merge seed branch into agent branches
-    const { targetAgents } = request.body ?? {};
-    let mergedAgents: string[] = [];
-    let failedMerges: Array<{ agent: string; reason: string }> = [];
-
-    if (targetAgents) {
-      if (targetAgents !== '*' && !Array.isArray(targetAgents)) {
-        return reply.badRequest('targetAgents must be an array of agent names or "*"');
-      }
-
-      // Validate names if explicit array
-      if (Array.isArray(targetAgents)) {
-        for (const agentName of targetAgents) {
-          if (typeof agentName !== 'string' || !AGENT_NAME_RE.test(agentName)) {
-            return reply.badRequest(`Invalid agent name in targetAgents: "${String(agentName).slice(0, 64)}"`);
-          }
-        }
-      }
-
-      const db = getDb();
-      const mergeResult = await mergeIntoAgentBranches({
-        bareRepo, projectId, project, targetAgents, db, log: fastify.log,
-      });
-      mergedAgents = mergeResult.mergedAgents;
-      failedMerges = mergeResult.failedMerges;
-    }
-
+    const { exteriorHead, previousSeed } = syncResult;
     return {
       ok: true,
       exteriorHead,
-      ...(commitSha ? { commitSha } : { upToDate: true }),
-      ...(mergedAgents.length ? { mergedAgents } : {}),
-      ...(failedMerges.length ? { failedMerges } : {}),
+      previousSeed,
+      changed: previousSeed !== exteriorHead,
     };
   });
 };

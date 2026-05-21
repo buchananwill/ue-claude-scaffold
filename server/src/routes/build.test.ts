@@ -662,7 +662,7 @@ process.exit(0);
     const seedDir = path.join(tmpDir, "seed");
     const bareRepoDir = path.join(tmpDir, "bare.git");
 
-    // First build to establish refs/scaffold/last-sync
+    // First build to populate the staging worktree
     const res1 = await ctx.app.inject({
       method: "POST",
       url: "/build",

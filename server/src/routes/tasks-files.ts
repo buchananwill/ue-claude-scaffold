@@ -25,7 +25,6 @@ export interface TaskBody {
   acceptanceCriteria?: string;
   priority?: number;
   files?: string[];
-  targetAgents?: string[] | string;
   dependsOn?: number[];
   dependsOnIndex?: number[];
 }
@@ -37,12 +36,11 @@ export const taskBodyKeys: { [K in keyof Required<TaskBody>]: true } = {
   acceptanceCriteria: true,
   priority: true,
   files: true,
-  targetAgents: true,
   dependsOn: true,
   dependsOnIndex: true,
 };
 
-export type PatchBody = Omit<TaskBody, "targetAgents" | "dependsOnIndex">;
+export type PatchBody = Omit<TaskBody, "dependsOnIndex">;
 export const patchBodyKeys: { [K in keyof Required<PatchBody>]: true } = {
   title: true,
   description: true,

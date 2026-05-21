@@ -1,16 +1,27 @@
-import { useState, useMemo } from 'react';
-import { Grid, Card, Title, Stack, Button, Group, Pagination } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
-import { TasksPanel } from '../components/TasksPanel.js';
-import { AgentsPanel } from '../components/AgentsPanel.js';
-import { UbtLockCard } from '../components/UbtLockCard.js';
-import { useAgents } from '../hooks/useAgents.js';
-import { useTasks } from '../hooks/useTasks.js';
-import { useTaskFiltersUrlBacked, UNASSIGNED } from '../hooks/useTaskFilters.js';
-import { useUbtStatus } from '../hooks/useUbtStatus.js';
-import { apiPost } from '../api/client.js';
-import { useProject } from '../contexts/ProjectContext.js';
-import { toErrorMessage } from '../utils/toErrorMessage.js';
+import { useState, useMemo } from "react";
+import {
+  Grid,
+  Card,
+  Title,
+  Stack,
+  Button,
+  Group,
+  Pagination,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
+import { TasksPanel } from "../components/TasksPanel.js";
+import { AgentsPanel } from "../components/AgentsPanel.js";
+import { UbtLockCard } from "../components/UbtLockCard.js";
+import { useAgents } from "../hooks/useAgents.js";
+import { useTasks } from "../hooks/useTasks.js";
+import {
+  useTaskFiltersUrlBacked,
+  UNASSIGNED,
+} from "../hooks/useTaskFilters.js";
+import { useUbtStatus } from "../hooks/useUbtStatus.js";
+import { apiPost } from "../api/client.js";
+import { useProject } from "../contexts/ProjectContext.js";
+import { toErrorMessage } from "../utils/toErrorMessage.js";
 
 const PAGE_SIZE = 20;
 
@@ -18,7 +29,14 @@ export function OverviewPage() {
   const { projectId } = useProject();
   const agents = useAgents();
   const taskFilters = useTaskFiltersUrlBacked();
-  const { page, statusFilter, agentFilter, priorityFilter, sortColumn, sortDir } = taskFilters;
+  const {
+    page,
+    statusFilter,
+    agentFilter,
+    priorityFilter,
+    sortColumn,
+    sortDir,
+  } = taskFilters;
   const offset = (page - 1) * PAGE_SIZE;
   const tasks = useTasks({
     limit: PAGE_SIZE,
@@ -37,7 +55,9 @@ export function OverviewPage() {
   const availableAgents = useMemo(() => {
     const agentList = agents.data;
     if (!agentList) return [];
-    const names = agentList.map((a) => a.name).sort((a, b) => a.localeCompare(b));
+    const names = agentList
+      .map((a) => a.name)
+      .sort((a, b) => a.localeCompare(b));
     // Always include the unassigned sentinel so users can filter for unassigned tasks.
     // The UNASSIGNED sentinel is recognized by the server's GET /tasks handler
     // (see server/src/routes/tasks.ts).
@@ -55,23 +75,31 @@ export function OverviewPage() {
       const res = await apiPost<{
         ok: boolean;
         exteriorHead?: string;
-        commitSha?: string;
-        upToDate?: boolean;
+        previousSeed?: string | null;
+        changed?: boolean;
         reason?: string;
-      }>('/sync/plans', undefined, projectId);
+      }>("/sync/plans", undefined, projectId);
       if (res.ok) {
-        const detail = res.upToDate
-          ? 'Already up to date'
-          : `Synced to ${res.commitSha?.slice(0, 8)}`;
-        notifications.show({ title: 'Sync complete', message: detail, color: 'green' });
+        const detail = res.changed
+          ? `Synced to ${res.exteriorHead?.slice(0, 8)}`
+          : "Already up to date";
+        notifications.show({
+          title: "Sync complete",
+          message: detail,
+          color: "green",
+        });
       } else {
-        notifications.show({ title: 'Sync failed', message: res.reason ?? 'Unknown error', color: 'red' });
+        notifications.show({
+          title: "Sync failed",
+          message: res.reason ?? "Unknown error",
+          color: "red",
+        });
       }
     } catch (err) {
       notifications.show({
-        title: 'Sync failed',
+        title: "Sync failed",
         message: toErrorMessage(err),
-        color: 'red',
+        color: "red",
       });
     } finally {
       setSyncing(false);
@@ -102,7 +130,18 @@ export function OverviewPage() {
           />
         </Card>
         {/* zIndex: 1 layers above scrolled task rows; boxShadow fades into page background */}
-        <Group justify="center" py="xs" mt="xs" pos="sticky" bottom={0} bg="var(--mantine-color-body)" style={{ zIndex: 1, boxShadow: '0 -6px 9px 3px var(--mantine-color-body)' }}>
+        <Group
+          justify="center"
+          py="xs"
+          mt="xs"
+          pos="sticky"
+          bottom={0}
+          bg="var(--mantine-color-body)"
+          style={{
+            zIndex: 1,
+            boxShadow: "0 -6px 9px 3px var(--mantine-color-body)",
+          }}
+        >
           <Pagination
             total={Math.ceil((tasks.data?.total ?? 0) / PAGE_SIZE)}
             value={taskFilters.page ?? 1}
@@ -112,9 +151,11 @@ export function OverviewPage() {
         </Group>
       </Grid.Col>
       <Grid.Col span={4}>
-        <Stack gap="md" pos={'sticky'} top={64}>
+        <Stack gap="md" pos={"sticky"} top={64}>
           <Card withBorder p="sm">
-            <Title order={5} mb="sm">Agents</Title>
+            <Title order={5} mb="sm">
+              Agents
+            </Title>
             <AgentsPanel agents={agents.data ?? null} />
           </Card>
           <UbtLockCard status={ubt.data ?? null} />

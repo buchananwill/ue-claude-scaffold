@@ -83,7 +83,6 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `POST /build`, `POST /test` — sync worktree from bare repo, run host-side build/test scripts, return structured `{success, exit_code, output, stderr}`
    - `GET /builds` — query build history with filtering
    - `POST /agents/register`, `GET /agents`, `GET /agents/{name}`, `POST /agents/{name}/status`, `DELETE /agents/{name}`, `DELETE /agents` — agent lifecycle. `DELETE /agents/{name}` performs a single-phase soft-delete (sets `status = 'deleted'`); optional `sessionToken` query parameter returns 409 on mismatch
-   - `POST /agents/{name}/sync` — merge `docker/{project-id}/current-root` into `docker/{project-id}/{name}`; propagates plans to running containers
    - `POST /agents/{name}/branch` — branch setup operations (create, reset, verify agent branches)
    - `POST /agents/{name}/exit-classify` — classify agent exit codes and decide retry/stop/report
    - `POST /hooks/resolve` — stateless hook cascade resolution (intercept, guard, push, lint) from request body
@@ -96,7 +95,7 @@ Validate shell scripts: `bash -n launch.sh && bash -n setup.sh && bash -n status
    - `/teams/*` — design team registration and lifecycle
    - UBT lock (`GET /ubt/status`, `POST /ubt/acquire`, `POST /ubt/release`) — singleton mutex with priority queue and stale-lock sweeping (60s interval)
    - `/tasks/*` — task queue split across `tasks.ts`, `tasks-claim.ts`, `tasks-lifecycle.ts`, `tasks-replan.ts`, `tasks-ingest.ts` (claim/complete/fail/release/replan lifecycle for worker mode; helpers and shared types live in `tasks-files.ts` and `tasks-types.ts`). Tasks carry an optional `agentTypeOverride` column so a single pump container can run different agent definitions per task — validated by a CHECK constraint on `tasks.agent_type_override`, by `validateAgentTypeOverride` on every write route, by an `agentTypeOverride` filter on `GET /tasks` (with the `__default__` sentinel for "no override"), and by an allowlist regex in `container/lib/pump-loop.sh` before the container exports the agent type for the next iteration
-   - `POST /sync/plans` — merge committed state from the exterior repo into the bare repo's `docker/{project-id}/current-root` branch; optionally propagates to agent branches via `targetAgents` body param
+   - `POST /sync/plans` — force-set the bare repo's `docker/{project-id}/current-root` to the exterior repo's HEAD. Only the seed branch is mutated; agent branches are reset exclusively via `launch.sh --fresh`.
    - `GET /search` — full-text search across tasks, messages, agents
    - `GET /files` — file ownership registry (tracks which agent owns which files)
    - `/coalesce/*` — system-wide coordination: pause pump agents, wait for in-flight tasks, release file ownership
@@ -156,12 +155,11 @@ docker/{project-id}/agent-1         ← agent-1's working branch
 docker/{project-id}/agent-2         ← agent-2's working branch
 ```
 
-- The exterior repo is the source of truth for plans and design work. `POST /sync/plans` merges its committed state into `docker/{project-id}/current-root` in the bare repo.
+- The exterior repo is the source of truth for plans and design work. `POST /sync/plans` (the dashboard's "Sync Bare Repo" button) force-sets `docker/{project-id}/current-root` to exterior HEAD. No merge — the seed becomes byte-identical to exterior HEAD, even if exterior was rewound or rewritten.
 - Containers fork from `docker/{project-id}/current-root` on first launch and push to `docker/{project-id}/{agent-name}`.
-- `--fresh` resets the agent branch to `docker/{project-id}/current-root` HEAD.
-- Default (no `--fresh`) resumes from the agent's existing branch.
-- Plans must be committed in the exterior repo, then synced to the bare repo via `POST /sync/plans` (or the dashboard's "Sync Bare Repo" button) before tasks can reference them. The server validates plan `sourcePath` references against `docker/{project-id}/current-root` in the bare repo.
-- Plans on `docker/{project-id}/current-root` can be merged into agent branches via `POST /agents/{name}/sync`, `targetAgents` on `POST /tasks`, or `targetAgents` on `POST /sync/plans`.
+- `--fresh` force-resets the agent branch to `docker/{project-id}/current-root` HEAD (destructive — any unmerged agent commits are discarded). Default (no `--fresh`) resumes from the agent's existing branch.
+- The core operator flow is two-part: (1) Sync Bare Repo, (2) `launch.sh --fresh`. Plans committed in the exterior repo become visible to agents through that pair. No other path mutates branches in the bare repo.
+- Plans must be committed in the exterior repo before tasks can reference them. The server validates plan `sourcePath` references against `docker/{project-id}/current-root` in the bare repo (auto-syncing once on validation failure).
 - Scripts target a specific project via `--project <id>`. If `scaffold.config.json` has exactly one project (including a legacy single-project config synthesized as `default`), the flag can be omitted.
 
 ### Agent Definitions

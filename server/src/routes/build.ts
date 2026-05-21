@@ -175,25 +175,20 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     return project.bareRepoPath;
   }
 
-  const SYNC_REF = "refs/scaffold/last-sync";
-
-  async function updateSyncRef(worktreePath: string): Promise<void> {
-    const result = await runCommand(
-      "git",
-      ["update-ref", SYNC_REF, "FETCH_HEAD"],
-      worktreePath,
-      5000,
-    );
-    if (!result.success) {
-      throw new Error(`syncWorktree: git update-ref failed: ${result.stderr}`);
-    }
-  }
-
+  /**
+   * Reset the staging worktree to the bare repo's branch tip.
+   *
+   * Every call produces a coherent worktree: HEAD, index, and working tree all
+   * match FETCH_HEAD. Unignored untracked files (random test output, junk) are
+   * cleaned. Gitignored paths (Saved/, Intermediate/, Binaries/,
+   * DerivedDataCache/, plugin copies) are preserved so the next build reuses
+   * cached artifacts.
+   */
   async function syncWorktree(
     agentName: string | undefined,
     projectId: string,
     project: ProjectConfig,
-  ): Promise<"changed" | "unchanged"> {
+  ): Promise<void> {
     const worktreePath = getStagingWorktree(agentName, project);
     const bareRepo = getBareRepoPath(project);
 
@@ -221,117 +216,27 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       throw new Error(`syncWorktree: git fetch failed: ${fetchResult.stderr}`);
     }
 
-    const refCheck = await runCommand(
+    const resetResult = await runCommand(
       "git",
-      ["rev-parse", "--verify", SYNC_REF],
+      ["reset", "--hard", "FETCH_HEAD"],
       worktreePath,
-      5000,
+      30000,
     );
-    const baseRef = refCheck.success ? SYNC_REF : "HEAD";
+    if (!resetResult.success) {
+      throw new Error(
+        `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
+      );
+    }
 
-    const addModResult = await runCommand(
+    const cleanResult = await runCommand(
       "git",
-      [
-        "diff",
-        "--name-only",
-        "--no-renames",
-        "--diff-filter=AMCR",
-        baseRef,
-        "FETCH_HEAD",
-      ],
+      ["clean", "-fd"],
       worktreePath,
-      15000,
+      30000,
     );
-
-    const delResult = await runCommand(
-      "git",
-      [
-        "diff",
-        "--name-only",
-        "--no-renames",
-        "--diff-filter=D",
-        baseRef,
-        "FETCH_HEAD",
-      ],
-      worktreePath,
-      15000,
-    );
-
-    if (!addModResult.success || !delResult.success) {
-      const resetResult = await runCommand(
-        "git",
-        ["reset", "--hard", "FETCH_HEAD"],
-        worktreePath,
-        30000,
-      );
-      if (!resetResult.success) {
-        throw new Error(
-          `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
-        );
-      }
-      await updateSyncRef(worktreePath);
-      return "changed";
+    if (!cleanResult.success) {
+      throw new Error(`syncWorktree: git clean failed: ${cleanResult.stderr}`);
     }
-
-    const addModFiles = addModResult.output.trim();
-    const delFiles = delResult.output.trim();
-
-    if (addModFiles.length === 0 && delFiles.length === 0) {
-      await updateSyncRef(worktreePath);
-      return "unchanged";
-    }
-
-    if (delFiles.length > 0) {
-      const rmResult = await runCommand(
-        "git",
-        ["rm", "--quiet", "--force", "--", ...delFiles.split("\n")],
-        worktreePath,
-        15000,
-      );
-      if (!rmResult.success) {
-        const resetResult = await runCommand(
-          "git",
-          ["reset", "--hard", "FETCH_HEAD"],
-          worktreePath,
-          30000,
-        );
-        if (!resetResult.success) {
-          throw new Error(
-            `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
-          );
-        }
-        await updateSyncRef(worktreePath);
-        return "changed";
-      }
-    }
-
-    if (addModFiles.length > 0) {
-      const checkoutResult = await runCommand(
-        "git",
-        ["checkout", "FETCH_HEAD", "--", ...addModFiles.split("\n")],
-        worktreePath,
-        30000,
-      );
-      if (!checkoutResult.success) {
-        const resetResult = await runCommand(
-          "git",
-          ["reset", "--hard", "FETCH_HEAD"],
-          worktreePath,
-          30000,
-        );
-        if (!resetResult.success) {
-          throw new Error(
-            `syncWorktree: git reset --hard failed: ${resetResult.stderr}`,
-          );
-        }
-        await updateSyncRef(worktreePath);
-        return "changed";
-      }
-    }
-
-    await updateSyncRef(worktreePath);
-
-    return "changed";
   }
 
   /**

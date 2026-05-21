@@ -7,13 +7,7 @@ import * as roomsQ from "../queries/rooms.js";
 import * as filesQ from "../queries/files.js";
 import * as tasksLifecycleQ from "../queries/tasks-lifecycle.js";
 import type { ScaffoldConfig } from "../config.js";
-import { mergeIntoBranch } from "../git-utils.js";
-import {
-  seedBranchFor,
-  agentBranchFor,
-  AGENT_NAME_RE,
-} from "../branch-naming.js";
-import { resolveProject } from "../resolve-project.js";
+import { AGENT_NAME_RE } from "../branch-naming.js";
 
 interface AgentsOpts {
   config: ScaffoldConfig;
@@ -61,9 +55,7 @@ const ALLOWED_STATUSES = [
 type AllowedStatus = (typeof ALLOWED_STATUSES)[number];
 const ALLOWED_STATUS_SET = new Set<string>(ALLOWED_STATUSES);
 
-const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
-  const { config } = opts;
-
+const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify) => {
   fastify.post<{
     Body: {
       name: string;
@@ -209,48 +201,6 @@ const agentsPlugin: FastifyPluginAsync<AgentsOpts> = async (fastify, opts) => {
     });
     return { ok: true, deletedCount: result };
   });
-
-  // POST /agents/:name/sync -- merge seed branch into agent's branch
-  fastify.post<{ Params: { name: string } }>(
-    "/agents/:name/sync",
-    async (request, reply) => {
-      const { name } = request.params;
-      const db = getDb();
-
-      const agent = await agentsQ.getWorktreeInfo(db, request.projectId, name);
-      if (!agent) {
-        return reply.notFound(`Agent '${name}' not found`);
-      }
-
-      let project;
-      try {
-        project = await resolveProject(config, db, agent.projectId);
-      } catch {
-        return reply.badRequest(`Unknown project: "${agent.projectId}"`);
-      }
-      const bareRepo = project.bareRepoPath;
-      if (!bareRepo) {
-        return reply.code(422).send({
-          statusCode: 422,
-          error: "Unprocessable Entity",
-          message: "sync requires bareRepoPath to be configured",
-        });
-      }
-
-      const seedBranch = seedBranchFor(agent.projectId, project);
-      const targetBranch = agentBranchFor(agent.projectId, name);
-
-      const result = mergeIntoBranch(bareRepo, seedBranch, targetBranch);
-      if (result.ok) {
-        return reply.send({
-          ok: true,
-          ...(result.commitSha ? { commitSha: result.commitSha } : {}),
-        });
-      } else {
-        return reply.code(409).send({ ok: false, reason: result.reason });
-      }
-    },
-  );
 };
 
 export default agentsPlugin;
