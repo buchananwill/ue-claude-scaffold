@@ -17,6 +17,7 @@ source "$SCRIPT_DIR/scripts/lib/resolve-hooks.sh"
 source "$SCRIPT_DIR/scripts/lib/compile-agents.sh"
 source "$SCRIPT_DIR/scripts/lib/branch-setup.sh"
 source "$SCRIPT_DIR/scripts/lib/launch-container.sh"
+source "$SCRIPT_DIR/scripts/lib/generate-plugin-overlay.sh"
 source "$SCRIPT_DIR/scripts/lib/print-resolved-config.sh"
 
 # ── Parse CLI ────────────────────────────────────────────────────────────────
@@ -109,6 +110,10 @@ _compose_dir="$SCRIPT_DIR/container"
 _compose_files=("docker-compose.template.yml")
 if [[ -n "${UE_ENGINE_PATH:-}" ]]; then
   _compose_files+=("docker-compose.engine.yml")
+fi
+_plugin_overlay="$_compose_dir/docker-compose.plugins.gen.yml"
+if _generate_plugin_overlay "$SCRIPT_DIR" "$PROJECT_ID" "$_plugin_overlay"; then
+  _compose_files+=("docker-compose.plugins.gen.yml")
 fi
 
 # ── Export vars for docker-compose ───────────────────────────────────────────

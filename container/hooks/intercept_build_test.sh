@@ -68,6 +68,35 @@ if ! echo "$COMMAND" | grep -qE "(${BUILD_SCRIPT_NAME}|${TEST_SCRIPT_NAME})"; th
     exit 0
 fi
 
+# ── Determine which script triggered the hook ────────────────────────────────
+
+if echo "$COMMAND" | grep -qE "${TEST_SCRIPT_NAME}"; then
+    OPERATION="test"
+    SCRIPT_NAME="$TEST_SCRIPT_NAME"
+else
+    OPERATION="build"
+    SCRIPT_NAME="$BUILD_SCRIPT_NAME"
+fi
+
+TAIL=$(echo "$COMMAND" | sed -E "s/.*${SCRIPT_NAME}[[:space:]]*//")
+
+# ── Reject shell metacharacters in the post-script tail ──────────────────────
+# The hook returns the host-side script's structured response (stdout, stderr,
+# exit code) directly. Pipes, redirects, and chaining are meaningless here and
+# would be classified as filter arguments by the parser below — silently
+# corrupting the host-side invocation.
+if echo "$TAIL" | grep -qE '[|;<>&`]|\$\(' ; then
+    cat >&2 <<EOF
+Hook rejected: do not pipe, redirect, or chain shell commands after ${SCRIPT_NAME}.
+
+This hook intercepts ${SCRIPT_NAME} and returns its structured response (stdout, stderr, exit code) to you directly. Operators like \`| tail\`, \`2>&1\`, \`> file\`, \`; cmd\`, or \`&& cmd\` will be parsed as filter arguments and corrupt the host-side invocation.
+
+Re-invoke with only filters and flags, e.g.:
+  python Scripts/${SCRIPT_NAME} Test.Name.Goes.Here
+EOF
+    exit 2
+fi
+
 # ── Commit and push current state to bare repo ──────────────────────────────
 
 cd "$CLAUDE_PROJECT_DIR"
@@ -80,15 +109,12 @@ fi
 
 git push origin "HEAD:${WORK_BRANCH}" --force
 
-# ── Determine operation and request body ─────────────────────────────────────
+# ── Build request body ───────────────────────────────────────────────────────
 
-if echo "$COMMAND" | grep -qE "${TEST_SCRIPT_NAME}"; then
-    OPERATION="test"
-
+if [ "$OPERATION" = "test" ]; then
     # Split args after the test script name into flags (leading '-') and positional filters.
     FLAGS=()
     FILTERS=()
-    TAIL=$(echo "$COMMAND" | sed -E "s/.*${TEST_SCRIPT_NAME}[[:space:]]*//")
     # shellcheck disable=SC2206
     TOKENS=( $TAIL )
     for tok in "${TOKENS[@]+"${TOKENS[@]}"}"; do
@@ -117,7 +143,6 @@ if echo "$COMMAND" | grep -qE "${TEST_SCRIPT_NAME}"; then
     REQUEST_BODY=$(jq -n --argjson flags "$FLAGS_JSON" --argjson filters "$FILTERS_JSON" \
         '{flags: $flags, filters: $filters}')
 else
-    OPERATION="build"
     CLEAN_FLAG="false"
     if echo "$COMMAND" | grep -q '\-\-clean'; then
         CLEAN_FLAG="true"

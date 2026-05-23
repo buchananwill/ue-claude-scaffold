@@ -20,3 +20,11 @@ Common entry points:
 - `/engine/Plugins/` — engine-bundled plugins
 
 Do not attempt to write to `/engine` — the mount is read-only and any modification attempt will fail.
+
+## Project Plugins
+
+Project-side plugins configured for this project (e.g. Voxel, UE5Coro, SubsystemBrowserPlugin) are mounted read-only at:
+
+    /plugins-ro/<plugin-name>
+
+Use this path for any read of plugin source — `Read`, `Glob`, `Grep` all work. They are **not** symlinked into `/workspace/Plugins/`, so anything you see at that path in the working tree is repo content, not a host mount.

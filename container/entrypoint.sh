@@ -41,7 +41,6 @@ _snapshot_agents
 # _setup_hooks can compute the union access-scope across the role set.
 _prefetch_role_agents
 _setup_hooks
-_symlink_plugins
 
 # ── Register with coordination server ──────────────────────────────────────
 _register_agent

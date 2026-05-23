@@ -30,6 +30,7 @@ logs/
 # Local config (created from .example files by setup.sh)
 scaffold.config.json
 container/docker-compose.yml
+container/docker-compose.plugins.gen.yml
 
 # Ingestion state
 .ingest-state.json
