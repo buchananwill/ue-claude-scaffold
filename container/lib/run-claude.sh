@@ -349,8 +349,7 @@ This task is in a revision cycle. Read the consolidated review at:
 
   ${lrp_display}
 
-Address every BLOCKING entry. NOTE entries are observability only — do not
-act on them. Re-build clean. Post the \`built\` transition with the new
+Address every BLOCKING entry. NOTE entries are to be addressed also. Post the \`built\` transition with the new
 commitSha.
 
 Do not paraphrase the consolidated review into your working memory — read
