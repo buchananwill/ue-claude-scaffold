@@ -121,7 +121,7 @@ COMPOSE_DIR="$SCRIPT_DIR/container"
 # ── Helper: find all running claude-* projects ──────────────────────────────
 _find_claude_projects() {
   local -a projects=()
-  mapfile -t projects < <(docker ps --filter "label=com.docker.compose.project" --format '{{index .Labels "com.docker.compose.project"}}' 2>/dev/null | \
+  mapfile -t projects < <(docker ps --filter "label=com.docker.compose.project" --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null | \
     grep -o 'claude-[^ ,]*' | sort -u)
 
   # When --project is set, filter to only agents registered under that project
