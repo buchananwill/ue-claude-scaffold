@@ -34,9 +34,17 @@ function runCommand(
   onSpawn?: (child: ChildProcess) => void,
 ): Promise<SpawnResult> {
   return new Promise((resolve) => {
+    // Recursion guard: the host-side build/test scripts (Scripts/build.py,
+    // Scripts/run_tests.py) forward to this server when SCAFFOLD_FORWARD_SCRIPT is set.
+    // Strip it from the child environment so the scripts we spawn here run locally
+    // instead of forwarding back to us. Inheritance is transitive, so this also covers
+    // run_tests.py's internal pre-test build.py.
+    const childEnv = { ...process.env };
+    delete childEnv.SCAFFOLD_FORWARD_SCRIPT;
     const child = spawn(command, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
+      env: childEnv,
     });
     onSpawn?.(child);
 
@@ -135,14 +143,69 @@ function resolveScript(
   return { command: scriptPath, scriptArgs: extraArgs };
 }
 
+export interface TestRequestBody {
+  filters?: string[];
+  withRhi?: boolean;
+  functional?: boolean;
+  timeout?: number | null;
+  noBuild?: boolean;
+  keepLog?: boolean;
+  // Present because the transport script posts the script's payload verbatim; ignored
+  // here (the route already determines the operation).
+  operation?: string;
+  // Transitional legacy field: the old PreToolUse hook posted pre-split CLI tokens.
+  // Removed once the script-side routing cutover is complete.
+  flags?: string[];
+}
+
 export function buildTestScriptArgs(
-  flags: string[] | undefined,
-  filters: string[] | undefined,
+  body: TestRequestBody,
   defaultFilters: string[],
 ): string[] {
-  const resolvedFilters = filters?.length ? filters : defaultFilters;
-  return [...(flags ?? []), ...resolvedFilters];
+  const resolvedFilters = body.filters?.length ? body.filters : defaultFilters;
+
+  // Legacy path: the hook already produced an ordered CLI token list.
+  if (body.flags) {
+    return [...body.flags, ...resolvedFilters];
+  }
+
+  // Structured path: reconstruct a canonical argv. Flags first (each emitted only when
+  // set), then positional filters — so --timeout is always immediately followed by its
+  // value and run_tests.py's argparse (flags then nargs="*" filters) parses cleanly.
+  const args: string[] = [];
+  if (body.withRhi) args.push("--with-rhi");
+  if (body.functional) args.push("--functional");
+  if (body.timeout != null) args.push("--timeout", String(body.timeout));
+  if (body.noBuild) args.push("--no-build");
+  if (body.keepLog) args.push("--keep-log");
+  args.push(...resolvedFilters);
+  return args;
 }
+
+const BUILD_BODY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation: { type: "string" },
+    clean: { type: "boolean" },
+  },
+};
+
+const TEST_BODY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation: { type: "string" },
+    filters: { type: "array", items: { type: "string" } },
+    withRhi: { type: "boolean" },
+    functional: { type: "boolean" },
+    timeout: { type: ["number", "null"] },
+    noBuild: { type: "boolean" },
+    keepLog: { type: "boolean" },
+    // Transitional legacy field; removed with the old hook.
+    flags: { type: "array", items: { type: "string" } },
+  },
+};
 
 const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   const config = opts.config;
@@ -364,8 +427,8 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   }
 
   fastify.post<{
-    Body: { clean?: boolean };
-  }>("/build", async (request) => {
+    Body: { clean?: boolean; operation?: string };
+  }>("/build", { schema: { body: BUILD_BODY_SCHEMA } }, async (request) => {
     // NOTE: x-agent-name and x-agent-id are trusted without authentication.
     // This relies on network-isolated deployment (containers on the same host).
     // If the server is exposed to untrusted networks, agent identity must be
@@ -412,8 +475,8 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
   });
 
   fastify.post<{
-    Body: { filters?: string[]; flags?: string[] };
-  }>("/test", async (request) => {
+    Body: TestRequestBody;
+  }>("/test", { schema: { body: TEST_BODY_SCHEMA } }, async (request) => {
     const agentName = request.headers["x-agent-name"] as string | undefined;
     const agentId = request.headers["x-agent-id"] as string | undefined;
     const prep = await prepareBuildOrTest(
@@ -428,11 +491,7 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
       project.build?.testScriptPath ?? config.build.testScriptPath;
     const { command, scriptArgs } = resolveScript(
       scriptPath,
-      buildTestScriptArgs(
-        request.body.flags,
-        request.body.filters,
-        config.build.defaultTestFilters,
-      ),
+      buildTestScriptArgs(request.body, config.build.defaultTestFilters),
     );
 
     const testTimeoutMs =

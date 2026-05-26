@@ -243,9 +243,16 @@ _setup_hooks() {
     # Build the PreToolUse Bash matcher hooks array
     local PRE_BASH PRE_MATCHERS POST_MATCHERS
     PRE_BASH=$(jq -n '[{"type":"command","command":"bash /claude-hooks/inject-agent-header.sh"}]')
+    # Build/test forwarding is now done script-side: Scripts/build.py and
+    # Scripts/run_tests.py detect SCAFFOLD_FORWARD_SCRIPT (injected via the settings.json
+    # `env` block below) and forward to /claude-hooks/forward_build_test.sh themselves, so
+    # the old intercept_build_test.sh PreToolUse hook is no longer registered. The push
+    # guard stays: the transport's git push runs as a subprocess of the script, not as an
+    # agent Bash tool call, so it is unaffected, while the agent's direct pushes remain
+    # blocked.
     if [ "${HOOK_BUILD_INTERCEPT}" = "true" ]; then
         PRE_BASH=$(jq -n --argjson base "$PRE_BASH" \
-            '[{"type":"command","command":"bash /claude-hooks/intercept_build_test.sh"},{"type":"command","command":"bash /claude-hooks/block-push-passthrough.sh"}] + $base')
+            '[{"type":"command","command":"bash /claude-hooks/block-push-passthrough.sh"}] + $base')
     fi
     if [ "${WORKSPACE_READONLY}" = "false" ]; then
         PRE_BASH=$(jq -n --argjson base "$PRE_BASH" \
@@ -269,9 +276,24 @@ _setup_hooks() {
             '$m + [{"matcher":"Bash","hooks":[{"type":"command","command":"bash /claude-hooks/push-after-commit.sh"}]}]')
     fi
 
+    # When build-forwarding is enabled, inject SCAFFOLD_FORWARD_SCRIPT via the settings
+    # `env` block so the project's build/test scripts (run by the agent's Bash tool)
+    # detect the container and forward to the host. The variable is intentionally absent
+    # otherwise, and is never set in the coordination server's environment, so host-side
+    # runs (including the server's own spawns) always execute locally.
+    # Belt-and-suspenders: export into this (sourced) entrypoint shell so the var is
+    # inherited by the claude process launched later and by its Bash tool subprocesses,
+    # in addition to the settings.json `env` block written below.
+    local ENV_JSON="{}"
+    if [ "${HOOK_BUILD_INTERCEPT}" = "true" ]; then
+        export SCAFFOLD_FORWARD_SCRIPT="/claude-hooks/forward_build_test.sh"
+        ENV_JSON=$(jq -n --arg p "$SCAFFOLD_FORWARD_SCRIPT" '{"SCAFFOLD_FORWARD_SCRIPT":$p}')
+    fi
+
     # Write the final settings file
-    jq -n --argjson pre "$PRE_MATCHERS" --argjson post "$POST_MATCHERS" \
-        'if ($post | length) > 0 then {"hooks":{"PreToolUse":$pre,"PostToolUse":$post}} else {"hooks":{"PreToolUse":$pre}} end' \
+    jq -n --argjson pre "$PRE_MATCHERS" --argjson post "$POST_MATCHERS" --argjson env "$ENV_JSON" \
+        '({"PreToolUse":$pre} + (if ($post | length) > 0 then {"PostToolUse":$post} else {} end)) as $hooks
+         | ({"hooks":$hooks} + (if ($env | length) > 0 then {"env":$env} else {} end))' \
         > /home/claude/.claude/settings.json
 
     echo "Hook settings: buildIntercept=${HOOK_BUILD_INTERCEPT}, cppLint=${HOOK_CPP_LINT}, jsLint=${HOOK_JS_LINT}, gitSync=${HOOK_GIT_SYNC}"

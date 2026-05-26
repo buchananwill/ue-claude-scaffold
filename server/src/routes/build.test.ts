@@ -720,26 +720,78 @@ process.exit(0);
 });
 
 describe("buildTestScriptArgs", () => {
-  it("places flags before filters", () => {
+  it("places structured flags before filters", () => {
     assert.deepEqual(
-      buildTestScriptArgs(["--with-rhi"], ["Resort.LevelTest.Foo"], ["Resort"]),
+      buildTestScriptArgs(
+        { withRhi: true, filters: ["Resort.LevelTest.Foo"] },
+        ["Resort"],
+      ),
       ["--with-rhi", "Resort.LevelTest.Foo"],
     );
   });
 
   it("falls back to default filters when filters are empty or omitted", () => {
-    assert.deepEqual(buildTestScriptArgs(undefined, undefined, ["Resort"]), [
-      "Resort",
-    ]);
-    assert.deepEqual(buildTestScriptArgs(undefined, [], ["Resort"]), [
+    assert.deepEqual(buildTestScriptArgs({}, ["Resort"]), ["Resort"]);
+    assert.deepEqual(buildTestScriptArgs({ filters: [] }, ["Resort"]), [
       "Resort",
     ]);
   });
 
   it("places flags before default filters when only flags are sent", () => {
+    assert.deepEqual(buildTestScriptArgs({ withRhi: true }, ["Resort"]), [
+      "--with-rhi",
+      "Resort",
+    ]);
+  });
+
+  it("reconstructs --timeout immediately followed by its value", () => {
     assert.deepEqual(
-      buildTestScriptArgs(["--with-rhi"], undefined, ["Resort"]),
-      ["--with-rhi", "Resort"],
+      buildTestScriptArgs(
+        { withRhi: true, timeout: 900, filters: ["Resort.Buildable"] },
+        ["Resort"],
+      ),
+      ["--with-rhi", "--timeout", "900", "Resort.Buildable"],
+    );
+  });
+
+  it("emits all structured flags in canonical order", () => {
+    assert.deepEqual(
+      buildTestScriptArgs(
+        {
+          withRhi: true,
+          functional: true,
+          timeout: 2400,
+          noBuild: true,
+          keepLog: true,
+          filters: ["Resort.X"],
+        },
+        ["Resort"],
+      ),
+      [
+        "--with-rhi",
+        "--functional",
+        "--timeout",
+        "2400",
+        "--no-build",
+        "--keep-log",
+        "Resort.X",
+      ],
+    );
+  });
+
+  it("omits --timeout when timeout is null or undefined", () => {
+    assert.deepEqual(buildTestScriptArgs({ timeout: null }, ["Resort"]), [
+      "Resort",
+    ]);
+  });
+
+  it("honours the transitional legacy flags array", () => {
+    assert.deepEqual(
+      buildTestScriptArgs(
+        { flags: ["--with-rhi"], filters: ["Resort.Legacy"] },
+        ["Resort"],
+      ),
+      ["--with-rhi", "Resort.Legacy"],
     );
   });
 });
