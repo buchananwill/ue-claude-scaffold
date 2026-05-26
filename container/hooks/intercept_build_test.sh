@@ -211,10 +211,13 @@ fi
 
 # ── Call the coordination server ─────────────────────────────────────────────
 
+# Must exceed the server's build/test ceiling (8h) plus margin, or the container
+# would abandon a long-but-healthy UE build while the host keeps compiling. The
+# server owns the real kill timer; this curl just has to outlast it.
 if [ "$OPERATION" = "test" ]; then
-    CURL_TIMEOUT=820
+    CURL_TIMEOUT=29400
 else
-    CURL_TIMEOUT=780
+    CURL_TIMEOUT=29200
 fi
 
 RESPONSE=$(curl -s -X POST "${SERVER_URL}/${OPERATION}" \

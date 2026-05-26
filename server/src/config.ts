@@ -207,9 +207,14 @@ export function loadConfig(): ScaffoldConfig {
       scriptPath: raw.build?.scriptPath ?? "",
       testScriptPath: raw.build?.testScriptPath ?? "",
       defaultTestFilters: raw.build?.defaultTestFilters ?? [],
+      // 8h ceiling — a from-clean UE build (even engine-from-source) fits under
+      // this. This is the hard kill on a genuinely hung build, not an expected
+      // duration. The UBT lock is held for the build's real lifetime via the
+      // in-memory build registry, independent of this timer.
       buildTimeoutMs:
-        coercePositiveNumber(raw.build?.buildTimeoutMs) ?? 660_000,
-      testTimeoutMs: coercePositiveNumber(raw.build?.testTimeoutMs) ?? 700_000,
+        coercePositiveNumber(raw.build?.buildTimeoutMs) ?? 28_800_000,
+      testTimeoutMs:
+        coercePositiveNumber(raw.build?.testTimeoutMs) ?? 28_800_000,
       ubtRetryCount: coercePositiveNumber(raw.build?.ubtRetryCount) ?? 5,
       ubtRetryDelayMs:
         coercePositiveNumber(raw.build?.ubtRetryDelayMs) ?? 30_000,

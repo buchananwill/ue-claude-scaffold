@@ -62,8 +62,10 @@ export function resolveProjectConfig(
     engineVersion: merged.engine?.version ?? null,
     buildScriptPath: merged.build?.scriptPath ?? null,
     testScriptPath: merged.build?.testScriptPath ?? null,
-    buildTimeoutMs: merged.build?.buildTimeoutMs ?? 660_000,
-    testTimeoutMs: merged.build?.testTimeoutMs ?? 700_000,
+    // Fall back to the resolved global default rather than a literal, so this
+    // never skews from config.ts's build/test ceiling.
+    buildTimeoutMs: merged.build?.buildTimeoutMs ?? config.build.buildTimeoutMs,
+    testTimeoutMs: merged.build?.testTimeoutMs ?? config.build.testTimeoutMs,
     // defaultTestFilters is taken from the global config only because
     // ProjectConfig does not have a per-project defaultTestFilters field.
     defaultTestFilters: config.build.defaultTestFilters,

@@ -1,9 +1,10 @@
-import type { FastifyPluginAsync } from 'fastify';
-import { getDb } from '../drizzle-instance.js';
-import * as ubtQ from '../queries/ubt.js';
-import * as buildsQ from '../queries/builds.js';
-import type { ScaffoldConfig } from '../config.js';
-import { resolveAgent } from './route-helpers.js';
+import type { FastifyPluginAsync } from "fastify";
+import { getDb } from "../drizzle-instance.js";
+import * as ubtQ from "../queries/ubt.js";
+import * as buildsQ from "../queries/builds.js";
+import type { ScaffoldConfig } from "../config.js";
+import { resolveAgent } from "./route-helpers.js";
+import { hasLiveBuild, killAllBuilds } from "../build-registry.js";
 
 interface UbtOpts {
   config: ScaffoldConfig;
@@ -13,19 +14,32 @@ let _timeoutMs = 600000;
 
 export function isStale(acquiredAt: string | Date | null): boolean {
   if (!acquiredAt) return true;
-  const ts = typeof acquiredAt === 'string'
-    ? new Date(acquiredAt.endsWith('Z') ? acquiredAt : acquiredAt + 'Z').getTime()
-    : acquiredAt.getTime();
+  const ts =
+    typeof acquiredAt === "string"
+      ? new Date(
+          acquiredAt.endsWith("Z") ? acquiredAt : acquiredAt + "Z",
+        ).getTime()
+      : acquiredAt.getTime();
   const elapsed = Date.now() - ts;
   return elapsed > _timeoutMs;
 }
 
-export async function recordBuildStart(agent: string, type: 'build' | 'test', projectId: string = 'default'): Promise<number> {
+export async function recordBuildStart(
+  agent: string,
+  type: "build" | "test",
+  projectId: string = "default",
+): Promise<number> {
   const db = getDb();
   return buildsQ.insertHistory(db, { agent, type, projectId });
 }
 
-export async function recordBuildEnd(id: number, durationMs: number, success: boolean, output: string, stderr: string): Promise<void> {
+export async function recordBuildEnd(
+  id: number,
+  durationMs: number,
+  success: boolean,
+  output: string,
+  stderr: string,
+): Promise<void> {
   const db = getDb();
   await buildsQ.updateHistory(db, id, { durationMs, success, output, stderr });
 }
@@ -37,20 +51,23 @@ export interface LastBuildResult {
 }
 
 /** Return the most recent completed build/test result for an agent, or null if none. */
-export async function getLastBuildResult(agent: string, type: 'build' | 'test'): Promise<LastBuildResult | null> {
+export async function getLastBuildResult(
+  agent: string,
+  type: "build" | "test",
+): Promise<LastBuildResult | null> {
   const db = getDb();
   const row = await buildsQ.lastCompleted(db, agent, type);
   if (!row) return null;
   return {
     success: row.success === 1,
-    output: row.output ?? '',
-    stderr: row.stderr ?? '',
+    output: row.output ?? "",
+    stderr: row.stderr ?? "",
   };
 }
 
 export async function getEstimatedBuildMs(type?: string): Promise<number> {
   const db = getDb();
-  const avg = await buildsQ.avgDuration(db, type ?? 'build');
+  const avg = await buildsQ.avgDuration(db, type ?? "build");
   return avg ?? 300_000;
 }
 
@@ -72,6 +89,13 @@ export async function sweepStaleLock(): Promise<void> {
   const lock = await ubtQ.getLock(db);
   if (!lock) return;
 
+  // Liveness beats the clock: if a build/test is genuinely running on this host,
+  // the lock is busy — hold it for as long as the build runs, however long that
+  // is (a from-clean UE build can take hours). The 8h ceiling is enforced by the
+  // spawn's own kill timer; when it fires the child leaves the registry and the
+  // next sweep frees the lock through the idle path below.
+  if (hasLiveBuild()) return;
+
   if (isStale(lock.acquiredAt)) {
     await clearLockAndPromote();
   } else if (lock.holderAgentId != null) {
@@ -85,13 +109,19 @@ export async function sweepStaleLock(): Promise<void> {
 const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
   _timeoutMs = opts.config.server.ubtLockTimeoutMs;
 
-  fastify.get('/ubt/status', async (request) => {
+  fastify.get("/ubt/status", async (request) => {
     const db = getDb();
     const lock = await ubtQ.getLock(db);
     const queue = await ubtQ.getQueue(db);
 
     if (lock && isStale(lock.acquiredAt)) {
-      return { holder: null, acquiredAt: null, stale: true, queue, estimatedWaitMs: 0 };
+      return {
+        holder: null,
+        acquiredAt: null,
+        stale: true,
+        queue,
+        estimatedWaitMs: 0,
+      };
     }
 
     if (!lock?.holderAgentId) {
@@ -114,14 +144,16 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
 
   fastify.post<{
     Body: { agent: string; priority?: number };
-  }>('/ubt/acquire', async (request, reply) => {
+  }>("/ubt/acquire", async (request, reply) => {
     const { agent, priority = 0 } = request.body;
     const db = getDb();
 
     // Resolve agent name to UUID
     const agentRow = await resolveAgent(db, request.projectId, agent);
     if (!agentRow) {
-      return reply.notFound(`Agent '${agent}' not found in project '${request.projectId}'`);
+      return reply.notFound(
+        `Agent '${agent}' not found in project '${request.projectId}'`,
+      );
     }
     const agentId = agentRow.id;
 
@@ -143,7 +175,11 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
 
       const existing = await ubtQ.findInQueue(tx, agentId);
       if (existing) {
-        const pos = await ubtQ.getQueuePosition(tx, existing.id, existing.priority ?? 0);
+        const pos = await ubtQ.getQueuePosition(
+          tx,
+          existing.id,
+          existing.priority ?? 0,
+        );
         return {
           granted: false,
           position: pos,
@@ -170,29 +206,42 @@ const ubtPlugin: FastifyPluginAsync<UbtOpts> = async (fastify, opts) => {
 
   fastify.post<{
     Body: { agent: string };
-  }>('/ubt/release', async (request, reply) => {
+  }>("/ubt/release", async (request, reply) => {
     const { agent } = request.body;
     const db = getDb();
 
     // Resolve agent name to UUID
     const agentRow = await resolveAgent(db, request.projectId, agent);
     if (!agentRow) {
-      return reply.notFound(`Agent '${agent}' not found in project '${request.projectId}'`);
+      return reply.notFound(
+        `Agent '${agent}' not found in project '${request.projectId}'`,
+      );
     }
     const agentId = agentRow.id;
 
     const lock = await ubtQ.getLock(db);
 
     if (!lock) {
-      return { ok: false, reason: 'not_held' };
+      return { ok: false, reason: "not_held" };
     }
 
     if (lock.holderAgentId !== agentId) {
-      return { ok: false, reason: 'not_holder' };
+      return { ok: false, reason: "not_holder" };
     }
 
     const result = await clearLockAndPromote();
     return { ok: true, ...result };
+  });
+
+  // Operator escape hatch: terminate a runaway build and free the lock.
+  // UBT is host-level (one lock per host), so this is unscoped by project: it
+  // tree-kills every build child this server spawned, then releases the lock and
+  // promotes the next waiter. This is the handle that was missing when a build
+  // free-ran with no holder — no more reaching for Task Manager.
+  fastify.post("/ubt/kill", async () => {
+    const killed = killAllBuilds();
+    const result = await clearLockAndPromote();
+    return { ok: true, killedPids: killed, ...result };
   });
 };
 

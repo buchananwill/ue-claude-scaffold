@@ -1,6 +1,8 @@
-import type { FastifyPluginAsync } from "fastify";
-import { spawn } from "node:child_process";
+import type { FastifyPluginAsync, FastifyRequest } from "fastify";
+import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
+import { killTree } from "../process-utils.js";
+import { registerBuild, unregisterBuild } from "../build-registry.js";
 import type { ScaffoldConfig, ProjectConfig } from "../config.js";
 import { getProject } from "../config.js";
 import { isStale, recordBuildStart, recordBuildEnd } from "./ubt.js";
@@ -29,13 +31,23 @@ function runCommand(
   args: string[],
   cwd: string,
   timeoutMs: number,
+  onSpawn?: (child: ChildProcess) => void,
 ): Promise<SpawnResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: timeoutMs,
     });
+    onSpawn?.(child);
+
+    // Node's own spawn `timeout` only signals the direct child, orphaning the
+    // UE compiler grandchildren. Enforce the ceiling ourselves with a tree-kill
+    // so the whole process tree dies when a build genuinely hangs.
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (child.pid != null) killTree(child.pid);
+    }, timeoutMs);
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -44,15 +56,20 @@ function runCommand(
     child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
     child.on("close", (code) => {
+      clearTimeout(timer);
+      const stderr = Buffer.concat(stderrChunks).toString("utf-8");
       resolve({
-        success: code === 0,
-        exit_code: code ?? 1,
+        success: !timedOut && code === 0,
+        exit_code: timedOut ? -1 : (code ?? 1),
         output: Buffer.concat(stdoutChunks).toString("utf-8"),
-        stderr: Buffer.concat(stderrChunks).toString("utf-8"),
+        stderr: timedOut
+          ? `${stderr}\n[killed: build exceeded ${timeoutMs}ms and was terminated]`
+          : stderr,
       });
     });
 
     child.on("error", (err) => {
+      clearTimeout(timer);
       resolve({
         success: false,
         exit_code: 1,
@@ -303,6 +320,49 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     return { ok: true, project, projectId, cwd };
   }
 
+  /**
+   * Run a build/test with UBT-contention retry, tracking the child in the build
+   * registry (so the sweeper sees a live build and never expires the lock under
+   * it) and reaping the process tree if the client disconnects mid-build.
+   */
+  async function runTrackedBuild(
+    command: string,
+    scriptArgs: string[],
+    cwd: string,
+    timeoutMs: number,
+    histId: number,
+    request: FastifyRequest,
+  ): Promise<SpawnResult> {
+    let settled = false;
+    let currentChild: ChildProcess | null = null;
+
+    // If the container (HTTP client) disconnects before we finish — its curl
+    // --max-time elapses, or the container dies — reap the build instead of
+    // letting it free-run unowned on the host.
+    const onClose = () => {
+      if (!settled && currentChild?.pid != null) {
+        killTree(currentChild.pid);
+      }
+    };
+    request.raw.on("close", onClose);
+
+    try {
+      return await runWithUbtRetry(
+        () =>
+          runCommand(command, scriptArgs, cwd, timeoutMs, (child) => {
+            currentChild = child;
+            registerBuild(histId, child);
+          }),
+        config.build.ubtRetryCount,
+        config.build.ubtRetryDelayMs,
+      );
+    } finally {
+      settled = true;
+      unregisterBuild(histId);
+      request.raw.off("close", onClose);
+    }
+  }
+
   fastify.post<{
     Body: { clean?: boolean };
   }>("/build", async (request) => {
@@ -333,10 +393,13 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const agentForHistory = agentName ?? "unknown";
     const histId = await recordBuildStart(agentForHistory, "build", projectId);
     const t0 = Date.now();
-    const result = await runWithUbtRetry(
-      () => runCommand(command, scriptArgs, cwd, buildTimeoutMs),
-      config.build.ubtRetryCount,
-      config.build.ubtRetryDelayMs,
+    const result = await runTrackedBuild(
+      command,
+      scriptArgs,
+      cwd,
+      buildTimeoutMs,
+      histId,
+      request,
     );
     await recordBuildEnd(
       histId,
@@ -377,10 +440,13 @@ const buildPlugin: FastifyPluginAsync<BuildOpts> = async (fastify, opts) => {
     const agentForHistory = agentName ?? "unknown";
     const histId = await recordBuildStart(agentForHistory, "test", projectId);
     const t0 = Date.now();
-    const result = await runWithUbtRetry(
-      () => runCommand(command, scriptArgs, cwd, testTimeoutMs),
-      config.build.ubtRetryCount,
-      config.build.ubtRetryDelayMs,
+    const result = await runTrackedBuild(
+      command,
+      scriptArgs,
+      cwd,
+      testTimeoutMs,
+      histId,
+      request,
     );
     await recordBuildEnd(
       histId,
