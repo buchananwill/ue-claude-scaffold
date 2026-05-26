@@ -73,7 +73,11 @@ post_message() {
 
 # ── Commit and push current state to bare repo ──────────────────────────────
 
-cd "$CLAUDE_PROJECT_DIR"
+# Unlike the old PreToolUse hook, this transport runs as a subprocess of build.py /
+# run_tests.py, so CLAUDE_PROJECT_DIR is not guaranteed to be set. Under `set -u` a bare
+# "$CLAUDE_PROJECT_DIR" would abort with "unbound variable". Fall back to the inherited
+# cwd, which is the workspace root (build.py is invoked from there).
+cd "${CLAUDE_PROJECT_DIR:-$PWD}"
 
 git add -A
 
