@@ -81,7 +81,6 @@ export interface Task {
   reviewCycleCount: number;
   reviewCycleBudget: number;
   reviewerVerdicts: ReviewerVerdictMap;
-  latestReviewPath: string | null;
   arbitrationPendingTrigger: string | null;
   arbitrationAddendumPath: string | null;
   failureReason: FailureReason | null;

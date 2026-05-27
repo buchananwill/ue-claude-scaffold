@@ -1,7 +1,13 @@
 import { eq, and, sql, inArray, type SQL } from "drizzle-orm";
-import { tasks, arbitrationRuns } from "../schema/tables.js";
+import {
+  tasks,
+  arbitrationRuns,
+  reviewRuns,
+  reviewFindings,
+} from "../schema/tables.js";
 import type { DrizzleDb, DbOrTx } from "../drizzle-instance.js";
 import type { TaskDbRow } from "./tasks-core.js";
+import type { ReviewerAggregate } from "../review-decision.js";
 import { ACTIVE_STATUSES } from "./query-helpers.js";
 
 export async function claim(
@@ -275,7 +281,6 @@ export interface TransitionUpdate {
   status: string;
   buildStatus?: string;
   commitSha?: string;
-  latestReviewPath?: string;
   reviewerVerdicts?: Record<string, string>;
   arbitrationPendingTrigger?: string | null;
   failureReason?: string;
@@ -299,8 +304,6 @@ export async function applyTransition(
   const set: Record<string, unknown> = { status: update.status };
   if (update.buildStatus !== undefined) set.buildStatus = update.buildStatus;
   if (update.commitSha !== undefined) set.commitSha = update.commitSha;
-  if (update.latestReviewPath !== undefined)
-    set.latestReviewPath = update.latestReviewPath;
   if (update.reviewerVerdicts !== undefined)
     set.reviewerVerdicts = update.reviewerVerdicts;
   if (update.arbitrationPendingTrigger !== undefined) {
@@ -350,4 +353,39 @@ export async function arbitrationExists(
     )
     .limit(1);
   return rows.length > 0;
+}
+
+/**
+ * Per-reviewer roll-up of one review cycle: each reviewer's verdict plus its
+ * total and BLOCKING finding tallies. Feeds `classifyReview` (review-decision.ts)
+ * to gate the `reviewing → completed` / `reviewing → revising` transitions.
+ *
+ * Uses a LEFT JOIN so a reviewer with zero findings still produces a row;
+ * `count(reviewFindings.id)` is null-safe (counts only matched finding rows),
+ * so a no-findings reviewer reports findingsCount = 0 rather than 1.
+ */
+export async function getReviewerAggregates(
+  db: DrizzleDb,
+  taskId: number,
+  cycle: number,
+): Promise<ReviewerAggregate[]> {
+  const rows = await db
+    .select({
+      reviewerRole: reviewRuns.reviewerRole,
+      verdict: reviewRuns.verdict,
+      findingsCount: sql<number>`count(${reviewFindings.id})`,
+      blockingCount: sql<number>`count(${reviewFindings.id}) filter (where ${reviewFindings.severity} = 'BLOCKING')`,
+    })
+    .from(reviewRuns)
+    .leftJoin(reviewFindings, eq(reviewFindings.runId, reviewRuns.id))
+    .where(and(eq(reviewRuns.taskId, taskId), eq(reviewRuns.cycle, cycle)))
+    .groupBy(reviewRuns.id, reviewRuns.reviewerRole, reviewRuns.verdict);
+
+  // pg/PGlite return bigint aggregates as strings — normalise to number.
+  return rows.map((r) => ({
+    reviewerRole: r.reviewerRole,
+    verdict: r.verdict,
+    findingsCount: Number(r.findingsCount),
+    blockingCount: Number(r.blockingCount),
+  }));
 }

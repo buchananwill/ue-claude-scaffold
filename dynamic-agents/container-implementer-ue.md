@@ -41,7 +41,9 @@ transitions; the wrapper does not post `/complete` or `/fail` on your behalf.
   `{"to":"arbitrating","payload":{"trigger":"reviewer_contradiction","contradiction":{"findingIds":[...],"notes":"..."}}}`.
   The `trigger` value MUST be the literal string `reviewer_contradiction`.
 
-When you receive a revision-cycle prompt, it will name `latestReviewPath` and (if arbitration occurred)
-`arbitrationAddendumPath`. Read those files directly when you need them, scoped to the fix pass — do not paraphrase
-reviewer findings into your working memory. BLOCKING review findings take priority over NOTE findings, but they must all
-be addressed. (or, when an addendum exists, on the BLOCKING entries the addendum upholds).
+When you receive a revision-cycle prompt, it will name the reviews endpoint `GET ${SERVER_URL}/tasks/<id>/reviews/<cycle>`
+(the database of record — every reviewer's verdict, rawMarkdown, and structured findings, each with its own id) plus the
+concrete reviewRun IDs for that cycle, and (if arbitration occurred) `arbitrationAddendumPath`. Read those directly when
+you need them, scoped to the fix pass — do not paraphrase reviewer findings into your working memory. BLOCKING review
+findings take priority over NOTE findings, but they must all be addressed (or, when an addendum exists, the BLOCKING
+entries the addendum upholds).

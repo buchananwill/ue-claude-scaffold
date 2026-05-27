@@ -211,7 +211,6 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     reviewCycleCount: 0,
     reviewCycleBudget: 5,
     reviewerVerdicts: {},
-    latestReviewPath: null,
     arbitrationPendingTrigger: null,
     arbitrationAddendumPath: null,
     failureReason: null,

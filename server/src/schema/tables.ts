@@ -145,7 +145,6 @@ export const tasks = pgTable(
     reviewerVerdicts: jsonb("reviewer_verdicts")
       .notNull()
       .default(sql`'{}'::jsonb`),
-    latestReviewPath: text("latest_review_path"),
     // FSM: build state tracked separately from task status
     buildStatus: text("build_status").notNull().default("pending"),
     commitSha: text("commit_sha"),
@@ -474,10 +473,13 @@ export const arbitrationRuns = pgTable(
 );
 
 // 19. reviewFindings — per-finding child rows of review_runs.
-//     Severity is two-tier: BLOCKING means the engineer must address before the cycle
-//     can transition to 'completed'; NOTE is observability-only and never acted on by
-//     the engineer (it lands here so the operator can aggregate signals across tasks).
-//     The legacy WARNING tier is removed.
+//     Severity is two-tier: BLOCKING and NOTE (the legacy WARNING tier is removed).
+//     Both tiers count toward the findings-based review decision (classifyReview in
+//     review-decision.ts): the per-reviewer and total finding tallies that drive
+//     accept-vs-revise count BLOCKING + NOTE alike, and a single BLOCKING finding
+//     forces a revision regardless of verdict. BLOCKING ranks above NOTE for the
+//     engineer's attention, but NOTE findings are still addressed on a revision pass
+//     and still aggregate for cross-task operator signal.
 export const reviewFindings = pgTable(
   "review_findings",
   {

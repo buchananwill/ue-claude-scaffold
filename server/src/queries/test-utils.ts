@@ -129,7 +129,6 @@ CREATE TABLE "tasks" (
   "review_cycle_count" integer NOT NULL DEFAULT 0,
   "review_cycle_budget" integer NOT NULL DEFAULT 5,
   "reviewer_verdicts" jsonb NOT NULL DEFAULT '{}'::jsonb,
-  "latest_review_path" text,
   "build_status" text NOT NULL DEFAULT 'pending',
   "commit_sha" text,
   "arbitration_pending_trigger" text,

@@ -130,22 +130,28 @@ _scrub_prompt_path_csv() {
 # the caller declares the following locals before calling, and this function
 # assigns into them:
 #
-#   title source_path cycle_count latest_review_path addendum_path
+#   title source_path cycle_count addendum_path
 #   had_addendum_originally addendum_rejected
+#   review_cycle review_run_ids
 #
 # Behaviour:
 #   * Non-numeric task_id (defence-in-depth against the looser pump-loop claim
 #     regex `^[0-9a-zA-Z_-]+$`) → skip the curl, warn to stderr, fall through
 #     to the env-fallback branch.
 #   * Server unreachable / empty response → env-fallback: seed from
-#     CURRENT_TASK_TITLE / CURRENT_TASK_SOURCE, cycle_count=0, no review/
-#     addendum paths.
+#     CURRENT_TASK_TITLE / CURRENT_TASK_SOURCE, cycle_count=0, no addendum path.
 #   * Server response present → newline-scrub all string fields, capture
 #     had_addendum_originally BEFORE the allowlist scrub (so a rejected-but-
 #     non-null addendum still routes to Branch 3 with a sentinel placeholder
 #     instead of silently masquerading as a no-addendum revision), then
-#     allowlist-scrub the three path fields via _scrub_prompt_path_field.
+#     allowlist-scrub the source_path / addendum_path fields via
+#     _scrub_prompt_path_field.
 #   * Non-numeric cycle_count → sanitised to 0.
+#   * On a revision cycle (cycle_count > 0) → fetch the prior review cycle's
+#     run IDs (reviewing→revising incremented reviewCycleCount, so the cycle
+#     just reviewed is cycle_count - 1) so the prompt can name them concretely.
+#     Reviews are the database of record (review_runs + review_findings); there
+#     is no scratch-file pointer.
 _fetch_engineer_fsm_fields() {
     local task_id="$1"
 
@@ -167,27 +173,24 @@ _fetch_engineer_fsm_fields() {
         title=$(echo "$task_json"               | jq -r '.title                    // ""' | tr -d '\n')
         source_path=$(echo "$task_json"         | jq -r '.sourcePath               // ""' | tr -d '\n')
         cycle_count=$(echo "$task_json"         | jq -r '.reviewCycleCount         // 0')
-        latest_review_path=$(echo "$task_json"  | jq -r '.latestReviewPath         // ""' | tr -d '\n')
         addendum_path=$(echo "$task_json"       | jq -r '.arbitrationAddendumPath  // ""' | tr -d '\n')
 
         # Capture had_addendum_originally before any scrub so branch selection
         # cannot be downgraded by a rejected-path verdict.
         [ -n "$addendum_path" ] && had_addendum_originally=1
 
-        # Allowlist-scrub the three path fields. Title is free-form; newline
+        # Allowlist-scrub the two path fields. Title is free-form; newline
         # scrubbing alone is enough. On allowlist failure, the helper echoes
         # empty so the sentinel placeholder is used instead of injecting a
         # malformed path into the prompt. The cycle branch (0 / revision /
         # post-arbitration) is determined by `cycle_count` and
-        # `had_addendum_originally`, not by whether `latest_review_path` or
-        # `addendum_path` passed the allowlist.
-        # `|| true` on the source_path / latest_review_path scrubs: the
-        # helper returns 1 on rejection, which would trip the parent's
-        # `set -e` if left unguarded. We only consult the return code for
-        # addendum_path (to set addendum_rejected). The empty echo on reject
-        # is identical in all three cases.
+        # `had_addendum_originally`, not by whether `addendum_path` passed the
+        # allowlist.
+        # `|| true` on the source_path scrub: the helper returns 1 on
+        # rejection, which would trip the parent's `set -e` if left unguarded.
+        # We only consult the return code for addendum_path (to set
+        # addendum_rejected). The empty echo on reject is identical in both.
         source_path=$(_scrub_prompt_path_field "$source_path" "source_path") || true
-        latest_review_path=$(_scrub_prompt_path_field "$latest_review_path" "latest_review_path") || true
         if ! addendum_path=$(_scrub_prompt_path_field "$addendum_path" "addendum_path" \
                 "routing to post-arbitration branch with sentinel placeholder."); then
             addendum_rejected=1
@@ -200,7 +203,6 @@ _fetch_engineer_fsm_fields() {
         title="$(printf '%s' "${CURRENT_TASK_TITLE:-}" | tr -d '\n')"
         source_path="$(printf '%s' "${CURRENT_TASK_SOURCE:-}" | tr -d '\n')"
         cycle_count=0
-        latest_review_path=""
         addendum_path=""
         # had_addendum_originally stays 0 — env-fallback always routes to
         # the cycle-0 branch (no server state available).
@@ -210,6 +212,22 @@ _fetch_engineer_fsm_fields() {
     if ! [[ "$cycle_count" =~ ^[0-9]+$ ]]; then
         cycle_count=0
     fi
+
+    # On a revision cycle, fetch the prior review cycle's run IDs so the prompt
+    # can name them concretely. The cycle just reviewed is cycle_count - 1
+    # (reviewing→revising incremented reviewCycleCount). review_run_ids stays
+    # empty on any failure — the prompt falls back to a "GET the endpoint"
+    # sentinel and the engineer enumerates the runs itself.
+    review_cycle=""
+    review_run_ids=""
+    if [[ "$task_id" =~ ^[0-9]+$ ]] && [ "$cycle_count" -gt 0 ]; then
+        review_cycle=$(( cycle_count - 1 ))
+        local reviews_json
+        reviews_json=$(_curl_server -sf "${SERVER_URL}/tasks/${task_id}/reviews/${review_cycle}" --max-time 10 2>/dev/null) || reviews_json=""
+        if [ -n "$reviews_json" ]; then
+            review_run_ids=$(echo "$reviews_json" | jq -r '[(.runs // [])[].id] | join(", ")' 2>/dev/null) || review_run_ids=""
+        fi
+    fi
 }
 
 # Build the engineer-session prompt by fetching fresh FSM state from the
@@ -217,17 +235,19 @@ _fetch_engineer_fsm_fields() {
 # task FSM contract:
 #
 #   * cycle 0                              → standard implement-from-plan.
-#   * cycle > 0, no arbitration addendum   → revise per consolidated review.
+#   * cycle > 0, no arbitration addendum   → revise per the DB reviews.
 #   * cycle > 0, arbitration addendum set  → revise per addendum (authoritative
-#                                            over the consolidated review where
-#                                            they conflict).
+#                                            over the reviews where they
+#                                            conflict).
 #
 # Fields read from GET /tasks/:id: title, sourcePath, reviewCycleCount,
-# latestReviewPath, arbitrationAddendumPath. The prompt names exact transition
-# endpoints and failureReason enum values literally so the engineer cannot
-# invent free-text values that trip the CHECK constraint. It does NOT inline
-# reviewer findings or anti-pattern language — the engineer reads
-# latestReviewPath / arbitrationAddendumPath on demand.
+# arbitrationAddendumPath. On a revision cycle it also fetches the prior
+# cycle's reviewRun IDs from GET /tasks/:id/reviews/:cycle. The prompt names
+# exact transition endpoints and failureReason enum values literally so the
+# engineer cannot invent free-text values that trip the CHECK constraint. It
+# does NOT inline reviewer findings or anti-pattern language — the engineer
+# reads the reviews (GET /tasks/:id/reviews/:cycle) and arbitrationAddendumPath
+# on demand.
 #
 # This dispatcher delegates field acquisition to _fetch_engineer_fsm_fields
 # (which uses bash dynamic scoping to populate the locals declared here) and
@@ -240,7 +260,8 @@ _build_engineer_prompt() {
     local prefix
     prefix="$(_build_task_prompt_prefix)"
 
-    local title source_path cycle_count latest_review_path addendum_path
+    local title source_path cycle_count addendum_path
+    local review_cycle review_run_ids
     # Whether the server reported a non-null arbitrationAddendumPath, captured
     # BEFORE the allowlist scrub. Drives Branch 2 vs Branch 3 selection so a
     # rejected-but-non-null addendum still routes to the post-arbitration
@@ -336,24 +357,26 @@ ${contradiction_escape}"
         # addendum_path. A legitimately-null server response sets
         # had_addendum_originally=0 and lands here; a rejected-but-non-null
         # addendum sets had_addendum_originally=1 and routes to Branch 3.
-        # Note: avoid `${var:-<...${SERVER_URL}>}` here — bash parses the
-        # default-substitution arm greedily and an unescaped inner `}` would
-        # close the outer expansion early, splicing trailing literal text.
-        local lrp_display="$latest_review_path"
-        [ -z "$lrp_display" ] && lrp_display="<latestReviewPath missing — refetch GET /tasks/${task_id}>"
+        local runids_display="$review_run_ids"
+        [ -z "$runids_display" ] && runids_display="<none returned — GET the endpoint below to enumerate them>"
         echo -n "${header}
 
 ## Revision cycle ${cycle_count} (no arbitration)
 
-This task is in a revision cycle. Read the consolidated review at:
+This task is in a revision cycle. The full reviews are the database of record.
+Read them directly:
 
-  ${lrp_display}
+  GET \${SERVER_URL}/tasks/${task_id}/reviews/${review_cycle}
 
-Address every BLOCKING entry. NOTE entries are to be addressed also. Post the \`built\` transition with the new
-commitSha.
+reviewRun IDs for this cycle: ${runids_display}
 
-Do not paraphrase the consolidated review into your working memory — read
-it directly when you need it, scoped to one fix pass.
+The response carries each reviewer's verdict, rawMarkdown, and structured
+findings (every finding has its severity, file/line, and suggested fix).
+Address every BLOCKING finding. NOTE findings are to be addressed also. Post
+the \`built\` transition with the new commitSha.
+
+Do not paraphrase the reviews into your working memory — read them directly
+when you need them, scoped to one fix pass.
 
 ${transitions}
 
@@ -365,14 +388,8 @@ ${contradiction_escape}"
         # the engineer must see the arbitration ruling even when the path
         # itself is unrenderable, so it can refetch the task and read the
         # addendum directly.
-        # Note: Branch 2 and Branch 3 use DIFFERENT lrp_display sentinels by
-        # design (Branch 2 mentions refetching the task; Branch 3 keeps it
-        # terse because the addendum_display sentinel already names the
-        # refetch in the same prompt). Do not lift this above the branch
-        # split — the byte-identical-output constraint requires the divergence
-        # to be preserved.
-        local lrp_display="$latest_review_path"
-        [ -z "$lrp_display" ] && lrp_display="<latestReviewPath missing>"
+        local runids_display="$review_run_ids"
+        [ -z "$runids_display" ] && runids_display="<none returned — GET the endpoint below to enumerate them>"
         local addendum_display="$addendum_path"
         if [ "$addendum_rejected" = "1" ]; then
             addendum_display="<arbitrationAddendumPath rejected — refetch GET /tasks/${task_id}>"
@@ -388,17 +405,20 @@ ${contradiction_escape}"
 
 This task is in a revision cycle following an arbitrator ruling. Read both:
 
-  Consolidated review: ${lrp_display}
+  Reviews (database):  GET \${SERVER_URL}/tasks/${task_id}/reviews/${review_cycle}
   Arbitrator addendum: ${addendum_display}
 
-The addendum is AUTHORITATIVE where it conflicts with the consolidated
-review — it names which BLOCKING finding was upheld and which was retired.
+reviewRun IDs for this cycle: ${runids_display}
+
+The reviews response carries each reviewer's verdict, rawMarkdown, and
+structured findings. The addendum is AUTHORITATIVE where it conflicts with the
+reviews — it names which BLOCKING finding was upheld and which was retired.
 Address only the upheld findings; ignore the retired ones. NOTE entries are
 observability only. Re-build clean. Post the \`built\` transition with the
 new commitSha.
 
-Do not paraphrase either file into your working memory — read both directly
-when you need them, scoped to one fix pass.
+Do not paraphrase the reviews or the addendum into your working memory — read
+them directly when you need them, scoped to one fix pass.
 
 ${transitions}
 

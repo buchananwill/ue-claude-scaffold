@@ -5,6 +5,7 @@ import * as tasksLifecycleQ from "../queries/tasks-lifecycle.js";
 import { existsInBareRepo, isCommittedInRepo } from "../git-utils.js";
 import { seedBranchFor, AGENT_NAME_RE } from "../branch-naming.js";
 import { resolveProject } from "../resolve-project.js";
+import { classifyReview } from "../review-decision.js";
 import type { TasksOpts } from "./tasks-files.js";
 import { resolveAgent } from "./route-helpers.js";
 
@@ -68,7 +69,6 @@ type BuildStatus = (typeof BUILD_STATUSES)[number];
 const REVIEWER_ROLE_RE = /^[A-Za-z0-9_-]+$/;
 const REVIEWER_ROLE_MAX = 64;
 const COMMIT_SHA_MAX = 128;
-const LATEST_REVIEW_PATH_MAX = 4096;
 const FAILURE_DETAIL_MAX = 4096;
 
 interface TransitionPayload {
@@ -79,9 +79,6 @@ interface TransitionPayload {
   // reviewing → reviewing (per-reviewer verdict update)
   reviewerRole?: string;
   verdict?: string;
-
-  // reviewing → revising (workspace pointer)
-  latestReviewPath?: string;
 
   // engineering → arbitrating, reviewing → arbitrating
   trigger?: string;
@@ -156,21 +153,6 @@ function readVerdicts(raw: unknown): Record<string, string> {
     return out;
   }
   return {};
-}
-
-/**
- * True iff every declared reviewer (the keys of `verdicts`) has a verdict in
- * {approve, out_of_scope}. Empty maps return false — completion requires at
- * least one declared reviewer.
- */
-function allReviewersClear(verdicts: Record<string, string>): boolean {
-  const values = Object.values(verdicts);
-  if (values.length === 0) return false;
-  return values.every((v) => v === "approve" || v === "out_of_scope");
-}
-
-function anyRequestChanges(verdicts: Record<string, string>): boolean {
-  return Object.values(verdicts).some((v) => v === "request_changes");
 }
 
 const tasksLifecyclePlugin: FastifyPluginAsync<TasksOpts> = async (
@@ -441,46 +423,36 @@ async function handleTransition(
     }
   } else if (target === "revising") {
     // Two legal sources per the FSM:
-    //   reviewing → revising   : engineer reads accumulated verdicts and
-    //                            decides to revise. Requires latestReviewPath
-    //                            (workspace pointer) and at least one
-    //                            request_changes verdict already on file.
-    //                            Subject to the cycle-budget reroute below —
-    //                            if it would push the count past the budget,
-    //                            we silently flip the write to `arbitrating`
-    //                            with the cycle-budget trigger and DO NOT
-    //                            write latestReviewPath.
+    //   reviewing → revising   : the findings-based decision (classifyReview)
+    //                            for the current cycle must be "revise". No
+    //                            payload is required — reviews live in the
+    //                            database (review_runs/review_findings) and the
+    //                            engineer reads them via GET /tasks/:id/reviews.
+    //                            Subject to the cycle-budget reroute below — if
+    //                            it would push the count past the budget, we
+    //                            silently flip the write to `arbitrating` with
+    //                            the cycle-budget trigger instead.
     //   arbitrating → revising : Phase 7 arbitrator ruled 'rule'; clear the
-    //                            pending trigger and move on.
-    //                            latestReviewPath is OPTIONAL on this path —
-    //                            the arbitrator's ruling is the workspace
-    //                            pointer of record. If supplied, validate and
-    //                            write it; otherwise leave it untouched.
+    //                            pending trigger and move on. No payload — the
+    //                            engineer reads the arbitration ruling (DB +
+    //                            addendum file) on the next hop.
     if (current === "reviewing") {
-      // Validate latestReviewPath up front: it is required on this edge,
-      // even though we may end up not writing it (cycle-budget reroute path).
-      if (
-        typeof payload.latestReviewPath !== "string" ||
-        payload.latestReviewPath.length === 0
-      ) {
-        return reply.badRequest(
-          "payload.latestReviewPath is required on reviewing→revising",
-        );
-      }
-      if (payload.latestReviewPath.length > LATEST_REVIEW_PATH_MAX) {
-        return reply.badRequest(
-          `payload.latestReviewPath exceeds maximum length of ${LATEST_REVIEW_PATH_MAX} characters`,
-        );
-      }
-
-      // Verdict gate: at least one reviewer must have posted request_changes.
-      // The transition table edge is "any verdict == request_changes". An
-      // engineer-initiated revising with only approvals/out_of_scope on file
-      // would be incoherent.
-      const verdicts = readVerdicts(row.reviewerVerdicts);
-      if (!anyRequestChanges(verdicts)) {
+      // Decision gate: recompute the findings-based verdict for the cycle just
+      // reviewed (review_runs/review_findings are the authoritative store —
+      // reviewer verdicts alone are insufficient). The reviewer-fanout posts
+      // the matching transition; the server is the authority. The cycle under
+      // review is the current reviewCycleCount (the increment below happens
+      // only after this gate passes).
+      const cycle = row.reviewCycleCount ?? 0;
+      const aggregates = await tasksLifecycleQ.getReviewerAggregates(
+        db,
+        id,
+        cycle,
+      );
+      if (classifyReview(aggregates) !== "revise") {
         return reply.conflict(
-          `cannot transition '${current}' → '${target}': no reviewer has posted request_changes`,
+          `cannot transition '${current}' → '${target}': no revision trigger fired ` +
+            "(needs request_changes, >=3 findings on one reviewer, >=2 reviewers with findings, or a BLOCKING finding)",
         );
       }
 
@@ -498,29 +470,13 @@ async function handleTransition(
         update.status = "arbitrating";
         update.arbitrationPendingTrigger = trigger;
         update.reviewCycleCount = nextCount;
-        // Do not write latestReviewPath — we are not entering revising.
       } else {
-        update.latestReviewPath = payload.latestReviewPath;
         update.reviewCycleCount = nextCount;
       }
     } else if (current === "arbitrating") {
-      // arbitrator ruled 'rule'; latestReviewPath optional.
-      if (payload.latestReviewPath !== undefined) {
-        if (
-          typeof payload.latestReviewPath !== "string" ||
-          payload.latestReviewPath.length === 0
-        ) {
-          return reply.badRequest(
-            "payload.latestReviewPath, if supplied, must be a non-empty string",
-          );
-        }
-        if (payload.latestReviewPath.length > LATEST_REVIEW_PATH_MAX) {
-          return reply.badRequest(
-            `payload.latestReviewPath exceeds maximum length of ${LATEST_REVIEW_PATH_MAX} characters`,
-          );
-        }
-        update.latestReviewPath = payload.latestReviewPath;
-      }
+      // arbitrator ruled 'rule'; clear the pending trigger and move on. The
+      // engineer reads the arbitration ruling (DB + addendum file) on the next
+      // revising → engineering hop; no workspace pointer is written here.
       update.arbitrationPendingTrigger = null;
     }
   } else if (target === "arbitrating") {
@@ -554,12 +510,22 @@ async function handleTransition(
     }
     update.arbitrationPendingTrigger = payload.trigger;
   } else if (target === "completed") {
-    // Legal sources: reviewing (verdict gate) and arbitrating (ruling=approve).
+    // Legal sources: reviewing (decision gate) and arbitrating (ruling=approve).
     if (current === "reviewing") {
-      const verdicts = readVerdicts(row.reviewerVerdicts);
-      if (!allReviewersClear(verdicts)) {
+      // Findings-based acceptance: every reviewer verdict in
+      // {approve, out_of_scope}, at most one reviewer with findings, at most
+      // two findings on any reviewer, and no BLOCKING findings. Recomputed
+      // server-side from review_runs/review_findings for the current cycle.
+      const cycle = row.reviewCycleCount ?? 0;
+      const aggregates = await tasksLifecycleQ.getReviewerAggregates(
+        db,
+        id,
+        cycle,
+      );
+      if (classifyReview(aggregates) !== "accept") {
         return reply.conflict(
-          "cannot transition reviewing→complete: not all declared reviewers have approved or declared out_of_scope",
+          "cannot transition reviewing→completed: review does not meet the acceptance criteria " +
+            "(needs all verdicts approve/out_of_scope, <=1 reviewer with findings, <=2 findings per reviewer, no BLOCKING findings)",
         );
       }
     } else if (current === "arbitrating") {

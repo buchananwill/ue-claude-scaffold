@@ -11,18 +11,21 @@
  * Findings can be empty (an `approve` or `out_of_scope` verdict need not carry
  * findings); an `approve` may still carry NOTE findings, count unconstrained.
  */
-import type { FastifyPluginAsync } from 'fastify';
-import { eq, and, asc, inArray } from 'drizzle-orm';
-import { getDb } from '../drizzle-instance.js';
-import { reviewRuns, reviewFindings, tasks } from '../schema/tables.js';
-import { requireProjectIdHeader } from './_project-id-guard.js';
-import { isUniqueConstraintConflict, reviewerRoleError } from './_route-helpers.js';
+import type { FastifyPluginAsync } from "fastify";
+import { eq, and, asc, inArray } from "drizzle-orm";
+import { getDb } from "../drizzle-instance.js";
+import { reviewRuns, reviewFindings, tasks } from "../schema/tables.js";
+import { requireProjectIdHeader } from "./_project-id-guard.js";
+import {
+  isUniqueConstraintConflict,
+  reviewerRoleError,
+} from "./_route-helpers.js";
 
-const VERDICTS = ['approve', 'request_changes', 'out_of_scope'] as const;
-type Verdict = typeof VERDICTS[number];
+const VERDICTS = ["approve", "request_changes", "out_of_scope"] as const;
+type Verdict = (typeof VERDICTS)[number];
 
-const SEVERITIES = ['BLOCKING', 'NOTE'] as const;
-type Severity = typeof SEVERITIES[number];
+const SEVERITIES = ["BLOCKING", "NOTE"] as const;
+type Severity = (typeof SEVERITIES)[number];
 
 const TITLE_MAX = 1024;
 const RAW_MARKDOWN_MAX = 512_000;
@@ -54,11 +57,11 @@ type ValidationResult<T> =
   | { ok: false; message: string };
 
 function isVerdict(v: unknown): v is Verdict {
-  return typeof v === 'string' && (VERDICTS as readonly string[]).includes(v);
+  return typeof v === "string" && (VERDICTS as readonly string[]).includes(v);
 }
 
 function isSeverity(v: unknown): v is Severity {
-  return typeof v === 'string' && (SEVERITIES as readonly string[]).includes(v);
+  return typeof v === "string" && (SEVERITIES as readonly string[]).includes(v);
 }
 
 /**
@@ -68,8 +71,11 @@ function isSeverity(v: unknown): v is Severity {
  * The error wording matches what the inline validator emitted before
  * extraction, so existing tests keep passing without modification.
  */
-function validateFinding(f: unknown, i: number): ValidationResult<FindingInput> {
-  if (!f || typeof f !== 'object') {
+function validateFinding(
+  f: unknown,
+  i: number,
+): ValidationResult<FindingInput> {
+  if (!f || typeof f !== "object") {
     return { ok: false, message: `findings[${i}] must be an object` };
   }
   const o = f as Record<string, unknown>;
@@ -77,7 +83,7 @@ function validateFinding(f: unknown, i: number): ValidationResult<FindingInput> 
   if (!isSeverity(o.severity)) {
     return {
       ok: false,
-      message: `findings[${i}].severity must be one of: ${SEVERITIES.join(', ')}`,
+      message: `findings[${i}].severity must be one of: ${SEVERITIES.join(", ")}`,
     };
   }
   if (!Number.isInteger(o.ordinal) || (o.ordinal as number) < 0) {
@@ -86,8 +92,11 @@ function validateFinding(f: unknown, i: number): ValidationResult<FindingInput> 
       message: `findings[${i}].ordinal must be a non-negative integer`,
     };
   }
-  if (typeof o.title !== 'string' || o.title.length === 0) {
-    return { ok: false, message: `findings[${i}].title must be a non-empty string` };
+  if (typeof o.title !== "string" || o.title.length === 0) {
+    return {
+      ok: false,
+      message: `findings[${i}].title must be a non-empty string`,
+    };
   }
   if (o.title.length > TITLE_MAX) {
     return {
@@ -95,8 +104,11 @@ function validateFinding(f: unknown, i: number): ValidationResult<FindingInput> 
       message: `findings[${i}].title exceeds maximum length of ${TITLE_MAX}`,
     };
   }
-  if (typeof o.description !== 'string') {
-    return { ok: false, message: `findings[${i}].description must be a string` };
+  if (typeof o.description !== "string") {
+    return {
+      ok: false,
+      message: `findings[${i}].description must be a string`,
+    };
   }
   if (o.description.length > DESCRIPTION_MAX) {
     return {
@@ -104,36 +116,48 @@ function validateFinding(f: unknown, i: number): ValidationResult<FindingInput> 
       message: `findings[${i}].description exceeds maximum length of ${DESCRIPTION_MAX}`,
     };
   }
-  if (o.filePath !== undefined && o.filePath !== null && typeof o.filePath !== 'string') {
+  if (
+    o.filePath !== undefined &&
+    o.filePath !== null &&
+    typeof o.filePath !== "string"
+  ) {
     return { ok: false, message: `findings[${i}].filePath must be a string` };
   }
   if (
-    o.line !== undefined
-    && o.line !== null
-    && (!Number.isInteger(o.line) || (o.line as number) < 0)
+    o.line !== undefined &&
+    o.line !== null &&
+    (!Number.isInteger(o.line) || (o.line as number) < 0)
   ) {
     return {
       ok: false,
       message: `findings[${i}].line must be a non-negative integer`,
     };
   }
-  if (o.evidence !== undefined && o.evidence !== null && typeof o.evidence !== 'string') {
+  if (
+    o.evidence !== undefined &&
+    o.evidence !== null &&
+    typeof o.evidence !== "string"
+  ) {
     return { ok: false, message: `findings[${i}].evidence must be a string` };
   }
   if (
-    o.evidence !== undefined
-    && o.evidence !== null
-    && (o.evidence as string).length > EVIDENCE_MAX
+    o.evidence !== undefined &&
+    o.evidence !== null &&
+    (o.evidence as string).length > EVIDENCE_MAX
   ) {
     return {
       ok: false,
       message: `findings[${i}].evidence exceeds maximum length of ${EVIDENCE_MAX}`,
     };
   }
-  if (o.fix !== undefined && o.fix !== null && typeof o.fix !== 'string') {
+  if (o.fix !== undefined && o.fix !== null && typeof o.fix !== "string") {
     return { ok: false, message: `findings[${i}].fix must be a string` };
   }
-  if (o.fix !== undefined && o.fix !== null && (o.fix as string).length > FIX_MAX) {
+  if (
+    o.fix !== undefined &&
+    o.fix !== null &&
+    (o.fix as string).length > FIX_MAX
+  ) {
     return {
       ok: false,
       message: `findings[${i}].fix exceeds maximum length of ${FIX_MAX}`,
@@ -161,25 +185,27 @@ function validateFinding(f: unknown, i: number): ValidationResult<FindingInput> 
  * extraction of the inline validation that previously ran in the handler —
  * no behaviour change, no message change.
  */
-function validatePostReviewBody(raw: unknown): ValidationResult<PostReviewBody> {
+function validatePostReviewBody(
+  raw: unknown,
+): ValidationResult<PostReviewBody> {
   const body = (raw ?? {}) as Record<string, unknown>;
 
   if (!Number.isInteger(body.cycle) || (body.cycle as number) < 0) {
-    return { ok: false, message: 'cycle must be a non-negative integer' };
+    return { ok: false, message: "cycle must be a non-negative integer" };
   }
-  if (typeof body.reviewerRole !== 'string' || body.reviewerRole.length === 0) {
-    return { ok: false, message: 'reviewerRole must be a non-empty string' };
+  if (typeof body.reviewerRole !== "string" || body.reviewerRole.length === 0) {
+    return { ok: false, message: "reviewerRole must be a non-empty string" };
   }
-  const reviewerErr = reviewerRoleError(body.reviewerRole, 'reviewerRole');
+  const reviewerErr = reviewerRoleError(body.reviewerRole, "reviewerRole");
   if (reviewerErr !== null) return { ok: false, message: reviewerErr };
   if (!isVerdict(body.verdict)) {
     return {
       ok: false,
-      message: `verdict must be one of: ${VERDICTS.join(', ')}`,
+      message: `verdict must be one of: ${VERDICTS.join(", ")}`,
     };
   }
-  if (typeof body.rawMarkdown !== 'string') {
-    return { ok: false, message: 'rawMarkdown must be a string' };
+  if (typeof body.rawMarkdown !== "string") {
+    return { ok: false, message: "rawMarkdown must be a string" };
   }
   if ((body.rawMarkdown as string).length > RAW_MARKDOWN_MAX) {
     return {
@@ -188,9 +214,14 @@ function validatePostReviewBody(raw: unknown): ValidationResult<PostReviewBody> 
     };
   }
 
-  const findings = Array.isArray(body.findings) ? (body.findings as unknown[]) : null;
+  const findings = Array.isArray(body.findings)
+    ? (body.findings as unknown[])
+    : null;
   if (findings === null) {
-    return { ok: false, message: 'findings must be an array (use [] for none)' };
+    return {
+      ok: false,
+      message: "findings must be an array (use [] for none)",
+    };
   }
 
   const validatedFindings: FindingInput[] = [];
@@ -217,7 +248,7 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.post<{
     Params: { id: string };
     Body: unknown;
-  }>('/tasks/:id/reviews', async (request, reply) => {
+  }>("/tasks/:id/reviews", async (request, reply) => {
     // X-Project-Id is mandatory on this endpoint. The project-id plugin
     // silently substitutes 'default' on a missing header — the shared guard
     // re-keys off the raw header so a missing or empty value surfaces as 400.
@@ -225,7 +256,7 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
 
     const taskId = Number(request.params.id);
     if (!Number.isInteger(taskId) || taskId <= 0) {
-      return reply.badRequest('invalid task id');
+      return reply.badRequest("invalid task id");
     }
 
     const v = validatePostReviewBody(request.body);
@@ -246,7 +277,7 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
       .where(and(eq(tasks.id, taskId), eq(tasks.projectId, request.projectId)))
       .limit(1);
     if (taskRow.length === 0) {
-      return reply.notFound('task not found');
+      return reply.notFound("task not found");
     }
 
     try {
@@ -288,7 +319,9 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
 
       return result;
     } catch (err) {
-      if (isUniqueConstraintConflict(err, 'review_runs_task_cycle_role_unique')) {
+      if (
+        isUniqueConstraintConflict(err, "review_runs_task_cycle_role_unique")
+      ) {
         return reply.conflict(
           `review run already exists for task ${taskId}, cycle ${body.cycle}, reviewerRole '${body.reviewerRole}'`,
         );
@@ -300,7 +333,7 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
   // GET /tasks/:id/reviews/:cycle — per-run breakdown for a single cycle
   fastify.get<{
     Params: { id: string; cycle: string };
-  }>('/tasks/:id/reviews/:cycle', async (request, reply) => {
+  }>("/tasks/:id/reviews/:cycle", async (request, reply) => {
     // X-Project-Id is mandatory on this endpoint. See the POST handler for
     // the rationale on inspecting the raw header rather than
     // `request.projectId`.
@@ -309,10 +342,10 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
     const taskId = Number(request.params.id);
     const cycle = Number(request.params.cycle);
     if (!Number.isInteger(taskId) || taskId <= 0) {
-      return reply.badRequest('invalid task id');
+      return reply.badRequest("invalid task id");
     }
     if (!Number.isInteger(cycle) || cycle < 0) {
-      return reply.badRequest('invalid cycle');
+      return reply.badRequest("invalid cycle");
     }
 
     const db = getDb();
@@ -329,7 +362,7 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
       .where(and(eq(tasks.id, taskId), eq(tasks.projectId, request.projectId)))
       .limit(1);
     if (taskRow.length === 0) {
-      return reply.notFound('task not found');
+      return reply.notFound("task not found");
     }
 
     const runs = await db
@@ -365,7 +398,11 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
       })
       .from(reviewFindings)
       .where(inArray(reviewFindings.runId, runIds))
-      .orderBy(asc(reviewFindings.runId), asc(reviewFindings.ordinal), asc(reviewFindings.id));
+      .orderBy(
+        asc(reviewFindings.runId),
+        asc(reviewFindings.ordinal),
+        asc(reviewFindings.id),
+      );
 
     const byRun = new Map<number, typeof findingsRows>();
     for (const f of findingsRows) {
@@ -377,10 +414,12 @@ const reviewsPlugin: FastifyPluginAsync = async (fastify) => {
     return {
       cycle,
       runs: runs.map((r) => ({
+        id: r.id,
         reviewerRole: r.reviewerRole,
         verdict: r.verdict,
         rawMarkdown: r.rawMarkdown,
-        postedAt: r.postedAt instanceof Date ? r.postedAt.toISOString() : r.postedAt,
+        postedAt:
+          r.postedAt instanceof Date ? r.postedAt.toISOString() : r.postedAt,
         findings: (byRun.get(r.id) ?? []).map((f) => ({
           id: f.id,
           severity: f.severity,

@@ -22,11 +22,14 @@
 #      whose engineering work is already committed.
 #   6. After all reviewer rows are present, posts the per-role verdict merge
 #      (`reviewing → reviewing` self-loop with payload {reviewerRole, verdict})
-#      so reviewerVerdicts is populated.
-#   7. Builds `consolidated.md` by alphabetical concatenation of per-role .md
-#      files with `## [<ROLE> REVIEW]` section headers.
-#   8. Posts the final transition: `complete` if all verdicts ∈ {approve,
-#      out_of_scope}, otherwise `revising` with latestReviewPath set.
+#      so reviewerVerdicts is populated for the dashboard.
+#   7. Computes the findings-based accept/revise decision from the authoritative
+#      review rows and posts the final transition: `completed` on acceptance,
+#      otherwise `revising`. No workspace pointer is written — reviews live in
+#      the database (review_runs + review_findings); the engineer reads them via
+#      GET /tasks/:id/reviews/:cycle. The decision mirrors classifyReview()
+#      server-side (server/src/review-decision.ts), which re-derives the same
+#      verdict and gates the transition.
 #
 # The fanout itself owns final transitions; reviewers only POST /tasks/:id/reviews.
 
@@ -210,35 +213,6 @@ _rfan_spawn_reviewer() {
     # rename fails (e.g. tmpfile vanished), bubble the failure up.
     mv "$tmpfile" "$finalfile" 2>/dev/null || return 1
     return 0
-}
-
-# Build the consolidated.md by literal alphabetical concatenation of all
-# per-role .md files in the scratch directory with `## [<ROLE> REVIEW]`
-# section headers prepended. Writes to ${scratch_dir}/consolidated.md.
-_rfan_write_consolidated() {
-    local scratch_dir="$1"
-    shift
-    local roles=("$@")
-
-    # Alphabetical sort of the role list — caller may pass them in any order.
-    local sorted
-    sorted=$(printf '%s\n' "${roles[@]}" | LC_ALL=C sort)
-
-    local out="${scratch_dir}/consolidated.md"
-    : > "$out"
-
-    local role upper
-    while IFS= read -r role; do
-        [ -z "$role" ] && continue
-        upper=$(printf '%s' "$role" | tr '[:lower:]' '[:upper:]')
-        printf '## [%s REVIEW]\n\n' "$upper" >> "$out"
-        if [ -f "${scratch_dir}/${role}.md" ]; then
-            cat "${scratch_dir}/${role}.md" >> "$out"
-        else
-            printf '<!-- %s.md missing -->\n' "$role" >> "$out"
-        fi
-        printf '\n\n' >> "$out"
-    done <<< "$sorted"
 }
 
 # Read a reviewer's verdict from the server-side runs row set. Echoes the
@@ -467,14 +441,12 @@ _run_reviewer_fanout() {
     fi
 
     local verdict
-    local -a verdicts=()
     for role in "${all_roles[@]}"; do
         verdict=$(_rfan_verdict_for_role "$final_runs" "$role")
         if [ -z "$verdict" ]; then
             echo "ERROR: reviewer-fanout: no verdict for role '${role}' even after spawn loop completed" >&2
             return 1
         fi
-        verdicts+=("$verdict")
         local merge_body
         merge_body=$(jq -nc \
             --arg role "$role" \
@@ -485,30 +457,42 @@ _run_reviewer_fanout() {
         fi
     done
 
-    # ── Step 7: build consolidated.md ──────────────────────────────────────
-    _rfan_write_consolidated "$scratch_dir" "${all_roles[@]}"
-    local consolidated_path="${scratch_dir}/consolidated.md"
-    echo "reviewer-fanout: wrote ${consolidated_path}"
+    # ── Step 7: findings-based final transition ────────────────────────────
+    # The accept/revise decision is computed from the authoritative review rows
+    # (verdict + per-reviewer finding tallies), NOT verdicts alone. It mirrors
+    # classifyReview() in server/src/review-decision.ts — the server re-derives
+    # the same verdict from review_runs/review_findings and gates the transition,
+    # so the two layers agree. A revision round is triggered if ANY of:
+    #   1. a reviewer returned request_changes
+    #   2. a reviewer raised >= 3 findings (BLOCKING + NOTE both count)
+    #   3. >= 2 reviewers raised at least one finding
+    #   4. a reviewer raised a BLOCKING finding (backstop for a reviewer who
+    #      raised a blocker but did not request changes)
+    # Otherwise the work meets the acceptance criteria and is completed. No
+    # workspace pointer is written — the engineer reads the reviews from the
+    # database via GET /tasks/:id/reviews/:cycle.
+    local decision
+    decision=$(echo "$final_runs" | jq -r '
+        (.runs // []) as $r
+        | (($r | any(.verdict == "request_changes"))
+           or ($r | any(((.findings // []) | length) >= 3))
+           or (($r | map(select(((.findings // []) | length) >= 1)) | length) >= 2)
+           or ($r | any((.findings // []) | any(.severity == "BLOCKING"))))
+        | if . then "revise" else "accept" end
+    ' 2>/dev/null) || decision=""
 
-    # ── Step 8: final transition ───────────────────────────────────────────
-    # All approve / out_of_scope → complete. Any request_changes → revising.
-    local any_request_changes=0
-    for verdict in "${verdicts[@]}"; do
-        if [ "$verdict" = "request_changes" ]; then
-            any_request_changes=1
-            break
-        fi
-    done
+    if [ "$decision" != "revise" ] && [ "$decision" != "accept" ]; then
+        echo "ERROR: reviewer-fanout: could not compute review decision from cycle runs" >&2
+        return 1
+    fi
 
     local final_body
-    if [ "$any_request_changes" -eq 1 ]; then
-        final_body=$(jq -nc \
-            --arg p "$consolidated_path" \
-            '{to: "revising", payload: {latestReviewPath: $p}}')
-        echo "reviewer-fanout: any request_changes → revising"
+    if [ "$decision" = "revise" ]; then
+        final_body=$(jq -nc '{to: "revising"}')
+        echo "reviewer-fanout: revision triggered → revising"
     else
         final_body=$(jq -nc '{to: "completed"}')
-        echo "reviewer-fanout: all approve/out_of_scope → completed"
+        echo "reviewer-fanout: acceptance criteria met → completed"
     fi
 
     if ! _rfan_post_transition "$task_id" "$final_body"; then

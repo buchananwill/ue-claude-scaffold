@@ -71,6 +71,13 @@
       "when": 1778889600003,
       "tag": "0009_rename_complete_to_completed",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778889600004,
+      "tag": "0010_drop_tasks_latest_review_path",
+      "breakpoints": true
     }
   ]
 }

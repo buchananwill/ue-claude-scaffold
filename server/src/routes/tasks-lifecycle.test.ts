@@ -74,7 +74,6 @@ describe("tasks-lifecycle routes", () => {
     reviewer_verdicts: Record<string, string>;
     build_status: string;
     commit_sha: string | null;
-    latest_review_path: string | null;
     arbitration_pending_trigger: string | null;
     failure_reason: string | null;
     failure_detail: string | null;
@@ -84,7 +83,7 @@ describe("tasks-lifecycle routes", () => {
   async function getFsmRow(id: number): Promise<FsmRowShape> {
     const result = await ctx.db.execute(sql`
       SELECT status, review_cycle_count, reviewer_verdicts, build_status, commit_sha,
-             latest_review_path, arbitration_pending_trigger, failure_reason, failure_detail
+             arbitration_pending_trigger, failure_reason, failure_detail
         FROM tasks
        WHERE id = ${id}
     `);
@@ -112,18 +111,40 @@ describe("tasks-lifecycle routes", () => {
     return id;
   }
 
-  /** Seed a single reviewer's verdict directly into the row. */
-  async function seedVerdict(
+  /**
+   * Seed one reviewer's authoritative review row (review_runs) plus its
+   * findings (review_findings) for a given cycle. The findings-based decision
+   * gate (classifyReview) reads from these tables, not reviewer_verdicts. The
+   * `nBlocking`/`nNote` counts are inserted as that many distinct findings.
+   */
+  async function seedReview(
     id: number,
     role: string,
     verdict: string,
+    opts: { nBlocking?: number; nNote?: number; cycle?: number } = {},
   ): Promise<void> {
-    const obj: Record<string, string> = { [role]: verdict };
-    await ctx.db.execute(sql`
-      UPDATE tasks
-         SET reviewer_verdicts = ${JSON.stringify(obj)}::jsonb
-       WHERE id = ${id}
+    const { nBlocking = 0, nNote = 0, cycle = 0 } = opts;
+    const ins = await ctx.db.execute(sql`
+      INSERT INTO review_runs (task_id, cycle, reviewer_role, verdict, raw_markdown)
+      VALUES (${id}, ${cycle}, ${role}, ${verdict}, ${"md"})
+      RETURNING id
     `);
+    const runId = (ins as unknown as { rows: { id: number }[] }).rows[0].id;
+    let ordinal = 0;
+    for (let i = 0; i < nBlocking; i++) {
+      await ctx.db.execute(sql`
+        INSERT INTO review_findings (run_id, severity, ordinal, title, description)
+        VALUES (${runId}, 'BLOCKING', ${ordinal}, ${"t"}, ${"d"})
+      `);
+      ordinal++;
+    }
+    for (let i = 0; i < nNote; i++) {
+      await ctx.db.execute(sql`
+        INSERT INTO review_findings (run_id, severity, ordinal, title, description)
+        VALUES (${runId}, 'NOTE', ${ordinal}, ${"t"}, ${"d"})
+      `);
+      ordinal++;
+    }
   }
 
   // ── 1. claimed → engineering ──────────────────────────────────────────
@@ -278,18 +299,12 @@ describe("tasks-lifecycle routes", () => {
     assert.equal(res.statusCode, 400);
   });
 
-  // ── 5. reviewing → complete only when all reviewers clear ─────────────
+  // ── 5. reviewing → complete: findings-based acceptance ─────────────────
 
-  it("reviewing → complete succeeds when all declared reviewers approve/out_of_scope", async () => {
+  it("reviewing → complete succeeds when all reviewers approve/out_of_scope with no findings", async () => {
     const id = await driveToReviewing();
-    await transition(id, {
-      to: "reviewing",
-      payload: { reviewerRole: "safety", verdict: "approve" },
-    });
-    await transition(id, {
-      to: "reviewing",
-      payload: { reviewerRole: "correctness", verdict: "out_of_scope" },
-    });
+    await seedReview(id, "safety", "approve");
+    await seedReview(id, "correctness", "out_of_scope");
 
     const res = await transition(id, { to: "completed" });
     assert.equal(res.statusCode, 200, res.body);
@@ -299,7 +314,17 @@ describe("tasks-lifecycle routes", () => {
     assert.equal(row.status, "completed");
   });
 
-  it("reviewing → complete returns 409 when no verdicts present", async () => {
+  it("reviewing → complete succeeds with one reviewer holding two NOTE findings (acceptance boundary)", async () => {
+    const id = await driveToReviewing();
+    await seedReview(id, "safety", "approve", { nNote: 2 });
+    await seedReview(id, "correctness", "approve");
+
+    const res = await transition(id, { to: "completed" });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json().status, "completed");
+  });
+
+  it("reviewing → complete returns 409 when no reviews present", async () => {
     const id = await driveToReviewing();
 
     const res = await transition(id, { to: "completed" });
@@ -308,14 +333,33 @@ describe("tasks-lifecycle routes", () => {
 
   it("reviewing → complete returns 409 when a reviewer requested changes", async () => {
     const id = await driveToReviewing();
-    await transition(id, {
-      to: "reviewing",
-      payload: { reviewerRole: "safety", verdict: "approve" },
-    });
-    await transition(id, {
-      to: "reviewing",
-      payload: { reviewerRole: "correctness", verdict: "request_changes" },
-    });
+    await seedReview(id, "safety", "approve");
+    await seedReview(id, "correctness", "request_changes");
+
+    const res = await transition(id, { to: "completed" });
+    assert.equal(res.statusCode, 409);
+  });
+
+  it("reviewing → complete returns 409 when one reviewer raised three findings (all NOTE)", async () => {
+    const id = await driveToReviewing();
+    await seedReview(id, "safety", "approve", { nNote: 3 });
+
+    const res = await transition(id, { to: "completed" });
+    assert.equal(res.statusCode, 409);
+  });
+
+  it("reviewing → complete returns 409 when two reviewers each raised a finding", async () => {
+    const id = await driveToReviewing();
+    await seedReview(id, "safety", "approve", { nNote: 1 });
+    await seedReview(id, "correctness", "approve", { nNote: 1 });
+
+    const res = await transition(id, { to: "completed" });
+    assert.equal(res.statusCode, 409);
+  });
+
+  it("reviewing → complete returns 409 when a reviewer raised a BLOCKING finding despite approving", async () => {
+    const id = await driveToReviewing();
+    await seedReview(id, "safety", "approve", { nBlocking: 1 });
 
     const res = await transition(id, { to: "completed" });
     assert.equal(res.statusCode, 409);
@@ -343,19 +387,17 @@ describe("tasks-lifecycle routes", () => {
 
   it("reviewing → revising reroutes to arbitrating when budget exhausted", async () => {
     const id = await driveToReviewing();
-    await seedVerdict(id, "safety", "request_changes");
     // Push reviewCycleCount up to budget (5). We must use a SQL set rather
     // than driving the transitions because each successful revising raises
     // the count by one — we want the *next* revising to be the one that
-    // exceeds the budget.
+    // exceeds the budget. The decision gate reads the cycle == reviewCycleCount,
+    // so the request_changes review row must be seeded at cycle 5.
     await ctx.db.execute(sql`
       UPDATE tasks SET review_cycle_count = 5 WHERE id = ${id}
     `);
+    await seedReview(id, "safety", "request_changes", { cycle: 5 });
 
-    const res = await transition(id, {
-      to: "revising",
-      payload: { latestReviewPath: "reviews/cycle-6/" },
-    });
+    const res = await transition(id, { to: "revising" });
     assert.equal(res.statusCode, 200, res.body);
     assert.equal(res.json().status, "arbitrating");
 
@@ -370,27 +412,32 @@ describe("tasks-lifecycle routes", () => {
 
   it("reviewing → revising under budget proceeds to revising and increments count", async () => {
     const id = await driveToReviewing();
-    await seedVerdict(id, "safety", "request_changes");
-    const res = await transition(id, {
-      to: "revising",
-      payload: { latestReviewPath: "reviews/cycle-1/" },
-    });
+    await seedReview(id, "safety", "request_changes");
+    const res = await transition(id, { to: "revising" });
     assert.equal(res.statusCode, 200, res.body);
     assert.equal(res.json().status, "revising");
 
     const row = await getFsmRow(id);
     assert.equal(row.status, "revising");
     assert.equal(row.review_cycle_count, 1);
-    assert.equal(row.latest_review_path, "reviews/cycle-1/");
+  });
+
+  it("reviewing → revising proceeds on findings alone when every reviewer approved", async () => {
+    // No request_changes verdict anywhere — the revision is triggered purely by
+    // a reviewer holding three findings (predicate 2).
+    const id = await driveToReviewing();
+    await seedReview(id, "safety", "approve", { nNote: 3 });
+
+    const res = await transition(id, { to: "revising" });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json().status, "revising");
+    assert.equal((await getFsmRow(id)).review_cycle_count, 1);
   });
 
   it("revising → engineering succeeds", async () => {
     const id = await driveToReviewing();
-    await seedVerdict(id, "safety", "request_changes");
-    await transition(id, {
-      to: "revising",
-      payload: { latestReviewPath: "reviews/cycle-1/" },
-    });
+    await seedReview(id, "safety", "request_changes");
+    await transition(id, { to: "revising" });
 
     const res = await transition(id, { to: "engineering" });
     assert.equal(res.statusCode, 200, res.body);
@@ -481,10 +528,10 @@ describe("tasks-lifecycle routes", () => {
 
   it("cycle-budget reroute returns 409 when an arbitration row already exists for the same trigger", async () => {
     const id = await driveToReviewing();
-    await seedVerdict(id, "safety", "request_changes");
     await ctx.db.execute(sql`
       UPDATE tasks SET review_cycle_count = 5 WHERE id = ${id}
     `);
+    await seedReview(id, "safety", "request_changes", { cycle: 5 });
     // Pre-existing arbitration for the same trigger — the reroute must
     // recognise it and reject rather than entering arbitrating again.
     await ctx.db.execute(sql`
@@ -492,10 +539,7 @@ describe("tasks-lifecycle routes", () => {
       VALUES (${id}, 'review_cycle_budget_exhausted', 'escalate', 'previously escalated')
     `);
 
-    const res = await transition(id, {
-      to: "revising",
-      payload: { latestReviewPath: "reviews/cycle-6/" },
-    });
+    const res = await transition(id, { to: "revising" });
     assert.equal(res.statusCode, 409);
   });
 
@@ -533,16 +577,12 @@ describe("tasks-lifecycle routes", () => {
       },
     });
 
-    const res = await transition(id, {
-      to: "revising",
-      payload: { latestReviewPath: "reviews/arb/" },
-    });
+    const res = await transition(id, { to: "revising" });
     assert.equal(res.statusCode, 200, res.body);
 
     const row = await getFsmRow(id);
     assert.equal(row.status, "revising");
     assert.equal(row.arbitration_pending_trigger, null);
-    assert.equal(row.latest_review_path, "reviews/arb/");
   });
 
   it("arbitrating → failed succeeds and clears the pending trigger", async () => {
@@ -656,19 +696,14 @@ describe("tasks-lifecycle routes", () => {
 
   // ── 12b. behaviour-fidelity guards on revising / arbitrating ──────────
 
-  it("reviewing → revising returns 409 when no reviewer has posted request_changes", async () => {
+  it("reviewing → revising returns 409 when no revision trigger fired", async () => {
     const id = await driveToReviewing();
-    // Seed only approve / out_of_scope verdicts — no request_changes on file.
-    await ctx.db.execute(sql`
-      UPDATE tasks
-         SET reviewer_verdicts = '{"safety":"approve","correctness":"out_of_scope"}'::jsonb
-       WHERE id = ${id}
-    `);
+    // Clean review set — all approve/out_of_scope, no findings. classifyReview
+    // returns "accept", so a revising transition is incoherent.
+    await seedReview(id, "safety", "approve");
+    await seedReview(id, "correctness", "out_of_scope");
 
-    const res = await transition(id, {
-      to: "revising",
-      payload: { latestReviewPath: "reviews/cycle-1/" },
-    });
+    const res = await transition(id, { to: "revising" });
     assert.equal(res.statusCode, 409, res.body);
   });
 
@@ -685,9 +720,9 @@ describe("tasks-lifecycle routes", () => {
     assert.equal(res.statusCode, 409, res.body);
   });
 
-  it("arbitrating → revising succeeds without latestReviewPath", async () => {
-    // Phase 7 arbitrator ruling="rule" path: the arbitrator's ruling is the
-    // workspace pointer of record, so latestReviewPath is optional.
+  it("arbitrating → revising succeeds with no payload", async () => {
+    // Phase 7 arbitrator ruling="rule" path: the engineer reads the arbitration
+    // ruling (DB + addendum file) on the next hop; no payload is required.
     const id = await createTask();
     await claim(id);
     await transition(id, { to: "engineering" });
@@ -717,17 +752,6 @@ describe("tasks-lifecycle routes", () => {
     const res = await transition(id, {
       to: "built",
       payload: { buildStatus: "clean", commitSha: "a".repeat(129) },
-    });
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("reviewing → revising returns 400 when latestReviewPath exceeds length cap", async () => {
-    const id = await driveToReviewing();
-    await seedVerdict(id, "safety", "request_changes");
-
-    const res = await transition(id, {
-      to: "revising",
-      payload: { latestReviewPath: "a".repeat(4097) },
     });
     assert.equal(res.statusCode, 400);
   });
@@ -802,10 +826,7 @@ describe("tasks-lifecycle routes", () => {
       payload: { buildStatus: "clean", commitSha: "sha" },
     });
     await transition(id, { to: "reviewing" });
-    await transition(id, {
-      to: "reviewing",
-      payload: { reviewerRole: "safety", verdict: "approve" },
-    });
+    await seedReview(id, "safety", "approve");
     await transition(id, { to: "completed" });
 
     const res = await ctx.app.inject({
@@ -827,10 +848,7 @@ describe("tasks-lifecycle routes", () => {
       payload: { buildStatus: "clean", commitSha: "sha" },
     });
     await transition(id, { to: "reviewing" });
-    await transition(id, {
-      to: "reviewing",
-      payload: { reviewerRole: "safety", verdict: "approve" },
-    });
+    await seedReview(id, "safety", "approve");
     await transition(id, { to: "completed" });
 
     const res = await ctx.app.inject({

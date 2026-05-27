@@ -7,9 +7,10 @@
 # `_run_claude` defers to `_run_arbitrator_dispatch` here. This module:
 #
 #   1. Reads the task's pending arbitration trigger via GET /tasks/:id.
-#   2. Builds a per-trigger prompt naming the plan path, prior cycle
-#      `consolidated.md` files, the engineer's commit log, and the reviewer
-#      skill definitions.
+#   2. Builds a per-trigger prompt naming the plan path, the review-cycle
+#      database endpoint (GET /tasks/:id/reviews/:cycle — reviews are the store
+#      of record; there are no scratch `consolidated.md` files), the engineer's
+#      commit log, and the reviewer skill definitions.
 #   3. Launches a single read-only `claude -p` subprocess with scoped tools
 #      (no Edit/Write) and explicit Opus model.
 #   4. Captures stdout to .scratch/arbitrations/<task-id>/<trigger>.md.tmp;
@@ -95,23 +96,28 @@ plan / commit / review-markdown files.
 PROMPT
 }
 
-# Append cycle-exhausted-specific context to the prompt: lists every prior
-# cycle's consolidated.md plus the engineer's commit log and the diff between
-# the last two cycles' consolidated reviews.
+# Append cycle-exhausted-specific context to the prompt: names every prior
+# review cycle's database endpoint plus the engineer's commit log. Reviews are
+# the store of record (review_runs + review_findings); the arbitrator GETs each
+# cycle from the server rather than reading scratch files.
 _arb_append_cycle_exhausted_context() {
     local task_id="$1"
     local files_csv="$2"
+    local review_cycle_count="$3"
 
     local files_display="${files_csv:-<use git diff origin/<branch>..HEAD --name-only>}"
+    # reviewing→revising incremented reviewCycleCount before the reroute to
+    # arbitrating, so the highest reviewed cycle is review_cycle_count - 1.
+    local last_cycle="?"
+    if [[ "$review_cycle_count" =~ ^[0-9]+$ ]] && [ "$review_cycle_count" -gt 0 ]; then
+        last_cycle=$(( review_cycle_count - 1 ))
+    fi
 
-    printf '## Cycle-exhausted inputs\n\nThe task has run five review cycles and reviewers still hold open BLOCKING findings. Your inputs:\n\n- Prior consolidated reviews:\n'
+    printf '## Cycle-exhausted inputs\n\nThe task has run the full review-cycle budget and reviewers still hold open BLOCKING findings. Reviews live in the database (verdict + structured findings per reviewer per cycle). Your inputs:\n\n- Every prior review cycle, read in order from cycle 0 to cycle %s:\n\n' "$last_cycle"
 
-    # List every cycle directory that exists. We do not glob from inside the
-    # heredoc — the agent reads the directory itself via Glob/Bash(ls).
-    printf '\n      Glob .scratch/reviews/%s/cycle-*/consolidated.md\n      Read each in order from cycle-1 to cycle-N.\n\n' "$task_id"
+    printf '      curl -s ${SERVER_URL}/tasks/%s/reviews/0\n      ... through ...\n      curl -s ${SERVER_URL}/tasks/%s/reviews/%s\n\n' "$task_id" "$task_id" "$last_cycle"
 
-    printf -- '- Diff between final two cycles (load-bearing — shows whether the engineer is converging or churning):\n\n'
-    printf '      diff .scratch/reviews/%s/cycle-N-1/consolidated.md .scratch/reviews/%s/cycle-N/consolidated.md\n\n' "$task_id" "$task_id"
+    printf -- '- Convergence check (load-bearing — shows whether the engineer is converging or churning): compare the findings in cycle %s against the cycle before it.\n\n' "$last_cycle"
 
     printf -- '- Engineer commit log for this task:\n\n      Bash(git log --oneline origin/main..HEAD -- %s)\n\n' "$files_display"
 
@@ -132,14 +138,21 @@ contradiction to resolve. The server rejects `rule` here with HTTP 400.
 PROMPT
 }
 
-# Append contradiction-specific context to the prompt: names the two finding
-# IDs (when known) and points at the per-reviewer markdown for the two
-# reviewers involved.
+# Append contradiction-specific context to the prompt: points at the most
+# recent review cycle in the database (verdicts + structured findings for every
+# reviewer) so the arbitrator can locate the two conflicting findings.
 _arb_append_contradiction_context() {
     local task_id="$1"
     local files_csv="$2"
+    local review_cycle_count="$3"
 
     local files_display="${files_csv:-<use git diff origin/<branch>..HEAD --name-only>}"
+    # The most recent reviewed cycle is review_cycle_count - 1 (reviewing→revising
+    # incremented the counter on the hop that produced the findings in play).
+    local last_cycle="?"
+    if [[ "$review_cycle_count" =~ ^[0-9]+$ ]] && [ "$review_cycle_count" -gt 0 ]; then
+        last_cycle=$(( review_cycle_count - 1 ))
+    fi
 
     cat <<'PROMPT'
 ## Contradiction inputs
@@ -147,20 +160,21 @@ _arb_append_contradiction_context() {
 The engineer detected two findings that cannot both be satisfied (e.g. one
 demands a split, another demands a lock-together). Your inputs:
 
-- The most recent cycle's consolidated review and per-reviewer markdown:
+- The most recent review cycle from the database (every reviewer's verdict,
+  rawMarkdown, and structured findings — each finding carries its own id):
 
 PROMPT
 
-    printf '      Glob .scratch/reviews/%s/cycle-*/consolidated.md   (use the highest-numbered cycle)\n' "$task_id"
-    printf '      Glob .scratch/reviews/%s/cycle-*/*.md              (per-reviewer reports)\n\n' "$task_id"
+    printf '      curl -s ${SERVER_URL}/tasks/%s/reviews/%s\n\n' "$task_id" "$last_cycle"
 
     printf -- '- Changed files for this task: %s\n\n' "$files_display"
 
     cat <<'PROMPT'
 The engineer's contradiction-trigger POST named the two finding IDs in the
-task's `progress_log` field (read GET /tasks/<id>'s progressLog) or in the
-most recent consolidated.md. Identify both findings, quote them verbatim in
-your `rulingMarkdown`, and pick which one survives.
+task's `progress_log` field (read GET /tasks/<id>'s progressLog). Cross-
+reference them against the `findings[].id` values in the reviews response above.
+Identify both findings, quote them verbatim in your `rulingMarkdown`, and pick
+which one survives.
 
 ## Permitted rulings on contradiction
 
@@ -205,12 +219,16 @@ _run_arbitrator_dispatch() {
         return 1
     fi
 
-    local status trigger task_title source_path files_csv
+    local status trigger task_title source_path files_csv review_cycle_count
     status=$(echo "$task_json"      | jq -r '.status                       // empty')
     trigger=$(echo "$task_json"     | jq -r '.arbitrationPendingTrigger   // ""'    | tr -d '\n')
     task_title=$(echo "$task_json"  | jq -r '.title                        // ""'    | tr -d '\n')
     source_path=$(echo "$task_json" | jq -r '.sourcePath                   // ""'    | tr -d '\n')
     files_csv=$(echo "$task_json"   | jq -r '(.files // []) | join(", ")')
+    review_cycle_count=$(echo "$task_json" | jq -r '.reviewCycleCount      // 0')
+    if ! [[ "$review_cycle_count" =~ ^[0-9]+$ ]]; then
+        review_cycle_count=0
+    fi
 
     if [ "$status" != "arbitrating" ]; then
         echo "ERROR: arbitrator-dispatch: task ${task_id} is not in 'arbitrating' (status='${status}')" >&2
@@ -281,10 +299,10 @@ _run_arbitrator_dispatch() {
     prompt="$(_arb_build_prompt_header "$task_id" "$trigger" "$task_title" "$source_path")"
     case "$trigger" in
         review_cycle_budget_exhausted)
-            prompt="${prompt}$(_arb_append_cycle_exhausted_context "$task_id" "$files_csv")"
+            prompt="${prompt}$(_arb_append_cycle_exhausted_context "$task_id" "$files_csv" "$review_cycle_count")"
             ;;
         reviewer_contradiction)
-            prompt="${prompt}$(_arb_append_contradiction_context "$task_id" "$files_csv")"
+            prompt="${prompt}$(_arb_append_contradiction_context "$task_id" "$files_csv" "$review_cycle_count")"
             ;;
     esac
 
@@ -303,21 +321,24 @@ _run_arbitrator_dispatch() {
     _post_status "working"
 
     # Launch the arbitrator. Scoped tools mirror the reviewer-fanout posture
-    # plus a *narrowed* `curl` permission for the agent's own POST
+    # plus two *narrowed* `curl` permissions: a read-only GET of THIS task's
+    # reviews (the store of record it adjudicates from) and the agent's own POST
     # /arbitrations. We explicitly name the Opus model here because the plan
     # calls this out as load-bearing — the arbitrator runs at most twice per
     # task and is the most consequential single judgment in the FSM. WebFetch
-    # is excluded; the arbitrator works exclusively from local plan / commit /
-    # review-markdown files.
+    # is excluded; the arbitrator works exclusively from local plan / commit
+    # history plus the task's own review rows.
     #
-    # SECURITY (Phase 7 cycle 1, safety B1): the curl permission is bound to
-    # POSTing to the arbitrations endpoint for THIS task on THIS server only.
-    # The pattern below substitutes ${SERVER_URL} and ${task_id} at script
-    # time (bash expansion, before claude sees the string), so the literal
-    # constraint claude enforces is a fully-qualified URL prefix anchored to
-    # ${SERVER_URL}/tasks/${task_id}/arbitrations. The trailing `*` permits
-    # the curl flags / body / headers that follow the URL in the agent's
-    # invocation but not a different endpoint or host.
+    # SECURITY (Phase 7 cycle 1, safety B1): both curl permissions are bound to
+    # THIS task on THIS server only. The patterns below substitute ${SERVER_URL}
+    # and ${task_id} at script time (bash expansion, before claude sees the
+    # string), so the literal constraints claude enforces are fully-qualified
+    # URL prefixes anchored to ${SERVER_URL}/tasks/${task_id}/reviews (GET) and
+    # ${SERVER_URL}/tasks/${task_id}/arbitrations (POST). The trailing `*`
+    # permits the curl flags / body / headers that follow the URL in the agent's
+    # invocation but not a different endpoint, task, or host. The reviews
+    # endpoint is read-only and task-scoped, so widening to it does not expand
+    # the arbitrator's write surface.
     #
     # If the underlying allowlist engine in any future Claude Code release
     # stops honouring URL-constrained globs and falls back to literal-prefix
@@ -328,11 +349,12 @@ _run_arbitrator_dispatch() {
     # every successful POST writes a row to `arbitrationRuns` that the
     # operator can review.
     local curl_pattern="curl * ${SERVER_URL}/tasks/${task_id}/arbitrations*"
+    local reviews_pattern="curl * ${SERVER_URL}/tasks/${task_id}/reviews*"
     echo "arbitrator-dispatch: launching claude (agent=${agent_basename}, model=opus)"
     set +e
     claude \
         --dangerously-skip-permissions \
-        --allowed-tools "Read,Grep,Glob,Bash(git diff:*,git log:*,git show:*,wc:*,ls:*),Bash(${curl_pattern})" \
+        --allowed-tools "Read,Grep,Glob,Bash(git diff:*,git log:*,git show:*,wc:*,ls:*),Bash(${reviews_pattern}),Bash(${curl_pattern})" \
         -p "$prompt" \
         --append-system-prompt "$agent_body" \
         --output-format json \

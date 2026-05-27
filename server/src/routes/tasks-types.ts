@@ -32,7 +32,6 @@ export interface TaskRow {
    * cleared state set on entry to `reviewing`.
    */
   reviewerVerdicts: unknown;
-  latestReviewPath: string | null;
   arbitrationPendingTrigger: string | null;
   arbitrationAddendumPath: string | null;
   failureReason: string | null;
@@ -64,7 +63,6 @@ export function toTaskRow(row: TaskDbRow): TaskRow {
     reviewCycleCount: row.reviewCycleCount ?? 0,
     reviewCycleBudget: row.reviewCycleBudget ?? 5,
     reviewerVerdicts: row.reviewerVerdicts ?? {},
-    latestReviewPath: row.latestReviewPath ?? null,
     arbitrationPendingTrigger: row.arbitrationPendingTrigger ?? null,
     arbitrationAddendumPath: row.arbitrationAddendumPath ?? null,
     failureReason: row.failureReason ?? null,
@@ -124,7 +122,6 @@ export function formatTask(
     reviewCycleCount: row.reviewCycleCount,
     reviewCycleBudget: row.reviewCycleBudget,
     reviewerVerdicts: row.reviewerVerdicts ?? {},
-    latestReviewPath: row.latestReviewPath,
     arbitrationPendingTrigger: row.arbitrationPendingTrigger,
     arbitrationAddendumPath: row.arbitrationAddendumPath,
     failureReason: row.failureReason,

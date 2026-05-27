@@ -28,11 +28,11 @@ Escalation is the correct call when the situation genuinely requires operator ju
 The dispatch script writes a prompt that names:
 
 - The plan path (so you know what was being built).
-- For **`review_cycle_budget_exhausted`**: every prior cycle's `consolidated.md` (1..N), the engineer's commit log (`git log --oneline <branch-base>..HEAD`), and the diff between cycle N's and cycle N-1's consolidated review (the load-bearing signal — is the engineer regressing, churning, or converging on a hard call?).
-- For **`reviewer_contradiction`**: the two contradicting finding IDs, the per-reviewer markdown for the two reviewers involved (so you see full context, not just the engineer's restatement), and the changed source files.
+- For **`review_cycle_budget_exhausted`**: every prior review cycle via `GET ${SERVER_URL}/tasks/<id>/reviews/<cycle>` (0..N — reviews are the database of record: each reviewer's verdict and structured findings), the engineer's commit log (`git log --oneline <branch-base>..HEAD`), and a convergence check comparing the latest cycle's findings against the one before it (the load-bearing signal — is the engineer regressing, churning, or converging on a hard call?).
+- For **`reviewer_contradiction`**: the two contradicting finding IDs (named in the task's `progressLog`), and the most recent review cycle via `GET ${SERVER_URL}/tasks/<id>/reviews/<cycle>` (every reviewer's verdict, rawMarkdown, and structured findings — cross-reference the two finding ids against `findings[].id`), plus the changed source files.
 - The reviewer skill definitions for the project's configured reviewers (so you understand each reviewer's mandate when adjudicating).
 
-Read these files directly. You have `Read`, `Grep`, `Glob`, and a narrow `Bash` allowlist (`git diff`, `git log`, `git show`, `wc`, `ls`). You also have `curl` for posting your ruling.
+Read these directly. You have `Read`, `Grep`, `Glob`, and a narrow `Bash` allowlist (`git diff`, `git log`, `git show`, `wc`, `ls`). You also have `curl`, scoped to this task, for `GET`ting the reviews and posting your ruling.
 
 ## Output
 
@@ -89,12 +89,12 @@ The standard `X-Agent-Name` and `X-Project-Id` headers are injected by the conta
 
 When ruling `rule`, also write a separate addendum file at `.scratch/arbitrations/<task-id>/contradiction-ruling.md` BEFORE you POST. The addendum is a focused document the engineer's next-cycle prompt will read directly. It contains:
 
-1. The two findings quoted verbatim (cite the cycle-N consolidated.md by `B<X>` / `B<Y>` IDs and reviewer role).
+1. The two findings quoted verbatim (cite them by their `findings[].id` from the reviews response and reviewer role).
 2. Your choice (`upheldFindingId` vs `retiredFindingId`) and one-paragraph rationale.
 3. A directive line the engineer prompt surfaces verbatim:
-   > "Finding [B<X>] from [<role> reviewer] is upheld and must be addressed. Finding [B<Y>] from [<other role> reviewer] is retired by arbitrator ruling and must NOT be addressed in this cycle."
+   > "Finding [<id-X>] from [<role> reviewer] is upheld and must be addressed. Finding [<id-Y>] from [<other role> reviewer] is retired by arbitrator ruling and must NOT be addressed in this cycle."
 
-Do NOT edit any reviewer's `consolidated.md` or per-role `.md` file. The addendum is a separate file; the engineer's prompt branch already handles reading both.
+The reviews are read-only database records — you cannot and need not edit them. The addendum is the only file you write; the engineer's prompt branch already handles reading both the reviews and the addendum.
 
 ## Exit handling
 
