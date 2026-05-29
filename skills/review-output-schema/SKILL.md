@@ -41,10 +41,11 @@ Standard output format for all code reviewers. Domain-specific sections can be a
 
 - Every finding must include `file:line` and a rule or evidence reference.
 - Use sequential IDs: B1, B2, ... for BLOCKING; N1, N2, ... for NOTE. Do not use W-prefixed IDs.
-- BLOCK any finding you're at least 40% confident about and that requires action this cycle. NOTE any finding below 40% confidence OR any finding that does not require action but is worth aggregating across tasks. Do not report findings below 50% confidence.
+- BLOCK any finding you're at least 40% confident about and that requires action this cycle.
 - Verdict is REQUEST CHANGES if any BLOCKING exists; APPROVE otherwise. NOTEs do not affect the verdict.
 - NOTE is a first-class tier alongside BLOCKING; every reviewer may emit NOTEs and they never affect the verdict.
-- NOTE entries are observability-only and never block a cycle. BLOCKING entries always block. Do not pad either tier with borderline calls; if you cannot substantiate the finding with specific code evidence, omit it.
+- Do not pad either tier with borderline calls; if you cannot substantiate the finding with specific code evidence, omit it.
+- Do NOT instruct an engineer to defer NOTEs. The engineer is expected to consider NOTEs for action in every review pass, with priority falling to BLOCKING issues.
 
 ## JSON shadow block
 
