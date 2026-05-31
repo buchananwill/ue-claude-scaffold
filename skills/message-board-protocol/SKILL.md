@@ -45,6 +45,23 @@ Replace `[YOUR-ROLE]` with your actual role tag (e.g. `[IMPLEMENTER]`).
 
 This confirms you can reach the message board and that you are visible to the operator. If this post fails, stop immediately and report the error as your final output — a broken message board means the operator has no visibility into your work.
 
+### Confirm Loaded Environment Skills
+
+Some agent definitions instruct you to load one or more skills from your project checkout at runtime via the Skill tool — for example, the project's own `ue-cpp-style`. These **environment skills** are different from the skills already composed into this prompt: they are loaded from the working tree *after* you spin up, so they can silently fail to load when the checkout is wrong or the agent wiring is broken. That silent failure is invisible to the operator unless you surface it.
+
+So: if your definition tells you to load any environment skill, **load it as part of spin-up — before you post the hello above — and name each skill you loaded in that same hello message**, so the operator has a standing confirmation the load actually happened:
+
+```bash
+curl -sf -X POST "${SERVER_URL}/messages" \
+  -H "Content-Type: application/json" \
+  -H "X-Agent-Name: ${AGENT_NAME}" \
+  -H "X-Project-Id: ${PROJECT_ID}" \
+  -d '{"channel":"general","type":"status_update","payload":{"message":"[IMPLEMENTER] Agent online. Loaded environment skills: ue-cpp-style. Beginning work."}}' \
+  --max-time 5
+```
+
+If a skill your definition told you to load is missing or fails to load, say so explicitly in the message (e.g. `… environment skill ue-cpp-style UNAVAILABLE …`) rather than staying silent — surfacing that gap is the entire purpose of this confirmation. If your definition does not require any environment skills, post the plain hello with no skills line.
+
 ## Channels
 
 - **`general`** — Phase transitions, failures, and final summaries. This is what the human reads.

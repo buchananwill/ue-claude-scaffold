@@ -12,6 +12,8 @@ Standard output format for all code reviewers. Domain-specific sections can be a
 ```
 # <Domain> Review: <brief description>
 
+**Environment skills loaded:** <names, or "none (inline only)">
+
 ## Files Reviewed
 - `<path>` (N lines)
 
@@ -39,6 +41,7 @@ Standard output format for all code reviewers. Domain-specific sections can be a
 
 ## Rules
 
+- **Environment-skill canary.** Directly under the report title, emit `**Environment skills loaded:** <names>` naming every skill you loaded at runtime from the project checkout via the Skill tool (e.g. `ue-cpp-style`). This is a standing canary the operator reads to confirm at a glance that the project's own rulesets actually reached you this cycle — you have no message board, so this report is your only place to confirm it. If your definition told you to load such a skill but the Skill invocation failed, write `none (<skill> UNAVAILABLE)` and additionally raise the failure as a NOTE — silence here is a wiring failure the operator must see. If your definition loads nothing from the environment (all skills composed inline), write `none (inline only)`.
 - Every finding must include `file:line` and a rule or evidence reference.
 - Use sequential IDs: B1, B2, ... for BLOCKING; N1, N2, ... for NOTE. Do not use W-prefixed IDs.
 - BLOCK any finding you're at least 40% confident about and that requires action this cycle.
