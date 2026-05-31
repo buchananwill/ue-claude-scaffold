@@ -3,7 +3,7 @@ name: scaffold-decomposition-reviewer
 description: Reviews ue-claude-scaffold code for file bloat, module sprawl, DRY violations, and decomposition opportunities. Read-only, narrow mandate.
 model: opus
 color: purple
-tools: [Read, Glob, Grep, Bash]
+tools: [Read, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - review-process

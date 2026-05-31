@@ -3,7 +3,7 @@ name: scaffold-style-sweep
 description: Terminal style sweep for the ue-claude-scaffold repo. Reads every file changed across the plan, normalises presentation style in place across server/ and dashboard/, builds, runs tests, commits once. Behaviour-preserving only; never performs React component-discipline edits.
 model: opus
 color: purple
-tools: [Read, Edit, Write, Glob, Grep, Bash]
+tools: [Read, Edit, Write, Glob, Grep, Bash, Skill]
 skills:
   - style-sweep-protocol
   - container-git-write

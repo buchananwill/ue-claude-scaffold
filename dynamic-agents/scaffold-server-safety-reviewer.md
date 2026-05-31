@@ -3,7 +3,7 @@ name: scaffold-server-safety-reviewer
 description: Reviews ue-claude-scaffold server/ code for SQL injection, input validation, shell injection, auth header handling, and error-response information leakage. Read-only, narrow mandate. Reviews only server/** files.
 model: sonnet
 color: red
-tools: [Read, Glob, Grep, Bash]
+tools: [Read, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - review-process

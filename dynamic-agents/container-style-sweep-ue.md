@@ -3,7 +3,7 @@ name: container-style-sweep-ue
 description: Terminal style sweep for UE C++. Reads every file changed across the plan, normalises style in place per ue-cpp-style, builds via the host-routed hook, runs tests, commits once. Behaviour-preserving only.
 model: opus
 color: purple
-tools: [Read, Edit, Write, Glob, Grep, Bash]
+tools: [Read, Edit, Write, Glob, Grep, Bash, Skill]
 skills:
   - style-sweep-protocol
   - container-git-write

@@ -3,7 +3,7 @@ name: scaffold-correctness-reviewer
 description: Reviews ue-claude-scaffold code for spec compliance, logic correctness, async safety, and API contract adherence. Read-only, narrow mandate.
 model: sonnet
 color: orange
-tools: [Read, Glob, Grep, Bash]
+tools: [Read, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - review-process

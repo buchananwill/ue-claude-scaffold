@@ -3,7 +3,7 @@ name: scaffold-server-implementer
 description: Implements TypeScript changes for the server/ subtree of ue-claude-scaffold inside a Docker container. Writes Fastify plugins, Drizzle queries, and node:test tests via TDD. Refuses any task that touches files outside server/**.
 model: opus
 color: green
-tools: [Read, Edit, Write, Glob, Grep, Bash]
+tools: [Read, Edit, Write, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - tdd-implementation-loop

@@ -3,7 +3,7 @@ name: scaffold-dashboard-browser-safety-reviewer
 description: Reviews dashboard SPA code for React-agnostic web hygiene — XSS, untrusted URL handling, external link attributes, browser storage, CSRF, postMessage, clickjacking, open redirects, and error leakage. Read-only, narrow mandate. Reviews only files inside the working scope its orchestrator declared.
 model: sonnet
 color: red
-tools: [Read, Glob, Grep, Bash]
+tools: [Read, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - review-process

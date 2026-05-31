@@ -3,7 +3,7 @@ name: container-arbitrator-ue
 description: Adjudicates between contradictory reviewer findings or judges whether a cycle-budget-exhausted task has effectively converged, for Unreal Engine C++ tasks. Read-only, narrow mandate. Runs at most twice per task.
 model: opus
 color: yellow
-tools: [Agent, Read, Glob, Grep, Bash]
+tools: [Agent, Read, Glob, Grep, Bash, Skill]
 skills:
   - arbitration-protocol
   - action-boundary

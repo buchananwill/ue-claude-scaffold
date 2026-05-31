@@ -3,7 +3,7 @@ name: scaffold-server-correctness-reviewer
 description: Reviews ue-claude-scaffold server/ code for spec compliance, logic correctness, async safety, API contract adherence, project-id scoping, and test coverage. Read-only, narrow mandate. Reviews only server/** files.
 model: sonnet
 color: orange
-tools: [Read, Glob, Grep, Bash]
+tools: [Read, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - review-process

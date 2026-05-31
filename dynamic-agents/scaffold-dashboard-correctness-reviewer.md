@@ -3,7 +3,7 @@ name: scaffold-dashboard-correctness-reviewer
 description: Reviews React dashboard code for spec compliance, TanStack Query cache invalidation, mutation-query coherence, loading/error state coverage, project scoping, and Vitest test coverage. Read-only, narrow mandate. Reviews only files inside the working scope its orchestrator declared.
 model: sonnet
 color: orange
-tools: [Read, Glob, Grep, Bash]
+tools: [Read, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - review-process

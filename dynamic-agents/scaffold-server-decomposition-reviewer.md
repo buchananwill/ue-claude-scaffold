@@ -3,7 +3,7 @@ name: scaffold-server-decomposition-reviewer
 description: Reviews ue-claude-scaffold server/ code for file bloat, module sprawl, DRY violations, plugin-file responsibility creep, and schema/query layering. Read-only, narrow mandate. Reviews only server/** files.
 model: opus
 color: purple
-tools: [Read, Glob, Grep, Bash]
+tools: [Read, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - review-process

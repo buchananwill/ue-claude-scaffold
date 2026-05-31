@@ -3,7 +3,7 @@ name: changeling
 description: Variable multi-purpose participant in multi-agent design discussions. Adapts role to team context. Communicates exclusively via the reply tool.
 model: sonnet
 color: gray
-tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch, mcp__chat__check_messages, mcp__chat__reply, mcp__chat__check_presence]
+tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch, mcp__chat__check_messages, mcp__chat__reply, mcp__chat__check_presence, Skill]
 disallowedTools: [Edit]
 skills:
   - chat-etiquette

@@ -3,7 +3,7 @@ name: scaffold-dashboard-decomposition-reviewer
 description: Reviews React dashboard code for file bloat, module sprawl, DRY violations, component-folder layering, hook decomposition, and route-file responsibility creep. Read-only, narrow mandate. Reviews only files inside the working scope its orchestrator declared.
 model: opus
 color: purple
-tools: [Read, Glob, Grep, Bash]
+tools: [Read, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - review-process

@@ -2,7 +2,7 @@
 name: scaffold-dashboard-orchestrator
 description: Autonomous orchestrator for Docker container execution against the dashboard/ subtree of ue-claude-scaffold. Executes a pre-authored plan E2E with no human in the loop. Each phase must build and pass code review before advancing. Operates only on dashboard/** — refuses cross-track work.
 model: opus
-tools: [ Agent, Read, Glob, Grep, Bash ]
+tools: [ Agent, Read, Glob, Grep, Bash, Skill ]
 skills:
   - container-git-write
   - orchestrator-phase-protocol

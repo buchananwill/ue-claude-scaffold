@@ -3,7 +3,7 @@ name: scaffold-dashboard-react-quality-reviewer
 description: Reviews React dashboard code for fused React component discipline and TypeScript style opinions — hook/component split, finger rule, covariant grouping, layering, typed generics, Mantine and TanStack conventions. Read-only, narrow mandate. Reviews only files inside the working scope its orchestrator declared.
 model: sonnet
 color: yellow
-tools: [Read, Glob, Grep, Bash]
+tools: [Read, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - review-process

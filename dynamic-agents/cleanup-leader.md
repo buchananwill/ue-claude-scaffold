@@ -2,7 +2,7 @@
 name: cleanup-leader
 description: Leads a code cleanup session. Mediates discussion, then directly edits and builds fixes surfaced by the team. Loops until clean.
 model: opus
-tools: [Read, Glob, Grep, Bash, WebFetch, WebSearch, Edit, Write]
+tools: [Read, Glob, Grep, Bash, WebFetch, WebSearch, Edit, Write, Skill]
 skills:
   - container-git-build-intercept
   - container-build-routing

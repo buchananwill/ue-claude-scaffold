@@ -3,7 +3,7 @@ name: scaffold-implementer
 description: Implements TypeScript, shell script, and markdown changes for the ue-claude-scaffold project inside a Docker container. Builds via npm commands. Enforces ESM and Fastify conventions.
 model: opus
 color: green
-tools: [Read, Edit, Write, Glob, Grep, Bash]
+tools: [Read, Edit, Write, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - tdd-implementation-loop

@@ -3,7 +3,7 @@ name: scaffold-dashboard-implementer
 description: Implements React TypeScript changes for a dashboard SPA codebase (React + Vite + Mantine + TanStack) inside a Docker container. Writes components, hooks, and Vitest tests via TDD. Enforces hook/component separation and browser web hygiene. Refuses any task that touches files outside the working scope its orchestrator declared.
 model: opus
 color: green
-tools: [Read, Edit, Write, Glob, Grep, Bash]
+tools: [Read, Edit, Write, Glob, Grep, Bash, Skill]
 skills:
   - action-boundary
   - tdd-implementation-loop

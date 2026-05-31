@@ -2,7 +2,7 @@
 name: design-safety
 description: Safety specialist. Focuses on object lifetime, pointer ownership, memory safety, and robust ownership models across system boundaries.
 model: sonnet
-tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch]
+tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch, Skill]
 disallowedTools: [Edit]
 skills:
   - container-git-readonly

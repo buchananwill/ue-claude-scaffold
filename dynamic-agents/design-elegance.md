@@ -2,7 +2,7 @@
 name: design-elegance
 description: Elegance specialist. Focuses on code reuse, duplication elimination, simplicity over cleverness, and clean abstractions.
 model: sonnet
-tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch]
+tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch, Skill]
 disallowedTools: [Edit]
 skills:
   - container-git-readonly

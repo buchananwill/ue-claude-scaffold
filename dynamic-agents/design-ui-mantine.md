@@ -2,7 +2,7 @@
 name: design-ui-mantine
 description: UI systems specialist for the web dashboard. Masters Mantine, React, and TanStack Router. Champions semantic tokens, composable component libraries, and responsive design.
 model: sonnet
-tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch]
+tools: [Read, Glob, Grep, Bash, Write, WebFetch, WebSearch, Skill]
 disallowedTools: [Edit]
 skills:
   - container-git-readonly

@@ -3,7 +3,7 @@ name: scaffold-server-style-sweep
 description: Terminal style sweep for the server/ subtree of ue-claude-scaffold. Normalises presentation style including TypeScript type discipline in place, builds, runs tests, commits once. Behaviour-preserving only. Edits only server/** files.
 model: opus
 color: purple
-tools: [Read, Edit, Write, Glob, Grep, Bash]
+tools: [Read, Edit, Write, Glob, Grep, Bash, Skill]
 skills:
   - style-sweep-protocol
   - container-git-write

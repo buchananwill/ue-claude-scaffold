@@ -3,7 +3,7 @@ name: fallback-arbitrator
 description: Global last-resort arbitrator for FSM tasks whose project has no project-specific arbitrator configured. Domain-agnostic — rules from the FSM contract, git history, and the captured review markdown alone. Read-only, narrow mandate. Runs at most twice per task.
 model: opus
 color: yellow
-tools: [Agent, Read, Glob, Grep, Bash]
+tools: [Agent, Read, Glob, Grep, Bash, Skill]
 skills:
   - arbitration-protocol
   - action-boundary
