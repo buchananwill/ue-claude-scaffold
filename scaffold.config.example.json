@@ -82,9 +82,8 @@
         "engineer": "container-implementer-ue",
         "arbitrator": "container-arbitrator-ue",
         "reviewers": {
-          "safety": "container-safety-reviewer-ue",
-          "correctness": "container-reviewer-ue",
-          "decomp": "container-decomposition-reviewer-ue"
+          "safety-correctness": "container-safety-correctness-reviewer-ue",
+          "style-decomp": "container-style-decomposition-reviewer-ue"
         }
       }
     },

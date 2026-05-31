@@ -438,7 +438,7 @@ Required shape:
 - `engineer` — bare agent definition name (lowercase slug, no `.md` extension) that runs the engineering role.
 - `arbitrator` — bare agent definition name that runs the arbitration role when reviewers contradict or the cycle
   budget is exhausted.
-- `reviewers` — non-empty map of reviewer slot (lowercase slug, e.g. `safety`, `correctness`, `decomp`) to agent
+- `reviewers` — non-empty map of reviewer slot (lowercase slug, e.g. `safety-correctness`, `style-decomp`) to agent
   definition name. Each entry is dispatched in parallel against the engineer's commit.
 
 Example block (see `scaffold.config.example.json` for the canonical working configuration):
@@ -448,9 +448,8 @@ Example block (see `scaffold.config.example.json` for the canonical working conf
   "engineer": "container-implementer-ue",
   "arbitrator": "container-arbitrator-ue",
   "reviewers": {
-    "safety": "container-safety-reviewer-ue",
-    "correctness": "container-reviewer-ue",
-    "decomp": "container-decomposition-reviewer-ue"
+    "safety-correctness": "container-safety-correctness-reviewer-ue",
+    "style-decomp": "container-style-decomposition-reviewer-ue"
   }
 }
 ```

@@ -74,9 +74,8 @@ POST payload shapes.
 When adjudicating, consult the per-reviewer skill definitions so you know
 each reviewer's narrow mandate:
 
-  Read .compiled-agents/container-safety-reviewer-ue.md
-  Read .compiled-agents/container-reviewer-ue.md           (correctness)
-  Read .compiled-agents/container-decomposition-reviewer-ue.md
+  Read .compiled-agents/container-safety-correctness-reviewer-ue.md   (safety + correctness)
+  Read .compiled-agents/container-style-decomposition-reviewer-ue.md  (style + decomposition)
 
 These name what each reviewer can legitimately demand. A finding outside the
 reviewer's mandate is not load-bearing — feel free to retire it (on a
