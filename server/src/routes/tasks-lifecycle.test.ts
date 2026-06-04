@@ -314,10 +314,20 @@ describe("tasks-lifecycle routes", () => {
     assert.equal(row.status, "completed");
   });
 
-  it("reviewing → complete succeeds with one reviewer holding two NOTE findings (acceptance boundary)", async () => {
+  it("reviewing → complete succeeds with one reviewer holding three NOTE findings (acceptance boundary)", async () => {
     const id = await driveToReviewing();
-    await seedReview(id, "safety", "approve", { nNote: 2 });
+    await seedReview(id, "safety", "approve", { nNote: 3 });
     await seedReview(id, "correctness", "approve");
+
+    const res = await transition(id, { to: "completed" });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json().status, "completed");
+  });
+
+  it("reviewing → complete succeeds when two reviewers each raised a single NOTE finding", async () => {
+    const id = await driveToReviewing();
+    await seedReview(id, "safety", "approve", { nNote: 1 });
+    await seedReview(id, "correctness", "approve", { nNote: 1 });
 
     const res = await transition(id, { to: "completed" });
     assert.equal(res.statusCode, 200, res.body);
@@ -340,18 +350,18 @@ describe("tasks-lifecycle routes", () => {
     assert.equal(res.statusCode, 409);
   });
 
-  it("reviewing → complete returns 409 when one reviewer raised three findings (all NOTE)", async () => {
+  it("reviewing → complete returns 409 when one reviewer raised four findings (all NOTE)", async () => {
     const id = await driveToReviewing();
-    await seedReview(id, "safety", "approve", { nNote: 3 });
+    await seedReview(id, "safety", "approve", { nNote: 4 });
 
     const res = await transition(id, { to: "completed" });
     assert.equal(res.statusCode, 409);
   });
 
-  it("reviewing → complete returns 409 when two reviewers each raised a finding", async () => {
+  it("reviewing → complete returns 409 when two reviewers each raised two findings", async () => {
     const id = await driveToReviewing();
-    await seedReview(id, "safety", "approve", { nNote: 1 });
-    await seedReview(id, "correctness", "approve", { nNote: 1 });
+    await seedReview(id, "safety", "approve", { nNote: 2 });
+    await seedReview(id, "correctness", "approve", { nNote: 2 });
 
     const res = await transition(id, { to: "completed" });
     assert.equal(res.statusCode, 409);
@@ -424,9 +434,9 @@ describe("tasks-lifecycle routes", () => {
 
   it("reviewing → revising proceeds on findings alone when every reviewer approved", async () => {
     // No request_changes verdict anywhere — the revision is triggered purely by
-    // a reviewer holding three findings (predicate 2).
+    // a reviewer holding four findings (predicate 2).
     const id = await driveToReviewing();
-    await seedReview(id, "safety", "approve", { nNote: 3 });
+    await seedReview(id, "safety", "approve", { nNote: 4 });
 
     const res = await transition(id, { to: "revising" });
     assert.equal(res.statusCode, 200, res.body);

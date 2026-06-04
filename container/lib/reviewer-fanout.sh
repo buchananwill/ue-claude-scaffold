@@ -465,8 +465,8 @@ _run_reviewer_fanout() {
     # the same verdict from review_runs/review_findings and gates the transition,
     # so the two layers agree. A revision round is triggered if ANY of:
     #   1. a reviewer returned request_changes
-    #   2. a reviewer raised >= 3 findings (BLOCKING + NOTE both count)
-    #   3. >= 2 reviewers raised at least one finding
+    #   2. a reviewer raised >= 4 findings (BLOCKING + NOTE both count)
+    #   3. >= 2 reviewers each raised at least two findings
     #   4. a reviewer raised a BLOCKING finding (backstop for a reviewer who
     #      raised a blocker but did not request changes)
     # Otherwise the work meets the acceptance criteria and is completed. No
@@ -476,8 +476,8 @@ _run_reviewer_fanout() {
     decision=$(echo "$final_runs" | jq -r '
         (.runs // []) as $r
         | (($r | any(.verdict == "request_changes"))
-           or ($r | any(((.findings // []) | length) >= 3))
-           or (($r | map(select(((.findings // []) | length) >= 1)) | length) >= 2)
+           or ($r | any(((.findings // []) | length) >= 4))
+           or (($r | map(select(((.findings // []) | length) >= 2)) | length) >= 2)
            or ($r | any((.findings // []) | any(.severity == "BLOCKING"))))
         | if . then "revise" else "accept" end
     ' 2>/dev/null) || decision=""

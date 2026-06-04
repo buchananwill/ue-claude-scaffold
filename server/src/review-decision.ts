@@ -14,17 +14,17 @@
  *
  * Predicates that force a revision round (ANY one fires):
  *   1. Any reviewer returned `request_changes`.
- *   2. Any reviewer raised >= 3 findings (BLOCKING + NOTE both count).
- *   3. >= 2 reviewers raised at least one finding.
+ *   2. Any reviewer raised >= 4 findings (BLOCKING + NOTE both count).
+ *   3. >= 2 reviewers each raised at least two findings.
  *   4. Any reviewer raised a BLOCKING finding (a reviewer should have
  *      requested changes in this case — predicate 4 is the backstop for when
  *      they did not).
  *
- * Acceptance is the exact complement (for a non-empty review set): at most one
- * reviewer with any findings, at most two findings on any single reviewer, no
- * BLOCKING findings, and every reviewer verdict in {approve, out_of_scope}.
- * `out_of_scope` counts as clear — a reviewer whose domain does not apply to
- * the task must not block acceptance forever.
+ * Acceptance is the exact complement (for a non-empty review set): fewer than
+ * two reviewers with two-or-more findings, at most three findings on any single
+ * reviewer, no BLOCKING findings, and every reviewer verdict in
+ * {approve, out_of_scope}. `out_of_scope` counts as clear — a reviewer whose
+ * domain does not apply to the task must not block acceptance forever.
  */
 
 export interface ReviewerAggregate {
@@ -50,14 +50,16 @@ export function classifyReview(rows: ReviewerAggregate[]): ReviewDecision {
   if (rows.length === 0) return "incomplete";
 
   const anyRequestChanges = rows.some((r) => r.verdict === "request_changes");
-  const anyThreePlusFindings = rows.some((r) => r.findingsCount >= 3);
-  const reviewersWithFindings = rows.filter((r) => r.findingsCount >= 1).length;
+  const anyFourPlusFindings = rows.some((r) => r.findingsCount >= 4);
+  const reviewersWithMultipleFindings = rows.filter(
+    (r) => r.findingsCount >= 2,
+  ).length;
   const anyBlocking = rows.some((r) => r.blockingCount >= 1);
 
   if (
     anyRequestChanges ||
-    anyThreePlusFindings ||
-    reviewersWithFindings >= 2 ||
+    anyFourPlusFindings ||
+    reviewersWithMultipleFindings >= 2 ||
     anyBlocking
   ) {
     return "revise";
