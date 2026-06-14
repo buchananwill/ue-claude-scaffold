@@ -1,6 +1,16 @@
-import { eq, and, gt, lt, desc, asc, sql, isNull, count as countFn, type SQL } from 'drizzle-orm';
-import { messages } from '../schema/tables.js';
-import type { DrizzleDb } from '../drizzle-instance.js';
+import {
+  eq,
+  and,
+  gt,
+  lt,
+  desc,
+  sql,
+  isNull,
+  count as countFn,
+  type SQL,
+} from "drizzle-orm";
+import { messages } from "../schema/tables.js";
+import type { DrizzleDb } from "../drizzle-instance.js";
 
 function buildWhere(conditions: SQL[]) {
   return conditions.length > 0 ? and(...conditions) : undefined;
@@ -22,7 +32,7 @@ export async function insert(db: DrizzleDb, opts: InsertOpts): Promise<number> {
       channel: opts.channel,
       type: opts.type,
       payload: opts.payload,
-      projectId: opts.projectId ?? 'default',
+      projectId: opts.projectId ?? "default",
     })
     .returning();
   return rows[0].id;
@@ -54,15 +64,24 @@ export async function list(db: DrizzleDb, opts: ListOpts = {}) {
     conditions.push(eq(messages.projectId, opts.projectId));
   }
 
-  // Polling mode: since => ORDER BY id ASC, capped by limit when provided
+  // Polling mode: since => return the NEWEST rows after the cursor (tail-anchored).
+  // ORDER BY id DESC LIMIT n, then reverse to ascending. When fewer than the cap
+  // match, this returns all of them ascending — identical to a keeping-up poller's
+  // delta. When more match, it returns the freshest `limit` rows, so a naive one-shot
+  // `since=0` on a busy channel lands on the live tail instead of replaying the
+  // oldest history (the recurring "channel looks stale" trap). Exhaustive in-order
+  // replay of a large backlog is served by backward `before=` paging instead.
   if (opts.since != null) {
     conditions.push(gt(messages.id, opts.since));
-    const query = db
+    const pageSize = Math.min(Math.max(opts.limit ?? 500, 1), 500);
+    const rows = await db
       .select()
       .from(messages)
       .where(buildWhere(conditions))
-      .orderBy(asc(messages.id));
-    return query.limit(opts.limit ?? 500);
+      .orderBy(desc(messages.id))
+      .limit(pageSize);
+    rows.reverse();
+    return rows;
   }
 
   // Paging mode: before => ORDER BY id DESC LIMIT n, then reverse
@@ -89,7 +108,10 @@ export interface CountOpts {
   projectId?: string;
 }
 
-export async function count(db: DrizzleDb, opts: CountOpts = {}): Promise<number> {
+export async function count(
+  db: DrizzleDb,
+  opts: CountOpts = {},
+): Promise<number> {
   const conditions: SQL[] = [];
 
   if (opts.channel) {
@@ -113,7 +135,11 @@ export async function count(db: DrizzleDb, opts: CountOpts = {}): Promise<number
   return Number(rows[0].count);
 }
 
-export async function claim(db: DrizzleDb, id: number, claimedBy: string): Promise<boolean> {
+export async function claim(
+  db: DrizzleDb,
+  id: number,
+  claimedBy: string,
+): Promise<boolean> {
   const rows = await db
     .update(messages)
     .set({ claimedBy, claimedAt: sql`now()` })
@@ -130,14 +156,14 @@ export async function resolve(db: DrizzleDb, id: number, result: unknown) {
 }
 
 export async function deleteById(db: DrizzleDb, id: number): Promise<boolean> {
-  const rows = await db
-    .delete(messages)
-    .where(eq(messages.id, id))
-    .returning();
+  const rows = await db.delete(messages).where(eq(messages.id, id)).returning();
   return rows.length > 0;
 }
 
-export async function deleteByChannel(db: DrizzleDb, channel: string): Promise<number> {
+export async function deleteByChannel(
+  db: DrizzleDb,
+  channel: string,
+): Promise<number> {
   const rows = await db
     .delete(messages)
     .where(eq(messages.channel, channel))

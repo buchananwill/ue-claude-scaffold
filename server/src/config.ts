@@ -215,7 +215,12 @@ export function loadConfig(): ScaffoldConfig {
         coercePositiveNumber(raw.build?.buildTimeoutMs) ?? 28_800_000,
       testTimeoutMs:
         coercePositiveNumber(raw.build?.testTimeoutMs) ?? 28_800_000,
-      ubtRetryCount: coercePositiveNumber(raw.build?.ubtRetryCount) ?? 5,
+      // Contention-wait budget when an external process (operator/IDE build)
+      // holds the OS-level UBT mutex. 20 × 30s = 10min. The previous 5×30s=2.5min
+      // was calibrated for launcher-install builds; engine-from-source builds now
+      // run several minutes, so a concurrent host build outlasted the old ceiling
+      // and the agent failed ConflictingInstance instead of waiting it out.
+      ubtRetryCount: coercePositiveNumber(raw.build?.ubtRetryCount) ?? 20,
       ubtRetryDelayMs:
         coercePositiveNumber(raw.build?.ubtRetryDelayMs) ?? 30_000,
     },

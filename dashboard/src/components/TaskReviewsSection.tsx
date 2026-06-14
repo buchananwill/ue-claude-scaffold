@@ -8,20 +8,34 @@
  * prop" pattern is preserved as-is (NOTE finding N3 — not in scope this
  * cycle).
  */
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Accordion, Badge, Card, Code, Group, Loader, Stack, Text, Title } from '@mantine/core';
-import { MarkdownContent } from './MarkdownContent.tsx';
-import { RelativeTime } from './RelativeTime.tsx';
-import { usePollInterval } from '../hooks/usePollInterval.tsx';
-import { fetchReviewCycle } from '../api/client.ts';
-import { SEVERITY_COLORS, VERDICT_COLORS, type Severity } from '../constants/finding-styling.ts';
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Accordion,
+  Badge,
+  Card,
+  Code,
+  Group,
+  Loader,
+  Stack,
+  Text,
+  Title,
+} from "@mantine/core";
+import { MarkdownContent } from "./MarkdownContent.tsx";
+import { RelativeTime } from "./RelativeTime.tsx";
+import { usePollInterval } from "../hooks/usePollInterval.tsx";
+import { fetchReviewCycle } from "../api/client.ts";
+import {
+  SEVERITY_COLORS,
+  VERDICT_COLORS,
+  type Severity,
+} from "../constants/finding-styling.ts";
 import type {
   ReviewFinding,
   ReviewRun,
   ReviewerVerdict,
   ReviewerVerdictMap,
-} from '../api/types.ts';
+} from "../api/types.ts";
 
 interface TaskReviewsSectionProps {
   taskId: number;
@@ -40,41 +54,52 @@ export function TaskReviewsSection({
   // open the matching Accordion item in the current cycle.
   const [pinnedReviewer, setPinnedReviewer] = useState<string | null>(null);
 
-  if (currentCycle <= 0) {
-    return (
-      <Card withBorder p="md">
-        <Title order={5} mb="xs">Reviews</Title>
-        <Text size="sm" c="dimmed" fs="italic">No review cycles recorded yet.</Text>
-      </Card>
-    );
-  }
-
   // Render cycles in descending order so the current one is at the top.
+  // Cycle indices are 0-based and match the DB / FSM exactly: the first review
+  // round is stored at cycle 0, and `currentCycle` (= task.reviewCycleCount) is
+  // the index of the round currently under review — NOT a count of completed
+  // rounds. The loop must therefore include 0, or the entire first review round
+  // is dropped and every later round is mislabelled by one. A task that has not
+  // been reviewed yet still renders a single "Cycle 0" block; its CycleBlock
+  // reports "No reviewer runs posted for this cycle" until the first reviewer
+  // fanout posts, then populates live.
   const cycleNumbers: number[] = [];
-  for (let c = currentCycle; c >= 1; c -= 1) cycleNumbers.push(c);
+  for (let c = currentCycle; c >= 0; c -= 1) cycleNumbers.push(c);
 
   return (
     <Card withBorder p="md">
-      <Title order={5} mb="xs">Reviews</Title>
+      <Title order={5} mb="xs">
+        Reviews
+      </Title>
 
       {/* Quick-jump chip strip: clicking a request_changes reviewer pins the
           accordion open on that reviewer's run in the current cycle. */}
       {Object.keys(verdicts ?? {}).length > 0 && (
         <Group gap="xs" mb="sm">
-          <Text size="xs" c="dimmed">Jump to reviewer:</Text>
-          {(Object.entries(verdicts ?? {}) as [string, ReviewerVerdict][]).map(([role, verdict]) => (
-            <Badge
-              key={role}
-              component="button"
-              color={VERDICT_COLORS[verdict] ?? 'gray'}
-              variant={pinnedReviewer === role ? 'filled' : 'light'}
-              size="sm"
-              style={{ cursor: 'pointer', background: 'none', border: 'none' }}
-              onClick={() => setPinnedReviewer((cur) => (cur === role ? null : role))}
-            >
-              {role}: {verdict}
-            </Badge>
-          ))}
+          <Text size="xs" c="dimmed">
+            Jump to reviewer:
+          </Text>
+          {(Object.entries(verdicts ?? {}) as [string, ReviewerVerdict][]).map(
+            ([role, verdict]) => (
+              <Badge
+                key={role}
+                component="button"
+                color={VERDICT_COLORS[verdict] ?? "gray"}
+                variant={pinnedReviewer === role ? "filled" : "light"}
+                size="sm"
+                style={{
+                  cursor: "pointer",
+                  background: "none",
+                  border: "none",
+                }}
+                onClick={() =>
+                  setPinnedReviewer((cur) => (cur === role ? null : role))
+                }
+              >
+                {role}: {verdict}
+              </Badge>
+            ),
+          )}
         </Group>
       )}
 
@@ -102,10 +127,16 @@ interface CycleBlockProps {
   pinnedReviewer: string | null;
 }
 
-function CycleBlock({ taskId, projectId, cycle, isCurrent, pinnedReviewer }: CycleBlockProps) {
+function CycleBlock({
+  taskId,
+  projectId,
+  cycle,
+  isCurrent,
+  pinnedReviewer,
+}: CycleBlockProps) {
   const { intervalMs } = usePollInterval();
   const { data, isLoading, error } = useQuery({
-    queryKey: ['task-reviews', taskId, cycle, projectId],
+    queryKey: ["task-reviews", taskId, cycle, projectId],
     queryFn: ({ signal }) => fetchReviewCycle(taskId, cycle, signal, projectId),
     refetchInterval: isCurrent ? intervalMs : false,
     staleTime: 2000,
@@ -121,7 +152,9 @@ function CycleBlock({ taskId, projectId, cycle, isCurrent, pinnedReviewer }: Cyc
   const [openItems, setOpenItems] = useState<string[]>(
     pinnedReviewer ? [pinnedReviewer] : [],
   );
-  const [lastPinnedReviewer, setLastPinnedReviewer] = useState<string | null>(pinnedReviewer);
+  const [lastPinnedReviewer, setLastPinnedReviewer] = useState<string | null>(
+    pinnedReviewer,
+  );
   if (pinnedReviewer !== lastPinnedReviewer) {
     setLastPinnedReviewer(pinnedReviewer);
     if (pinnedReviewer && !openItems.includes(pinnedReviewer)) {
@@ -130,10 +163,18 @@ function CycleBlock({ taskId, projectId, cycle, isCurrent, pinnedReviewer }: Cyc
   }
 
   return (
-    <Card withBorder p="sm" bg={isCurrent ? 'var(--mantine-color-gray-0)' : undefined}>
+    <Card
+      withBorder
+      p="sm"
+      bg={isCurrent ? "var(--mantine-color-gray-0)" : undefined}
+    >
       <Group gap="sm" mb="xs">
         <Title order={6}>Cycle {cycle}</Title>
-        {isCurrent && <Badge size="xs" variant="light">current</Badge>}
+        {isCurrent && (
+          <Badge size="xs" variant="light">
+            current
+          </Badge>
+        )}
       </Group>
 
       {isLoading ? (
@@ -143,7 +184,9 @@ function CycleBlock({ taskId, projectId, cycle, isCurrent, pinnedReviewer }: Cyc
           {error instanceof Error ? error.message : String(error)}
         </Text>
       ) : !data || data.runs.length === 0 ? (
-        <Text size="sm" c="dimmed" fs="italic">No reviewer runs posted for this cycle.</Text>
+        <Text size="sm" c="dimmed" fs="italic">
+          No reviewer runs posted for this cycle.
+        </Text>
       ) : (
         <Accordion
           variant="separated"
@@ -165,8 +208,14 @@ function ReviewRunItem({ run }: { run: ReviewRun }) {
     <Accordion.Item value={run.reviewerRole}>
       <Accordion.Control>
         <Group gap="sm" wrap="nowrap">
-          <Text size="sm" fw={600}>{run.reviewerRole}</Text>
-          <Badge color={VERDICT_COLORS[run.verdict] ?? 'gray'} variant="light" size="sm">
+          <Text size="sm" fw={600}>
+            {run.reviewerRole}
+          </Text>
+          <Badge
+            color={VERDICT_COLORS[run.verdict] ?? "gray"}
+            variant="light"
+            size="sm"
+          >
             {run.verdict}
           </Badge>
           <Text size="xs" c="dimmed">
@@ -174,7 +223,8 @@ function ReviewRunItem({ run }: { run: ReviewRun }) {
           </Text>
           {run.findings.length > 0 && (
             <Text size="xs" c="dimmed">
-              {run.findings.length} finding{run.findings.length === 1 ? '' : 's'}
+              {run.findings.length} finding
+              {run.findings.length === 1 ? "" : "s"}
             </Text>
           )}
         </Group>
@@ -196,12 +246,16 @@ function ReviewRunItem({ run }: { run: ReviewRun }) {
  * should extend this mapping rather than fall through to the default.
  */
 function severityOrdinalPrefix(severity: Severity): string {
-  return severity === 'BLOCKING' ? 'B' : 'N';
+  return severity === "BLOCKING" ? "B" : "N";
 }
 
 function FindingsTable({ findings }: { findings: ReviewFinding[] }) {
   if (findings.length === 0) {
-    return <Text size="xs" c="dimmed" fs="italic">No structured findings.</Text>;
+    return (
+      <Text size="xs" c="dimmed" fs="italic">
+        No structured findings.
+      </Text>
+    );
   }
 
   return (
@@ -210,13 +264,21 @@ function FindingsTable({ findings }: { findings: ReviewFinding[] }) {
         <Accordion.Item key={f.id} value={String(f.id)}>
           <Accordion.Control>
             <Group gap="sm" wrap="nowrap">
-              <Badge color={SEVERITY_COLORS[f.severity]} variant="light" size="xs">
+              <Badge
+                color={SEVERITY_COLORS[f.severity]}
+                variant="light"
+                size="xs"
+              >
                 {f.severity}
               </Badge>
-              <Text size="xs" c="dimmed">{severityOrdinalPrefix(f.severity)}{f.ordinal}</Text>
+              <Text size="xs" c="dimmed">
+                {severityOrdinalPrefix(f.severity)}
+                {f.ordinal}
+              </Text>
               {f.filePath && (
                 <Text size="xs" ff="monospace">
-                  {f.filePath}{f.line !== null ? `:${f.line}` : ''}
+                  {f.filePath}
+                  {f.line !== null ? `:${f.line}` : ""}
                 </Text>
               )}
               <Text size="sm">{f.title}</Text>
@@ -225,19 +287,29 @@ function FindingsTable({ findings }: { findings: ReviewFinding[] }) {
           <Accordion.Panel>
             <Stack gap={6}>
               <div>
-                <Text size="xs" fw={600} c="dimmed">Description</Text>
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{f.description}</Text>
+                <Text size="xs" fw={600} c="dimmed">
+                  Description
+                </Text>
+                <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                  {f.description}
+                </Text>
               </div>
               {f.evidence && (
                 <div>
-                  <Text size="xs" fw={600} c="dimmed">Evidence</Text>
+                  <Text size="xs" fw={600} c="dimmed">
+                    Evidence
+                  </Text>
                   <Code block>{f.evidence}</Code>
                 </div>
               )}
               {f.fix && (
                 <div>
-                  <Text size="xs" fw={600} c="dimmed">Fix</Text>
-                  <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{f.fix}</Text>
+                  <Text size="xs" fw={600} c="dimmed">
+                    Fix
+                  </Text>
+                  <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                    {f.fix}
+                  </Text>
                 </div>
               )}
             </Stack>
