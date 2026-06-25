@@ -10,6 +10,10 @@ services:
       - AGENT_NAME=${AGENT_NAME:-agent-1}
       - WORK_BRANCH=${WORK_BRANCH:-main}
       - AGENT_TYPE=${AGENT_TYPE:?Set AGENT_TYPE in .env}
+      # Preferred auth: long-lived OAuth token from `claude setup-token`
+      # (sk-ant-oat01-...). Read from this env var; takes precedence over a
+      # mounted .credentials.json. Leave empty to use a credentials file or key.
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - CLAUDE_EFFORT=${CLAUDE_EFFORT:-high}
       - MAX_TURNS=${MAX_TURNS:-200}
       - SERVER_URL=http://host.docker.internal:${SERVER_PORT:-9100}
@@ -28,11 +32,13 @@ services:
       - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git
       # Host-side logs (exit logs persist after container shutdown for forensic review)
       - ${LOGS_PATH:-./logs}:/logs
-      # Required: Claude authentication (pick one)
-      # Option A — OAuth credentials file (CLAUDE_CREDENTIALS_PATH must be set in .env
-      # — ~ does not expand reliably on Windows):
-      - ${CLAUDE_CREDENTIALS_PATH:?Set CLAUDE_CREDENTIALS_PATH in .env}:/home/claude/.claude/.credentials.json:ro
-      # Option B — API key: set ANTHROPIC_API_KEY in environment above instead
+      # Claude authentication (pick one):
+      # Option A (preferred) — long-lived OAuth token: set CLAUDE_CODE_OAUTH_TOKEN
+      #   in .env (wired into the environment block above). No mount needed.
+      # Option B — OAuth credentials file: add an absolute-path mount here
+      #   (~ does not expand reliably on Windows):
+      #   - /abs/path/.credentials.json:/home/claude/.claude/.credentials.json:ro
+      # Option C — API key: set ANTHROPIC_API_KEY in the environment above instead
       # Agent definitions (container-orchestrator, etc.)
       - ${AGENTS_PATH:-../agents}:/staged-agents:ro
       # UE engine (read-only, optional — omit or set to /dev/null for non-UE projects)

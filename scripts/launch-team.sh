@@ -13,7 +13,8 @@
 #   SCRIPT_DIR         -- path to the repo root (where teams/ lives)
 #   BARE_REPO_PATH     -- path to the bare repo
 #   UE_ENGINE_PATH     -- Unreal Engine path
-#   CLAUDE_CREDENTIALS_PATH -- Claude credentials mount path
+#   CLAUDE_CREDENTIALS_PATH -- Claude credentials mount path (optional)
+#   CLAUDE_CODE_OAUTH_TOKEN -- long-lived OAuth token (preferred auth source)
 #   AGENTS_PATH        -- compiled agents directory
 #   MAX_TURNS          -- max agent turns
 #   LOG_VERBOSITY      -- verbosity level
@@ -124,6 +125,7 @@ while IFS= read -r member; do
     BARE_REPO_PATH="$BARE_REPO_PATH" \
     UE_ENGINE_PATH="${UE_ENGINE_PATH:-}" \
     CLAUDE_CREDENTIALS_PATH="${CLAUDE_CREDENTIALS_PATH:-}" \
+    CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}" \
     AGENTS_PATH="${AGENTS_PATH:-}" \
     SERVER_PORT="$SERVER_PORT" \
     MAX_TURNS="${TEAM_MAX_TURNS:-1000}" \

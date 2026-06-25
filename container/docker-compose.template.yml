@@ -14,6 +14,13 @@ services:
       # container's env.sh enforces this; here we just pass through whatever
       # the host launcher exported.
       - AGENT_TYPE=${AGENT_TYPE:-}
+      # Claude authentication. Preferred: a long-lived OAuth token from
+      # `claude setup-token` (sk-ant-oat01-...), set as CLAUDE_CODE_OAUTH_TOKEN
+      # in .env. Claude Code reads it from this env var and it takes precedence
+      # over any mounted .credentials.json. Leave empty to fall back to the
+      # credentials-file mount (applied via docker-compose.credentials.yml when
+      # CLAUDE_CREDENTIALS_PATH is set) or ANTHROPIC_API_KEY.
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - CLAUDE_EFFORT=${CLAUDE_EFFORT:-high}
       - MAX_TURNS=${MAX_TURNS:-200}
       - SERVER_URL=http://host.docker.internal:${SERVER_PORT:-9100}
@@ -41,8 +48,10 @@ services:
       - ${BARE_REPO_PATH:?Set BARE_REPO_PATH}:/repo.git
       # Host-side logs (persist after container shutdown for forensic review)
       - ${LOGS_PATH:-./logs}:/logs
-      # Claude authentication (OAuth credentials file)
-      - ${CLAUDE_CREDENTIALS_PATH:?Set CLAUDE_CREDENTIALS_PATH in .env}:/home/claude/.claude/.credentials.json:ro
+      # Claude authentication via credentials file is NOT mounted here — it is
+      # layered in by launch.sh through docker-compose.credentials.yml only when
+      # CLAUDE_CREDENTIALS_PATH is set. The default auth path is the
+      # CLAUDE_CODE_OAUTH_TOKEN env var above.
       # Host plugins directory (Skills, sub-agents, MCP servers installed via
       # `claude plugin install`). Mounted read-only; the entrypoint filters via
       # CLAUDE_PLUGINS_ALLOW so the container only stages an explicit subset.

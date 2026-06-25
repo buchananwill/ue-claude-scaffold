@@ -79,6 +79,7 @@ export AGENTS_PATH
 if [[ -n "$_CLI_TEAM" ]]; then
   export _CLI_TEAM _CLI_BRIEF PROJECT_ID SERVER_PORT SCRIPT_DIR
   export BARE_REPO_PATH UE_ENGINE_PATH CLAUDE_CREDENTIALS_PATH AGENTS_PATH
+  export CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}"
   export MAX_TURNS LOG_VERBOSITY
   exec "$SCRIPT_DIR/scripts/launch-team.sh"
 fi
@@ -111,6 +112,12 @@ _compose_files=("docker-compose.template.yml")
 if [[ -n "${UE_ENGINE_PATH:-}" ]]; then
   _compose_files+=("docker-compose.engine.yml")
 fi
+# Auth: the default path is the CLAUDE_CODE_OAUTH_TOKEN env var (injected via the
+# template's environment block). The credentials-file mount is layered in only
+# when CLAUDE_CREDENTIALS_PATH is set, so a token-only setup needs no file.
+if [[ -n "${CLAUDE_CREDENTIALS_PATH:-}" ]]; then
+  _compose_files+=("docker-compose.credentials.yml")
+fi
 _plugin_overlay="$_compose_dir/docker-compose.plugins.gen.yml"
 if _generate_plugin_overlay "$SCRIPT_DIR" "$PROJECT_ID" "$_plugin_overlay"; then
   _compose_files+=("docker-compose.plugins.gen.yml")
@@ -119,6 +126,7 @@ fi
 # ── Export vars for docker-compose ───────────────────────────────────────────
 export HOOK_BUILD_INTERCEPT HOOK_CPP_LINT HOOK_JS_LINT
 export AGENT_NAME WORK_BRANCH AGENT_TYPE CLAUDE_EFFORT MAX_TURNS LOG_VERBOSITY PROJECT_ID
+export CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}"
 export BARE_REPO_PATH UE_ENGINE_PATH PROJECT_PATH LOGS_PATH
 export WORKER_MODE WORKER_POLL_INTERVAL WORKER_SINGLE_TASK
 export AGENT_MODE="${AGENT_MODE:-single}"
