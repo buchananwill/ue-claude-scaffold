@@ -5,7 +5,7 @@ import * as tasksLifecycleQ from "../queries/tasks-lifecycle.js";
 import { existsInBareRepo, isCommittedInRepo } from "../git-utils.js";
 import { seedBranchFor, AGENT_NAME_RE } from "../branch-naming.js";
 import { resolveProject } from "../resolve-project.js";
-import { classifyReview } from "../review-decision.js";
+import { classifyReview, isFinalReviewCycle } from "../review-decision.js";
 import type { TasksOpts } from "./tasks-files.js";
 import { resolveAgent } from "./route-helpers.js";
 
@@ -444,21 +444,29 @@ async function handleTransition(
       // review is the current reviewCycleCount (the increment below happens
       // only after this gate passes).
       const cycle = row.reviewCycleCount ?? 0;
+      const budget = row.reviewCycleBudget ?? 5;
+      const finalCycle = isFinalReviewCycle(cycle, budget);
       const aggregates = await tasksLifecycleQ.getReviewerAggregates(
         db,
         id,
         cycle,
       );
-      if (classifyReview(aggregates) !== "revise") {
+      if (
+        classifyReview(aggregates, { isFinalCycle: finalCycle }) !== "revise"
+      ) {
         return reply.conflict(
           `cannot transition '${current}' → '${target}': no revision trigger fired ` +
-            "(needs request_changes, >=3 findings on one reviewer, >=2 reviewers with findings, or a BLOCKING finding)",
+            (finalCycle
+              ? "(final review cycle — only request_changes or a BLOCKING finding forces a revision; " +
+                "finding volume alone does not)"
+              : "(needs request_changes, >=4 findings on one reviewer, >=2 reviewers with two-or-more findings, " +
+                "or a BLOCKING finding)"),
         );
       }
 
       // Cycle-budget guard: increment first, then check.
-      const nextCount = (row.reviewCycleCount ?? 0) + 1;
-      if (nextCount > (row.reviewCycleBudget ?? 5)) {
+      const nextCount = cycle + 1;
+      if (nextCount > budget) {
         // Reroute: would-be revising becomes arbitrating with cycle-budget trigger.
         const trigger: ArbitrationTrigger = "review_cycle_budget_exhausted";
         const exists = await tasksLifecycleQ.arbitrationExists(db, id, trigger);
@@ -513,19 +521,27 @@ async function handleTransition(
     // Legal sources: reviewing (decision gate) and arbitrating (ruling=approve).
     if (current === "reviewing") {
       // Findings-based acceptance: every reviewer verdict in
-      // {approve, out_of_scope}, at most one reviewer with findings, at most
-      // two findings on any reviewer, and no BLOCKING findings. Recomputed
-      // server-side from review_runs/review_findings for the current cycle.
+      // {approve, out_of_scope}, at most one reviewer with two-or-more
+      // findings, at most three findings on any reviewer, and no BLOCKING
+      // findings. Recomputed server-side from review_runs/review_findings for
+      // the current cycle. On the final cycle of the budget the finding-volume
+      // conjuncts are dropped — see classifyReview's final-cycle relaxation.
       const cycle = row.reviewCycleCount ?? 0;
+      const finalCycle = isFinalReviewCycle(cycle, row.reviewCycleBudget ?? 5);
       const aggregates = await tasksLifecycleQ.getReviewerAggregates(
         db,
         id,
         cycle,
       );
-      if (classifyReview(aggregates) !== "accept") {
+      if (
+        classifyReview(aggregates, { isFinalCycle: finalCycle }) !== "accept"
+      ) {
         return reply.conflict(
           "cannot transition reviewing→completed: review does not meet the acceptance criteria " +
-            "(needs all verdicts approve/out_of_scope, <=1 reviewer with findings, <=2 findings per reviewer, no BLOCKING findings)",
+            (finalCycle
+              ? "(final review cycle — needs all verdicts approve/out_of_scope and no BLOCKING findings)"
+              : "(needs all verdicts approve/out_of_scope, <=1 reviewer with two-or-more findings, " +
+                "<=3 findings per reviewer, no BLOCKING findings)"),
         );
       }
     } else if (current === "arbitrating") {

@@ -444,6 +444,101 @@ describe("tasks-lifecycle routes", () => {
     assert.equal((await getFsmRow(id)).review_cycle_count, 1);
   });
 
+  // ── 7b. final-cycle relaxation of the volume predicates ───────────────
+  //
+  // On the last cycle the budget allows (reviewCycleCount >= budget, i.e. the
+  // cycle from which a revision would reroute to arbitration), the two
+  // finding-volume predicates are dropped. Only request_changes or a BLOCKING
+  // finding still forces a revision, so a nit-picked-but-clean task completes
+  // instead of going to an arbitrator over bikeshedding notes.
+
+  /** Park the task on the final review cycle (count == budget). */
+  async function setFinalCycle(id: number): Promise<void> {
+    await ctx.db.execute(sql`
+      UPDATE tasks SET review_cycle_count = 5 WHERE id = ${id}
+    `);
+  }
+
+  it("final cycle: reviewing → complete succeeds with one reviewer holding four NOTE findings", async () => {
+    const id = await driveToReviewing();
+    await setFinalCycle(id);
+    await seedReview(id, "safety", "approve", { nNote: 4, cycle: 5 });
+
+    const res = await transition(id, { to: "completed" });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal((await getFsmRow(id)).status, "completed");
+  });
+
+  it("final cycle: reviewing → complete succeeds when two reviewers each raised two NOTE findings", async () => {
+    const id = await driveToReviewing();
+    await setFinalCycle(id);
+    await seedReview(id, "safety", "approve", { nNote: 2, cycle: 5 });
+    await seedReview(id, "correctness", "approve", { nNote: 2, cycle: 5 });
+
+    const res = await transition(id, { to: "completed" });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal((await getFsmRow(id)).status, "completed");
+  });
+
+  it("final cycle: reviewing → revising returns 409 when only volume predicates would have fired", async () => {
+    // The complement of the acceptance test above — with the volume predicates
+    // dropped there is no revision trigger left, so the task must not be able
+    // to burn its last cycle (and therefore must not reach arbitration either).
+    const id = await driveToReviewing();
+    await setFinalCycle(id);
+    await seedReview(id, "safety", "approve", { nNote: 4, cycle: 5 });
+
+    const res = await transition(id, { to: "revising" });
+    assert.equal(res.statusCode, 409, res.body);
+
+    const row = await getFsmRow(id);
+    assert.equal(row.status, "reviewing");
+    assert.equal(row.review_cycle_count, 5);
+  });
+
+  it("final cycle: a BLOCKING finding still blocks completion and reroutes to arbitrating", async () => {
+    const id = await driveToReviewing();
+    await setFinalCycle(id);
+    await seedReview(id, "safety", "approve", { nBlocking: 1, cycle: 5 });
+
+    const rejected = await transition(id, { to: "completed" });
+    assert.equal(rejected.statusCode, 409, rejected.body);
+
+    const res = await transition(id, { to: "revising" });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json().status, "arbitrating");
+    assert.equal(
+      (await getFsmRow(id)).arbitration_pending_trigger,
+      "review_cycle_budget_exhausted",
+    );
+  });
+
+  it("final cycle: a request_changes verdict still blocks completion", async () => {
+    const id = await driveToReviewing();
+    await setFinalCycle(id);
+    await seedReview(id, "safety", "request_changes", { cycle: 5 });
+
+    const res = await transition(id, { to: "completed" });
+    assert.equal(res.statusCode, 409, res.body);
+  });
+
+  it("penultimate cycle: four NOTE findings still block completion", async () => {
+    // Boundary check on the relaxation — cycle 4 with budget 5 is not final,
+    // so predicate 2 is still live.
+    const id = await driveToReviewing();
+    await ctx.db.execute(sql`
+      UPDATE tasks SET review_cycle_count = 4 WHERE id = ${id}
+    `);
+    await seedReview(id, "safety", "approve", { nNote: 4, cycle: 4 });
+
+    const res = await transition(id, { to: "completed" });
+    assert.equal(res.statusCode, 409, res.body);
+
+    const revise = await transition(id, { to: "revising" });
+    assert.equal(revise.statusCode, 200, revise.body);
+    assert.equal(revise.json().status, "revising");
+  });
+
   it("revising → engineering succeeds", async () => {
     const id = await driveToReviewing();
     await seedReview(id, "safety", "request_changes");

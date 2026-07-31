@@ -25,6 +25,17 @@
  * reviewer, no BLOCKING findings, and every reviewer verdict in
  * {approve, out_of_scope}. `out_of_scope` counts as clear — a reviewer whose
  * domain does not apply to the task must not block acceptance forever.
+ *
+ * FINAL-CYCLE RELAXATION. Predicates 2 and 3 are volume predicates: they read a
+ * pile of non-blocking notes as evidence that the work is not yet clean. That
+ * inference stops being useful on the last cycle of the budget, where the only
+ * alternative to acceptance is arbitration — a task that has been thoroughly
+ * nit-picked across every prior cycle should not be dragged before an
+ * arbitrator because the reviewers are still bikeshedding. So on the final
+ * cycle (see `isFinalReviewCycle`) predicates 2 and 3 are dropped and only the
+ * blocking signals survive: an explicit `request_changes` verdict (predicate 1)
+ * and any BLOCKING finding (predicate 4). Non-blocking findings raised on the
+ * final cycle no longer force a revision.
  */
 
 export interface ReviewerAggregate {
@@ -46,23 +57,55 @@ export interface ReviewerAggregate {
  */
 export type ReviewDecision = "accept" | "revise" | "incomplete";
 
-export function classifyReview(rows: ReviewerAggregate[]): ReviewDecision {
+export interface ClassifyReviewOptions {
+  /**
+   * True when the cycle being classified is the last one the budget allows —
+   * a `revise` verdict here reroutes to arbitration instead of buying another
+   * engineering revolution. Drops the finding-volume predicates (2 and 3).
+   * Derive it with `isFinalReviewCycle`; never hand-compute the comparison.
+   */
+  isFinalCycle?: boolean;
+}
+
+/**
+ * Is `reviewCycleCount` the last cycle the budget allows?
+ *
+ * The cycle-budget reroute in the `reviewing → revising` gate increments first
+ * and then checks (`count + 1 > budget` → arbitrating), so the cycle from which
+ * a revision would reroute to arbitration is exactly `count >= budget`. This
+ * helper is the single definition of "final cycle" shared by the accept gate,
+ * the revise gate, and the container's mirror of the same decision.
+ */
+export function isFinalReviewCycle(
+  reviewCycleCount: number,
+  reviewCycleBudget: number,
+): boolean {
+  return reviewCycleCount >= reviewCycleBudget;
+}
+
+export function classifyReview(
+  rows: ReviewerAggregate[],
+  opts: ClassifyReviewOptions = {},
+): ReviewDecision {
   if (rows.length === 0) return "incomplete";
 
   const anyRequestChanges = rows.some((r) => r.verdict === "request_changes");
-  const anyFourPlusFindings = rows.some((r) => r.findingsCount >= 4);
-  const reviewersWithMultipleFindings = rows.filter(
-    (r) => r.findingsCount >= 2,
-  ).length;
   const anyBlocking = rows.some((r) => r.blockingCount >= 1);
 
-  if (
-    anyRequestChanges ||
-    anyFourPlusFindings ||
-    reviewersWithMultipleFindings >= 2 ||
-    anyBlocking
-  ) {
-    return "revise";
+  // Blocking signals fire on every cycle, final or not.
+  if (anyRequestChanges || anyBlocking) return "revise";
+
+  // Volume predicates — dropped on the final cycle so that a pile of
+  // non-blocking notes cannot push a clean-enough task into arbitration.
+  if (!opts.isFinalCycle) {
+    const anyFourPlusFindings = rows.some((r) => r.findingsCount >= 4);
+    const reviewersWithMultipleFindings = rows.filter(
+      (r) => r.findingsCount >= 2,
+    ).length;
+
+    if (anyFourPlusFindings || reviewersWithMultipleFindings >= 2) {
+      return "revise";
+    }
   }
 
   return "accept";

@@ -25,8 +25,10 @@
 #      so reviewerVerdicts is populated for the dashboard.
 #   7. Computes the findings-based accept/revise decision from the authoritative
 #      review rows and posts the final transition: `completed` on acceptance,
-#      otherwise `revising`. No workspace pointer is written — reviews live in
-#      the database (review_runs + review_findings); the engineer reads them via
+#      otherwise `revising`. On the final cycle of the review budget the
+#      finding-volume predicates are dropped and only blocking signals can force
+#      a revision. No workspace pointer is written — reviews live in the
+#      database (review_runs + review_findings); the engineer reads them via
 #      GET /tasks/:id/reviews/:cycle. The decision mirrors classifyReview()
 #      server-side (server/src/review-decision.ts), which re-derives the same
 #      verdict and gates the transition.
@@ -256,6 +258,7 @@ _run_reviewer_fanout() {
 
     # Fetch fresh task state.
     local task_json status source_path task_title files_csv review_cycle_count
+    local review_cycle_budget
     task_json=$(_rfan_fetch_task "$task_id")
     if [ -z "$task_json" ]; then
         echo "ERROR: reviewer-fanout: could not fetch task ${task_id}" >&2
@@ -268,6 +271,13 @@ _run_reviewer_fanout() {
     review_cycle_count=$(echo "$task_json" | jq -r '.reviewCycleCount // 0')
     if ! [[ "$review_cycle_count" =~ ^[0-9]+$ ]]; then
         review_cycle_count=0
+    fi
+    # Budget bounds the number of review cycles; the Step 7 decision relaxes its
+    # volume predicates once the current cycle reaches it. Fall back to the
+    # server's own default (5) if the field is missing or non-numeric.
+    review_cycle_budget=$(echo "$task_json" | jq -r '.reviewCycleBudget // 5')
+    if ! [[ "$review_cycle_budget" =~ ^[0-9]+$ ]]; then
+        review_cycle_budget=5
     fi
 
     # Phase 7 cycle 2 (decomp W2): allowlist-scrub server-derived strings
@@ -288,7 +298,7 @@ _run_reviewer_fanout() {
     # built → reviewing` revolution happens.
     local review_cycle="$review_cycle_count"
 
-    echo "reviewer-fanout: task=${task_id} status=${status} reviewCycle=${review_cycle} (daisy-chain cycle ${cycle})"
+    echo "reviewer-fanout: task=${task_id} status=${status} reviewCycle=${review_cycle}/${review_cycle_budget} (daisy-chain cycle ${cycle})"
 
     # Step 1: built → reviewing transition. On a recovery re-entry where status
     # is already `reviewing`, skip — re-posting `reviewing` would reset
@@ -469,16 +479,28 @@ _run_reviewer_fanout() {
     #   3. >= 2 reviewers each raised at least two findings
     #   4. a reviewer raised a BLOCKING finding (backstop for a reviewer who
     #      raised a blocker but did not request changes)
+    # …with 2 and 3 suppressed on the final review cycle (see below).
     # Otherwise the work meets the acceptance criteria and is completed. No
     # workspace pointer is written — the engineer reads the reviews from the
     # database via GET /tasks/:id/reviews/:cycle.
-    local decision
-    decision=$(echo "$final_runs" | jq -r '
+    #
+    # FINAL-CYCLE RELAXATION: on the last cycle the budget allows (review cycle
+    # >= reviewCycleBudget — the cycle from which a revision would reroute to
+    # arbitration), the volume predicates 2 and 3 are dropped. Only an explicit
+    # request_changes verdict or a BLOCKING finding still forces a revision, so
+    # a thoroughly nit-picked task is not dragged before an arbitrator over
+    # bikeshedding notes. Mirrors classifyReview's final-cycle branch.
+    local decision final_cycle_json="false"
+    if [ "$review_cycle" -ge "$review_cycle_budget" ]; then
+        final_cycle_json="true"
+    fi
+    decision=$(echo "$final_runs" | jq -r --argjson final "$final_cycle_json" '
         (.runs // []) as $r
         | (($r | any(.verdict == "request_changes"))
-           or ($r | any(((.findings // []) | length) >= 4))
-           or (($r | map(select(((.findings // []) | length) >= 2)) | length) >= 2)
-           or ($r | any((.findings // []) | any(.severity == "BLOCKING"))))
+           or ($r | any((.findings // []) | any(.severity == "BLOCKING")))
+           or (($final | not)
+               and (($r | any(((.findings // []) | length) >= 4))
+                    or (($r | map(select(((.findings // []) | length) >= 2)) | length) >= 2))))
         | if . then "revise" else "accept" end
     ' 2>/dev/null) || decision=""
 

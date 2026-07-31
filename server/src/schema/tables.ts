@@ -479,7 +479,9 @@ export const arbitrationRuns = pgTable(
 //     accept-vs-revise count BLOCKING + NOTE alike, and a single BLOCKING finding
 //     forces a revision regardless of verdict. BLOCKING ranks above NOTE for the
 //     engineer's attention, but NOTE findings are still addressed on a revision pass
-//     and still aggregate for cross-task operator signal.
+//     and still aggregate for cross-task operator signal. The one asymmetry is the
+//     final review cycle, where the volume tallies are ignored and only BLOCKING
+//     findings (or an explicit request_changes verdict) still force a revision.
 export const reviewFindings = pgTable(
   "review_findings",
   {
