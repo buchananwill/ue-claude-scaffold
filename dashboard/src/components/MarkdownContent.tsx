@@ -1,9 +1,9 @@
-import { Component, type ReactNode } from 'react';
-import { Text, Code } from '@mantine/core';
-import Markdown from 'react-markdown';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import type { ComponentPropsWithoutRef } from 'react';
+import { Component, type ReactNode } from "react";
+import { Code, Text, TypographyStylesProvider } from "@mantine/core";
+import Markdown from "react-markdown";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import type { ComponentPropsWithoutRef } from "react";
 
 interface MarkdownContentProps {
   content: string;
@@ -29,7 +29,7 @@ class MarkdownErrorBoundary extends Component<EBProps, EBState> {
   }
 
   componentDidCatch(error: unknown): void {
-    console.error('MarkdownContent render failure:', error);
+    console.error("MarkdownContent render failure:", error);
   }
 
   render(): ReactNode {
@@ -48,47 +48,64 @@ class MarkdownErrorBoundary extends Component<EBProps, EBState> {
 export function MarkdownContent({ content }: MarkdownContentProps) {
   return (
     <MarkdownErrorBoundary
-      fallback={<Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{content}</Text>}
+      fallback={
+        <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+          {content}
+        </Text>
+      }
     >
-      <Markdown
-        components={{
-          p({ children }) {
-            return <Text size="sm" component="p" style={{ margin: 0 }}>{children}</Text>;
-          },
-          a({ href, children }) {
-            const safe = href && /^(https?:|mailto:|#)/i.test(href);
-            if (!safe) return <>{children}</>;
-            return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
-          },
-          img({ src, alt, title }) {
-            const safe = src && /^https?:/i.test(src);
-            if (!safe) return null;
-            return <img src={src} alt={alt} title={title} />;
-          },
-          code({ className, children, ...rest }: ComponentPropsWithoutRef<'code'> & { className?: string }) {
-            const match = /language-(\w+)/.exec(className ?? '');
-            const codeString = String(children).replace(/\n$/, '');
-            if (match) {
+      <TypographyStylesProvider fz="sm" style={{ overflowWrap: "anywhere" }}>
+        <Markdown
+          components={{
+            a({ href, children }) {
+              const safe = href && /^(https?:|mailto:|#)/i.test(href);
+              if (!safe) return <>{children}</>;
               return (
-                <SyntaxHighlighter
-                  style={oneDark}
-                  language={match[1]}
-                  PreTag="div"
-                >
-                  {codeString}
-                </SyntaxHighlighter>
+                <a href={href} target="_blank" rel="noopener noreferrer">
+                  {children}
+                </a>
               );
-            }
-            return (
-              <Code {...rest} className={className}>
-                {children}
-              </Code>
-            );
-          },
-        }}
-      >
-        {content}
-      </Markdown>
+            },
+            img({ src, alt, title }) {
+              const safe = src && /^https?:/i.test(src);
+              if (!safe) return null;
+              return <img src={src} alt={alt} title={title} />;
+            },
+            code({
+              className,
+              children,
+              ...rest
+            }: ComponentPropsWithoutRef<"code"> & { className?: string }) {
+              const match = /language-(\w+)/.exec(className ?? "");
+              const codeString = String(children).replace(/\n$/, "");
+              if (match) {
+                return (
+                  <SyntaxHighlighter
+                    style={oneDark}
+                    language={match[1]}
+                    PreTag="div"
+                    customStyle={{
+                      margin: "var(--mantine-spacing-xs) 0",
+                      borderRadius: "var(--mantine-radius-sm)",
+                      fontSize: "var(--mantine-font-size-xs)",
+                      overflowX: "auto",
+                    }}
+                  >
+                    {codeString}
+                  </SyntaxHighlighter>
+                );
+              }
+              return (
+                <Code {...rest} className={className}>
+                  {children}
+                </Code>
+              );
+            },
+          }}
+        >
+          {content}
+        </Markdown>
+      </TypographyStylesProvider>
     </MarkdownErrorBoundary>
   );
 }

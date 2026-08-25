@@ -166,7 +166,7 @@ function CycleBlock({
     <Card
       withBorder
       p="sm"
-      bg={isCurrent ? "var(--mantine-color-gray-0)" : undefined}
+      bg={isCurrent ? "var(--mantine-color-default)" : undefined}
     >
       <Group gap="sm" mb="xs">
         <Title order={6}>Cycle {cycle}</Title>
