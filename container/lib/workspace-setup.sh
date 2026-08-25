@@ -7,8 +7,34 @@ _setup_workspace() {
     git config --global --add safe.directory /repo.git
     git config --global --add safe.directory /workspace
 
+    # ── Git LFS: pointer-only workspace ─────────────────────────────────
+    # Target repos route large binary assets through LFS (PistePerfect:
+    # Content/**/*.uasset and *.umap, 6+ GB). The image installs git-lfs with
+    # the smudge filter in --skip mode, so those paths check out as 131-byte
+    # pointer files and the clone below stays at source-code size. Containers
+    # never need the bytes -- builds and tests are forwarded to a host staging
+    # worktree, which smudges normally.
+    #
+    # Verify rather than assume. Without the binary, git aborts the checkout
+    # outright on a repo declaring filter=lfs; with the binary but no --skip,
+    # every container silently downloads the whole LFS store. Both are
+    # stale-image failures worth naming explicitly.
+    if ! command -v git-lfs >/dev/null 2>&1; then
+        echo "ERROR: git-lfs is not installed in this image." >&2
+        echo "       A repo declaring filter=lfs in .gitattributes cannot be" >&2
+        echo "       checked out without it. Rebuild the container image." >&2
+        exit 1
+    fi
+    if [ "$(git config --get filter.lfs.smudge)" != "git-lfs smudge --skip -- %f" ]; then
+        echo "ERROR: git-lfs smudge filter is not in --skip mode." >&2
+        echo "       This container would download every LFS object (6+ GB)." >&2
+        echo "       Rebuild the container image; its Dockerfile runs" >&2
+        echo "       'git lfs install --system --skip-smudge'." >&2
+        exit 1
+    fi
+
     if [ ! -d /workspace/.git ]; then
-        echo "Cloning from local bare repo..."
+        echo "Cloning from local bare repo (LFS pointers only)..."
         git clone /repo.git /workspace --branch "$WORK_BRANCH"
     fi
 
